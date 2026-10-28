@@ -158,8 +158,9 @@ describe("evaluateActions", () => {
       const pack = { ...emptyPack("acme/widgets"), checks: ciGreen === undefined ? {} : { "ci-green": { enabled: ciGreen } }, actions: { ...defaultActions(), pass: [{ do: "merge" }] satisfies Step[] } };
       return heldApprovals(evaluateActions({ facts: { ...facts, checks: ci }, checks: [], verdict: "pass", reason: "passes", pack }), undefined, ci)[0];
     }
-    expect(merge("pending", false)).toMatchObject({ effectId: expect.any(String), held: true, reason: "CI has not finished on this head." });
+    expect(merge("pending", false)).toMatchObject({ effectId: expect.any(String), held: true, heldUntil: "ci-finishes", reason: "CI has not finished on this head." });
     expect(merge("none", true)).toMatchObject({ held: true, reason: "There is no CI on this head." });
+    expect(merge("none", true)).not.toHaveProperty("heldUntil");
     expect(merge("none")).toMatchObject({ held: true, reason: "There is no CI on this head." });
     expect(merge("none", false)).toMatchObject({ target: { ciOptional: true }, reason: "passes" });
     expect(merge("none", false)).not.toHaveProperty("held");
@@ -223,6 +224,15 @@ describe("holdDos", () => {
     }
     const steps = [step("unsure", "close"), step("fail", "close"), step("pass", "merge"), step("fail", "merge"), step("unsure", "merge")];
     expect(holdDos(steps, ["close", "merge"]).map((action) => "held" in action)).toEqual([true, false, false, true, true]);
+  });
+
+  test("only a Do the role may write keeps waiting for CI to finish; one held for a person does not", () => {
+    const label: SuggestedDo = { list: "fail", index: 0, kind: "labels", reason: "", effectId: "e-label", target: { labels: ["bug"] } };
+    const [granted] = holdDos(heldApprovals([label], undefined, "pending"), ["labels"]);
+    const [asked] = holdDos(heldApprovals([label], undefined, "pending"), []);
+    expect(granted).toMatchObject({ held: true, heldUntil: "ci-finishes" });
+    expect(asked).toMatchObject({ held: true });
+    expect(asked).not.toHaveProperty("heldUntil");
   });
 });
 

@@ -1,14 +1,14 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
-import { Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
+import { Button, Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
 import { BUILT_IN_CHECK_NAMES, isCatalogId, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
 import { errorText } from "@corbits/common";
 import { linearIssues } from "../lib/linked-issue.ts";
 import { checkLabel } from "../lib/pack-prose.ts";
-import { passedChecks, type PaneStatus, type Problem, type Severity } from "../lib/pane-report.ts";
+import { heldText, lineText, passedChecks, type HeldChoice, type PaneStatus, type Problem, type Severity } from "../lib/pane-report.ts";
 import { checkMeasuredText, prHref } from "../lib/triage-view.ts";
 import { CitedEvidence } from "./CitedEvidence.tsx";
 import { DetailsBoundary } from "./DetailsBoundary.tsx";
@@ -43,8 +43,31 @@ export function StatusLine({ status }: { status: PaneStatus }) {
   return (
     <p className={`st3 t-${status.tone}`} role="status">
       <span className={status.live ? "dot live" : "dot"} />
-      <span>{status.text}</span>
+      <span>{lineText(status)}</span>
     </p>
+  );
+}
+
+type HeldActionsProps = { held: HeldChoice[]; doBlocked: boolean; onApprove: (choice: HeldChoice) => void; onHide: (() => void) | null };
+
+/** Each held action under the status line, with why it is held and its approve button; Hide for me hides them in this browser. */
+export function HeldActions({ held, doBlocked, onApprove, onHide }: HeldActionsProps) {
+  if (held.length === 0) return null;
+  return (
+    <div className="held">
+      <ul aria-label="Held actions">
+        {held.map((choice) => (
+          <li key={choice.pending.key}>
+            <span className="held-what">
+              {heldText(choice.pending)}
+              {choice.pending.until === null ? <span className="held-why">{choice.pending.reason}</span> : null}
+            </span>
+            <Button type="button" variant="outline" size="sm" disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onClick={() => onApprove(choice)}>Approve</Button>
+          </li>
+        ))}
+      </ul>
+      {onHide === null ? null : <Button type="button" variant="ghost" size="sm" onClick={onHide}>Hide for me</Button>}
+    </div>
   );
 }
 

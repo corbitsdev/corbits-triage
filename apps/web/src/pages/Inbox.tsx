@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Button } from "@corbits/react-ui";
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "@corbits/react-ui/ui/menu";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueries } from "@tanstack/react-query";
 import type { AuthorKind, CheckPack } from "@corbits/triage-contracts";
@@ -14,8 +14,8 @@ import { useHeldInbox } from "../lib/held-inbox.tsx";
 import { pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useHeldDoKeys } from "../lib/held-dos.ts";
 import { CodeReviewThreads } from "../components/CodeReviewThreads.tsx";
-import { Description, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
-import { endedText, heldChoices, paneBar, paneProblems, paneStatus, moreText, rowStatus, statusText, type BarEntry, type HeldChoice, type PaneBar } from "../lib/pane-report.ts";
+import { Description, HeldActions, Problems, ReportRows, StatusLine } from "../components/PaneReport.tsx";
+import { endedText, heldChoices, lineText, paneBar, paneProblems, paneStatus, type BarEntry, type HeldChoice, type PaneBar } from "../lib/pane-report.ts";
 import {
   COMPOSER_COPY,
   canRun,
@@ -54,6 +54,7 @@ import {
   listHref,
   matchesQuery,
   regroupInbox,
+  stoppedNotes,
   triageView,
   waitingOnOthers,
   withTriageView,
@@ -157,7 +158,7 @@ type RowProps = { entry: OpenItem; pack: CheckPack | null; byRepo: boolean; sele
 /** Grouped by repository the pile names it, so the row names the author instead. */
 function Row({ entry, pack, byRepo, selected, search }: RowProps) {
   const { item, handled } = entry;
-  const status = rowStatus(item, handled, pack);
+  const line = lineText(paneStatus({ item, detail: undefined, handled, pack }));
   const href = listHref(item);
   const cells = (
     <>
@@ -166,7 +167,7 @@ function Row({ entry, pack, byRepo, selected, search }: RowProps) {
       <b className="tw">{titleText(item.title)}</b>
       {byRepo ? <span className="who" title={item.author ?? undefined}>{item.author}</span> : null}
       <span className="age">{ageText(item.waitingSince)}</span>
-      <span className="st" title={statusText(status)}><span className="st-text">{status.text}</span>{status.more > 0 ? <span className="st-more">{moreText(status.more)}</span> : null}</span>
+      <span className="st" title={line}><span className="st-text">{line}</span></span>
     </>
   );
   if (href === undefined) return <div className="row" data-inbox-row={item.key}>{cells}</div>;
@@ -260,18 +261,12 @@ type PaneProps = {
   onBack: () => void;
 };
 
-type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; doBlocked: boolean; onChoose: (entry: BarEntry) => void; onEdit: (() => void) | null; onDo: (pending: PendingDo) => void; onHide: (() => void) | null };
+type BottomBarProps = { bar: PaneBar; draft: ReplyDraft | null; onChoose: (entry: BarEntry) => void; onEdit: (() => void) | null };
 
-/** Held actions sit behind one menu; the other writes are buttons, or behind More on a phone where they cannot fit. */
-function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: BottomBarProps) {
+/** Held actions are listed under the status line; the other writes are buttons, or behind More on a phone where they cannot fit. */
+function BottomBar({ bar, draft, onChoose, onEdit }: BottomBarProps) {
   const { primary, rest } = bar;
   const writes = rest.filter((entry) => entry.held === null);
-  const held = heldChoices(bar);
-
-  function chooseHeld({ pending, entry }: HeldChoice) {
-    if (entry === null) onDo(pending);
-    else onChoose(entry);
-  }
 
   return (
     <div className="bar">
@@ -279,25 +274,10 @@ function BottomBar({ bar, draft, doBlocked, onChoose, onEdit, onDo, onHide }: Bo
         <Button type="button" className="bar-primary" disabled={primary.blocker !== null} onClick={() => onChoose(primary)}>
           {primary.kind === "reply" && draft?.edited ? "Send edited feedback" : primary.label}
           {primary.detail === null ? null : <span className="det">{primary.detail}</span>}
-          {primary.held === null ? null : <span className="held-hint">held for you</span>}
+          {primary.held?.until === null ? <span className="held-hint">held for you</span> : null}
         </Button>
       )}
       {onEdit === null ? null : <Button type="button" variant="ghost" onClick={onEdit}>Edit feedback</Button>}
-      {held.length === 0 ? null : (
-        <Menu>
-          <MenuTrigger asChild><Button type="button" variant="outline">{held.length === 1 ? "1 held action" : `${held.length} held actions`}</Button></MenuTrigger>
-          <MenuContent side="top" align="start" className="held-menu">
-            <MenuLabel>Approve to run</MenuLabel>
-            {held.map((choice) => (
-              <MenuItem key={choice.pending.key} className="held-item" disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onSelect={() => chooseHeld(choice)}>
-                <span>{choice.pending.label}</span>
-                <span className="held-why">{choice.pending.reason}</span>
-              </MenuItem>
-            ))}
-            {onHide === null ? null : <><MenuSeparator /><MenuItem onSelect={onHide}>Hide for me</MenuItem></>}
-          </MenuContent>
-        </Menu>
-      )}
       {writes.map((entry) => <Button key={entry.kind} type="button" variant="ghost" className="bar-write" disabled={entry.blocker !== null} onClick={() => onChoose(entry)}>{entry.label}</Button>)}
       {writes.length === 0 ? null : (
         <Menu>
@@ -400,6 +380,11 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
     else approveDo(entry.held);
   }
 
+  function chooseHeld({ pending, entry }: HeldChoice) {
+    if (entry === null) approveDo(pending);
+    else choose(entry);
+  }
+
   function hideDos() {
     for (const pending of dos) heldDoKeys.hide(pending.key);
   }
@@ -445,6 +430,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
             <Byline item={item} author={facts.author} detail={pull.data} />
           </header>
           <StatusLine status={status} />
+          {ended ? null : <HeldActions held={heldChoices(bar)} doBlocked={doBlocked} onApprove={chooseHeld} onHide={dos.length === 0 ? null : hideDos} />}
           <Problems problems={paneProblems(item.checks, pack)} pack={pack} item={item} authorsTurn={status.tone === "author"} />
           {hasNumber(item) ? <CodeReviewThreads item={item} /> : null}
           <Description pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} />
@@ -463,11 +449,8 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
       {!ended && <BottomBar
         bar={bar}
         draft={draft}
-        doBlocked={doBlocked}
         onChoose={choose}
         onEdit={draft === null || editing ? null : () => setEditing(true)}
-        onDo={approveDo}
-        onHide={dos.length === 0 ? null : hideDos}
       />}
     </section>
   );
@@ -503,6 +486,11 @@ function RefusedPolicies({ repos }: { repos: string[] }) {
   return refused.map((repo) => (
     <p key={repo} role="status" className="note">Triage runs nothing on <Link to={`/repositories/${repo}`}>{repo}</Link> until its {refusedPath(repo)} is fixed.</p>
   ));
+}
+
+/** Triage not running on a host is said once here, not on each of its pull requests. */
+function StoppedNotes({ items }: { items: readonly PrItem[] }) {
+  return stoppedNotes(items).map((note) => <p key={note} role="status" className="note">{note} <Link to="/settings/triage">Open Settings</Link></p>);
 }
 
 /**
@@ -658,7 +646,6 @@ export default function Inbox() {
   const selectedMark = entries.find((entry) => entry.item.key === selected?.key)?.handled ?? null;
   // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
   const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
-  const paneMark = listsRest ? selectedMark : null;
   const groupings = groupingsOf(view, listsRest);
   const grouping = currentGrouping();
   const byRepo = view !== "ready" && grouping === "repo";
@@ -818,6 +805,7 @@ export default function Inbox() {
         </div>
         <PullToRefresh className="scroll" id="main">
           <RefusedPolicies repos={enabledNames} />
+          <StoppedNotes items={open.map((entry) => entry.item)} />
           <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
           {flat.length === 0 ? (
@@ -833,7 +821,7 @@ export default function Inbox() {
         <Pane
           key={paneKey}
           item={selected}
-          handled={paneMark}
+          handled={selectedMark}
           listTitle={listTitle}
           restored={paneDraft}
           sectionRef={sectionRef}

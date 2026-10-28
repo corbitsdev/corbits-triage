@@ -1,6 +1,7 @@
 import { errorText } from "@corbits/common";
 import { BUDGET_EXHAUSTED_NOTE, UNVERIFIED_FINDING } from "@corbits/triage-contracts";
 import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-review.ts";
+import { useCodeReviewOn } from "../lib/check-packs.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { relativeTime } from "../lib/duration.ts";
 import type { CodeReviewComment, CodeReviewRun, PrItem } from "../lib/hub-api.ts";
@@ -8,7 +9,7 @@ import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { Markdown } from "./Markdown.tsx";
 
-type Reviewed = Pick<PrItem, "repo" | "source" | "headSha" | "draft" | "verdictSha" | "codeReviewSkipped"> & { number: number };
+type Reviewed = Pick<PrItem, "repo" | "source" | "headSha" | "draft" | "verdictSha" | "codeReviewSkipped" | "awaiting"> & { number: number };
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
@@ -106,22 +107,29 @@ function CutNote({ cut }: { cut: NonNullable<CodeReviewRun["cut"]> }) {
   );
 }
 
-/** The pull request's code review, and Review again on a pull request that is not a draft while code review has a place to run. */
+/**
+ * The pull request's code review once there is one; before it, why its head was left out, or that it is awaited while the
+ * hub waits on it or the policy file turns it on. Review again on a reviewed pull request that is not a draft while code
+ * review has a place to run.
+ */
 export function CodeReviewThreads({ item }: { item: Reviewed }) {
   const { snapshot, readOnly } = usePortal();
   const reviews = useCodeReview(item).data;
   const again = useReviewAgain(item);
   const send = useSendCodeReview(item);
-  const askable = Boolean(snapshot?.codeReviewPlace) && item.draft !== true;
+  const policyOn = useCodeReviewOn(item.repo, item.source);
   const skipped = item.codeReviewSkipped !== undefined && !again.isSuccess && reviews?.review?.headSha !== item.verdictSha;
-  if (!reviews || (!reviews.review && !askable && !skipped)) return null;
+  const awaited = item.awaiting.includes("code-review") || (policyOn && item.draft !== true);
+  if (!reviews || (!reviews.review && !skipped && !awaited)) return null;
   const { review, completed, carriedTo } = reviews;
-  const unreviewed = again.isSuccess ? "Review requested" : "No review yet";
+  const askable = Boolean(snapshot?.codeReviewPlace) && item.draft !== true && Boolean(review);
+
+  if (!review && !skipped) return <section className="code-review" aria-label="Code review"><h3 className="lbl-h">Code review: awaited</h3></section>;
 
   return (
     <section className="code-review" aria-label="Code review">
       <h3 className="lbl-h">
-        Code review<span className="hint">{review ? hint(review, completed) : unreviewed}</span>
+        Code review<span className="hint">{review ? hint(review, completed) : "Not reviewed"}</span>
         <span className="sp" />
         {completed ? <SendReview item={item} completed={completed} carriedTo={carriedTo} send={send} /> : null}
         {askable ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}

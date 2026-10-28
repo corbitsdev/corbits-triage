@@ -113,12 +113,12 @@ function livePulls(runs: ObservedRuns): Map<string, LivePull> {
   return byPull;
 }
 
-/** A manager up between passes, as while it waits on a reviewer, runs nothing; a running one counts from the pass it took. */
+/** A manager up between passes runs nothing, so it is awaiting its reviewers or has none out; a running one counts from the pass it took. */
 function runOf(live: ObservedRun | undefined, now: Date): Run | null {
   if (!live || live.status === "completed") return null;
   const { runId } = live;
   if (live.status === "failed" || live.status === "cancelled") return { runId, startedAt: live.startedAt, status: live.status };
-  if (live.passAt === undefined) return null;
+  if (live.passAt === undefined) return live.awaiting === undefined ? null : { runId, status: "awaiting", on: live.awaiting };
   const startedAt = live.passAt;
   const stuck = now.getTime() - Date.parse(startedAt) > PR_TRIAGE_STUCK_RUN_MS;
   return { runId, startedAt, status: stuck ? "stuck" : "running" };
@@ -348,7 +348,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     const open = openHeads(listed, enabled, held);
     const pulls = [...open.values()].flatMap(({ repo, source, heads }) => [...heads.keys()].map((number) => ({ repo, source, number })));
     const live = livePulls(await deps.managerRuns(tenantId, pulls));
-    const runs = [...live.values()].map((pull) => `${pullKey(pull)}:${pull.runs.map((run) => `${run.runId}:${run.status}`).join(",")}`).sort();
+    const runs = [...live.values()].map((pull) => `${pullKey(pull)}:${pull.runs.map((run) => `${run.runId}:${run.status}:${run.passAt ?? ""}:${run.awaiting?.join("+") ?? ""}`).join(",")}`).sort();
     const key = [listed?.at, Math.floor(deps.now().getTime() / REBUILD_MS), ...connected.map(triageStateKey), "--", ...enabled.map(triageStateKey), "--", ...held.map(pullKey).sort(), "--", ...runs].join("\n");
     const hit = kept.get(tenantId);
     if (hit?.key === key) return respond(req, hit.body);

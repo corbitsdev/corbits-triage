@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { triageStopped } from "@corbits/triage-contracts";
 import type { CheckResult, PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
-import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, notPostedText, postedLabel, primaryAction, readyToMerge, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
+import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, primaryAction, readyToMerge, stoppedNotes, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -45,6 +46,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     running: false,
     waitingForCi: false,
     waitingHeadSha: null,
+    awaiting: [],
     failure: null,
     actions: [],
     automatic: [],
@@ -67,7 +69,7 @@ describe("groupInbox", () => {
       item({ key: "h", state: "new", runId: null, failure: "failed" }),
     ], READY);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([
-      ["decide", ["f", "g"]],
+      ["decide", ["f"]],
       ["unblock", ["c"]],
       ["merge", ["a"]],
       ["failed", ["h"]],
@@ -86,10 +88,34 @@ describe("groupInbox", () => {
     expect(view.groups[0]?.items.map((row) => row.key)).toEqual(["urgent", "human", "early", "late"]);
   });
 
-  test("a running pull request keeps its previous verdict's pile and reads Running", () => {
-    const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true })], READY);
-    expect(view.groups.map((group) => [group.action, group.items.map((row) => [row.key, inboxStatus(row)])])).toEqual([["decide", [["rerun", "Running"]]]]);
-    expect(view.awaiting).toBe(1);
+  test("Triage not running on a host is one note for the inbox, while a pull request Triage could not check is under Failed", () => {
+    const stopped = triageStopped("github");
+    const items = [
+      item({ key: "a", state: "new", runId: null, verdict: null, untriaged: stopped }),
+      item({ key: "b", state: "new", runId: null, verdict: null, untriaged: stopped }),
+      item({ key: "c", state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }),
+      item({ key: "d", state: "new", runId: null, verdict: null, untriaged: stopped, failure: "failed" }),
+    ];
+    const view = groupInbox(items, READY);
+    expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([["failed", ["c"]]]);
+    expect(view.awaiting).toBe(0);
+    expect(stoppedNotes(items)).toEqual([stopped]);
+  });
+
+  test("Needs you holds a failed run, a draft's included, and leaves out what only Triage again could change", () => {
+    expect(inNeedsYou(item({ state: "ready", verdict: "pass", verdictSha: "h1", headSha: "h2", failure: "failed" }))).toBe(true);
+    expect(inNeedsYou(item({ state: "new", runId: null, verdict: null, draft: true, failure: "stuck" }))).toBe(true);
+    expect(inNeedsYou(item({ state: "stale" }))).toBe(false);
+    expect(inNeedsYou(item({ state: "new", runId: null, verdict: null }))).toBe(false);
+    expect(inNeedsYou(item({ state: "blocked", verdictSha: "h1", headSha: "h2" }))).toBe(true);
+    expect(inNeedsYou(item({ state: "ready", verdict: "pass", verdictSha: "h1", headSha: "h2" }))).toBe(false);
+    expect(inNeedsYou(item({ state: "new", runId: null, verdict: null, draft: true, pendingApprovalId: "a1" }))).toBe(false);
+  });
+
+  test("a pull request Triage is at work on leaves Needs you until it has something for you, and counts as awaiting triage", () => {
+    const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true }), item({ key: "reviewing", awaiting: ["code-review"] })], READY);
+    expect(view.groups).toEqual([]);
+    expect(view.awaiting).toBe(3);
   });
 
   test("a pull request turned into a draft after its verdict leaves Needs you and waits on its author", () => {
@@ -180,18 +206,6 @@ describe("requested changes", () => {
   });
 });
 
-describe("postedLabel", () => {
-  test("names what the maintainer did, else the verdict's reply", () => {
-    expect(postedLabel(item({ posted: true }), { kind: "changes" })).toBe("Requested changes");
-    expect(postedLabel(item({ posted: true }), { kind: null })).toBe("Posted");
-    expect(postedLabel(item({}), null)).toBeNull();
-  });
-
-  test("says why the verdict is not on the host and where to turn posting on", () => {
-    expect(notPostedText(item({ notPosted: "no_grants", source: "github" }))).toBe("Not posted on GitHub: Triage may not post here. Allow it under Actions Triage takes on its own on the repository's page.");
-    expect(notPostedText(item({}))).toBeNull();
-  });
-});
 
 describe("groupOpen", () => {
   const open: OpenItem[] = [
@@ -254,8 +268,10 @@ describe("All open", () => {
       ["acme/widgets#3", "nobody"],
       ["acme/widgets#5", "author"],
       ["acme/widgets#6", "ci"],
+      ["acme/widgets#7", "triage"],
+      ["acme/widgets#8", "ci"],
     ]);
-    expect(needsYou(waiting, READY).filter((entry) => inNeedsYou(entry.item)).map((entry) => entry.item.key)).toEqual(["acme/widgets#1", "acme/widgets#7", "acme/widgets#8", "acme/widgets#9", "acme/off#10"]);
+    expect(needsYou(waiting, READY).filter((entry) => inNeedsYou(entry.item)).map((entry) => entry.item.key)).toEqual(["acme/widgets#1", "acme/widgets#9", "acme/off#10"]);
     expect(needsYouCount(waiting, READY) + waitingOnOthers(waiting, READY).length).toBe(allOpen(waiting, READY).length);
   });
 

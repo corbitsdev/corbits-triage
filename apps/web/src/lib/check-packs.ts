@@ -34,6 +34,13 @@ export function useRepoPack(repo: string): CheckPack | null {
   return packOf(useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, "github")).data);
 }
 
+/** Whether the repository's policy file turns code review on. */
+export function useCodeReviewOn(repo: string, source: RepoSource): boolean {
+  const { snapshot } = usePortal();
+  const found = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, source)).data;
+  return found?.kind === "file" && found.codeReview;
+}
+
 export function packOf(found: CheckPackArtifact | null | undefined): CheckPack | null {
   return found && "pack" in found ? found.pack : null;
 }

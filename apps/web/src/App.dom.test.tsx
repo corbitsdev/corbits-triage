@@ -61,6 +61,7 @@ function item(overrides: Partial<PrItem>): PrItem {
     running: false,
     waitingForCi: false,
     waitingHeadSha: null,
+    awaiting: [],
     failure: null,
     actions: [],
     automatic: [],

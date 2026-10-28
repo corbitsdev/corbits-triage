@@ -252,6 +252,15 @@ export function knownItems(items: PrItem[], handled: Handled, held: Handled): Op
     .map((item) => ({ item, handled: handledMark(held, item) ?? handledMark(handled, item) }));
 }
 
+/** What you just did on `item` in this browser, read from the same record as the inbox's marks. */
+export function useHandledMark(item: PrItem): HandledMark | null {
+  const { snapshot } = usePortal();
+  const tenantId = snapshot?.workspace.tenantId;
+  const handled = useHandledQuery(handledKey(tenantId));
+  const held = useHandledQuery(heldKey(tenantId));
+  return handledMark(held, item) ?? handledMark(handled, item);
+}
+
 export function useMarkedItems(): { open: OpenItem[]; known: OpenItem[] } {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;

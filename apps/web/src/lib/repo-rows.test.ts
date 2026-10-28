@@ -11,7 +11,7 @@ function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
     draft: null, mergeable: null, mergeBlock: null, state: "new",
     priority: null, owner: null, nextAction: null, verdict: null, score: null, reasons: [], evidence: [], checks: [], labels: [], comment: null,
     sha: null, verdictSha: null, degraded: null, needsHuman: false, closed: false, pendingApprovalId: null, runId: null, waitingSince: null, updatedAt: null,
-    ci: null, headSha: null, activityAt: null, reviewAnswered: false, posted: false, running: false, waitingForCi: false, waitingHeadSha: null,
+    ci: null, headSha: null, activityAt: null, reviewAnswered: false, posted: false, running: false, waitingForCi: false, waitingHeadSha: null, awaiting: [],
     failure: null, actions: [], automatic: [], href: "", source: "github", url: null,
   };
   return Object.assign(base, extra);
@@ -31,7 +31,7 @@ function read(found: PackState["found"]): PackState {
 }
 
 function policyFile(repo: string): PackState {
-  return read({ kind: "file", path: ".corbits-triage.yml", pack: recommendedPack(repo) });
+  return read({ kind: "file", path: ".corbits-triage.yml", pack: recommendedPack(repo), codeReview: false });
 }
 
 function twoHosts(github: number[], bitbucket: number[]): OpenPulls {
@@ -46,8 +46,8 @@ const packs = new Map([["acme/api", policyFile("acme/api")], ["acme/web", read(n
 describe("repository rows", () => {
   test("Needs you is the inbox's pile for the repository, and owners come from that pile", () => {
     const items = [
-      item("acme/api", 1, { state: "needs-decision", owner: "Maintainer", updatedAt: "2026-10-01T00:00:00Z" }),
-      item("acme/api", 2, { state: "ready", updatedAt: "2026-10-03T00:00:00Z" }),
+      item("acme/api", 1, { state: "needs-decision", verdict: "unsure", owner: "Maintainer", updatedAt: "2026-10-01T00:00:00Z" }),
+      item("acme/api", 2, { state: "ready", verdict: "pass", updatedAt: "2026-10-03T00:00:00Z" }),
       item("acme/api", 3, { state: "new", failure: "failed" }),
       item("acme/api", 4, { state: "new", owner: "Author", updatedAt: "2026-10-02T00:00:00Z" }),
     ];
@@ -67,7 +67,7 @@ describe("repository rows", () => {
       item("acme/api", 1, {}),
       item("acme/api", 2, {}),
       item("acme/web", 3, {}),
-      item("acme/web", 4, { state: "ready" }),
+      item("acme/web", 4, { state: "ready", verdict: "pass" }),
       item("acme/off", 5, {}),
       item("acme/raw", 6, {}),
       item("acme/loading", 7, {}),
@@ -92,7 +92,7 @@ describe("repository rows", () => {
   test("a repository whose policy file reads with a rule on is set up, with or without saved rules", () => {
     const states = new Map([
       ["acme/file", policyFile("acme/file")],
-      ["acme/off", read({ kind: "file", path: ".corbits-triage.yml", pack: emptyPack("acme/off") })],
+      ["acme/off", read({ kind: "file", path: ".corbits-triage.yml", pack: emptyPack("acme/off"), codeReview: false })],
       ["acme/refused", read({ kind: "invalid", path: ".corbits-triage.yml", reason: "bad yaml" })],
       ["acme/none", read(null)],
       ["acme/loading", { found: null, pending: true, error: null }],

@@ -31,6 +31,8 @@ const DetailAction = type({
   "target?": "Record<string, unknown>",
   "skipped?": "boolean",
   "held?": "boolean",
+  /** CI still running on the head holds it, and the run after CI finishes decides it again. */
+  "heldUntil?": "'ci-finishes'",
   "status?": "string",
   "error?": "string",
 });
@@ -81,16 +83,22 @@ const Verdict = type({
   detail: VerdictDetail.or("null"),
 });
 
+/** What a manager waits on between passes, in the order it asks them: the judge for the judgement rules, then code review. */
+export const AWAITED_STAGES = ["judge", "code-review"] as const;
+export type AwaitedStage = (typeof AWAITED_STAGES)[number];
+
 /**
  * The pull request's latest run, when it has not completed: still going, ended early, or running longer than any run can.
  * `waiting-ci`: no run yet, as the policy reads CI and it is still running on `headSha`, seen `since`.
+ * `awaiting`: the manager is up between passes and posts once each of `on` has reported on the newest head.
  */
 const Run = type({
   runId: "string",
   startedAt: "string",
   status: "'running' | 'failed' | 'cancelled' | 'stuck'",
 })
-  .or({ status: "'waiting-ci'", since: "string", headSha: "string" });
+  .or({ status: "'waiting-ci'", since: "string", headSha: "string" })
+  .or({ runId: "string", status: "'awaiting'", on: type.enumerated(...AWAITED_STAGES).array().atLeastLength(1) });
 
 const Source = type.enumerated(...REPO_SOURCES);
 
@@ -257,10 +265,10 @@ export type MergeRisk = (typeof MERGE_RISKS)[number];
 
 /**
  * `automatic` is what Triage may do on its own in the repository; `decide` the action kinds the policy file's own
- * `decide` names; `mergeRisks` what Triage's automatic approve or merge can let in. `invalid` is a policy file triage
- * refuses, so nothing runs until it is fixed.
+ * `decide` names; `mergeRisks` what Triage's automatic approve or merge can let in; `codeReview` whether the policy file
+ * turns code review on. `invalid` is a policy file triage refuses, so nothing runs until it is fixed.
  */
-export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, decide: ActionKinds, mergeRisks: type.enumerated(...MERGE_RISKS).array() })
+export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, decide: ActionKinds, mergeRisks: type.enumerated(...MERGE_RISKS).array(), codeReview: "boolean" })
   .or({ status: "'missing'" })
   .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape })
   .or({ status: "'invalid'", reason: "string", path: "string" });

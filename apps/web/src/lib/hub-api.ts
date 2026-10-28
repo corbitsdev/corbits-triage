@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -375,8 +375,8 @@ type PolicyKinds = { automatic?: ActionKind[]; decide?: ActionKind[]; mergeRisks
 export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack } & PolicyKinds;
 /** The repository's artifact holds something that is not a check pack; a save replaces it in place. */
 type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
-/** Read from the repository's policy file, which only a change to the file edits. */
-type FileCheckPack = { kind: "file"; path: string; pack: CheckPack } & PolicyKinds;
+/** Read from the repository's policy file, which only a change to the file edits; `codeReview` is whether it turns code review on. */
+type FileCheckPack = { kind: "file"; path: string; pack: CheckPack; codeReview: boolean } & PolicyKinds;
 /** The repository's policy file is refused, so triage runs nothing until it is fixed. */
 type InvalidPolicyFile = { kind: "invalid"; path: string; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack | FileCheckPack | InvalidPolicyFile;
@@ -390,7 +390,7 @@ export async function loadRepoCheckPack(transport: Transport, tenantId: string, 
   const { repo: stored, file } = read.source;
   const pack = readCheckPack(read.pack, clean);
   const kinds = { automatic: read.automatic, decide: read.decide, mergeRisks: read.mergeRisks };
-  if (file) return { kind: "file", path: file.path, pack, ...kinds };
+  if (file) return { kind: "file", path: file.path, pack, codeReview: read.codeReview, ...kinds };
   if (!stored) throw new Error(`The hub named no policy ${clean} was read from.`);
   return { kind: "pack", ...stored, pack, ...kinds };
 }
@@ -1319,6 +1319,8 @@ export type PrItem = {
   waitingForCi: boolean;
   /** The head Triage is holding for CI, when it is. */
   waitingHeadSha: string | null;
+  /** What the pull request's manager waits on before it posts, in the order it asks them; empty unless it is up between passes. */
+  awaiting: AwaitedStage[];
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
   failure: RunFailure | null;
   /** Why this pull request has no verdict, as the hub words it. Absent once there is a verdict, or when the hub has nothing to say. */
@@ -1332,8 +1334,11 @@ export type PrItem = {
 };
 
 // The portal reads verdict JSON and does not import the workflow package, so this keeps only the fields it uses.
-/** `held` waits for a maintainer's approval; `status` is how running it last ended, and `error` why it did not write. */
-export type SuggestedAction = { list: VerdictWord; index: number; effectId: string; kind: ActionKind; reason: string; target: Record<string, unknown>; held: boolean; status?: DoStatus; error?: string };
+/**
+ * `held` waits for a maintainer's approval, or with `heldUntil` for CI to finish; `status` is how running it last ended,
+ * and `error` why it did not write.
+ */
+export type SuggestedAction = { list: VerdictWord; index: number; effectId: string; kind: ActionKind; reason: string; target: Record<string, unknown>; held: boolean; heldUntil?: "ci-finishes"; status?: DoStatus; error?: string };
 
 const DO_STATUSES = ["done", "satisfied", "failed", "skipped"] as const;
 
@@ -1349,11 +1354,11 @@ function isActionKind(value: unknown): value is ActionKind {
 
 function suggestedActions(actions: NonNullable<VerdictDetail["actions"]>): SuggestedAction[] {
   const out: SuggestedAction[] = [];
-  for (const { list, index, effectId, kind, reason, target, skipped, held, status, error } of actions) {
+  for (const { list, index, effectId, kind, reason, target, skipped, held, heldUntil, status, error } of actions) {
     if (skipped || reason === undefined || !isActionKind(kind) || !target) continue;
     // A verdict from before Dos ran from verdict lists names none the hub can run.
     if (list === undefined || index === undefined || effectId === undefined) continue;
-    out.push({ list, index, effectId, kind, reason, target, held: held === true, ...(isDoStatus(status) && { status }), ...(error !== undefined && { error }) });
+    out.push({ list, index, effectId, kind, reason, target, held: held === true, ...(heldUntil !== undefined && { heldUntil }), ...(isDoStatus(status) && { status }), ...(error !== undefined && { error }) });
   }
   return out;
 }
@@ -1419,11 +1424,12 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
 
 /** A stuck run is a failure, not running, so its Dos stay enabled: running them again is the way out. */
 function failureOf(run: PullRun | null): RunFailure | null {
-  return run === null || run.status === "running" || run.status === "waiting-ci" ? null : run.status;
+  return run === null || run.status === "running" || run.status === "waiting-ci" || run.status === "awaiting" ? null : run.status;
 }
 
-function waitingFields(run: PullRun | null | undefined): Pick<PrItem, "waitingForCi" | "waitingHeadSha"> {
-  return run?.status === "waiting-ci" ? { waitingForCi: true, waitingHeadSha: run.headSha } : { waitingForCi: false, waitingHeadSha: null };
+function waitingFields(run: PullRun | null | undefined): Pick<PrItem, "waitingForCi" | "waitingHeadSha" | "awaiting"> {
+  if (run?.status === "awaiting") return { waitingForCi: false, waitingHeadSha: null, awaiting: run.on };
+  return run?.status === "waiting-ci" ? { waitingForCi: true, waitingHeadSha: run.headSha, awaiting: [] } : { waitingForCi: false, waitingHeadSha: null, awaiting: [] };
 }
 
 function isRunning(run: PullRun | null): boolean {

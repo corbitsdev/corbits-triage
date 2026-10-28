@@ -61,6 +61,7 @@ function item(repo: string, number: number): PrItem {
     running: false,
     waitingForCi: false,
     waitingHeadSha: null,
+    awaiting: [],
     failure: null,
     actions: [],
     automatic: [],

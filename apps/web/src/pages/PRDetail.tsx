@@ -5,15 +5,15 @@ import { Link, useParams } from "react-router-dom";
 import { CircleDot, FileText, Info, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
-import { usePullPageItems, useQueueLoading } from "../lib/open-pulls.ts";
+import { useHandledMark, usePullPageItems, useQueueLoading } from "../lib/open-pulls.ts";
 import { useApprovals } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
 import type { RepoSource } from "@corbits/triage-contracts";
-import { approvedHead, canRun, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
-import { actionMode, notPostedText, type ActionMode } from "../lib/inbox-view.ts";
-import { heldReason, isHeldBlock } from "../lib/pane-report.ts";
+import { approvedHead, canRun, checkedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { actionMode, hasUncheckedCommits, type ActionMode } from "../lib/inbox-view.ts";
+import { heldReason, isHeldBlock, lineText, paneStatus } from "../lib/pane-report.ts";
 import { offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
@@ -336,6 +336,13 @@ export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
   );
 }
 
+/** The one line the reading pane opens with: what Triage is at, what it needs from you, or what it did. */
+function PullLine({ item, detail }: { item: PrItem; detail: GithubPullDetail | undefined }) {
+  const pack = useRepoPack(item.repo);
+  const handled = useHandledMark(item);
+  return <p role="status" className="pr-composer pr-line">{lineText(paneStatus({ item, detail, handled, pack }))}</p>;
+}
+
 function MissingPull({ denied, loading }: { denied: boolean; loading: boolean }) {
   if (denied) return <DeniedNotice section="approvals" />;
   if (loading) return null;
@@ -495,7 +502,6 @@ export default function PRDetail() {
 
   const link = pullUrl(item);
   const host = hostName(item.source);
-  const notPosted = notPostedText(item);
 
   function filesPane(): ReactNode {
     if (loadState) return <div className="diff-empty">{loadState}</div>;
@@ -566,7 +572,6 @@ export default function PRDetail() {
             </p>
             <div className="pr-id-row">
               <span className={`pri ${(item.priority ?? "").toLowerCase()}`}>{item.priority ?? "—"}</span>
-              <Badge>{QUEUE_STATE_LABEL[item.state]}</Badge>
               {mergeBadge()}
               <VerdictChip item={item} />
               {link ? <a className="ghost-link" href={link} target="_blank" rel="noreferrer">{viewOnHost(item)}</a> : null}
@@ -579,6 +584,7 @@ export default function PRDetail() {
             </div>
           </div>
         </header>
+        <PullLine item={item} detail={pull.data} />
         {composer && (
           <form className="pr-composer" onSubmit={submitComposerForm}>
             <textarea
@@ -595,7 +601,6 @@ export default function PRDetail() {
           </form>
         )}
         <PullActions mode={policy} controls={controls} onApproveDo={(row) => void approveDo(row)} onSkipDo={(row) => heldDoKeys.hide(row.key)} />
-        {closed || notPosted === null ? null : <p role="status" className="pr-composer muted">{notPosted}</p>}
         {error && <p role="alert" className="error">{error}</p>}
         <main id="main" className="content content-pr-shell">
           <div className="pr-workspace">{pane}</div>

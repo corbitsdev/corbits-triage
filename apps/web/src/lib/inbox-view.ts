@@ -1,7 +1,6 @@
-import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
+import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, triageStopped, type AuthorKind, type AwaitedStage } from "@corbits/triage-contracts";
 import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
 import { holdsActionForYou, mergesOnItsOwn, pendingDos, triageActed } from "./pending-dos.ts";
-import { hostName } from "./pull-link.ts";
 import { priorityRank } from "./triage-view.ts";
 
 export type InboxAction = "decide" | "review" | "unblock" | "merge" | "failed";
@@ -50,7 +49,25 @@ const PRIMARY_LABEL: Record<PrimaryAction, string> = {
   triage: "Triage again",
 };
 
+/** Triage is not running on the pull request's host, which the inbox says once rather than on each pull request. */
+export function triageStoppedOn(item: Pick<PrItem, "untriaged" | "source">): boolean {
+  return item.untriaged === triageStopped(item.source);
+}
+
+/** The note for each host Triage is not running on, once however many of its pull requests are listed. */
+export function stoppedNotes(items: readonly PrItem[]): string[] {
+  return [...new Set(items.flatMap((item) => (triageStoppedOn(item) && item.untriaged !== undefined ? [item.untriaged] : [])))];
+}
+
+/** The latest run, on commits newer than the verdict's, ended without one. */
+export function failedOnNewCommits(item: PrItem): boolean {
+  return item.failure !== null && hasUncheckedCommits(item);
+}
+
+/** No run can start on a host where Triage is stopped, so none of its pull requests is a failure to try again. */
 export function inboxAction(item: PrItem): InboxAction | null {
+  if (triageStoppedOn(item)) return null;
+  if (failedOnNewCommits(item)) return "failed";
   switch (item.state) {
     case "needs-decision":
     case "stale":
@@ -64,7 +81,7 @@ export function inboxAction(item: PrItem): InboxAction | null {
     case "ready":
       return "merge";
     case "new":
-      return item.failure === null ? null : "failed";
+      return item.failure === null && item.untriaged === undefined ? null : "failed";
   }
 }
 
@@ -96,7 +113,12 @@ export function isReReview(item: Omit<StatusFields, "running">): boolean {
   return item.reviewAnswered && (item.state === "awaiting-review" || onlyRequestedChanges(item));
 }
 
-function waitsOnAuthor(item: PrItem): boolean {
+export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha" | "waitingHeadSha">): boolean {
+  const head = item.waitingHeadSha ?? item.headSha;
+  return item.verdictSha !== null && head !== null && item.verdictSha !== head;
+}
+
+export function waitsOnAuthor(item: PrItem): boolean {
   return isPostedToAuthor(item) || (onlyRequestedChanges(item) && !item.reviewAnswered);
 }
 
@@ -104,13 +126,30 @@ function awaitsYourDecision(item: PrItem): boolean {
   return item.pendingApprovalId !== null || holdsActionForYou(item);
 }
 
+const STAGE_TEXT: Record<AwaitedStage, string> = { judge: "the judgement rules", "code-review": "code review" };
+
+/** What the hub says Triage is doing or waiting on, in the order it comes; null when it has no run going or awaited. */
+export function progressText(item: PrItem): string | null {
+  if (item.running) return "checking this pull request";
+  if (item.waitingForCi) return "waiting on CI";
+  if (item.awaiting.length > 0) return `waiting on ${item.awaiting.map((stage) => STAGE_TEXT[stage]).join(", then ")}`;
+  return null;
+}
+
 /**
- * A pull request with a verdict that needs you stays while Triage checks it again or waits for CI, so it does not flicker out.
- * A draft is its author's until marked ready, whatever its last verdict said, unless something waits on your approval.
+ * Only a pull request with a decision for you: none while Triage is still at work on it. A failed run is yours to try
+ * again, a draft included. With no verdict otherwise the line only says it waits, whatever else is on it. A draft, one on
+ * its author's turn, or one whose verdict Triage could not settle is yours only while something waits on your approval,
+ * and a pass with commits Triage has not checked is not yours to merge.
  */
 export function inNeedsYou(item: PrItem): boolean {
+  if (progressText(item) !== null) return false;
+  const action = inboxAction(item);
+  if (action === "failed") return true;
+  if (item.verdict === null) return false;
   if (awaitsYourDecision(item)) return true;
-  return item.draft !== true && inboxAction(item) !== null && !waitsOnAuthor(item);
+  const passUnchecked = action === "merge" && hasUncheckedCommits(item);
+  return item.draft !== true && item.state !== "stale" && !passUnchecked && action !== null && !waitsOnAuthor(item);
 }
 
 /** A comment only counts as a draft when it holds non-empty text; a degraded verdict's empty feedback is nothing to post. */
@@ -160,10 +199,11 @@ const AUTHOR_TURN: ReadonlySet<HandledKind | null> = new Set(["changes", "reply"
 
 /** Who must act next, checked in order; `entry` is the pull request's handled mark, null while it is in Needs you. */
 export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
+  if (progressText(item) !== null) return item.waitingForCi ? "ci" : "triage";
   if ((entry === null && inNeedsYou(item)) || awaitsYourDecision(item)) return "maintainer";
   if (item.draft === true || item.state === "needs-author-update" || (entry !== null && AUTHOR_TURN.has(entry.kind))) return "author";
-  if (item.ci === "pending" || item.waitingForCi) return "ci";
-  if (inboxAction(item) === null) return "triage";
+  if (item.ci === "pending") return "ci";
+  if (inboxAction(item) === null || item.state === "stale" || hasUncheckedCommits(item)) return "triage";
   return "nobody";
 }
 
@@ -199,33 +239,6 @@ export function waitsOnIn(entry: OpenItem, needsSetup: ReadonlySet<string>): Wai
   return waits === "triage" && needsSetup.has(entry.item.repo) ? "setup" : waits;
 }
 
-const POSTED_LABEL: Record<HandledKind, string> = {
-  approve: "Approved",
-  reply: "Replied",
-  changes: "Requested changes",
-  comment: "Commented",
-  merge: "Merged",
-  close: "Closed",
-};
-
-export function postedLabel(item: Pick<PrItem, "posted">, entry: HandledMark | null): string | null {
-  if (entry?.kind) return POSTED_LABEL[entry.kind];
-  return item.posted ? "Posted" : null;
-}
-
-const NOT_POSTED: Record<string, string> = {
-  stale: "Triage could not reach a verdict and will check again.",
-  waiting: "Triage is waiting for the checks to finish.",
-  no_request: "There was nothing to post.",
-  no_grants: "Triage may not post here. Allow it under Actions Triage takes on its own on the repository's page.",
-};
-
-/** Why the verdict is not on the pull request's host, when the run said. */
-export function notPostedText(item: Pick<PrItem, "notPosted" | "source">): string | null {
-  const why = item.notPosted === undefined ? undefined : NOT_POSTED[item.notPosted];
-  return why === undefined ? null : `Not posted on ${hostName(item.source)}: ${why}`;
-}
-
 export function primaryLabel(action: PrimaryAction): string {
   return PRIMARY_LABEL[action];
 }
@@ -250,7 +263,7 @@ export function groupInbox(items: PrItem[], ready: ReadonlySet<string>): InboxVi
   const groups = INBOX_ACTION_ORDER
     .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inNeedsYou(item) && listedAction(item) === action) }))
     .filter((group) => group.items.length > 0);
-  return { groups, awaiting: items.filter((item) => ready.has(item.repo) && inboxAction(item) === null).length };
+  return { groups, awaiting: items.filter((item) => ready.has(item.repo) && !triageStoppedOn(item) && (inboxAction(item) === null || progressText(item) !== null)).length };
 }
 
 export function awaitingText(count: number): string {
