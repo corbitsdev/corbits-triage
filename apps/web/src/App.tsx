@@ -26,6 +26,7 @@ import Audit from "./pages/Audit.tsx";
 import Inbox from "./pages/Inbox.tsx";
 import PRDetail from "./pages/PRDetail.tsx";
 import Repositories from "./pages/Repositories.tsx";
+import CodeReview from "./pages/CodeReview.tsx";
 import Settings from "./pages/Settings.tsx";
 import { legacyTriageTarget } from "./lib/inbox-view.ts";
 
@@ -179,6 +180,7 @@ function Gate() {
         <Route path="/audit" element={<Audit />} />
         <Route path="/runs/*" element={<TriageRedirect />} />
         <Route path="/repositories/:owner?/:repo?" element={<Repositories />} />
+        <Route path="/code-review" element={<CodeReview />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/:tab" element={<Settings />} />
         <Route path="/" element={<Inbox />} />

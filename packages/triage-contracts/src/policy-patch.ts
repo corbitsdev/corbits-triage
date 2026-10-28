@@ -202,7 +202,8 @@ function parsedPolicy(text: string): Document | string {
   return doc;
 }
 
-function requiredField(id: CatalogId): string | undefined {
+/** The limit a built-in rule must be given when it is turned on: a size rule's `max` or forbidden paths' `paths`. */
+export function requiredField(id: CatalogId): "max" | "paths" | undefined {
   if (isSizeRule(id)) return "max";
   if (id === "no-forbidden-paths") return "paths";
   return undefined;

@@ -556,7 +556,7 @@ function ConnectModel() {
           <div className="sentences">
             <div className="sentence">
               <span className="txt">Triage needs a decision model before it can judge pull requests.</span>
-              {readOnly ? null : <Button asChild size="sm"><Link to="/settings/triage">Connect</Link></Button>}
+              {readOnly ? null : <Button asChild size="sm"><Link to="/code-review#decision-model">Connect</Link></Button>}
             </div>
           </div>
         </div>

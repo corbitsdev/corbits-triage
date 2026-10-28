@@ -69,46 +69,46 @@
 .repos .rs-h { display: flex; align-items: center; gap: 8px; }
 .repos .rs-h h3 { flex: 1; margin: 0; }
 .repos .policy .gcard { margin-top: 8px; }
-.repos .then-t { border-top: 1px solid var(--rule); }
-.repos .then { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 12px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
-.repos .then:last-child { border-bottom: 0; }
-.repos .steps { display: grid; gap: 4px; min-width: 0; }
+:is(.repos, .code-review) .then-t { border-top: 1px solid var(--rule); }
+:is(.repos, .code-review) .then { display: grid; grid-template-columns: 76px minmax(0, 1fr); column-gap: 12px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+:is(.repos, .code-review) .then:last-child { border-bottom: 0; }
+:is(.repos, .code-review) .steps { display: grid; gap: 4px; min-width: 0; }
 .repos .moved { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; font-size: 14px; }
 .repos .moved .mk .ic { width: 11px; height: 11px; stroke-width: 2.4; }
 
 /* Starting or editing the policy file: one card with its steps */
-.repos .move { container: move / inline-size; margin-top: 8px; padding: 14px 16px 16px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); font-size: 14px; }
+:is(.repos, .code-review) .move { container: move / inline-size; margin-top: 8px; padding: 14px 16px 16px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); font-size: 14px; }
 /* The rules a move adds sit flat in its card, not as a card inside it. */
-.repos .move .gcard { padding: 0; border: 0; border-top: 1px solid var(--rule); border-radius: 0; }
-.repos .move > header { display: grid; gap: 2px; }
-.repos .move > header b { font-size: 15px; }
-.repos .move > header span { font-size: 13px; color: var(--ink-mute); }
-.repos .track { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; margin: 14px 0 6px; padding: 0; list-style: none; font-size: 12px; }
-.repos .track li { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-mute); white-space: nowrap; }
-.repos .track li + li::before { content: ""; width: 22px; height: 1px; margin: 0 8px; background: var(--rule-strong); }
-.repos .track .num { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 700 10px var(--font); box-shadow: inset 0 0 0 1.5px var(--rule-strong); }
-.repos .track .num .ic { width: 11px; height: 11px; stroke-width: 2.4; }
-.repos .track .now { color: var(--ink); font-weight: 700; }
-.repos .track .now .num { background: var(--ink); color: var(--white); box-shadow: none; }
-.repos .track .done { color: var(--ink); }
-.repos .track .done .num { background: var(--green); color: var(--white); box-shadow: none; }
+:is(.repos, .code-review) .move .gcard { padding: 0; border: 0; border-top: 1px solid var(--rule); border-radius: 0; }
+:is(.repos, .code-review) .move > header { display: grid; gap: 2px; }
+:is(.repos, .code-review) .move > header b { font-size: 15px; }
+:is(.repos, .code-review) .move > header span { font-size: 13px; color: var(--ink-mute); }
+:is(.repos, .code-review) .track { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; margin: 14px 0 6px; padding: 0; list-style: none; font-size: 12px; }
+:is(.repos, .code-review) .track li { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-mute); white-space: nowrap; }
+:is(.repos, .code-review) .track li + li::before { content: ""; width: 22px; height: 1px; margin: 0 8px; background: var(--rule-strong); }
+:is(.repos, .code-review) .track .num { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 700 10px var(--font); box-shadow: inset 0 0 0 1.5px var(--rule-strong); }
+:is(.repos, .code-review) .track .num .ic { width: 11px; height: 11px; stroke-width: 2.4; }
+:is(.repos, .code-review) .track .now { color: var(--ink); font-weight: 700; }
+:is(.repos, .code-review) .track .now .num { background: var(--ink); color: var(--white); box-shadow: none; }
+:is(.repos, .code-review) .track .done { color: var(--ink); }
+:is(.repos, .code-review) .track .done .num { background: var(--green); color: var(--white); box-shadow: none; }
 /* Too narrow for one line: four equal columns, each number over its label, a line joining the numbers. */
 @container move (max-width: 460px) {
-  .repos .track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 0 8px; }
-  .repos .track li { position: relative; display: grid; justify-items: start; gap: 6px; white-space: normal; line-height: 1.3; }
-  .repos .track li + li::before { display: none; }
-  .repos .track li:not(:last-child)::after { content: ""; position: absolute; top: 9px; left: 26px; right: -2px; height: 1px; background: var(--rule-strong); }
+  :is(.repos, .code-review) .track { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 0 8px; }
+  :is(.repos, .code-review) .track li { position: relative; display: grid; justify-items: start; gap: 6px; white-space: normal; line-height: 1.3; }
+  :is(.repos, .code-review) .track li + li::before { display: none; }
+  :is(.repos, .code-review) .track li:not(:last-child)::after { content: ""; position: absolute; top: 9px; left: 26px; right: -2px; height: 1px; background: var(--rule-strong); }
 }
-.repos .move .sentences { margin-top: 8px; }
-.repos .move .sentence:last-child { border-bottom: 0; }
-.repos .move .lead { margin: 10px 0 0; }
-.repos .move .policy-text { display: block; width: 100%; min-height: 320px; margin-top: 12px; font: 400 13px/1.5 var(--mono); white-space: pre; overflow-wrap: normal; overflow-x: auto; }
-.repos .move .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
-.repos .confirm { margin-top: 14px; padding: 10px 0 0 12px; box-shadow: inset 3px 0 0 var(--orange); }
-.repos .confirm p { margin: 0; }
-.repos .confirm .acts { margin-top: 10px; }
-.repos .state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-.repos .state .dot { background: var(--orange); }
+:is(.repos, .code-review) .move .sentences { margin-top: 8px; }
+:is(.repos, .code-review) .move .sentence:last-child { border-bottom: 0; }
+:is(.repos, .code-review) .move .lead { margin: 10px 0 0; }
+:is(.repos, .code-review) .move .policy-text { display: block; width: 100%; min-height: 320px; margin-top: 12px; font: 400 13px/1.5 var(--mono); white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+:is(.repos, .code-review) .move .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+:is(.repos, .code-review) .confirm { margin-top: 14px; padding: 10px 0 0 12px; box-shadow: inset 3px 0 0 var(--orange); }
+:is(.repos, .code-review) .confirm p { margin: 0; }
+:is(.repos, .code-review) .confirm .acts { margin-top: 10px; }
+:is(.repos, .code-review) .state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+:is(.repos, .code-review) .state .dot { background: var(--orange); }
 .repos .hl.wait .dot { background: var(--orange); }
 
 .repos .rp .reason { margin: 4px 0 0; font-size: 13px; font-weight: 600; }

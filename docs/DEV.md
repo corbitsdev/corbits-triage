@@ -43,11 +43,11 @@ It first applies the database migrations (`bun run db:migrate`), then starts bot
 
 It packs the workflows into `apps/web/public/packages/` first. Hub on http://localhost:3000 (API only), portal on http://localhost:5173 (it proxies `/api` to the hub). As it starts, the hub publishes the packed workflows and rolls every workspace onto them. Restart after changing `apps/hub` or `packages/`; only the portal hot-reloads.
 
-When no isolated place is registered, the hub prints one warning, `code_review_no_isolated_place`, and still starts; triage runs and code review does not. Docker on this machine needs no variable, only Docker running and the `corbits-triage-sidecar` image built ([steps 1 to 3](provisioners/docker.md#set-up)), optionally with `DOCKER_CONTEXT`. The other places need `DOCKER_HOST`, `DOCKER_TLS_CA`, `DOCKER_TLS_CERT`, `DOCKER_TLS_KEY`, `E2B_API_KEY`, `RAILWAY_SANDBOX_TOKEN` and `RAILWAY_SANDBOX_ENVIRONMENT_ID` ([docs/provisioners/](provisioners/)). Settings → Code review shows **Code review needs an isolated place to run** at the top, with the first place's `.env` lines and setup guide, until a place is in use.
+When no isolated place is registered, the hub prints one warning, `code_review_no_isolated_place`, and still starts; triage runs and code review does not. Docker on this machine needs no variable, only Docker running and the `corbits-triage-sidecar` image built ([steps 1 to 3](provisioners/docker.md#set-up)), optionally with `DOCKER_CONTEXT`. The other places need `DOCKER_HOST`, `DOCKER_TLS_CA`, `DOCKER_TLS_CERT`, `DOCKER_TLS_KEY`, `E2B_API_KEY`, `RAILWAY_SANDBOX_TOKEN` and `RAILWAY_SANDBOX_ENVIRONMENT_ID` ([docs/provisioners/](provisioners/)). The Code review page shows **Code review needs an isolated place to run** under **Code review**, with the first place's `.env` lines and setup guide, until a place is in use.
 
 ## 5. Set up in the portal
 
-Sign up at http://localhost:5173; the portal shows **Set up Triage** with two steps: Connect a source, then Repositories. A decision model is not part of setup and is not a variable in `.env`. Triage does not start until one is saved under Settings → Triage. Follow [Set up in the portal](SELF_HOST.md#set-up-in-the-portal), using a sandbox repository. GitHub App credentials, and a model key if you save one, go to the hub vault, not `.env`.
+Sign up at http://localhost:5173; the portal shows **Set up Triage** with two steps: Connect a source, then Repositories. A decision model is not part of setup and is not a variable in `.env`. Triage does not start until one is saved on the Code review page. Follow [Set up in the portal](SELF_HOST.md#set-up-in-the-portal), using a sandbox repository. GitHub App credentials, and a model key if you save one, go to the hub vault, not `.env`.
 
 ### Webhooks on localhost (unverified)
 
@@ -60,7 +60,7 @@ The App's webhook URL is built from `BETTER_AUTH_BASE_URL`, and GitHub refuses a
 1. Start the stack against it: `GITHUB_API_ORIGIN=http://localhost:4000 VITE_GITHUB_API_ORIGIN=http://localhost:4000 bun run dev`.
 2. Create an account and copy the webhook URL shown under Connect → **Connect an existing GitHub App instead**.
 3. Uncomment `webhook_url` in `emulate.config.yaml` with that URL, then start the emulator: `npx emulate start --service github --generated-secrets-file .emulate-secrets.json`.
-4. In Connect, enter App ID `12345`, the PEM from `.emulate-secrets.json`, and webhook secret `emulate-webhook-secret`, then open Repositories. Save a decision model under Settings → Triage (**Add my own provider**, any HTTPS endpoint).
+4. In Connect, enter App ID `12345`, the PEM from `.emulate-secrets.json`, and webhook secret `emulate-webhook-secret`, then open Repositories. Save a decision model on the Code review page (**Add my own provider**, any HTTPS endpoint).
 5. Register the repository by sending the installation event GitHub would send:
 
    ```sh
@@ -100,7 +100,7 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 ## Troubleshooting
 
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
-- **"The workspace has no decision model"**: triage has not started. Save a decision model in the **Triage** section of Settings.
+- **"The workspace has no decision model"**: triage has not started. Save a decision model on the **Code review** page.
 - **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
 - **New PRs never reach triage**: the host has no live listener (`triage-listener-github` or `triage-listener-bitbucket-datacenter`). Settings → Triage says why; the hub's `workflow_release_*` log lines say what the last roll did. A failed roll is tried again ten minutes later; restart the hub, or save the decision model again, to roll at once.
 - **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.
