@@ -262,19 +262,19 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
 /** A just-deployed listener counts as live longer than a roll waits for it, so one a roll still waits on is never released. */
 const LISTENER_START_GRACE_MS = START_DEADLINE_MS + 60_000;
 
+/** How long a just-deployed run without a sidecar still counts as up when the portal reads which deployments are live. */
+const DEPLOYMENT_START_GRACE_MS = 2 * 60_000;
+
 /** A run that is running, or whose sidecar is up. */
 function runIsRunning(run: ManagerRun | undefined): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
   return run.status === "running" || (run.allocationStatus === "allocated" && run.sidecarId !== null);
 }
 
-type UpRule = { readonly graceMs?: number; readonly startedByMail: boolean };
+type UpRule = { readonly graceMs: number; readonly startedByMail: boolean };
 
-/**
- * A running run; one on its sidecar, unless it is started by its mail and sat there past `neverRanMs`; or one
- * deployed inside the startup window, stock's mail hold, while its wake mail may still reach it.
- */
-function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = timings().mailHoldMs, startedByMail }: UpRule): boolean {
+/** A running run; one on its sidecar, unless it is started by its mail and sat there past `neverRanMs`; or one deployed within `graceMs`. */
+function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs, startedByMail }: UpRule): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
   if (run.status === "running") return true;
   if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < neverRanMs();
@@ -282,12 +282,12 @@ function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = timings().m
 }
 
 async function runGone(tx: Tx | DB["db"], runId: string, now: Date): Promise<boolean> {
-  return !runIsUp(await managerRun(tx, runId), now, { startedByMail: true });
+  return !runIsUp(await managerRun(tx, runId), now, { graceMs: timings().mailHoldMs, startedByMail: true });
 }
 
 /** Whether a deployment is up as the hub counts a listener: running, on its sidecar, or just deployed. */
 export async function deploymentUp(db: DB["db"], runId: string): Promise<boolean> {
-  return runIsUp(await managerRun(db, runId), new Date(), { startedByMail: false });
+  return runIsUp(await managerRun(db, runId), new Date(), { graceMs: DEPLOYMENT_START_GRACE_MS, startedByMail: false });
 }
 
 /**
@@ -355,7 +355,7 @@ export async function liveManager(db: DB["db"], tenantId: string, pr: PullReques
     const claim = await lockClaim(tx, tenantId, pr);
     if (claim?.status !== "live" || claim.runId === undefined) return undefined;
     const run = await managerRun(tx, claim.runId);
-    return run && canExecuteWorkflowRun(run) && runIsUp(run, now, { startedByMail: true }) ? claim.runId : undefined;
+    return run && canExecuteWorkflowRun(run) && runIsUp(run, now, { graceMs: timings().mailHoldMs, startedByMail: true }) ? claim.runId : undefined;
   });
 }
 

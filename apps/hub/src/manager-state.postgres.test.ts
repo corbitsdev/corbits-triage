@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { Tx } from "./github/admin-github-grant.js";
-import { done, endNeverRan, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
+import { deploymentUp, done, endNeverRan, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
 import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -519,6 +519,16 @@ test("PostgreSQL: a listener counts as live as a manager does, and one deployed 
     const [left] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt, cancellationReason: schema.workflowRun.cancellationReason }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_listener'`);
     expect(left?.cancellationRequestedAt).toBeInstanceOf(Date);
     expect(left?.cancellationReason).toBe("listener deployed without a sidecar");
+  });
+}, 120_000);
+
+test("PostgreSQL: a deployment without a sidecar past its start grace reads as not live, though still inside the mail hold", async () => {
+  await withDatabase(async function unstarted(db) {
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: "triage-listener-github" });
+    await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date() });
+    expect(await deploymentUp(db, "run_listener")).toBe(true);
+    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 3 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    expect(await deploymentUp(db, "run_listener")).toBe(false);
   });
 }, 120_000);
 

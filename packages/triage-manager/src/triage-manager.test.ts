@@ -136,7 +136,8 @@ function hurried() {
  * Runs one mail's body; the mail agent's director runs its one tool, so the mail it would send is recorded and answered
  * `mailed` in the `{ reply, turn }` a live agent step outputs.
  */
-async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers = true, clock?: () => Date) {
+/** `delivers`, whether every mail goes, or whether each in turn does; one that does not fails its step unless the agent tolerates it. */
+async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers: boolean | readonly boolean[] = true, clock?: () => Date) {
   const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the body is not inline");
   const { terminalStatus, outputs } = await runLocal(body.inline, {
@@ -145,7 +146,9 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
     invokeStep: async function mailAgent({ agent, input }) {
       if (!agent.id.startsWith("triage-mail")) throw new Error(`no agent but the mail agent runs, not ${agent.id}`);
       mailed.push(input);
-      const reply = JSON.stringify(delivers ? { mailed: true } : { mailed: false, error: "public key was not published by its readyBy" });
+      const goes = typeof delivers === "boolean" ? delivers : delivers[mailed.length - 1];
+      if (!goes && agent.id !== "triage-mail-tolerant") throw new Error("mail: public key was not published by its readyBy");
+      const reply = JSON.stringify(goes ? { mailed: true } : { mailed: false, error: "public key was not published by its readyBy" });
       return { output: { reply, turn: { role: "assistant", content: [{ type: "text", text: reply }] } } };
     },
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
@@ -1055,6 +1058,16 @@ describe("triage-listener", () => {
       [DEPLOYED, JSON.parse(manageMail(TENANT, PULL))],
       [DEPLOYED, JSON.parse(manageMail(TENANT, { ...PULL, number: 9 }))],
     ]);
+  });
+
+  test("a wake mail that does not go leaves the other pull requests in the batch woken", async () => {
+    const hub = fakeHub({ takes: [] });
+    const mailed: unknown[] = [];
+    const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }, { prNumber: 9, headSha: "h9" }] });
+    const { terminalStatus } = await runMail(listener, mail, githubHost().host, hub.hub, mailed, [false, true]);
+    expect(terminalStatus).toBe("completed");
+    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, DEPLOY, NOTE]);
+    expect((mailed as { content: string }[]).map((sent) => JSON.parse(sent.content))).toEqual([JSON.parse(manageMail(TENANT, PULL)), JSON.parse(manageMail(TENANT, { ...PULL, number: 9 }))]);
   });
 
   test("a mail that names no pull request, or is not from the hub, fails instead of being dropped", async () => {

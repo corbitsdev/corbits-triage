@@ -17,7 +17,7 @@ const POLL_MS = 30_000;
  * A backstop on passes, twice a lifetime of polls for the passes events bring between them; the lifetime clock, which
  * take reads from the claim, ends a manager first.
  */
-export const PASSES = (2 * LIFETIME_MS) / POLL_MS;
+export const PASSES = Math.ceil((2 * LIFETIME_MS) / POLL_MS);
 
 const PAYLOAD = { project: { from: "trigger" }, fields: ["payload"] } as const;
 

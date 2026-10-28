@@ -26,7 +26,7 @@ export function triageListener({ id, manager }: { id: string; manager: Release |
         credentials: [HUB_CREDENTIAL_HANDLE],
         effect: { requires: [HUB_WRITE] },
       }),
-      mail: map({ over: { from: "steps.forward.output.mails" }, step: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: false }), input: { from: "trigger.payload" } }), after: ["forward"] }),
+      mail: map({ over: { from: "steps.forward.output.mails" }, step: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "trigger.payload" } }), after: ["forward"] }),
     },
   });
   return defineWorkflow({
