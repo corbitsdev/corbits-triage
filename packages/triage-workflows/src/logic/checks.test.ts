@@ -369,7 +369,7 @@ rules:
 `;
 
   function patterns(files: PrFileFacts[], contents: Record<string, string>, pack = readCheckPack(readPolicyFile(FILE, "acme/widgets"))) {
-    const matched = Object.fromEntries(pack.custom.filter(isPatternsCheck).map((rule) => [rule.id, patternsResult(rule, files, contents)]));
+    const matched = Object.fromEntries(pack.custom.filter(isPatternsCheck).map((rule) => [rule.id, patternsResult(rule, files, contents, "github")]));
     return deriveState({ ...open, files, patterns: matched }, undefined, pack);
   }
 
@@ -447,9 +447,9 @@ rules:
 
   test("a file without its patch, as on Bitbucket Data Center, an unread content or a broken rule never passes", () => {
     const unpatched = { path: "src/a.ts", status: "modified", additions: 0, deletions: 0 };
-    expect(filesToRead([unpatched])).toEqual({ unread: "src/a.ts: the host sent no diff" });
+    expect(filesToRead([unpatched], "github")).toEqual({ unread: "src/a.ts: the host sent no diff" });
     const past = (path: string) => ({ ...unpatched, path, patchUnread: true as const });
-    expect(filesToRead([unpatched, past("src/b.ts"), past("src/c.ts")])).toEqual({ unread: "src/a.ts: the host sent no diff; src/b.ts and 1 more: the pull request's diff is larger than Triage reads" });
+    expect(filesToRead([unpatched, past("src/b.ts"), past("src/c.ts")], "github")).toEqual({ unread: "src/a.ts: the host sent no diff; src/b.ts and 1 more: the pull request's diff is larger than Triage reads" });
     expect(patterns([unpatched], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", output: { kind: "could-not-check" } });
     expect(patterns([file], {}).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
     const nested = patterns([{ ...file, path: "src/build/a.ts" }], {});
@@ -463,11 +463,18 @@ rules:
     const large = { path: "src/large.ts", status: "modified", additions: 9_000, deletions: 0 };
     const clean = { path: "src/b.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const b = 1;" };
     const left = "src/large.ts: not checked, the host sent no diff";
-    expect(filesToRead([file, large, clean])).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(filesToRead([file, large, clean], "github")).toEqual(["src/a.ts", "src/b.ts"]);
     const failed = patterns([file, large], { "src/a.ts": content });
     expect(failed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: expect.arrayContaining([left]), skipped: [left] });
     const passed = patterns([clean, large], { "src/b.ts": "const b = 1;\n" });
     expect(passed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "pass", reason: "no code pattern matched; 1 file was not checked", evidence: [left] });
+  });
+
+  test("a file GitHub only renamed is nothing to read, while a Data Center move without its patch stays unread", () => {
+    const renamed = { path: "src/moved.ts", previousPath: "src/old.ts", status: "renamed", additions: 0, deletions: 0 };
+    expect(filesToRead([renamed, file], "github")).toEqual(["src/a.ts"]);
+    expect(patternsResult(readCheckPack(readPolicyFile(FILE, "acme/widgets")).custom.find(isPatternsCheck)!, [renamed], {}, "github")).toEqual({ matches: [], skipped: [], checked: 1 });
+    expect(filesToRead([renamed], "bitbucket-datacenter")).toEqual({ unread: "src/moved.ts: the host sent no diff" });
   });
 
   test("an unknown preset is refused", () => {

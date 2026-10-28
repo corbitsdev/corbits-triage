@@ -182,9 +182,8 @@ const MIN_FILE_ROOM = 8 * 1024;
 const MAX_JUDGE_REQUESTS = 64;
 export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the decision model";
 
-// The facts step reads this much patch text, shared by every pull request a backlog batch reads, for the rules that run
-// in code and the judge; one sidecar holds every deployment's step outputs, so past it the step lists files without their
-// patches.
+// The facts step reads this much patch text per pull request, for the rules that run in code and the judge; one sidecar
+// holds every deployment's step outputs, so past it the pull request's later files are listed without their patches.
 export const MAX_CODE_RULES_PATCH_CHARS = 2_000_000;
 
 /** A changed file as the judge reads it: `patchTruncated` when its patch was cut at `MAX_PATCH_INPUT_CHARS`. */

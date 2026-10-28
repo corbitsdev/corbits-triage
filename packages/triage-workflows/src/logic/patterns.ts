@@ -1,5 +1,5 @@
 import { parse } from "@ast-grep/napi";
-import { isForeignPath, PATTERN_EXTENSIONS, PATTERN_PRESETS, type PatternExtension, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck } from "@corbits/triage-contracts";
+import { isForeignPath, PATTERN_EXTENSIONS, PATTERN_PRESETS, type PatternExtension, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck, type RepoSource } from "@corbits/triage-contracts";
 import type { PrFileFacts } from "./checks.js";
 import { addedLines } from "./hunks.js";
 
@@ -51,8 +51,13 @@ function inScope(file: PrFileFacts): boolean {
  * A file in scope without a patch: GitHub sends none for a very large or binary file, Bitbucket Data Center for any,
  * and none is read past the code rules' ceiling.
  */
-function unpatched(file: PrFileFacts): boolean {
-  return inScope(file) && file.patch === undefined;
+function unpatched(file: PrFileFacts, source: RepoSource): boolean {
+  return inScope(file) && file.patch === undefined && !renamedOnly(file, source);
+}
+
+/** GitHub sends no patch for a file it only renamed, so there is nothing to read; Data Center counts no lines to tell. */
+function renamedOnly(file: PrFileFacts, source: RepoSource): boolean {
+  return source === "github" && file.status === "renamed" && file.additions === 0 && file.deletions === 0;
 }
 
 function whyUnpatched(file: PrFileFacts): string {
@@ -79,9 +84,9 @@ export const MAX_CONTENT_READS = 300;
  * The files whose content the rules need, or why they cannot be checked: files in scope came without a patch and none
  * other adds code, or more files than are read.
  */
-export function filesToRead(files: readonly PrFileFacts[]): string[] | { unread: string } {
+export function filesToRead(files: readonly PrFileFacts[], source: RepoSource): string[] | { unread: string } {
   const toRead = files.filter((file) => inScope(file) && file.patch !== undefined && addedLines(file.patch).size > 0).map(readPath);
-  const missing = files.filter(unpatched);
+  const missing = files.filter((file) => unpatched(file, source));
   if (toRead.length === 0 && missing.length > 0) return { unread: namedUnpatched(missing) };
   if (toRead.length > MAX_CONTENT_READS) return { unread: `${toRead.length} files with added code, more than the ${MAX_CONTENT_READS} read per pull request` };
   return toRead;
@@ -108,8 +113,8 @@ function fileMatches(file: PrFileFacts, patch: string, content: string, grammar:
  * Matches on the lines a pull request adds; a file in scope whose content was not read leaves the rule unchecked, and
  * one without a patch is named as not checked.
  */
-export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>>): PatternsResult {
-  const toRead = filesToRead(files);
+export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts[], contents: Readonly<Record<string, string>>, source: RepoSource): PatternsResult {
+  const toRead = filesToRead(files, source);
   if (!Array.isArray(toRead)) return toRead;
   const matches: string[] = [];
   try {
@@ -122,7 +127,7 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
   } catch (error) {
     return { unread: error instanceof Error ? error.message : String(error) };
   }
-  const missing = files.filter(unpatched);
+  const missing = files.filter((file) => unpatched(file, source));
   const skipped = [
     ...missing.map((file) => `${file.path}: not checked, ${whyUnpatched(file)}`),
     ...files.filter((file) => checkable(file) && isForeignPath(file.path)).map((file) => `${file.path}: skipped as vendored, built or installed code`),
