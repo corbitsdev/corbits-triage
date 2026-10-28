@@ -59,9 +59,13 @@ function whyUnpatched(file: PrFileFacts): string {
   return file.patchUnread ? "the pull request's diff is larger than Triage reads" : "the host sent no diff";
 }
 
+/** The files without a patch, grouped by why: the first of each group named, the rest counted. */
 function namedUnpatched(files: readonly PrFileFacts[]): string {
-  const more = files.length > 1 ? ` and ${files.length - 1} more` : "";
-  return `${files[0]!.path}${more}: ${whyUnpatched(files[0]!)}`;
+  const groups = Map.groupBy(files, whyUnpatched);
+  return [...groups].map(function group([why, grouped]) {
+    const more = grouped.length > 1 ? ` and ${grouped.length - 1} more` : "";
+    return `${grouped[0]!.path}${more}: ${why}`;
+  }).join("; ");
 }
 
 function readPath(file: PrFileFacts): string {

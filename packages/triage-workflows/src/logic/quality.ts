@@ -184,8 +184,9 @@ export const QUALITY_EVALUATION_LIMIT_ERROR = "pull request too large for the de
 
 // The judge reads patches up to three requests' worth; later files are sent without theirs.
 const MAX_PATCH_CHARS = 3 * MAX_SYSTEM_ONE_STATE_BYTES;
-// The rules that run in code read this much patch text, apart from the judge's budget; one sidecar holds every
-// deployment's step outputs, so a diff past it is listed without its later patches.
+// The rules that run in code read this much patch text per facts step, shared by every pull request a backlog batch
+// reads, apart from the judge's budget; one sidecar holds every deployment's step outputs, so past it the step lists
+// files without their patches.
 export const MAX_CODE_RULES_PATCH_CHARS = 2_000_000;
 
 /** A changed file as the judge reads it: `patchTruncated` when its patch was cut at `MAX_PATCH_INPUT_CHARS`. */
