@@ -3,7 +3,7 @@ import { type } from "arktype";
 import { isFromTriageSender, repoSourceOf, TRIAGE_LISTENERS } from "@corbits/triage-contracts";
 import { Mailed, MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
-import { deploy, endRun, mailOf, manageMail } from "./hub.js";
+import { deploy, endRun, mailOf, managedBy, manageMail } from "./hub.js";
 
 /** How long a just-deployed manager has to reach a sidecar before its first mail fails. */
 const MANAGER_READY_MS = 2 * 60_000;
@@ -40,18 +40,53 @@ export async function forward(input: unknown, ctx: EffectContext, _signal: Abort
   return { mails };
 }
 
-const UnwokenInput = type({ forward: { output: { mails: MailInput.array() } }, mail: { output: type({ reply: "string" }).array() } });
+const Replies = type({ reply: "string" }).array();
+const Cancelled = type({ runId: "string > 0", reason: "string" }).array();
+const UnwokenInput = type({ forward: { output: { mails: MailInput.array() } }, mail: { output: Replies } });
+const RetryInput = type({ forward: { output: { mails: MailInput.array() } }, unwoken: { output: { cancelled: Cancelled } } });
+const RetriedInput = type({ retry: { output: { mails: MailInput.array() } }, remail: { output: Replies } });
 
 /**
  * Cancels each manager this body deployed whose wake mail did not go, through the stock stop-run route, so a manager
- * that was never woken does not stay deployed; the output names each with why its mail failed. The pull request's next
- * event, or the reconciler re-queuing its head, deploys a fresh one.
+ * that was never woken does not stay deployed; the output names each with why its mail failed.
  */
 export async function unwoken(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ cancelled: { runId: string; reason: string }[] }> {
   const parsed = UnwokenInput(input);
   if (parsed instanceof type.errors) throw new Error(`unwoken: ${parsed.summary}`);
-  const { mails } = parsed.forward.output;
-  const replies = parsed.mail.output;
+  return cancelUnwoken(ctx, parsed.forward.output.mails, parsed.mail.output);
+}
+
+/**
+ * Deploys one fresh manager for each pull request whose manager `unwoken` cancelled, as a sidecar slow to start makes
+ * the first wake fail, and wakes it with the same mail.
+ */
+export async function retry(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ mails: MailInput[] }> {
+  const parsed = RetryInput(input);
+  if (parsed instanceof type.errors) throw new Error(`retry: ${parsed.summary}`);
+  const cancelled = new Set(parsed.unwoken.output.cancelled.map((run) => run.runId));
+  const mails: MailInput[] = [];
+  for (const mail of parsed.forward.output.mails.filter((sent) => cancelled.has(sent.to))) {
+    const { tenantId, pullRequest } = managedBy(JSON.parse(mail.content) as Record<string, unknown>);
+    const source = repoSourceOf(pullRequest.source);
+    const release = publishedFor(source, "manager");
+    if (!release) throw new Error(`${TRIAGE_LISTENERS[source]} needs the release's manager in release.json, which the hub publishes beside it`);
+    const runId = await deploy(ctx, `redeploy:${pullRequest.number}`, tenantId, release);
+    mails.push({ ...mail, to: runId, readyBy: new Date(Date.now() + MANAGER_READY_MS).toISOString() });
+  }
+  return { mails };
+}
+
+/**
+ * Cancels each manager `retry` deployed whose wake mail did not go either, and deploys no other: the hub's start grace
+ * on the claim lapses, and the pull request's next event or the reconciler re-queuing its head asks again.
+ */
+export async function unwokenAgain(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ cancelled: { runId: string; reason: string }[] }> {
+  const parsed = RetriedInput(input);
+  if (parsed instanceof type.errors) throw new Error(`unwokenAgain: ${parsed.summary}`);
+  return cancelUnwoken(ctx, parsed.retry.output.mails, parsed.remail.output);
+}
+
+async function cancelUnwoken(ctx: EffectContext, mails: readonly MailInput[], replies: readonly { reply: string }[]): Promise<{ cancelled: { runId: string; reason: string }[] }> {
   if (replies.length !== mails.length) throw new Error(`unwoken: ${replies.length} mail replies for ${mails.length} managers`);
   const cancelled: { runId: string; reason: string }[] = [];
   for (const [index, mail] of mails.entries()) {

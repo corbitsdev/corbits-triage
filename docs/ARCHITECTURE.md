@@ -244,7 +244,12 @@ any other tenant or an unknown sender.
   new manager to publish its key. When a wake mail fails for any reason, the
   listener cancels that manager through the stock stop-run route under the
   `manage` grant stock gives a deployment's creator, and its `unwoken` step's
-  output names each run it cancelled and why the mail failed. A run stock
+  output names each run it cancelled and why the mail failed. Its `retry`
+  step then deploys one more manager for each of those pull requests and
+  wakes it the same way, and `unwokenAgain` cancels that one too if its mail
+  fails, with no third. After a double failure the claim's 2-minute start
+  grace (`deployAskedAt`) lapses, so the pull request's next mail asks the
+  listener again. A run stock
   no longer lets execute, as one whose cancellation is requested or whose
   deadline has passed, is mailed nothing and its own take is refused; one
   that holds the claim keeps it until it ends, so no second manager writes
