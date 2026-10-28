@@ -878,7 +878,19 @@ export function degradedVerdict(reason: string): RenderOutput {
 }
 
 /** The mirror tool's arguments for a marker: the label on GitHub, the build status on Bitbucket Data Center. */
-export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS" | "FAILED"; description: string }; appLogin?: string };
+export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS" | "FAILED"; description: string }; comment?: string; appLogin?: string };
+
+/** What a head's verdict still waits for. */
+export type Awaits = "ci" | "judge" | "code-review";
+
+const AWAITS_NAMES: Record<Awaits, string> = { ci: "CI to finish", judge: "the decision model's answer", "code-review": "code review" };
+
+/** The one comment while the verdict waits, naming what it waits for; the verdict replaces it in place. */
+export function progressComment(awaits: readonly Awaits[]): string {
+  const names = awaits.map((awaited) => AWAITS_NAMES[awaited]);
+  const listed = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+  return `**Triage: In progress**\n\nTriage is waiting for ${listed} before it decides. This comment shows the verdict once it has.`;
+}
 
 /** `effectId` names the marker on its head; the write itself is a no-op where the head already shows it, and skipped once the head moved. */
 export type WaitingMark = { effectId: string; repoSource: RepoSource; args: MarkArgs };

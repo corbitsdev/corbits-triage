@@ -63,6 +63,11 @@ function mailEvent(head: string, payload: Record<string, unknown>, key = "evt_1"
 const REQUEST = hubRequest(RULES);
 const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z" };
 const RESUMED = { ...PASS, pass: { ...PASS.pass, takes: 2 }, resumed: true };
+/** The one in-progress comment, posted or edited in place, naming what the head waits for. */
+function inProgress(awaits: string) {
+  return expect.objectContaining({ body: { body: expect.stringContaining(`**Triage: In progress**\n\nTriage is waiting for ${awaits} before it decides.`) } });
+}
+
 const IDLE = { outcome: "idle", request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z" };
 const ENDED = { outcome: "ended" };
 const MORE = { outcome: "more", wait: false };
@@ -265,7 +270,7 @@ describe("triage-manager", () => {
     expect(ran).toEqual(["approvals", "done", "paused", "poll", "ran", "take"]);
     expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, true]);
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
-    expect(writes.filter((write) => write.path.endsWith("/comments"))).toEqual([]);
+    expect(writes.filter((write) => write.path.endsWith("/comments"))).toEqual([inProgress("CI to finish")]);
   });
 
   test("a new head with no checks yet waits two minutes for its CI to start, then is read again and decided as having none", async () => {
@@ -364,7 +369,7 @@ describe("triage-manager", () => {
   });
 
   test("on Bitbucket Data Center it reaches the host through that host's bindings only", async () => {
-    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter", "postReview:bitbucket-datacenter"]);
+    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter", "postReview:bitbucket-datacenter", "progress:bitbucket-datacenter"]);
     const { builds, host } = bitbucketHost();
     const request = { kind: "pr", repo: BB_REPO, repoSource: "bitbucket-datacenter", prNumber: 8, headSha: "abc", policy: { enabled: true }, policyUnreadable: "The policy file has unknown checks: max-size.", automatic: ACTION_KINDS, tenantId: TENANT };
     const bbPull = { source: "bitbucket-datacenter", repo: BB_REPO, number: 8 };
@@ -385,7 +390,7 @@ describe("triage-manager with code review", () => {
     const mailed: unknown[] = [];
     const first = fakeHub({ takes: [{ ...PASS, request: ON }], dones: [ENDED] });
     expect((await runMail(reviewed, wake(), host, first.hub, mailed)).ran).toContain("doneReviewing");
-    expect(writes).toEqual([]);
+    expect(writes).toEqual([inProgress("code review")]);
     expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_review", package: { format: "source", commitSha: "c0ffee", packageName: RELEASE.workflow.packageName } }, entry: RELEASE.workflow.entry, sourceOfferingIds: ["off_a"], defaultSourceOfferingId: "off_a" } });
     expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
@@ -423,7 +428,7 @@ describe("triage-manager with code review", () => {
     const settled = { ...reviewer(), runId: "run_earlier", result: REVIEW };
     const first = fakeHub({ takes: [{ ...PASS, request: again, events: [mailEvent(HEAD, again, "evt_2")], reviewers: [settled] }], dones: [ENDED] });
     expect((await runMail(reviewed, wake(), host, first.hub, mailed)).ran).toContain("deployReview");
-    expect(writes).toEqual([]);
+    expect(writes).toEqual([inProgress("code review")]);
     expect(mailed).toHaveLength(1);
     expect(first.calls.at(-2)).toMatchObject({ ...DONE, body: { reviewers: [settled, { kind: "code-review", head: HEAD, runId: DEPLOYED, again: "again_1" }] } });
 
@@ -734,7 +739,7 @@ describe("triage-manager with a judge", () => {
     const mailed: unknown[] = [];
     const first = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] });
     expect((await runMail(github, wake(), host, first.hub, mailed)).ran).toContain("doneJudging");
-    expect(writes).toEqual([]);
+    expect(writes).toEqual([inProgress("the decision model's answer")]);
     expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_judge", package: { format: "source", commitSha: "c0ffee", packageName: JUDGE_RELEASE.workflow.packageName } }, entry: JUDGE_RELEASE.workflow.entry, sourceOfferingIds: ["off_d"], defaultSourceOfferingId: "off_d" } });
     expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
@@ -838,7 +843,7 @@ describe("triage-manager with a judge", () => {
     const undecided = { ...await judgeVerdict(JSON.parse((await firstJudgeMail(request)).content).rules), waiting: true };
     const again = fakeHub({ takes: [{ ...PASS, request, reviewers: [{ ...JUDGE, result: undecided }] }], dones: [ENDED] });
     expect((await runMail(github, wake(), host, again.hub, mailed)).ran).toContain("deployJudge");
-    expect(writes).toEqual([]);
+    expect(writes).toEqual([inProgress("the decision model's answer")]);
 
     const verdict = await judgeVerdict(JSON.parse((mailed[0] as { content: string }).content).rules);
     const judged = fakeHub({ takes: [judgeReported(verdict, request)], dones: [ENDED] });
@@ -900,7 +905,7 @@ describe("triage-manager with a judge and code review", () => {
     const again = await runMail(github, wake(), host, second.hub, mailed);
     expect(again.ran).not.toContain("deployReview");
     expect(again.ran).not.toContain("mirrorRules");
-    expect(writes).toEqual([]);
+    expect(writes).toEqual([inProgress("the decision model's answer and code review"), inProgress("code review")]);
     expect(doneBody(second.calls)).toMatchObject({ wait: true, reviewers: [{ ...JUDGE, result: verdict }, expect.objectContaining({ kind: "code-review", runId: DEPLOYED })] });
 
     const third = fakeHub({ takes: [{ ...reported({ result: REVIEW }, request), reviewers: [{ ...JUDGE, result: verdict }, reviewer()] }], dones: [ENDED] });

@@ -357,7 +357,14 @@ any other tenant or an unknown sender.
   verdict, the judge's verdict and the code review together. A verdict whose
   only unconfirmed rules are the host's (CI green pending, mergeability not
   computed) waits: its pass writes only the waiting marker and records no
-  verdict. Done reports what the pass ran: the approved Dos' outcomes, a head
+  verdict. Where the role holds Comment, a pass that ends waiting writes the
+  one triage comment as **Triage: In progress**, naming what the head waits
+  for (CI, the judge, code review), through the same writer as the verdict's
+  comment (`mirror_auto`) under an effect id per head and set of what it
+  waits for (`progress:<owner>--<name>:<number>:<head sha>:<awaits>`, the CI
+  wait's under its waiting marker), so it is rewritten only when that set
+  changes; the verdict then edits that comment in place. A pass that ends
+  waiting for a reviewer writes it in its `progress` step before its done. Done reports what the pass ran: the approved Dos' outcomes, a head
   that waits for CI, or the verdict it posted as its evaluate, mirror, execute
   and rules steps output it, with the facts the verdict keeps rather than the
   diff. Each branch that reports one of these has its own done step. A pass
@@ -381,7 +388,9 @@ any other tenant or an unknown sender.
   whose `check_run` never arrived. A pass whose head has waited 60 minutes is
   triaged with `noWait`, so it is
   decided with CI still running; a manager's passes run out after three
-  hours, time for CI, the judge and code review to each take their hour.
+  hours, time for CI, the judge and code review to each take their hour; for
+  that long a waiting manager holds its sidecar slot, which the local
+  sidecar cap and sandbox overflow bound.
   Once the passes end, fail or run out, or take finds another run holds the
   claim, the run's last step stops it through the stop-run route under a
   `manage` grant on its own run, so the run is ended once and never keeps
@@ -399,7 +408,7 @@ any other tenant or an unknown sender.
   host, a pass deploys it under `workflow:*` `create` and `read` on exactly
   the judge's asset, which the definition declares when its module loads with
   that release, mails it the rules output until the judge's one-hour deadline,
-  and posts nothing. While those checks run, the judge is held and the pass
+  and posts only the in-progress comment. While those checks run, the judge is held and the pass
   marks the head waiting, as a pass of deterministic rules does. The pass that
   collects the judge's report posts and executes its verdict as the judge made
   it, once that verdict names the pass's pull request, head and host; facts
@@ -417,8 +426,8 @@ any other tenant or an unknown sender.
   hub read the head's review request and the release publishes a code review,
   a pass deploys it the same way (without one it declares no code-review
   asset, and the verdict goes up alone), mails it the request until the
-  review's one-hour deadline, and still posts nothing while that review is
-  out. A pass that mails the judge deploys code review with it, once the
+  review's one-hour deadline, and still posts only the in-progress comment
+  while that review is out. A pass that mails the judge deploys code review with it, once the
   rules step's own results open the rules gate, unless the block's
   `when.triage` leaves out a verdict the judge has still to decide or it is
   a Review again; the review is still posted with the final verdict. A pull request whose failed rules shut the rules gate, or that the
@@ -615,7 +624,7 @@ label off that head, so it never stands on a head not yet triaged.
    held and an approve that may not stand is skipped; the completed
    `check_run` (or the reconciler's CI re-read) triages it again. A verdict
    other than Fail whose only unconfirmed rules are the host's (CI green
-   pending, mergeability not computed) is `waiting` instead: no comment, no
+   pending, mergeability not computed) is `waiting` instead: no verdict, no
    actions, the waiting marker as its mirror (`mark`). A rule Triage could
    not check for its own reasons, as code patterns in a patch it could not
    read in full, does not wait. The hub records no verdict for a waiting
@@ -629,7 +638,8 @@ label off that head, so it never stands on a head not yet triaged.
    also writes the verdict as the `Corbits Triage` build status. It runs
    before execute, so a merge or close finds the final verdict on the head. A
    waiting verdict writes only its waiting marker: the waiting label or
-   `INPROGRESS` build status. On GitHub the marker passes the fail and
+   `INPROGRESS` build status, and, where the role holds Comment, the
+   in-progress comment naming CI. On GitHub the marker passes the fail and
    unsure verdict labels as `keep`, so a pull request carrying one keeps its
    labels until the verdict, which swaps them only when it differs. A head
    with no checks (facts' `checks: "none"`) gets no waiting label: the marker

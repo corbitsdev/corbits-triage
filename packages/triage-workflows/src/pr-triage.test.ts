@@ -657,15 +657,15 @@ describe("pr-triage body", () => {
     expect(github.labels).toEqual(["bug", "Triage: Ready"]);
   });
 
-  test("CI still running holds the head under the waiting label and posts nothing; once CI completes the head passes", async () => {
+  test("CI still running holds the head under the waiting label with the in-progress comment and no Dos; once CI completes the verdict replaces the comment in place", async () => {
     const github = fakeGithub();
     github.pr.ci = "pending";
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO };
     const held = await triage(pack, { github });
     expect(held.verdict).toMatchObject({ waiting: true, labels: [WAITING_LABEL], feedback: "", actions: [] });
     expect(held.dos).toEqual([]);
-    expect(github.requests.filter((r) => r.method !== "GET")).toEqual([{ method: "POST", path: `/repos/${REPO}/issues/8/labels` }]);
-    expect(github.comments).toEqual([]);
+    expect(github.comments.map((comment) => comment.body.split("\n")[1])).toEqual(["**Triage: In progress**"]);
+    expect(github.comments[0]!.body).toContain("waiting for CI to finish");
     github.pr.ci = "success";
     const passed = await triage(pack, { github });
     expect(passed.verdict).toMatchObject({ verdict: "pass", labels: ["Triage: Ready"], actions: [{ list: "pass", kind: "comment" }] });

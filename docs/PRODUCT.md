@@ -238,12 +238,21 @@ is taken back first. Branch protection stays the
 backstop. Request changes lists the failed rules, once per head, and is
 dismissed once none still fails.
 
+### In progress
+
+Where Triage comments on its own, a pull request has one Triage comment. While
+the verdict waits for CI, the decision model or code review, that comment
+reads **Triage: In progress** and names what it waits for, such as "Triage is
+waiting for the decision model's answer and code review before it decides".
+It is rewritten when what it waits for changes, and the verdict replaces it in
+place.
+
 ### Waiting for CI
 
 Triage checks a new head at once. When the only rules it cannot confirm yet
 are the host's own (CI still running, mergeability not computed yet), the head
-gets no verdict yet: Triage shows **Waiting for CI**, posts nothing, runs no
-action, and decides once they are done, as soon as a check fails, or after an
+gets no verdict yet: Triage shows **Waiting for CI**, runs no action, and
+decides once they are done, as soon as a check fails, or after an
 hour at most. When CI green is on, a head with no checks within 2 minutes of
 Triage first seeing it is taken as having no CI. Triage again,
 and a head's last retry, decide at once. On GitHub a

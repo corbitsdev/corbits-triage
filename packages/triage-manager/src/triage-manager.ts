@@ -34,6 +34,11 @@ function hubAction(handler: string, input: Selector, after: readonly string[]) {
   return action({ handler, input, after, credentials: [HUB_CREDENTIAL_HANDLE], effect: { requires: [HUB_WRITE] } });
 }
 
+/** The in-progress comment of a pass that ends waiting for a reviewer, before its done. */
+function progressAction(sources: Sources, mailed: readonly string[], after: readonly string[]) {
+  return action({ handler: "progress", input: { merge: [MAIL, stepsOf("take", ...mailed)] }, after, credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } });
+}
+
 /**
  * Code review between triage's verdict and its mirror. A pass that deploys the review mails it the request and posts
  * nothing; the pass that collects its report mirrors the verdict, then posts the review. A review whose mail failed by
@@ -49,10 +54,11 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
     deployReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["reviewing"]),
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
     reviewMailed: action({ handler: "reviewMailed", input: stepsOf("deployReview", "mailReview"), after: ["mailReview"] }),
-    reviewSent: gate({ when: { from: "steps.reviewMailed.output.post" }, then: "mirrorRules", else: "doneReviewing", after: ["reviewMailed"] }),
+    reviewSent: gate({ when: { from: "steps.reviewMailed.output.post" }, then: "mirrorRules", else: "progressReviewing", after: ["reviewMailed"] }),
+    progressReviewing: progressAction(sources, ["reviewMailed"], ["reviewSent"]),
     // A pass that mailed its review records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
-    doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "reviewMailed")] }, ["reviewSent"]),
-    posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "doneAwaiting", after: ["reviewing"] }),
+    doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "reviewMailed")] }, ["progressReviewing"]),
+    posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "progressAwaiting", after: ["reviewing"] }),
     postReview: action({ handler: "postReview", input: { merge: [MAIL, stepsOf("take", "reviewScope")] }, after: ["mirrorRules"], credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } }),
   };
 }
@@ -64,7 +70,7 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
  * does not publish posts nothing. One that failed, could not be mailed, or ran past its deadline goes on to the
  * machine verdict and is not deployed again on that pass.
  */
-function judgeSteps(): Record<string, Primitive> {
+function judgeSteps(sources: Sources): Record<string, Primitive> {
   return {
     judgeScope: action({ handler: "judgeScope", input: { merge: [MAIL, stepsOf("take", "rules")] }, after: ["route"] }),
     judging: gate({ when: { from: "steps.judgeScope.output.deploy" }, then: "deployJudge", else: "judgeWait", after: ["judgeScope"] }),
@@ -75,15 +81,17 @@ function judgeSteps(): Record<string, Primitive> {
     // Code review goes out with the judge once the rules gate opens, unless its `when` waits for the verdict; the pass
     // that collects both reports posts the review with the final verdict.
     reviewEarly: action({ handler: "reviewEarly", input: { merge: [MAIL, stepsOf("take", "rules")] }, after: ["judgeSent"] }),
-    earlyReviewing: gate({ when: { from: "steps.reviewEarly.output.deploy" }, then: "deployEarlyReview", else: "doneJudging", after: ["reviewEarly"] }),
+    earlyReviewing: gate({ when: { from: "steps.reviewEarly.output.deploy" }, then: "deployEarlyReview", else: "progressJudging", after: ["reviewEarly"] }),
     deployEarlyReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["earlyReviewing"]),
     mailEarlyReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployEarlyReview.output.mail" }, after: ["deployEarlyReview"] }),
     earlyReviewMailed: action({ handler: "earlyReviewMailed", input: stepsOf("deployEarlyReview", "mailEarlyReview"), after: ["mailEarlyReview"] }),
     // A pass that mailed its judge records it, and a review mailed with it, as reviewers; a skipped step is missing from
     // every selector, so each branch has its own done.
-    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed")] }, ["earlyReviewing"]),
-    doneJudgingReview: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed", "earlyReviewMailed")] }, ["earlyReviewMailed"]),
-    judgeWait: gate({ when: { from: "steps.judgeScope.output.post" }, then: "evaluateRules", else: "doneAwaiting", after: ["judging"] }),
+    progressJudging: progressAction(sources, ["judgeMailed"], ["earlyReviewing"]),
+    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed")] }, ["progressJudging"]),
+    progressJudgingReview: progressAction(sources, ["judgeMailed", "earlyReviewMailed"], ["earlyReviewMailed"]),
+    doneJudgingReview: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed", "earlyReviewMailed")] }, ["progressJudgingReview"]),
+    judgeWait: gate({ when: { from: "steps.judgeScope.output.post" }, then: "evaluateRules", else: "progressAwaiting", after: ["judging"] }),
   };
 }
 
@@ -113,7 +121,7 @@ function passOf(id: string, sources: Sources) {
       facts: hostAction("facts", sources, TAKEN, ["markUnready"]),
       rules,
       route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "judgeScope", else: "evaluateRules", after: ["rules"] }),
-      ...judgeSteps(),
+      ...judgeSteps(sources),
       evaluateRules: action({ handler: "verdict", input: { merge: [MAIL, stepsOf("take", "rules")] }, after: ["route", "judgeWait", "judgeSent"] }),
       ...reviewSteps(sources),
       mirrorRules: { ...mirrorRules, input: CLEARED, after: ["posting", "reviewSent"] },
@@ -122,7 +130,8 @@ function passOf(id: string, sources: Sources) {
       // A skipped step is missing from every selector, so the branches that report a posted verdict, or a head triaged
       // while a reviewer is out, have their own done.
       donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "cleared", "reviewScope", "mirrorRules", "executeRules")] }, ["executeRules"]),
-      doneAwaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules")] }, ["judgeWait", "posting"]),
+      progressAwaiting: progressAction(sources, [], ["judgeWait", "posting"]),
+      doneAwaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules")] }, ["progressAwaiting"]),
       done: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals")] }, ["ran", "triaged"]),
     },
   });
@@ -157,7 +166,7 @@ export function triageManager({ id, sources, codeReview, judge }: { id: string; 
       stop: hubAction("stop", { from: "trigger.payload" }, ["passes", "exhausted"]),
     },
   });
-  const posts = ["executeApprovals", "postReview"].flatMap((handler) => sources.map((source) => ({ action: handler, handle: source, provider: source, name: source, locator: "tenant" }) as const));
+  const posts = ["executeApprovals", "postReview", "progress"].flatMap((handler) => sources.map((source) => ({ action: handler, handle: source, provider: source, name: source, locator: "tenant" }) as const));
   return defineWorkflow({
     id,
     credentialBindings: [...credentialBindingsFor(sources), ...posts],

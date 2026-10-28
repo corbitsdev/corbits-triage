@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
-import type { MarkArgs, WaitingMark } from "../logic/render.js";
+import { progressComment, type Awaits, type MarkArgs, type WaitingMark } from "../logic/render.js";
 
 /** `mark` is absent when there is nothing to take off, so nothing is written either. */
 export type UnreadyOutput = { unready: true; mark?: WaitingMark };
@@ -23,10 +23,24 @@ function marks(source: RepoSource, automatic: readonly unknown[]): boolean {
   return marksWaiting(source, ACTION_KINDS.filter((kind) => automatic.includes(kind)));
 }
 
-/** The waiting marker on `headSha`, `Triage: Waiting for CI` only where the head has CI; none where triage does not write the verdict on this host. */
+/**
+ * The waiting marker on `headSha`, `Triage: Waiting for CI` only where the head has CI, with the in-progress comment
+ * where triage comments; none where triage writes neither on this host.
+ */
 export function waitingMark(source: RepoSource, { repo, number, headSha }: { repo: string; number: number; headSha: string }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, ci: boolean, appLogin: string | undefined): WaitingMark | undefined {
-  if (!marks(source, automatic)) return undefined;
-  return mark("waiting", source, { repo, number, onHead: headSha }, labels, ci, appLogin);
+  const pull = { repo, number, onHead: headSha };
+  const comment = automatic.includes("comment") ? { comment: progressComment(["ci"]) } : {};
+  if (marks(source, automatic)) {
+    const marked = mark("waiting", source, pull, labels, ci, appLogin);
+    return { ...marked, args: { ...marked.args, ...comment } };
+  }
+  return "comment" in comment ? progressMark(source, pull, ["ci"], appLogin) : undefined;
+}
+
+/** The in-progress comment alone on `pull`'s head, written once for each set of what it waits for. */
+export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Awaits[], appLogin: string | undefined): WaitingMark {
+  const args = { ...pull, labels: [], owned: [], comment: progressComment(awaits), ...(appLogin && { appLogin }) };
+  return { effectId: `progress:${pull.repo.replace("/", "--")}:${pull.number}:${pull.onHead}:${awaits.join("+")}`, repoSource: source, args };
 }
 
 /**

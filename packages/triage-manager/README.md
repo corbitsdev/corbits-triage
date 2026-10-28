@@ -13,7 +13,8 @@ A workspace's listener and a pull request's manager.
   One whose rules need the judge, or that asks for code review, posts once, after each of those has reported or given
   up. The next pass runs at once while an event is pending. While the head waits for CI, or for a judge or code review
   it mailed, the next runs 30 seconds later, taking what arrived meanwhile: a check finishing, a reviewer's result, or a
-  new head, whose pass starts over. A head that waited an hour for CI is decided anyway. The manager ends once its head
+  new head, whose pass starts over. Meanwhile the one triage comment reads In progress and names what it waits for; the
+  verdict replaces it in place. A head that waited an hour for CI is decided anyway. The manager ends once its head
   has its final verdict and the policy's actions ran or were held, so an idle pull request has no manager. With a
   published judge, a pass deploys [`@corbits/triage-judge`](../triage-judge) once the host's checks have finished and
   mails it the rules output; while they run the head waits. The pass that collects its report posts the judge's

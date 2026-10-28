@@ -107,6 +107,11 @@ export async function mirrorVerdicts(input: unknown, write: HostWrite): Promise<
   return batch ? { results: outcomes } : outcomes[0]!;
 }
 
+/** Writes a marker alone, as a manager's in-progress comment. */
+export async function writeMark(mark: WaitingMark, ctx: EffectContext): Promise<MirrorOutcome> {
+  return outcome(await hostWrite(ctx)(mark.repoSource, markCall(mark)));
+}
+
 export async function mirror(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<MirrorOutput> {
   return mirrorVerdicts(input, hostWrite(ctx));
 }

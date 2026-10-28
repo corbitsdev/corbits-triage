@@ -208,7 +208,7 @@ describe("deriveState check output", () => {
   test("each fact is named for what it states, so pending CI never reads as passing", () => {
     const pack = recommendedPack("acme/widgets");
     pack.checks["no-forbidden-paths"] = { enabled: true, forbiddenGlobs: ["vendor/**"] };
-    const facts: PrFacts = { ...noisy, checks: "pending", mergeable: true, paths: ["vendor/x.ts"], changedFiles: 1, additions: 1, deletions: 0 };
+    const facts: PrFacts = { ...noisy, checks: "pending", pendingChecks: ["build"], mergeable: true, paths: ["vendor/x.ts"], changedFiles: 1, additions: 1, deletions: 0 };
     const result = deriveState(facts, undefined, pack);
     const outputs = Object.fromEntries([...result.checks, ...result.labelled!.checks].map((check) => [check.check, check.output]));
     expect(outputs).toMatchObject({

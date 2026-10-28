@@ -7,7 +7,7 @@ import { DEPLOYMENT_UNREADABLE, NEEDS_SETUP_REASON } from "./logic/checks.js";
 import { unsettledBy } from "./logic/settled.js";
 import { NO_FACTS } from "./logic/item.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
-import { INSTRUCTED_REASON, NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
+import { INSTRUCTED_REASON, NEEDS_JUDGE_REASON, progressComment, type Verdict } from "./logic/render.js";
 import { evaluate, parts, rules } from "./actions/index.js";
 import { waitingMark } from "./actions/waiting.js";
 import { MAX_DOS_PER_RUN, executeDos } from "./actions/execute.js";
@@ -641,7 +641,7 @@ describe("mirror grants", () => {
     expect(await marked(["comment"])).toEqual([{
       id: "waiting:acme--widgets:8:abc",
       name: "bitbucket_datacenter_mirror_auto",
-      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], build: { state: "INPROGRESS", description: "Triage: Waiting for CI" } },
+      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], build: { state: "INPROGRESS", description: "Triage: Waiting for CI" }, comment: progressComment(["ci"]) },
     }]);
     expect(await marked(["labels"])).toEqual([]);
   });
