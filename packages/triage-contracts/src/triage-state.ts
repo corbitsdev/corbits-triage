@@ -22,6 +22,8 @@ export type PrTriageRow = {
   cappedRetries?: number;
   firstSeenAt: string;
   queuedAt?: string;
+  /** When the head's mail first did not go out; kept while it is queued again, so it is not taken as newly waiting, until a run of it starts or it settles. */
+  undeliveredSince?: string;
   /** Runs started before this do not settle the head: the base branch moved after them. */
   staleBefore?: string;
   updatedAt: string;
@@ -61,6 +63,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
   if (cappedRetries !== undefined && (typeof cappedRetries !== "number" || !Number.isInteger(cappedRetries) || cappedRetries < 0)) return null;
   const runId = optionalString(row.runId);
   const queuedAt = optionalString(row.queuedAt);
+  const undeliveredSince = optionalString(row.undeliveredSince);
   const staleBefore = optionalString(row.staleBefore);
   const error = optionalString(row.error);
   return {
@@ -72,6 +75,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
     ...(cappedRetries !== undefined && { cappedRetries }),
     firstSeenAt,
     ...(queuedAt !== undefined && { queuedAt }),
+    ...(undeliveredSince !== undefined && { undeliveredSince }),
     ...(staleBefore !== undefined && { staleBefore }),
     updatedAt,
     ...(error !== undefined && { error }),

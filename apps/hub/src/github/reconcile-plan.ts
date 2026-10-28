@@ -112,7 +112,8 @@ type Observation = { status: PrTriageRow["status"]; run?: ObservedRun; runId?: s
 
 function withStatus(row: PrTriageRow, { status, run, runId = run?.runId, error }: Observation, now: string): PrTriageRow {
   if (row.status === status && row.runId === runId && row.error === error) return row;
-  const { runId: _run, error: _error, ...rest } = row;
+  // Every status observed here follows a mail that went out.
+  const { runId: _run, error: _error, undeliveredSince: _undelivered, ...rest } = row;
   return {
     ...rest,
     status,

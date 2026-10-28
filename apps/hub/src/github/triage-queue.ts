@@ -112,10 +112,11 @@ async function replaceQueued(store: TriageStateStore, head: QueuedHead, next: (r
   throw new TriageStateConflictError(head.repo);
 }
 
-/** Marks a still queued head failed after its mail did not go out, so the reconciler queues it again. */
+/** Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; it keeps when its mail first did not. */
 export function failHead(store: TriageStateStore, head: QueuedHead, error: string, now: Date): Promise<void> {
   return replaceQueued(store, head, function failed(row) {
-    return { ...row, status: "failed", error, updatedAt: now.toISOString() };
+    const at = now.toISOString();
+    return { ...row, status: "failed", error, undeliveredSince: row.undeliveredSince ?? row.queuedAt ?? at, updatedAt: at };
   });
 }
 
