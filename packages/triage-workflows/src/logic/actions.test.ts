@@ -225,6 +225,15 @@ describe("holdDos", () => {
     const steps = [step("unsure", "close"), step("fail", "close"), step("pass", "merge"), step("fail", "merge"), step("unsure", "merge")];
     expect(holdDos(steps, ["close", "merge"]).map((action) => "held" in action)).toEqual([true, false, false, true, true]);
   });
+
+  test("only a Do the role may write keeps waiting for CI to finish; one held for a person does not", () => {
+    const label: SuggestedDo = { list: "fail", index: 0, kind: "labels", reason: "", effectId: "e-label", target: { labels: ["bug"] } };
+    const [granted] = holdDos(heldApprovals([label], undefined, "pending"), ["labels"]);
+    const [asked] = holdDos(heldApprovals([label], undefined, "pending"), []);
+    expect(granted).toMatchObject({ held: true, heldUntil: "ci-finishes" });
+    expect(asked).toMatchObject({ held: true });
+    expect(asked).not.toHaveProperty("heldUntil");
+  });
 });
 
 describe("a step for a group the policy file defines", () => {

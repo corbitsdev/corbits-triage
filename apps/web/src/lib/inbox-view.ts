@@ -136,14 +136,18 @@ export function progressText(item: PrItem): string | null {
 
 /**
  * Only a pull request with a decision for you: none while Triage is still at work on it. A failed run is yours to try
- * again, a draft included. A draft, one on its author's turn, or one whose verdict Triage could not settle is yours only
- * while something waits on your approval.
+ * again, a draft included. With no verdict otherwise the line only says it waits, whatever else is on it. A draft, one on
+ * its author's turn, or one whose verdict Triage could not settle is yours only while something waits on your approval,
+ * and a pass with commits Triage has not checked is not yours to merge.
  */
 export function inNeedsYou(item: PrItem): boolean {
   if (progressText(item) !== null) return false;
   const action = inboxAction(item);
-  if (action === "failed" || awaitsYourDecision(item)) return true;
-  return item.draft !== true && item.state !== "stale" && action !== null && !waitsOnAuthor(item);
+  if (action === "failed") return true;
+  if (item.verdict === null) return false;
+  if (awaitsYourDecision(item)) return true;
+  const passUnchecked = action === "merge" && hasUncheckedCommits(item);
+  return item.draft !== true && item.state !== "stale" && !passUnchecked && action !== null && !waitsOnAuthor(item);
 }
 
 /** A comment only counts as a draft when it holds non-empty text; a degraded verdict's empty feedback is nothing to post. */

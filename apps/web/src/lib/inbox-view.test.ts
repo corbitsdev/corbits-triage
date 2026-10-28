@@ -107,6 +107,8 @@ describe("groupInbox", () => {
     expect(inNeedsYou(item({ state: "stale" }))).toBe(false);
     expect(inNeedsYou(item({ state: "new", runId: null, verdict: null }))).toBe(false);
     expect(inNeedsYou(item({ state: "blocked", verdictSha: "h1", headSha: "h2" }))).toBe(true);
+    expect(inNeedsYou(item({ state: "ready", verdict: "pass", verdictSha: "h1", headSha: "h2" }))).toBe(false);
+    expect(inNeedsYou(item({ state: "new", runId: null, verdict: null, draft: true, pendingApprovalId: "a1" }))).toBe(false);
   });
 
   test("a pull request Triage is at work on leaves Needs you until it has something for you", () => {

@@ -46,8 +46,8 @@ const packs = new Map([["acme/api", policyFile("acme/api")], ["acme/web", read(n
 describe("repository rows", () => {
   test("Needs you is the inbox's pile for the repository, and owners come from that pile", () => {
     const items = [
-      item("acme/api", 1, { state: "needs-decision", owner: "Maintainer", updatedAt: "2026-10-01T00:00:00Z" }),
-      item("acme/api", 2, { state: "ready", updatedAt: "2026-10-03T00:00:00Z" }),
+      item("acme/api", 1, { state: "needs-decision", verdict: "unsure", owner: "Maintainer", updatedAt: "2026-10-01T00:00:00Z" }),
+      item("acme/api", 2, { state: "ready", verdict: "pass", updatedAt: "2026-10-03T00:00:00Z" }),
       item("acme/api", 3, { state: "new", failure: "failed" }),
       item("acme/api", 4, { state: "new", owner: "Author", updatedAt: "2026-10-02T00:00:00Z" }),
     ];
@@ -67,7 +67,7 @@ describe("repository rows", () => {
       item("acme/api", 1, {}),
       item("acme/api", 2, {}),
       item("acme/web", 3, {}),
-      item("acme/web", 4, { state: "ready" }),
+      item("acme/web", 4, { state: "ready", verdict: "pass" }),
       item("acme/off", 5, {}),
       item("acme/raw", 6, {}),
       item("acme/loading", 7, {}),

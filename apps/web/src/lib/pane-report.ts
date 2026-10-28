@@ -1,7 +1,7 @@
 import { askRules, citationOf, NO_CHANGES_REQUESTED, type CheckPack, type VerdictWord } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, HeldBlock, PrItem, RunFailure } from "./hub-api.ts";
 import { paneActions, paneFacts, type ActionBlocker, type MenuEntry, type PaneFacts, type PaneGate, type PaneKind } from "./inbox-pane.ts";
-import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, failedOnNewCommits, hasUncheckedCommits, primaryLabel, progressText, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
+import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, failedOnNewCommits, hasUncheckedCommits, primaryLabel, progressText, triageStoppedOn, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
 import { checkLabel } from "./pack-prose.ts";
 import { pendingDos, postedActions, type PendingDo } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
@@ -46,8 +46,7 @@ export function passedChecks(checks: CheckResult[]): CheckResult[] {
 
 type StatusTone = "ready" | "you" | "author" | "quiet";
 
-/** The run read as one: what Triage is at, what it needs from you, or what it ended with. */
-/** A draft with no verdict has nothing done yet and nothing for you, so it is only waiting. */
+/** The run read as one: what Triage is at, what it needs from you, what it ended with, or, with no verdict and no run, that it waits. */
 type LineForm = "progress" | "you" | "done" | "waiting";
 
 const FORM_LABEL: Record<LineForm, string> = { progress: "In progress", you: "Needs you", done: "Done", waiting: "Waiting" };
@@ -264,6 +263,12 @@ function verdictLine(context: Context, handled: HandledMark | null): PaneStatus 
   return settled(item, waitsOn(item, handled) === "author" ? authors : ruledLine(context));
 }
 
+/** No run can start on a host where Triage is stopped, so only elsewhere is Triage again offered. */
+function waitingText(item: PrItem): string {
+  if (item.draft === true) return "draft";
+  return triageStoppedOn(item) ? "not triaged yet" : "not triaged yet · Triage again";
+}
+
 /** Why the verdict may no longer stand: Triage could not settle it, or there are commits it has not checked. */
 function unsettledText(item: PrItem): string | null {
   if (item.state === "stale") return "Triage could not settle it";
@@ -283,10 +288,7 @@ export function paneStatus({ item, detail, handled, pack }: StatusInput): PaneSt
   if (progress !== null) return { form: "progress", tone: "quiet", text: upperFirst(progress), live: item.running };
   // A draft has no main button, so Triage again waits in More.
   if (inboxAction(item) === "failed") return { form: "you", tone: "you", text: `${failedText(item)} · ${item.draft === true ? "use Triage again in More" : "Triage again"}`, live: false };
-  if (item.verdict === null) {
-    if (item.draft === true) return { form: "waiting", tone: "author", text: "draft", live: false };
-    return settled(item, said("quiet", "Not triaged yet · Triage again"));
-  }
+  if (item.verdict === null) return { form: "waiting", tone: "quiet", text: waitingText(item), live: false };
   const facts = paneFacts(item, detail);
   const author = facts.author === null ? "the author" : `@${facts.author}`;
   const context: Context = { item, author, problems: bySeverity(item, pack), pack, facts, detail };
@@ -296,7 +298,8 @@ export function paneStatus({ item, detail, handled, pack }: StatusInput): PaneSt
   if (unsettled === null) return line;
   const held = heldForYouText(item);
   if (item.state === "stale" && held !== null) return { form: "you", tone: "you", text: `${upperFirst(held)} · ${unsettled}`, live: false };
-  if (item.state !== "stale" && line.form === "you") return { ...line, text: `${line.text} · ${unsettled}` };
+  // Commits Triage has not checked are never merged, so a pass has nothing for you until Triage checks them.
+  if (item.state !== "stale" && line.form === "you" && inboxAction(item) !== "merge") return { ...line, text: `${line.text} · ${unsettled}` };
   if (item.state !== "stale") return { ...line, form: "done", text: `${line.text} · ${unsettled} · Triage again` };
   return { form: "done", tone: "quiet", text: doneText(item, `${unsettled} · Triage again`), live: false };
 }

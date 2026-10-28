@@ -600,7 +600,7 @@ label off that head, so it never stands on a head not yet triaged.
    row, not the label.
 8. **execute**: runs the actions whose kind the `pr-triage` role holds on the
    repository. Every other action is held in the verdict (`held: true`). One
-   held only because CI is still running on the head also carries
+   the role may write, held only because CI is still running on the head, carries
    `heldUntil: "ci-finishes"`, which the portal reads as running on its own once
    CI finishes; any other hold waits for a person.
 
