@@ -15,7 +15,8 @@ import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, se
 
 
 const MANAGER = "triage-manager-github";
-export const SETTLE_MS = 90_000;
+// Every deployment starts a sidecar process of its own, and a judged pull request starts two in turn.
+export const SETTLE_MS = 150_000;
 
 export const DETERMINISTIC = `${OWNER}/deterministic`;
 export const JUDGED = `${OWNER}/judged`;

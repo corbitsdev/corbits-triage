@@ -47,7 +47,7 @@ import { connectRailwaySidecars, sweepRailwaySidecarsOf, type RailwaySidecarProv
 import { createHostCapacity } from "./sidecar/host-capacity.js";
 import { createLocalSidecarManifestStore } from "./sidecar/manifest-store.js";
 import { createPlacementChooser, localSidecarUsage } from "./sidecar/placement.js";
-import { restoreLocalSidecars } from "./sidecar/restore.js";
+import { bootLocalSidecars } from "./sidecar/boot.js";
 import { createSpawnLocalSidecar } from "./sidecar/spawn.js";
 import { SIDECAR_ADAPTER_MANIFEST } from "./sidecar-config.js";
 import { createPortalHandler, isPortalRequest, withPortalCors } from "./portal.js";
@@ -71,7 +71,7 @@ import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
 import { createRolloutQueue, createWorkflowRollout, stopGivenUp, type DeployRequest } from "./workflow-release/rollout.js";
-import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, localSidecarMaxDeployments, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
@@ -159,24 +159,19 @@ await assertMigrated(database);
 
 const credentialCipher = createEnvKeyCredentialCipher(hexDecode(env.CREDENTIAL_ENCRYPTION_KEY));
 const localSidecarDataRoot = `${env.HUB_DATA_DIR}/local-sidecars`;
-const localSidecarCap = localSidecarMaxDeployments(env);
+const localSidecarCap = maxLocalSidecars(env);
 const local = createLocalProcessSidecarProvisioner({
   dataRoot: localSidecarDataRoot,
   ...(env.HUB_SIDECAR_STOP_TIMEOUT_MS !== undefined && { stopTimeoutMs: Number(env.HUB_SIDECAR_STOP_TIMEOUT_MS) }),
   spawnSidecar: createSpawnLocalSidecar({
     interchangeDir: V,
     credentialEncryptionKey: env.SIDECAR_CREDENTIAL_ENCRYPTION_KEY,
-    maxActiveDeployments: localSidecarCap,
     processEnv: childProcessEnv(env),
   }),
-  manifests: createLocalSidecarManifestStore({
-    dataRoot: localSidecarDataRoot,
-    cipher: credentialCipher,
-    log: logJson,
-  }),
+  manifests: createLocalSidecarManifestStore({ dataRoot: localSidecarDataRoot, log: logJson }),
   capacity: createHostCapacity({ cgroupRoot: "/sys/fs/cgroup", meminfo: "/proc/meminfo" }),
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
-  onAccepted: notePlaced,
+  maxSidecars: localSidecarCap,
   log: logJson,
 });
 const docker = await connectDockerSidecars({ docker: dockerSettings(env), database, adapterManifest: SIDECAR_ADAPTER_MANIFEST });
@@ -195,7 +190,7 @@ const codeReviewProbes = [...dockerPlaces(docker), { guide: E2B_PLACE, found: e2
 const noIsolatedPlace = isolatedPlaceBootWarning(workloadProvisioners.length > 0, codeReviewProbes.map((probe) => probe.guide));
 if (noIsolatedPlace) logJson(noIsolatedPlace);
 function placeDeployments(db: DB["db"]) {
-  return createPlacementChooser({ db, local: local.provisioner, maxDeployments: localSidecarCap });
+  return createPlacementChooser({ db, local: local.provisioner, maxSidecars: localSidecarCap });
 }
 
 let shuttingDown = false;
@@ -264,7 +259,7 @@ const movedAppKeys: string[] = [];
 for (const tenantId of await githubTenants(composition.db)) {
   if (await moveAppKey(credentialDeps, tenantId)) movedAppKeys.push(tenantId);
 }
-await restoreLocalSidecars(composition.db, local);
+await bootLocalSidecars(composition.db, composition.sidecarRouter, local);
 if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
 async function tendE2b(sidecars: E2bSidecarProvisioner): Promise<void> {
   try {

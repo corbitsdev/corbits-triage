@@ -162,25 +162,32 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     A refused workflow deploy also logs `workflow_deploy_refused` with its
     code and reason.
 - **Sidecars**: started by the hub's `SidecarProvisioner`s. The local-process
-  provisioner runs one sidecar, a child process on the hub's machine, that
-  hosts every deployment placed there, each in a workflow child process of
-  its own: the first ensure starts it under the
-  identity Interchange offered, and every later ensure answers with that
-  sidecar, which stock deploys into over the same connection. It keeps a hold
-  per allocation beside one process manifest, and persists each destroy's
-  fence so a late ensure stays refused across a restart; a destroy releases the hold and
-  leaves the copy for the hub to undeploy, so the process lives as long as the
-  hub. On boot it respawns the sidecar once if any hold is still allocated or
-  the hub still waits for it to remove a copy.
-  It starts the sidecar only with 1 GiB free. The sidecar advertises
-  `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` (default 16) active deployments in its hello,
-  and stock refuses to place more there. The hub's placement chooser
-  (`apps/hub/src/sidecar/placement.ts`) counts the local sidecar's active
-  allocations and probes, and the placements waiting there for a slot, and
-  sends a deployment to the first matching sandbox provisioner once the cap is
-  reached. With no sandbox it stays local, where stock retries its placement
-  for up to 10 ensure attempts (about two and a half minutes) and then fails
-  it; the pull request is tried again on its next event. Probes run on the local
+  provisioner runs each allocation in a sidecar process of its own, a child
+  of the hub, as stock's own harness does: ensure starts it under the
+  identity Interchange offered, with a manifest and a data directory of its
+  own, and destroy stops it and removes both, so cleanup is always confirmed.
+  A sidecar process keeps the memory of every workflow it loaded, so none
+  hosts more than the one deployment it was started for, and each advertises
+  one active deployment. A late ensure for an identity a destroy named is
+  refused from memory; after a restart Interchange offers every ensure a
+  fresh identity. Boot never starts a sidecar again: it retires every
+  sidecar a manifest names, so Interchange places their deployments again at
+  once, and removes the manifests and data directories. A boot that cannot
+  retire one fails and keeps them for the next. A sidecar that exits on its
+  own is retired at once. The provisioner starts at most
+  `TRIAGE_MAX_LOCAL_SIDECARS` (default 8) sidecars, and one only while 1 GiB
+  is free beside those started that have not connected yet; past either it
+  refuses the ensure as retryable `capacity_unavailable`. The hub's placement
+  chooser (`apps/hub/src/sidecar/placement.ts`) counts the local allocations
+  and probes, and the placements waiting for a slot, and sends a deployment
+  to the first matching sandbox provisioner once the cap is reached. With no
+  sandbox it stays local, where stock retries its placement with backoff
+  (1, 2, 4, 8 and 16 seconds, then 30) for up to 10 ensure attempts, about
+  two and a half minutes, and then fails it. The manager never ran, so the
+  pull request gets no comment or label; its head stays queued until the
+  reconciler marks it never started after 10 minutes. The reconciler's next
+  pass, every 5 minutes, queues it again, and later attempts follow its
+  backoff (5 minutes, doubling), unless a new event comes first. Probes run on a local
   sidecar only when no sandbox is registered, since with one they require
   `isolation:workload`. The Docker provisioner (`packages/provisioner-docker`),
   registered after it when a daemon with the sidecar image answers, runs each
@@ -400,10 +407,10 @@ any other tenant or an unknown sender.
   its deadline and decides with `noWait`, and its verdict says what Triage
   stopped waiting for and holds every Do for a person. The loop's pass count
   is only a backstop. For up to three hours a waiting manager holds one of
-  the local sidecar's `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` slots, and its judge
-  and code review take more. Past the cap, deployments go to the sandbox
-  provisioner; with none configured they wait on stock's placement retry and
-  then fail, and the pull request is tried again on its next event. That is
+  the `TRIAGE_MAX_LOCAL_SIDECARS` local sidecars, and its judge and code
+  review take more. Past the cap, deployments go to the sandbox provisioner;
+  with none configured they wait on stock's placement retry and then fail,
+  and the pull request is tried again on its next event or reconcile pass. That is
   the bound (CL-11587); nothing else limits waiting managers. A manager
   waiting for CI is parked: the reconciler does not count it toward the
   tenant's in-flight slots, which only managers judging or reviewing hold.

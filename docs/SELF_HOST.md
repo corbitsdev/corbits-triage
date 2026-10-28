@@ -27,10 +27,11 @@ Optional, locally or deployed: a Google OAuth client for sign-in, an SMTP
 account for invite emails, and for [code review](PRODUCT.md#code-review) an
 Anthropic key and an [isolated place to run it](#where-sidecars-run).
 
-Size the hub for its sidecar: triage runs in one sidecar process beside the
-hub, which starts a workflow process for each of up to
-`TRIAGE_SIDECAR_MAX_DEPLOYMENTS` deployments at once. Memory is checked only
-when the sidecar starts (1 GiB free), so the cap is what bounds it.
+Size the hub for its sidecars: each deployment Triage runs on the hub's
+machine (the listener for each host, each manager and the judge) runs in a
+sidecar process of its own, up to `TRIAGE_MAX_LOCAL_SIDECARS` at once. Each
+takes about 0.5 GB, and one starts only while 1 GiB is free beside those still
+connecting.
 
 ## Run it
 
@@ -151,7 +152,7 @@ the pre-deploy command. Railway Sandboxes need `SANDBOX_REPOSITORY` and
 2. Set the [required variables](#required) and any optional ones.
 3. Run the [migrations](#migrations) before each start or upgrade.
 4. Give the platform a drain time longer than `HUB_SIDECAR_STOP_TIMEOUT_MS`
-   (default 25 seconds), the most the local sidecar takes to stop.
+   (default 25 seconds), the most a local sidecar takes to stop.
 5. Terminate TLS in front of the hub.
 
 Sign-in and email rate limits count each caller by address. On Railway the
@@ -295,8 +296,8 @@ All optional; the defaults suit most installs.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long the local sidecar gets to finish writing run state after SIGTERM before SIGKILL. |
-| `TRIAGE_SIDECAR_MAX_DEPLOYMENTS` | 16 | Deployments the hub's local sidecar runs at once: the listener, one manager per pull request being triaged, and the judge. At most 1792. |
+| `HUB_SIDECAR_STOP_TIMEOUT_MS` | 25000 | How long a local sidecar gets to finish writing run state after SIGTERM before SIGKILL. |
+| `TRIAGE_MAX_LOCAL_SIDECARS` | 8 | Sidecar processes the hub runs on its own machine at once, one per deployment or probe: the listener for each host, one manager per pull request being triaged, and the judge. |
 | `HUB_API_ORIGIN` | the origin of `BETTER_AUTH_BASE_URL` | The origin sidecars reach the hub REST API at, for workflows that call it. An `http` or `https` origin with no path. Set it when sidecars run in Docker on the hub's machine, where `localhost` is the container. |
 | `HUB_SIDECAR_WEBSOCKET_URL` | `ws://127.0.0.1:<PORT>/api/sidecars/ws` | The address sidecars dial. Leave it unset for Docker [on another machine](provisioners/docker-remote.md), whose sidecars dial `BETTER_AUTH_BASE_URL` over `wss://`. |
 | `DOCKER_HOST` | the docker CLI's context, else its default sockets | The daemon for the [Docker provisioner](provisioners/docker.md). |
@@ -359,8 +360,8 @@ The hub still publishes the workflows bundled in its own image's
 
 ## Where sidecars run
 
-Triage runs in one sidecar, a child process on the hub's machine; it needs
-nothing more. Code review needs a sidecar of its own, so it runs only once an
+Triage runs in sidecars that are child processes on the hub's machine, one
+per deployment; it needs nothing more. Code review needs a sidecar of its own, so it runs only once an
 isolated place is set up.
 Settings → Code review → **Where it runs** lists every place this server
 offers, with the `.env` lines and guide for each; code review uses the first

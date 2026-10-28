@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { type, type ArkError } from "arktype";
 import type { DockerTls, FindDockerHostOpts } from "@corbits/provisioner-docker";
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
-import { DEFAULT_SIDECAR_RETAINED_DEPLOYMENTS, MAX_SIDECAR_INCARNATIONS } from "@intx/types/sidecar";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 import type { CoalesceWindow } from "./github/coalescer.js";
 import { DEFAULT_RECONCILE_POLICY, type ReconcilePolicy } from "./github/reconcile-plan.js";
@@ -14,9 +13,7 @@ const secret = type("string").narrow((value, ctx) =>
 const positiveInteger = type("string.integer").narrow((value, ctx) =>
   Number(value) > 0 || ctx.mustBe("a positive integer"));
 
-/** The sidecar holds its active and kept deployments within Interchange's combined limit; the hub leaves it the default kept ones. */
-const MAX_LOCAL_SIDECAR_DEPLOYMENTS = MAX_SIDECAR_INCARNATIONS - DEFAULT_SIDECAR_RETAINED_DEPLOYMENTS;
-const DEFAULT_LOCAL_SIDECAR_DEPLOYMENTS = 16;
+const DEFAULT_MAX_LOCAL_SIDECARS = 8;
 
 const lifecycleDuration = type("string.trim").pipe(LifecycleDuration);
 
@@ -80,8 +77,7 @@ const HubEnvSchema = type({
   "TRIAGE_MAX_IN_FLIGHT?": positiveInteger,
   "TRIAGE_CAPPED_RETRY_MS?": positiveInteger,
   "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
-  "TRIAGE_SIDECAR_MAX_DEPLOYMENTS?": positiveInteger.narrow((value, ctx) =>
-    Number(value) <= MAX_LOCAL_SIDECAR_DEPLOYMENTS || ctx.mustBe(`at most ${String(MAX_LOCAL_SIDECAR_DEPLOYMENTS)}`)),
+  "TRIAGE_MAX_LOCAL_SIDECARS?": positiveInteger,
   "HUB_AGENT_GC_PACK_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_LOOSE_THRESHOLD?": positiveInteger,
   "HUB_AGENT_GC_WARN_BYTES?": positiveInteger,
@@ -283,9 +279,9 @@ export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" |
   };
 }
 
-/** Deployments the hub's local sidecar runs at once. */
-export function localSidecarMaxDeployments(env: Pick<HubEnv, "TRIAGE_SIDECAR_MAX_DEPLOYMENTS">): number {
-  return numberOr(env.TRIAGE_SIDECAR_MAX_DEPLOYMENTS, DEFAULT_LOCAL_SIDECAR_DEPLOYMENTS);
+/** Sidecar processes the hub runs on its own machine at once, one per deployment or probe. */
+export function maxLocalSidecars(env: Pick<HubEnv, "TRIAGE_MAX_LOCAL_SIDECARS">): number {
+  return numberOr(env.TRIAGE_MAX_LOCAL_SIDECARS, DEFAULT_MAX_LOCAL_SIDECARS);
 }
 
 const COALESCE_BURST_MS = 3_000;

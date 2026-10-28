@@ -1,5 +1,5 @@
-// The local sidecar's cap with no sandbox to overflow to: a manager placed while the listener and another manager
-// fill both slots waits, and runs once the other ends.
+// The local sidecar cap with no sandbox to overflow to: a manager placed while the listener and another manager fill
+// both slots is refused for capacity and retried, and runs once the other ends.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,7 +30,7 @@ beforeAll(async () => {
   github.addRepo(SECOND, POLICY);
   const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
   database = created;
-  hub = await startHub(database, github, portalDir, { TRIAGE_SIDECAR_MAX_DEPLOYMENTS: "2" });
+  hub = await startHub(database, github, portalDir, { TRIAGE_MAX_LOCAL_SIDECARS: "2" });
   workspace = await signUp(hub, database);
   await setUpWorkspace(workspace, github, model.origin);
   await listenerStarted(workspace);
@@ -96,10 +96,11 @@ test("with every local slot taken and no sandbox, a manager waits for one to fre
   });
   await pushed(SECOND, sha("second-1"));
   const waiting = await until("the second manager's placement to be refused for room", async () => {
-    const [row] = await rows("select failure_code from sidecar_allocation where failure_code = 'sidecar_reuse_rejected' limit 1");
+    const [row] = await rows("select failure_code from sidecar_allocation where failure_code = 'capacity_unavailable' limit 1");
     return row;
   });
-  expect(waiting).toEqual({ failure_code: "sidecar_reuse_rejected" });
+  expect(waiting).toEqual({ failure_code: "capacity_unavailable" });
+  expect(hub.logs.some((line) => line.includes('"msg":"local_sidecar_refused"') && line.includes("2 local sidecars already run"))).toBe(true);
   expect(await claimOf(SECOND)).toBeUndefined();
 
   releaseFirst();
@@ -109,6 +110,4 @@ test("with every local slot taken and no sandbox, a manager waits for one to fre
   });
   expect(second.runId ?? second.history[0]!.runId).not.toBe(first.runId);
   expect(github.pull(SECOND, 1).comments.map((comment) => comment.body)).toEqual([expect.stringContaining("**Triage: Pass**")]);
-  const [sidecars] = await rows(`select count(distinct sidecar_id)::int as count from sidecar_allocation where sidecar_id is not null and status in ('allocated', 'released')`);
-  expect(sidecars).toEqual({ count: 1 });
 });

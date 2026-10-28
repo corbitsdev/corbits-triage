@@ -1,5 +1,5 @@
-// One local sidecar process hosts the listener and two managers at once, and
-// each manager receives only its own pull request's mail.
+// The listener and two managers each run in a local sidecar process of their own, each manager receives only its own
+// pull request's mail, and a manager's sidecar is stopped and removed once its allocation is released.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +20,7 @@ const github = fakeGithub();
 const model = stubModel(function never(): never {
   throw new Error("No rule needs the judge.");
 });
-const portalDir = mkdtempSync(join(tmpdir(), "corbits-shared-portal-"));
+const portalDir = mkdtempSync(join(tmpdir(), "corbits-local-portal-"));
 let database: Database;
 let hub: Hub;
 let workspace: Workspace;
@@ -84,6 +84,10 @@ async function until<T>(what: string, read: () => Promise<T | undefined>, ms = 1
   throw new Error(`Timed out waiting for ${what}.\n${hub.logs.slice(-80).join("\n")}`);
 }
 
+function manifests(): string[] {
+  return readdirSync(join(hub.dataDir, "local-sidecars", "manifests"));
+}
+
 type Claim = { status: "live" | "ended"; runId?: string; history: { head: string; runId: string }[] };
 
 async function claimOf(repo: string): Promise<Claim | undefined> {
@@ -91,7 +95,7 @@ async function claimOf(repo: string): Promise<Claim | undefined> {
   return row?.["state"] as Claim | undefined;
 }
 
-test("one local sidecar process hosts the listener and two live managers, each receiving its own mail", async () => {
+test("the listener and two live managers each run in a sidecar of their own, and a released manager's sidecar is gone", async () => {
   const releaseFirst = github.hold(FIRST, 1);
   const releaseSecond = github.hold(SECOND, 1);
   await pushed(FIRST, sha("first-1"));
@@ -108,9 +112,8 @@ test("one local sidecar process hosts the listener and two live managers, each r
 
   const live = await rows(`select a.id, a.sidecar_id, r.status, coalesce(s.frozen_approval_bundle -> 'projection' ->> 'id', d.name) as workflow from sidecar_allocation a join workflow_run r on r.id = a.anchor_run_id join workflow_definition d on d.id = r.definition_id left join workflow_run_launch_spec s on s.anchor_run_id = r.id where a.status = 'allocated'`);
   expect(live.filter((row) => row["status"] === "running").map((row) => row["workflow"]).sort()).toEqual(["triage-listener-github", "triage-manager-github", "triage-manager-github"]);
-  expect(new Set(live.map((row) => row["sidecar_id"])).size).toBe(1);
-  expect(hub.logs.filter((line) => line.includes('"msg":"local_sidecar_started"'))).toHaveLength(1);
-  expect(readdirSync(join(hub.dataDir, "local-sidecars"), { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name)).toEqual(["sidecar"]);
+  expect(new Set(live.map((row) => row["sidecar_id"])).size).toBe(live.length);
+  expect(manifests().sort()).toEqual(live.map((row) => `${String(row["id"])}.json`).sort());
 
   await pushed(FIRST, sha("first-2"), "synchronize");
   await until("the first push's second head to be recorded", async () => {
@@ -133,13 +136,15 @@ test("one local sidecar process hosts the listener and two live managers, each r
   expect(github.pull(FIRST, 1).comments.map((comment) => comment.body)).toContainEqual(expect.stringContaining("**Triage: Pass**"));
   expect(github.pull(SECOND, 1).comments.map((comment) => comment.body)).toEqual([expect.stringContaining("**Triage: Pass**")]);
   const managerAllocations = live.filter((row) => row["workflow"] === "triage-manager-github").map((row) => `'${String(row["id"])}'`).join(",");
-  const released = await until("both managers' allocations to be released from the shared sidecar", async () => {
+  const released = await until("both managers' allocations to be released", async () => {
     const found = await rows(`select status, deployment_cleanup_confirmed from sidecar_allocation where id in (${managerAllocations})`);
     return found.every((row) => row["status"] === "released") ? found : undefined;
   });
   expect(released).toEqual([{ status: "released", deployment_cleanup_confirmed: true }, { status: "released", deployment_cleanup_confirmed: true }]);
-  const [sidecar] = await rows(`select retired_at from sidecar where id = '${String(live[0]!["sidecar_id"])}'`);
-  expect(sidecar!["retired_at"]).toBeNull();
-  const listener = await rows(`select a.status, r.status as run from sidecar_allocation a join workflow_run r on r.id = a.anchor_run_id where a.id = '${String(live.find((row) => row["workflow"] === "triage-listener-github")!["id"])}'`);
+  const listenerRow = live.find((row) => row["workflow"] === "triage-listener-github")!;
+  expect(manifests()).toEqual([`${String(listenerRow["id"])}.json`]);
+  const dataDirs = readdirSync(join(hub.dataDir, "local-sidecars")).filter((name) => name !== "manifests");
+  expect(dataDirs).toEqual([expect.stringMatching(new RegExp(`^${String(listenerRow["id"])}-`))]);
+  const listener = await rows(`select a.status, r.status as run from sidecar_allocation a join workflow_run r on r.id = a.anchor_run_id where a.id = '${String(listenerRow["id"])}'`);
   expect(listener).toEqual([{ status: "allocated", run: "running" }]);
 });
