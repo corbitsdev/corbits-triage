@@ -9,7 +9,7 @@ import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type Re
 import { mailPayload, unreadablePayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
-import { deliveryFailure, failHead } from "./triage-queue.js";
+import { failDelivery } from "./triage-queue.js";
 import type { PolicyReader, ResolvedPack } from "./repo-policy.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks } from "@corbits/github-reads";
@@ -252,7 +252,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       } catch (err) {
         if (err instanceof GithubRateLimited) throw err;
         deps.log({ level: "error", msg: "forward_failed", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, error: String(err) });
-        await failHead(deps.store, { tenantId: pass.tenantId, repo: key, number: queued.number, headSha }, deliveryFailure(err), deps.now());
+        await failDelivery(deps.store, { tenantId: pass.tenantId, repo: key, number: queued.number, headSha }, err, deps.now());
         continue;
       }
       deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, reason: queued.reason });

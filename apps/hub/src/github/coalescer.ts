@@ -22,7 +22,7 @@ import { GithubRateLimited } from "./github-usage.js";
 import type { PrMail } from "./normalize.js";
 import { triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
-import { deliveryFailure, failHead, queueHead, restoreHead, type QueuedHead, type Remembered } from "./triage-queue.js";
+import { failDelivery, failHead, queueHead, restoreHead, type QueuedHead, type Remembered } from "./triage-queue.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 import { createKeyedSerial } from "../keyed-serial.js";
 
@@ -165,7 +165,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     } catch (err) {
       if (err instanceof GithubRateLimited) return drop(open, entry, "github_rate_limited");
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
-      await failHead(deps.store, head, deliveryFailure(err), deps.now());
+      await failDelivery(deps.store, head, err, deps.now());
       return;
     }
     deps.log({ level: "info", msg: "forwarded", ...entry, workflow: latest.workflow });

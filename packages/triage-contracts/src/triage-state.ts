@@ -28,6 +28,8 @@ export type PrTriageRow = {
   staleBefore?: string;
   updatedAt: string;
   error?: string;
+  /** On a failed head whose mail reached no listener: it goes out again as soon as one is up, and those tries add nothing to `attempts`. */
+  unrouted?: true;
 };
 
 export type TriageState = {
@@ -66,6 +68,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
   const undeliveredSince = optionalString(row.undeliveredSince);
   const staleBefore = optionalString(row.staleBefore);
   const error = optionalString(row.error);
+  if (row.unrouted !== undefined && row.unrouted !== true) return null;
   return {
     number,
     headSha,
@@ -79,6 +82,7 @@ function parseRow(raw: unknown): PrTriageRow | null {
     ...(staleBefore !== undefined && { staleBefore }),
     updatedAt,
     ...(error !== undefined && { error }),
+    ...(row.unrouted === true && { unrouted: true as const }),
   };
 }
 

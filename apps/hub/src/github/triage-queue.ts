@@ -3,8 +3,9 @@
 // mail does not go out. Shared by the manual-run route and the webhook
 // coalescer.
 import { setTimeout as sleep } from "node:timers/promises";
+import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { triageStopped, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
-import { TriageStoppedError } from "./deployment.js";
+import { DeploymentNotReadyError, TriageStoppedError } from "./deployment.js";
 import { BASE_MOVED, type ReconcilePolicy } from "./reconcile-plan.js";
 import type { RepoRecord } from "./tenant-config.js";
 import { TriageStateConflictError, type TriageStateStore, type TriageStateVersion } from "./triage-state-store.js";
@@ -19,6 +20,11 @@ export function deliveryFailure(err: unknown): string {
 /** A head marked failed because its mail did not go out, as `deliveryFailure` words it. */
 export function undelivered(row: PrTriageRow, source: RepoSource): boolean {
   return row.status === "failed" && row.error !== undefined && (row.error === triageStopped(source) || row.error.startsWith(DELIVERY_FAILED));
+}
+
+/** The mail reached no run: the host had no listener, the listener was still starting, or the hub held no route to it. */
+function reachedNoRun(err: unknown): boolean {
+  return err instanceof TriageStoppedError || err instanceof DeploymentNotReadyError || isRunTriggerUnroutable(err);
 }
 
 /** A pull request mail for the host's listener. */
@@ -54,7 +60,7 @@ export function isRunningSince(row: PrTriageRow | undefined, now: Date, policy: 
 function queuedAgain(prior: PrTriageRow | undefined, number: number, headSha: string, at: string): PrTriageRow {
   if (prior === undefined) return { number, headSha, status: "queued", attempts: 0, firstSeenAt: at, queuedAt: at, updatedAt: at };
   // The last run and version stay named so the plan can tell this head from one it has never seen.
-  const { error: _error, ...rest } = prior;
+  const { error: _error, unrouted: _unrouted, ...rest } = prior;
   return { ...rest, status: "queued", queuedAt: at, updatedAt: at };
 }
 
@@ -110,6 +116,18 @@ async function replaceQueued(store: TriageStateStore, head: QueuedHead, next: (r
     }
   }
   throw new TriageStateConflictError(head.repo);
+}
+
+/**
+ * Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; it keeps when its
+ * mail first did not. Mail that reached no run leaves the head unrouted, so it goes out again as soon as a listener is up.
+ */
+export function failDelivery(store: TriageStateStore, head: QueuedHead, err: unknown, now: Date): Promise<void> {
+  const unrouted = reachedNoRun(err);
+  return replaceQueued(store, head, function failed(row) {
+    const at = now.toISOString();
+    return { ...row, status: "failed", error: deliveryFailure(err), undeliveredSince: row.undeliveredSince ?? row.queuedAt ?? at, ...(unrouted && { unrouted: true }), updatedAt: at };
+  });
 }
 
 /** Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; it keeps when its mail first did not. */
