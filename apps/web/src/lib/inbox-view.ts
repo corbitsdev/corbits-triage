@@ -64,7 +64,9 @@ export function failedOnNewCommits(item: PrItem): boolean {
   return item.failure !== null && hasUncheckedCommits(item);
 }
 
+/** No run can start on a host where Triage is stopped, so none of its pull requests is a failure to try again. */
 export function inboxAction(item: PrItem): InboxAction | null {
+  if (triageStoppedOn(item)) return null;
   if (failedOnNewCommits(item)) return "failed";
   switch (item.state) {
     case "needs-decision":
@@ -79,7 +81,7 @@ export function inboxAction(item: PrItem): InboxAction | null {
     case "ready":
       return "merge";
     case "new":
-      return item.failure === null && (item.untriaged === undefined || triageStoppedOn(item)) ? null : "failed";
+      return item.failure === null && item.untriaged === undefined ? null : "failed";
   }
 }
 
@@ -261,7 +263,7 @@ export function groupInbox(items: PrItem[], ready: ReadonlySet<string>): InboxVi
   const groups = INBOX_ACTION_ORDER
     .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inNeedsYou(item) && listedAction(item) === action) }))
     .filter((group) => group.items.length > 0);
-  return { groups, awaiting: items.filter((item) => ready.has(item.repo) && inboxAction(item) === null && !triageStoppedOn(item)).length };
+  return { groups, awaiting: items.filter((item) => ready.has(item.repo) && !triageStoppedOn(item) && (inboxAction(item) === null || progressText(item) !== null)).length };
 }
 
 export function awaitingText(count: number): string {

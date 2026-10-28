@@ -125,6 +125,7 @@ describe("the one line", () => {
     ["a draft with a verdict", { state: "awaiting-review", draft: true, checks: [FAIL] }, "Done: Needs human review · draft · waiting on @ada"],
     ["no verdict, no note and no run", { state: "new", runId: null, verdict: null }, "Waiting: not triaged yet · Triage again"],
     ["no verdict on a host where Triage is stopped, where no run can start", { state: "new", runId: null, verdict: null, untriaged: triageStopped("github") }, "Waiting: not triaged yet"],
+    ["a failed run on a host where Triage is stopped", { state: "new", runId: null, verdict: null, untriaged: triageStopped("github"), failure: "failed" }, "Waiting: not triaged yet"],
     ["why Triage could not check it", { state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }, "Needs you: Couldn't triage: the run never started · Triage again"],
     ["a verdict Triage could not settle", { state: "stale", checks: [FAIL], comment: feedback }, "Done: Needs human review · Triage could not settle it · Triage again"],
     ["newer commits under a pass, which is never merged unchecked", { state: "ready", verdict: "pass", headSha: "head-2" }, "Done: Ready to merge · newer commits not yet checked · Triage again"],

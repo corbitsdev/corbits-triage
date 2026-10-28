@@ -73,6 +73,7 @@ export function createGithubPolicyRead(deps: { readCheckPack: PolicyReader }) {
     const rules = read.policyWorkflow?.decide ?? [];
     const decide = rules.flatMap((rule) => kindsOf(rule.do)).filter(isActionKind);
     const risks = mergeRisks(read.pack, rules, read.automatic);
-    return Response.json({ status: "ok", pack: read.pack, source: read.source, automatic: read.automatic, decide: [...new Set(decide)], mergeRisks: risks });
+    const codeReview = read.policyWorkflow?.["code-review"]?.on === true;
+    return Response.json({ status: "ok", pack: read.pack, source: read.source, automatic: read.automatic, decide: [...new Set(decide)], mergeRisks: risks, codeReview });
   };
 }

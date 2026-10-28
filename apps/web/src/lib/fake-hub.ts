@@ -47,7 +47,7 @@ export function fakeHub(artifacts: FakeArtifact[] = [], config: Record<string, u
     const row = policyRow(repo, source);
     if (!row) return { status: "missing" };
     try {
-      return { status: "ok", pack: readCheckPack(row.content, repo), source: { repo: { id: row.id, version: row.version } }, automatic: [], decide: [], mergeRisks: [] };
+      return { status: "ok", pack: readCheckPack(row.content, repo), source: { repo: { id: row.id, version: row.version } }, automatic: [], decide: [], mergeRisks: [], codeReview: false };
     } catch (error) {
       return { status: "corrupt", reason: (error as Error).message, repo: { id: row.id, version: row.version } };
     }

@@ -94,6 +94,7 @@ describe("groupInbox", () => {
       item({ key: "a", state: "new", runId: null, verdict: null, untriaged: stopped }),
       item({ key: "b", state: "new", runId: null, verdict: null, untriaged: stopped }),
       item({ key: "c", state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }),
+      item({ key: "d", state: "new", runId: null, verdict: null, untriaged: stopped, failure: "failed" }),
     ];
     const view = groupInbox(items, READY);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([["failed", ["c"]]]);
@@ -111,10 +112,10 @@ describe("groupInbox", () => {
     expect(inNeedsYou(item({ state: "new", runId: null, verdict: null, draft: true, pendingApprovalId: "a1" }))).toBe(false);
   });
 
-  test("a pull request Triage is at work on leaves Needs you until it has something for you", () => {
+  test("a pull request Triage is at work on leaves Needs you until it has something for you, and counts as awaiting triage", () => {
     const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true }), item({ key: "reviewing", awaiting: ["code-review"] })], READY);
     expect(view.groups).toEqual([]);
-    expect(view.awaiting).toBe(1);
+    expect(view.awaiting).toBe(3);
   });
 
   test("a pull request turned into a draft after its verdict leaves Needs you and waits on its author", () => {

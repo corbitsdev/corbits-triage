@@ -31,7 +31,7 @@ function read(found: PackState["found"]): PackState {
 }
 
 function policyFile(repo: string): PackState {
-  return read({ kind: "file", path: ".corbits-triage.yml", pack: recommendedPack(repo) });
+  return read({ kind: "file", path: ".corbits-triage.yml", pack: recommendedPack(repo), codeReview: false });
 }
 
 function twoHosts(github: number[], bitbucket: number[]): OpenPulls {
@@ -92,7 +92,7 @@ describe("repository rows", () => {
   test("a repository whose policy file reads with a rule on is set up, with or without saved rules", () => {
     const states = new Map([
       ["acme/file", policyFile("acme/file")],
-      ["acme/off", read({ kind: "file", path: ".corbits-triage.yml", pack: emptyPack("acme/off") })],
+      ["acme/off", read({ kind: "file", path: ".corbits-triage.yml", pack: emptyPack("acme/off"), codeReview: false })],
       ["acme/refused", read({ kind: "invalid", path: ".corbits-triage.yml", reason: "bad yaml" })],
       ["acme/none", read(null)],
       ["acme/loading", { found: null, pending: true, error: null }],

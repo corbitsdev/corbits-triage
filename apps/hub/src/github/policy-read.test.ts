@@ -57,3 +57,18 @@ test("the policy is read for the host named, GitHub when none is", async () => {
   await handle({ repo: "acme/app" }, member);
   expect(asked).toEqual(["bitbucket-datacenter", "github"]);
 });
+
+test("says whether the policy file turns code review on", async () => {
+  async function read(policyWorkflow?: { "code-review": { on: boolean } }): Promise<unknown> {
+    const handle = createGithubPolicyRead({
+      async readCheckPack() {
+        return { status: "ok", pack: base, source: { repo: { id: "a", version: 1 } }, automatic: [], ...(policyWorkflow && { policyWorkflow }) };
+      },
+    });
+    const res = await handle({ repo: "acme/app" }, { tenantId: "t", principalId: "p" } as Parameters<typeof handle>[1]);
+    return ((await res.json()) as { codeReview: unknown }).codeReview;
+  }
+  expect(await read({ "code-review": { on: true } })).toBe(true);
+  expect(await read({ "code-review": { on: false } })).toBe(false);
+  expect(await read()).toBe(false);
+});

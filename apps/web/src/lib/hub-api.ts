@@ -375,8 +375,8 @@ type PolicyKinds = { automatic?: ActionKind[]; decide?: ActionKind[]; mergeRisks
 export type StoredCheckPack = { kind: "pack"; id: string; version: number; pack: CheckPack } & PolicyKinds;
 /** The repository's artifact holds something that is not a check pack; a save replaces it in place. */
 type CorruptCheckPack = { kind: "corrupt"; id: string; version: number; reason: string };
-/** Read from the repository's policy file, which only a change to the file edits. */
-type FileCheckPack = { kind: "file"; path: string; pack: CheckPack } & PolicyKinds;
+/** Read from the repository's policy file, which only a change to the file edits; `codeReview` is whether it turns code review on. */
+type FileCheckPack = { kind: "file"; path: string; pack: CheckPack; codeReview: boolean } & PolicyKinds;
 /** The repository's policy file is refused, so triage runs nothing until it is fixed. */
 type InvalidPolicyFile = { kind: "invalid"; path: string; reason: string };
 export type CheckPackArtifact = StoredCheckPack | CorruptCheckPack | FileCheckPack | InvalidPolicyFile;
@@ -390,7 +390,7 @@ export async function loadRepoCheckPack(transport: Transport, tenantId: string, 
   const { repo: stored, file } = read.source;
   const pack = readCheckPack(read.pack, clean);
   const kinds = { automatic: read.automatic, decide: read.decide, mergeRisks: read.mergeRisks };
-  if (file) return { kind: "file", path: file.path, pack, ...kinds };
+  if (file) return { kind: "file", path: file.path, pack, codeReview: read.codeReview, ...kinds };
   if (!stored) throw new Error(`The hub named no policy ${clean} was read from.`);
   return { kind: "pack", ...stored, pack, ...kinds };
 }
