@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, VerdictFacts } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, JudgeVerdict, StageResult, VerdictFacts } from "@corbits/triage-contracts";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { hostAwaited, type Awaits } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
@@ -21,12 +21,6 @@ const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean
  * reviewers keep alive.
  */
 export const LIFETIME_MS = 3 * 60 * 60_000;
-
-/** How long a head waits for its CI, from its first pass that waited for it, before it is decided without it. */
-const CI_WAIT_MS = 60 * 60_000;
-
-/** How long a head with no checks yet waits for its CI to start before it is taken as having none. */
-const CI_START_MS = 2 * 60_000;
 
 /**
  * What a pass works on. `run` when there is anything to do: a pass, a reviewer the manager waits for is past its

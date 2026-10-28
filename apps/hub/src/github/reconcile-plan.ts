@@ -21,7 +21,7 @@ export type ObservedRun = {
   passAt?: string;
   /** What a running manager's reviewers on its head have yet to report. */
   awaiting?: AwaitedStage[];
-  /** Since when a running manager has waited for its head's CI. */
+  /** Since when the head has waited for its CI: a running manager's, or the last pass of a manager that ended to wait. */
   waitingSince?: string;
 };
 

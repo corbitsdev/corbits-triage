@@ -6,6 +6,12 @@ export const TRIAGE_STATE_SCHEMA_VERSION = 1;
 /** A pr-triage run still going after this long lost its sidecar: three agent steps on either gate branch of up to fifteen minutes each, plus their retries. */
 export const PR_TRIAGE_STUCK_RUN_MS = 90 * 60_000;
 
+/** How long a head waits for its CI, from its first pass that waited for it, before it is decided without it. */
+export const CI_WAIT_MS = 60 * 60_000;
+
+/** How long a head with no checks yet waits for its CI to start before it is taken as having none. */
+export const CI_START_MS = 2 * 60_000;
+
 /** `stale`: the base branch moved after the head's verdict, so it is due again. */
 export const PR_TRIAGE_STATUSES = ["new", "queued", "running", "triaged", "failed", "stale"] as const;
 export type PrTriageStatus = (typeof PR_TRIAGE_STATUSES)[number];

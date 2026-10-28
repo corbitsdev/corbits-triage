@@ -228,6 +228,32 @@ describe("triage reconciler", () => {
     expect(mailedNumbers(nowCancelled.delivered)).toEqual([1]);
   });
 
+  test("a head whose manager ended to wait for CI is queued once CI settles, no checks start within the grace, or the hour is up, reading its checks once a pass until then", async () => {
+    function waitedFor(minutes: number): Runs {
+      const since = at(-minutes).toISOString();
+      return runsOf([1, { runId: "run_1", source: "github", status: "completed", startedAt: since, waitingSince: since }]);
+    }
+    const running = [{ name: "build", status: "in_progress", conclusion: null }];
+    const pending = harness(waitedFor(5), [head(1)], { headChecks: running });
+    await pending.reconcile();
+    expect(pending.delivered).toHaveLength(0);
+    expect(pending.logged).toContainEqual(expect.objectContaining({ msg: "waiting_ci_read", repo: REPO, heads: 1 }));
+    const finished = harness(waitedFor(5), [head(1)], { headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
+    await finished.reconcile();
+    expect(mailedNumbers(finished.delivered)).toEqual([1]);
+    expect(finished.logged).toContainEqual(expect.objectContaining({ msg: "triage_requeued", pr: 1, reason: "ci_settled" }));
+    const starting = harness(waitedFor(1), [head(1)], { headChecks: [] });
+    await starting.reconcile();
+    expect(starting.delivered).toHaveLength(0);
+    const none = harness(waitedFor(3), [head(1)], { headChecks: [] });
+    await none.reconcile();
+    expect(mailedNumbers(none.delivered)).toEqual([1]);
+    const over = harness(waitedFor(61), [head(1)], { headChecks: running });
+    await over.reconcile();
+    expect(mailedNumbers(over.delivered)).toEqual([1]);
+    expect(over.logged).not.toContainEqual(expect.objectContaining({ msg: "waiting_ci_read" }));
+  });
+
   test("a verdict that read CI as cancelled is not queued again while it stays cancelled, however many reads, and is once a check is re-run", async () => {
     const cancelled = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed", output: { kind: "values", values: { status: "cancelled" } } }] };
     let now = NOW;
