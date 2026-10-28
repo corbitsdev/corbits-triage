@@ -8,7 +8,7 @@ import { createDB, createPrincipalKeyStore, resolveSenderKey, runMigrations, sch
 import { DEPLOYER_ROLE } from "@corbits/triage-contracts";
 import { ensureDeployerRole } from "../deployer-role.js";
 import { setUpPublisher } from "../workflow-release/publisher.js";
-import { assignRole, ASSIGNS_ROLE, keepDeploymentsAlive, managesTenant } from "./tenant.js";
+import { assignRole, ASSIGNS_ROLE, keepDeploymentsAlive, managesTenant, SETS_ROLE_GRANTS } from "./tenant.js";
 import { createSystemWrites, SYSTEM_WRITER, SystemWriteDenied } from "./writer.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -41,11 +41,15 @@ function writesOn(db: DB["db"]) {
 
 const Waiting = type({ pid: "number" }).array();
 
+async function lockWaiters(db: DB["db"]): Promise<number> {
+  const rows = Waiting.assert(await db.execute(sql`select pid from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`));
+  return rows.length;
+}
+
 /** Resolves once a statement in the test's database waits on a row lock. */
 async function waitingOnLock(db: DB["db"]): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const rows = Waiting.assert(await db.execute(sql`select pid from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`));
-    if (rows.length > 0) return;
+    if (await lockWaiters(db) > 0) return;
     await Bun.sleep(25);
   }
   throw new Error("No statement waited on a lock.");
@@ -138,6 +142,63 @@ test("PostgreSQL: admin taken away after the checks pass, before the writes, sto
     });
     await expect(attempt!).rejects.toThrow(SystemWriteDenied);
     expect(await rolesOf(db, "prn_midway_person")).toEqual([]);
+  });
+}, 60_000);
+
+test("PostgreSQL: a grant taken from admin after the writer is placed, before the writes, stops them", async () => {
+  await withDatabase(async function grantRevokedMidway(db) {
+    const writes = writesOn(db);
+    const tenantId = await workspace(db, "ungranted");
+    await writes.transaction(tenantId, [managesTenant(tenantId)], (w) => keepDeploymentsAlive(w, new Date()));
+    const [writer] = await writersOf(db, tenantId);
+    let attempt: Promise<void> | undefined;
+    await db.transaction(async function revoke(tx) {
+      await tx.select({ roleId: schema.principalRole.roleId }).from(schema.principalRole).where(eq(schema.principalRole.principalId, writer!.id)).for("update");
+      await tx.delete(schema.grant).where(eq(schema.grant.id, "grt_ungranted_manage"));
+      attempt = writes.transaction(tenantId, [ASSIGNS_ROLE], (w) => assignRole(w, "prn_ungranted_person", "rol_ungranted_reviewer"));
+      await waitingOnLock(db);
+    });
+    await expect(attempt!).rejects.toThrow(SystemWriteDenied);
+    expect(await rolesOf(db, "prn_ungranted_person")).toEqual([]);
+  });
+}, 60_000);
+
+test("PostgreSQL: a deny on one grant the Deployer role would drop stops the drop", async () => {
+  await withDatabase(async function deniedDrop(db) {
+    const writes = writesOn(db);
+    const tenantId = await workspace(db, "guarded");
+    const roleId = await writes.transaction(tenantId, SETS_ROLE_GRANTS, (w) => ensureDeployerRole(w, new Date()));
+    await db.insert(schema.grant).values([
+      { id: "grt_guarded_extra", tenantId, roleId, resource: "asset:*", action: "create", effect: "allow", origin: "role" },
+      { id: "grt_guarded_deny", tenantId, roleId: "rol_guarded_admin", resource: "grant:grt_guarded_extra", action: "manage", effect: "deny", origin: "system" },
+    ]);
+    await expect(writes.transaction(tenantId, SETS_ROLE_GRANTS, (w) => ensureDeployerRole(w, new Date()))).rejects.toThrow(SystemWriteDenied);
+    expect(await db.select({ id: schema.grant.id }).from(schema.grant).where(eq(schema.grant.id, "grt_guarded_extra"))).toEqual([{ id: "grt_guarded_extra" }]);
+  });
+}, 60_000);
+
+test("PostgreSQL: concurrent first writes in one process share a single mint of the writer", async () => {
+  await withDatabase(async function sharedMint(db) {
+    const writes = writesOn(db);
+    const tenantId = await workspace(db, "shared");
+    const held = new Error("held insert rolled back");
+    let attempts: Promise<void[]> | undefined;
+    let waiting = 0;
+    await expect(db.transaction(async function holdInsert(tx) {
+      await tx.insert(schema.principal).values({ id: "prn_shared_held", tenantId, kind: "agent", refId: SYSTEM_WRITER, status: "active" });
+      attempts = Promise.all([1, 2].map(() => writes.transaction(tenantId, [managesTenant(tenantId)], (w) => keepDeploymentsAlive(w, new Date()))));
+      await waitingOnLock(db);
+      await Bun.sleep(250);
+      waiting = await lockWaiters(db);
+      throw held;
+    })).rejects.toBe(held);
+    await attempts;
+
+    expect(waiting).toBe(1);
+    const [writer, ...extra] = await writersOf(db, tenantId);
+    expect(extra).toEqual([]);
+    const keys = await db.select({ id: schema.principalKey.id }).from(schema.principalKey).where(eq(schema.principalKey.principalId, writer!.id));
+    expect(keys).toHaveLength(1);
   });
 }, 60_000);
 

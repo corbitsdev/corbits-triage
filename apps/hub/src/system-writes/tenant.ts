@@ -23,10 +23,11 @@ const CREATES_ROLE: Check = { resource: "role:*", action: "create" };
 
 const CREATES_GRANT: Check = { resource: "grant:*", action: "create" };
 
-/** Stock checks `manage` on each `grant:<id>` it deletes; the ids are unknown before the transaction, so the wildcard is declared. */
-const MANAGES_GRANTS: Check = { resource: "grant:*", action: "manage" };
+export function managesGrant(grantId: string): Check {
+  return { resource: `grant:${grantId}`, action: "manage" };
+}
 
-export const SETS_ROLE_GRANTS: readonly Check[] = [CREATES_ROLE, CREATES_GRANT, MANAGES_GRANTS];
+export const SETS_ROLE_GRANTS: readonly Check[] = [CREATES_ROLE, CREATES_GRANT];
 
 /** Raises the workspace's deployment lifetime ceiling so each deployment lives until a newer one replaces it. */
 export async function keepDeploymentsAlive(w: WriteTx, stamp: Date): Promise<void> {

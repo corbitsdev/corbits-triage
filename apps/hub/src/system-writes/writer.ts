@@ -37,12 +37,19 @@ export function check(w: WriteTx, wanted: Check): void {
   if (!w.cleared.has(keyOf(wanted))) throw new Error(`The hub's write of ${wanted.action} ${wanted.resource} was not declared before its transaction.`);
 }
 
+/** Runs stock's grant check inside the transaction, so a grant changed before the check is read as it now stands. */
+export async function authorizeWrite(w: WriteTx, { resource, action }: Check): Promise<void> {
+  // Stock's grant store reads only through `query`, which a transaction has; its type asks for the top-level client.
+  const grants = createGrantStore(w.tx as unknown as DB["db"]);
+  const result = await authorize(grants, w.principalId, w.tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY });
+  if (result.effect !== "allow") throw new SystemWriteDenied(w.tenantId, resource, action);
+}
+
 export type SystemWrites = ReturnType<typeof createSystemWrites>;
 
 export function createSystemWrites({ db, principalKeyStore }: { db: DB["db"]; principalKeyStore: PrincipalKeyStore }) {
   const principals = createPrincipalStore(db, principalKeyStore);
-  const grants = createGrantStore(db);
-  const writers = new Map<string, string>();
+  const writers = new Map<string, Promise<string>>();
 
   /**
    * Mints the workspace's system writer holding stock's admin role, as stock tenant creation seats its owner; only once,
@@ -65,28 +72,21 @@ export function createSystemWrites({ db, principalKeyStore }: { db: DB["db"]; pr
     });
   }
 
+  /** Concurrent first writes to a workspace share one mint, so they do not each hold a connection contending for it. */
   async function writerOf(tenantId: string): Promise<string> {
-    const cached = writers.get(tenantId);
-    if (cached !== undefined) return cached;
-    const principalId = await place(tenantId);
-    writers.set(tenantId, principalId);
-    return principalId;
-  }
-
-  /**
-   * Stock's grant store reads only through the top-level database, so every check runs before the transaction
-   * opens, and no connection is held while a check waits for one.
-   */
-  async function clear(tenantId: string, checks: readonly Check[]): Promise<{ principalId: string; cleared: ReadonlySet<string> }> {
-    const principalId = await writerOf(tenantId);
-    for (const { resource, action } of checks) {
-      const result = await authorize(grants, principalId, tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY });
-      if (result.effect !== "allow") throw new SystemWriteDenied(tenantId, resource, action);
+    const known = writers.get(tenantId);
+    if (known !== undefined) return known;
+    const minting = place(tenantId);
+    writers.set(tenantId, minting);
+    try {
+      return await minting;
+    } catch (error) {
+      writers.delete(tenantId);
+      throw error;
     }
-    return { principalId, cleared: new Set(checks.map(keyOf)) };
   }
 
-  /** Holds the writer's admin seat for the transaction, so admin taken away after the checks still stops the writes. */
+  /** Holds the writer's admin seat for the transaction, so admin taken away while it runs still stops the writes. */
   async function holdAdmin(tx: Tx, tenantId: string, principalId: string): Promise<void> {
     const { principalRole, role } = schema;
     const [held] = await tx.select({ roleId: principalRole.roleId })
@@ -99,10 +99,12 @@ export function createSystemWrites({ db, principalKeyStore }: { db: DB["db"]; pr
 
   return {
     async transaction<T>(tenantId: string, checks: readonly Check[], body: (w: WriteTx) => Promise<T>): Promise<T> {
-      const { principalId, cleared } = await clear(tenantId, checks);
+      const principalId = await writerOf(tenantId);
       return db.transaction(async function write(tx) {
         await holdAdmin(tx, tenantId, principalId);
-        return body({ tx, tenantId, principalId, cleared });
+        const w: WriteTx = { tx, tenantId, principalId, cleared: new Set(checks.map(keyOf)) };
+        for (const wanted of checks) await authorizeWrite(w, wanted);
+        return body(w);
       });
     },
   };
