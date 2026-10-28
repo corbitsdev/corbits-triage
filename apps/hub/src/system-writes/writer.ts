@@ -7,7 +7,7 @@ import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { generateId } from "@intx/hub-common";
 import type { Tx } from "../github/admin-github-grant.js";
 
-/** The local part of the system principal the hub writes Interchange's records as; never a mail sender. */
+/** The refId of the system principal the hub writes Interchange's records as. */
 export const SYSTEM_WRITER = "triage-hub";
 
 /** A resource and action stock's own route checks before the write. */
@@ -44,18 +44,22 @@ export function createSystemWrites({ db, principalKeyStore }: { db: DB["db"]; pr
   const grants = createGrantStore(db);
   const writers = new Map<string, string>();
 
-  /** Mints the workspace's system writer holding stock's admin role, as stock tenant creation seats its owner; only once, so admin taken away stays away. */
+  /**
+   * Mints the workspace's system writer holding stock's admin role, as stock tenant creation seats its owner; only once,
+   * so admin taken away stays away. Stock's store mints every principal a key, and only a `user` principal resolves as a
+   * mail sender, so the writer is an `agent`.
+   */
   async function place(tenantId: string): Promise<string> {
     const { principal, principalRole, role } = schema;
     return db.transaction(async function placeWriter(tx) {
       const [admin] = await tx.select({ id: role.id }).from(role).where(and(eq(role.tenantId, tenantId), eq(role.name, "admin"), eq(role.isSystem, true)));
       if (!admin) throw new Error(`Workspace ${tenantId} has no system admin role.`);
-      const created = await principals.createIfAbsent({ id: generateId("principal"), tenantId, kind: "user", refId: SYSTEM_WRITER, status: "active" }, tx);
+      const created = await principals.createIfAbsent({ id: generateId("principal"), tenantId, kind: "agent", refId: SYSTEM_WRITER, status: "active" }, tx);
       if (created) {
         await tx.insert(principalRole).values({ principalId: created.id, roleId: admin.id });
         return created.id;
       }
-      const [found] = await tx.select({ id: principal.id }).from(principal).where(and(eq(principal.tenantId, tenantId), eq(principal.kind, "user"), eq(principal.refId, SYSTEM_WRITER)));
+      const [found] = await tx.select({ id: principal.id }).from(principal).where(and(eq(principal.tenantId, tenantId), eq(principal.kind, "agent"), eq(principal.refId, SYSTEM_WRITER)));
       if (!found) throw new Error(`No ${SYSTEM_WRITER} principal in workspace ${tenantId}.`);
       return found.id;
     });
@@ -82,10 +86,22 @@ export function createSystemWrites({ db, principalKeyStore }: { db: DB["db"]; pr
     return { principalId, cleared: new Set(checks.map(keyOf)) };
   }
 
+  /** Holds the writer's admin seat for the transaction, so admin taken away after the checks still stops the writes. */
+  async function holdAdmin(tx: Tx, tenantId: string, principalId: string): Promise<void> {
+    const { principalRole, role } = schema;
+    const [held] = await tx.select({ roleId: principalRole.roleId })
+      .from(principalRole)
+      .innerJoin(role, eq(role.id, principalRole.roleId))
+      .where(and(eq(principalRole.principalId, principalId), eq(role.tenantId, tenantId), eq(role.name, "admin"), eq(role.isSystem, true)))
+      .for("share", { of: principalRole });
+    if (!held) throw new SystemWriteDenied(tenantId, "Interchange's records", "write");
+  }
+
   return {
     async transaction<T>(tenantId: string, checks: readonly Check[], body: (w: WriteTx) => Promise<T>): Promise<T> {
       const { principalId, cleared } = await clear(tenantId, checks);
-      return db.transaction(function write(tx) {
+      return db.transaction(async function write(tx) {
+        await holdAdmin(tx, tenantId, principalId);
         return body({ tx, tenantId, principalId, cleared });
       });
     },

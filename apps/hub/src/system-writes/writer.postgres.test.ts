@@ -1,10 +1,12 @@
 // Run with: bun run test:postgres
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { type } from "arktype";
 import { and, eq, sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
-import { createDB, createPrincipalKeyStore, runMigrations, schema, type DB } from "@intx/db";
+import { createDB, createPrincipalKeyStore, resolveSenderKey, runMigrations, schema, type DB, type PrincipalKeyStore } from "@intx/db";
 import { DEPLOYER_ROLE } from "@corbits/triage-contracts";
+import { ensureDeployerRole } from "../deployer-role.js";
 import { setUpPublisher } from "../workflow-release/publisher.js";
 import { assignRole, ASSIGNS_ROLE, keepDeploymentsAlive, managesTenant } from "./tenant.js";
 import { createSystemWrites, SYSTEM_WRITER, SystemWriteDenied } from "./writer.js";
@@ -29,8 +31,24 @@ async function withDatabase(body: (db: DB["db"]) => Promise<void>, max?: number)
   }
 }
 
+function keysOn(db: DB["db"]): PrincipalKeyStore {
+  return createPrincipalKeyStore({ db, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)) });
+}
+
 function writesOn(db: DB["db"]) {
-  return createSystemWrites({ db, principalKeyStore: createPrincipalKeyStore({ db, cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)) }) });
+  return createSystemWrites({ db, principalKeyStore: keysOn(db) });
+}
+
+const Waiting = type({ pid: "number" }).array();
+
+/** Resolves once a statement in the test's database waits on a row lock. */
+async function waitingOnLock(db: DB["db"]): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const rows = Waiting.assert(await db.execute(sql`select pid from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`));
+    if (rows.length > 0) return;
+    await Bun.sleep(25);
+  }
+  throw new Error("No statement waited on a lock.");
 }
 
 /** A workspace as stock tenant creation leaves it: a system admin role holding `* read`, `* create` and `* manage`. */
@@ -76,6 +94,7 @@ test("PostgreSQL: each workspace's system writer is minted once under a race, wi
     expect(await rolesOf(db, writerTwo!.id)).toEqual(["rol_two_admin"]);
     const keys = await db.select({ id: schema.principalKey.id }).from(schema.principalKey).where(eq(schema.principalKey.principalId, writerOne!.id));
     expect(keys).toHaveLength(1);
+    expect(await resolveSenderKey(db, keysOn(db), `${SYSTEM_WRITER}@one.test`)).toBeNull();
     expect((await configOf(db, one))?.config).toEqual(KEEP_DEPLOYED);
   });
 }, 60_000);
@@ -105,6 +124,35 @@ test("PostgreSQL: the writer's writes land while it holds admin, and once admin 
   });
 }, 60_000);
 
+test("PostgreSQL: admin taken away after the checks pass, before the writes, stops them", async () => {
+  await withDatabase(async function revokedMidway(db) {
+    const writes = writesOn(db);
+    const tenantId = await workspace(db, "midway");
+    await writes.transaction(tenantId, [managesTenant(tenantId)], (w) => keepDeploymentsAlive(w, new Date()));
+    const [writer] = await writersOf(db, tenantId);
+    let attempt: Promise<void> | undefined;
+    await db.transaction(async function revoke(tx) {
+      await tx.delete(schema.principalRole).where(eq(schema.principalRole.principalId, writer!.id));
+      attempt = writes.transaction(tenantId, [ASSIGNS_ROLE], (w) => assignRole(w, "prn_midway_person", "rol_midway_reviewer"));
+      await waitingOnLock(db);
+    });
+    await expect(attempt!).rejects.toThrow(SystemWriteDenied);
+    expect(await rolesOf(db, "prn_midway_person")).toEqual([]);
+  });
+}, 60_000);
+
+test("PostgreSQL: a role is assigned only when the principal and the role are both in the transaction's workspace", async () => {
+  await withDatabase(async function scoped(db) {
+    const writes = writesOn(db);
+    const home = await workspace(db, "home");
+    await workspace(db, "away");
+    await expect(writes.transaction(home, [ASSIGNS_ROLE], (w) => assignRole(w, "prn_away_person", "rol_home_reviewer"))).rejects.toThrow("must both belong");
+    await expect(writes.transaction(home, [ASSIGNS_ROLE], (w) => assignRole(w, "prn_home_person", "rol_away_reviewer"))).rejects.toThrow("must both belong");
+    expect(await rolesOf(db, "prn_away_person")).toEqual([]);
+    expect(await rolesOf(db, "prn_home_person")).toEqual([]);
+  });
+}, 60_000);
+
 test("PostgreSQL: a write its transaction did not declare throws and changes nothing", async () => {
   await withDatabase(async function undeclared(db) {
     const writes = writesOn(db);
@@ -112,6 +160,8 @@ test("PostgreSQL: a write its transaction did not declare throws and changes not
     const before = await configOf(db, tenantId);
     await expect(writes.transaction(tenantId, [], (w) => assignRole(w, "prn_undeclared_person", "rol_undeclared_reviewer"))).rejects.toThrow("not declared");
     await expect(writes.transaction(tenantId, [], (w) => keepDeploymentsAlive(w, new Date()))).rejects.toThrow("not declared");
+    await expect(writes.transaction(tenantId, [ASSIGNS_ROLE, managesTenant(tenantId)], (w) => ensureDeployerRole(w, new Date()))).rejects.toThrow("not declared");
+    expect(await db.select({ id: schema.role.id }).from(schema.role).where(eq(schema.role.name, DEPLOYER_ROLE))).toEqual([]);
     expect(await rolesOf(db, "prn_undeclared_person")).toEqual([]);
     expect(await configOf(db, tenantId)).toEqual(before);
   });

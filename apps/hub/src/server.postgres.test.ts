@@ -8,13 +8,12 @@ import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
 import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
-import { emptyPack, exportPolicyFile, parseTriageState, TRIAGE_LISTENERS, triageStateName, TriageStats } from "@corbits/triage-contracts";
+import { DEPLOYER_ROLE, emptyPack, exportPolicyFile, parseTriageState, TRIAGE_LISTENERS, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { replaceVerdict } from "./github/verdict-record-store.js";
 import { mirrorOutcomesOf, summaryOf } from "./github/verdict-row.js";
-import { ensureDeployerRole } from "./deployer-role.js";
 import { connectTriage, triageRoleId } from "./github/automation.js";
 import { patchCorbitsTriage, upsertConnectedRepos } from "./github/tenant-config.js";
 import { homedir, tmpdir } from "node:os";
@@ -831,7 +830,8 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     // Triage's own roles are never offered to, or given to, a person.
     const ownRoles = await db.transaction(async function addTriageRoles(tx) {
       await connectTriage(tx, tenantId, [], new Date());
-      return [(await triageRoleId(tx, tenantId))!, await ensureDeployerRole(tx, tenantId, new Date())];
+      const [deployer] = await tx.insert(schema.role).values({ id: `rol_${tenantId}_deployer`, tenantId, name: DEPLOYER_ROLE, isSystem: true }).returning({ id: schema.role.id });
+      return [(await triageRoleId(tx, tenantId))!, deployer!.id];
     });
     const offered = (await refusal(owner, "GET", "")).body as { assignableRoleIds: string[] };
     for (const roleId of ownRoles) {

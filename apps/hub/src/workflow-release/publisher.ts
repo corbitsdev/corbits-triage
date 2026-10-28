@@ -1,5 +1,5 @@
 import { ensureDeployerRole } from "../deployer-role.js";
-import { assignRole, ASSIGNS_ROLE, keepDeploymentsAlive, managesTenant } from "../system-writes/tenant.js";
+import { assignRole, ASSIGNS_ROLE, keepDeploymentsAlive, managesTenant, SETS_ROLE_GRANTS } from "../system-writes/tenant.js";
 import type { SystemWrites } from "../system-writes/writer.js";
 
 /** The local part of the system principal that publishes and deploys a workspace's workflows. */
@@ -12,8 +12,8 @@ export const TRIAGE_PUBLISHER = "triage-publisher";
  * each listener until a newer one replaces it.
  */
 export async function setUpPublisher(writes: SystemWrites, tenantId: string, principalId: string, stamp: Date): Promise<void> {
-  await writes.transaction(tenantId, [ASSIGNS_ROLE, managesTenant(tenantId)], async function setUp(w) {
-    const roleId = await ensureDeployerRole(w.tx, tenantId, stamp);
+  await writes.transaction(tenantId, [...SETS_ROLE_GRANTS, ASSIGNS_ROLE, managesTenant(tenantId)], async function setUp(w) {
+    const roleId = await ensureDeployerRole(w, stamp);
     await assignRole(w, principalId, roleId);
     await keepDeploymentsAlive(w, stamp);
   });

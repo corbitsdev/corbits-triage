@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { schema } from "@intx/db";
 import { type } from "arktype";
 import { lifecycleDurationMs, LifecycleDuration } from "@intx/types";
@@ -19,6 +19,15 @@ export function managesTenant(tenantId: string): Check {
 
 export const ASSIGNS_ROLE: Check = { resource: "role:*", action: "manage" };
 
+const CREATES_ROLE: Check = { resource: "role:*", action: "create" };
+
+const CREATES_GRANT: Check = { resource: "grant:*", action: "create" };
+
+/** Stock checks `manage` on each `grant:<id>` it deletes; the ids are unknown before the transaction, so the wildcard is declared. */
+const MANAGES_GRANTS: Check = { resource: "grant:*", action: "manage" };
+
+export const SETS_ROLE_GRANTS: readonly Check[] = [CREATES_ROLE, CREATES_GRANT, MANAGES_GRANTS];
+
 /** Raises the workspace's deployment lifetime ceiling so each deployment lives until a newer one replaces it. */
 export async function keepDeploymentsAlive(w: WriteTx, stamp: Date): Promise<void> {
   check(w, managesTenant(w.tenantId));
@@ -35,5 +44,9 @@ export async function keepDeploymentsAlive(w: WriteTx, stamp: Date): Promise<voi
 
 export async function assignRole(w: WriteTx, principalId: string, roleId: string): Promise<void> {
   check(w, ASSIGNS_ROLE);
+  const { principal, role } = schema;
+  const [held] = await w.tx.select({ id: principal.id }).from(principal).where(and(eq(principal.id, principalId), eq(principal.tenantId, w.tenantId)));
+  const [given] = await w.tx.select({ id: role.id }).from(role).where(and(eq(role.id, roleId), eq(role.tenantId, w.tenantId)));
+  if (!held || !given) throw new Error(`Principal ${principalId} and role ${roleId} must both belong to workspace ${w.tenantId}.`);
   await w.tx.insert(schema.principalRole).values({ principalId, roleId }).onConflictDoNothing();
 }
