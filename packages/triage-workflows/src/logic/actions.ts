@@ -235,7 +235,9 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
     }
     try {
       const target = resolve(step, input);
-      if ("labels" in target) for (const label of target.labels) stepLabels.add(label.toLowerCase());
+      if ("labels" in target) {
+        for (const label of target.labels) stepLabels.add(label.toLowerCase());
+      }
       const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: step.do, target });
       if (!satisfied(step.do, target, facts)) out.push({ ...base, effectId, target, reason });
     } catch (e) {
