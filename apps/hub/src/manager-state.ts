@@ -646,6 +646,25 @@ export async function recordOverdueWake(db: DB["db"], tenantId: string, pr: Pull
   });
 }
 
+const NewestTake = type([{ at: "string | null" }]);
+
+/** When a manager of the tenant last took a pull request: claimed it, or opened a pass; undefined before any. */
+export async function lastTakeAt(db: DB["db"], tenantId: string): Promise<string | undefined> {
+  const [row] = NewestTake.assert(await db.execute(sql`
+    SELECT max(taken.at) AS at FROM ${managerState},
+    LATERAL (VALUES (${managerState.state}->>'claimedAt'), (${managerState.state}->'pass'->>'takenAt'), (${managerState.state}->'history'->-1->>'takenAt')) AS taken(at)
+    WHERE ${managerState.tenantId} = ${tenantId} AND ${managerState.kind} = 'claim'`));
+  return row.at ?? undefined;
+}
+
+/** When the tenant's oldest pull request mail no manager has taken was recorded, among those recorded after `after`. */
+export async function oldestPendingMail(db: DB["db"], tenantId: string, after: string | undefined): Promise<string | undefined> {
+  const since = after === undefined ? undefined : sql`(${managerState.state}->>'receivedAt')::timestamptz > ${after}::timestamptz`;
+  const [row] = await db.select({ at: sql<string | null>`min(${managerState.state}->>'receivedAt')` }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, since));
+  return row?.at ?? undefined;
+}
+
 /** The tenant's pull requests whose claim holds a reviewer with no result. */
 export async function reviewedPulls(db: DB["db"], tenantId: string): Promise<PullRequestRef[]> {
   const rows = await db.select({ key: managerState.key }).from(managerState)

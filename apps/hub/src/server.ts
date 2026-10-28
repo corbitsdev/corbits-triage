@@ -38,6 +38,7 @@ import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest } from "./manager-state.js";
+import { createTriageLiveness } from "./triage-liveness.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { archiveStoredPolicies } from "./stored-policies.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
@@ -71,7 +72,7 @@ import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
 import { createRolloutQueue, createWorkflowRollout, stopGivenUp, type DeployRequest } from "./workflow-release/rollout.js";
-import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageStalledAfterMs } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
@@ -346,6 +347,7 @@ const wakeManager = createManagerWake({
 const wakeOverdue = createOverdueWake({ db: composition.db, wake: wakeManager, log: logJson });
 await archiveStoredPolicies(composition.db, composition.db, logJson);
 await keepExistingWorkspacesAsking(composition.db, logJson);
+const triageLiveness = createTriageLiveness({ db: composition.db, stalledAfterMs: triageStalledAfterMs(env), now, log: logJson });
 mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
@@ -659,6 +661,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
     await watchListeners(tenant.id);
     await supersedeAll(tenant.id);
     await wakeOverdue(tenant.id);
+    await triageLiveness.watch(tenant.id);
   }
   await endNeverRan(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
   const outcomes: ReconcileOutcome[] = [];
