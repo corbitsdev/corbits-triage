@@ -5,13 +5,13 @@
 // live listener is left alone. A settled head whose verdict waited on CI is
 // queued again here once its CI finished, on hosts and pull requests whose CI
 // results send no webhook.
-import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
+import { CI_START_MS, CI_WAIT_MS, hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
 import { mailPayload, unreadablePayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { deliveryFailure, failHead } from "./triage-queue.js";
 import type { PolicyReader, ResolvedPack } from "./repo-policy.js";
-import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
+import { inFlight, planTenant, requeue, runKey, type ObservedRun, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks } from "@corbits/github-reads";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
@@ -86,6 +86,7 @@ function mergeRows(theirs: readonly PrTriageRow[], ours: readonly PrTriageRow[])
 }
 
 const BUILD_STATUS_CHANGED = "build_status_changed";
+const CI_SETTLED = "ci_settled";
 
 type BuildPoll = { polls: number; at: number };
 
@@ -182,6 +183,34 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       buildPolls.delete(key);
       requeue(plan, row, BUILD_STATUS_CHANGED, deps.now(), deps.policy);
     }
+  }
+
+  /**
+   * Queues a head whose manager ended to wait for its CI once a woken manager has something to decide: CI no longer
+   * pending, no checks past the start grace, or the CI wait over. One read of the head's checks per head per pass.
+   */
+  async function wakeWaiting(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan, runs: ReadonlyMap<string, ObservedRun[]> | undefined): Promise<void> {
+    const name = repo.record.name;
+    const now = deps.now();
+    let read = 0;
+    for (const row of plan.rows.filter((candidate) => candidate.status === "triaged")) {
+      const since = runs?.get(runKey(row.number, row.headSha))?.find((run) => run.status === "completed" && run.waitingSince !== undefined)?.waitingSince;
+      if (since === undefined) continue;
+      const waited = now.getTime() - Date.parse(since);
+      if (waited < CI_WAIT_MS) {
+        read += 1;
+        let ci: ReturnType<typeof summarizeChecks>;
+        try {
+          ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
+        } catch (err) {
+          deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
+          continue;
+        }
+        if (ci === "pending" || (ci === "none" && waited < CI_START_MS)) continue;
+      }
+      requeue(plan, row, CI_SETTLED, now, deps.policy);
+    }
+    if (read > 0) deps.log({ level: "info", msg: "waiting_ci_read", tenantId: pass.tenantId, repo: name, heads: read });
   }
 
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
@@ -302,6 +331,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     for (const repo of loaded) {
       try {
         await pollBuilds(pass, repo, plans.get(repo.record.name)!);
+        await wakeWaiting(pass, repo, plans.get(repo.record.name)!, managed.byRepo.get(repo.record.name));
         await deliverRepo(pass, repo, plans.get(repo.record.name)!);
       } catch (err) {
         if (reconcileFailed({ tenantId: tenant.id, repo: repo.record.name }, err)) failed = true;
