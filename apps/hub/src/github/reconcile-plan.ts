@@ -244,6 +244,18 @@ function runningHeads(runs: TenantPlanInput["runs"], now: Date, policy: Reconcil
   return busy;
 }
 
+/** The tenant's in-flight slots `plans` leave free: `maxInFlight` less the heads queued or running, a manager waiting for CI aside. */
+export function freeSlots(plans: ReadonlyMap<string, RepoPlan>, runs: TenantPlanInput["runs"], now: Date, policy: ReconcilePolicy): number {
+  const busy = runningHeads(runs, now, policy);
+  for (const [name, plan] of plans) {
+    for (const row of plan.rows) {
+      const key = runKey(row.number, row.headSha);
+      if (inFlight(row) && !parked(runs.get(name)?.get(key) ?? [])) busy.add(`${name} ${key}`);
+    }
+  }
+  return Math.max(policy.maxInFlight - busy.size, 0);
+}
+
 type Due = { repo: string; index: number; row: PrTriageRow };
 
 /** A head with no run and no verdict, even if its mail failed to deliver. */

@@ -428,7 +428,11 @@ any other tenant or an unknown sender.
   the same way, and the judgement stays on the reviewer for the pass after
   CI. A check finishing, a reviewer's result or a new head reaches the hub,
   which mails the live manager or has the listener deploy one, and a new
-  head's pass starts over. A pull request with nothing outstanding has no
+  head's pass starts over. The listener is asked once per manager start: the
+  claim keeps when it was asked (`deployAskedAt`), and until a manager takes
+  the claim, or for the 2-minute start grace at most, a further mail is only
+  recorded for that manager to take; a mail that failed to reach the listener
+  withdraws its ask. A pull request with nothing outstanding has no
   manager. The hub keeps, on the claim, whether each closed pass waited for
   CI, and answers take with `waitingSince`, when the head's unbroken run of
   waiting passes began, and `headSince`, when the head's first closed pass

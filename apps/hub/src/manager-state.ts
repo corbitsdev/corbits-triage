@@ -598,21 +598,37 @@ async function endedWaiting(tx: Tx, tenantId: string, pr: PullRequestRef, histor
 function deploying(claim: Claim, now: Date): boolean {
   if (claim.deployAskedAt === undefined) return false;
   const asked = Date.parse(claim.deployAskedAt);
-  return asked > Date.parse(claim.claimedAt) && now.getTime() - asked < MANAGER_START_GRACE_MS;
+  const taken = claim.starts > 0 && Date.parse(claim.claimedAt) >= asked;
+  return !taken && now.getTime() - asked < MANAGER_START_GRACE_MS;
 }
 
 /**
- * Whether the listener is to deploy a manager for the pull request, recording on its claim that one was asked for.
- * False while one asked for earlier is still on its way: the mail is recorded, and that manager takes it.
+ * When the hub asked the listener to deploy a manager for the pull request, recorded on its claim, which a pull request
+ * no manager has taken yet gets with no start. Undefined while one asked for earlier is still on its way: the mail is
+ * recorded, and that manager takes it.
  */
-export async function askDeploy(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<boolean> {
+export async function askDeploy(db: DB["db"], tenantId: string, pr: PullRequestRef): Promise<string | undefined> {
   return db.transaction(async function asked(tx) {
-    const claim = await lockClaim(tx, tenantId, pr);
-    if (!claim) return true;
+    const key = claimKey(pr);
     const now = new Date();
-    if (deploying(claim, now)) return false;
-    await writeClaim(tx, tenantId, pr, { ...claim, deployAskedAt: now.toISOString() });
-    return true;
+    const unstarted = { status: "ended" as const, claimId: randomUUID(), claimedAt: now.toISOString(), reviewers: [], history: [], starts: 0 };
+    await tx.insert(managerState).values({ tenantId, key, kind: "claim", state: claimOf(key, unstarted) }).onConflictDoNothing();
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) throw new Error(`manager_state ${key} vanished under its lock`);
+    if (deploying(claim, now)) return undefined;
+    const at = now.toISOString();
+    await writeClaim(tx, tenantId, pr, { ...claim, deployAskedAt: at });
+    return at;
+  });
+}
+
+/** Withdraws the ask made `at` once its mail to the listener failed, so the next mail asks again. */
+export async function withdrawDeploy(db: DB["db"], tenantId: string, pr: PullRequestRef, at: string): Promise<void> {
+  await db.transaction(async function withdrawn(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) return;
+    const { deployAskedAt, ...kept } = claim;
+    if (deployAskedAt === at) await writeClaim(tx, tenantId, pr, kept);
   });
 }
 

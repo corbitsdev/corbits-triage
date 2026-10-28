@@ -254,6 +254,17 @@ describe("triage reconciler", () => {
     expect(over.logged).not.toContainEqual(expect.objectContaining({ msg: "waiting_ci_read" }));
   });
 
+  test("woken heads take the tenant's free in-flight slots, longest waiting first, and the rest wait for a later pass", async () => {
+    function waited(number: number, minutes: number): [number, ObservedRun] {
+      const since = at(-minutes).toISOString();
+      return [number, { runId: `run_${number}`, source: "github", status: "completed", startedAt: since, waitingSince: since }];
+    }
+    const finished = [{ name: "build", status: "completed", conclusion: "success" }];
+    const { reconcile, delivered } = harness(runsOf(waited(1, 5), waited(2, 20)), [head(1), head(2)], { maxInFlight: "1", headChecks: finished });
+    await reconcile();
+    expect(mailedNumbers(delivered)).toEqual([2]);
+  });
+
   test("a verdict that read CI as cancelled is not queued again while it stays cancelled, however many reads, and is once a check is re-run", async () => {
     const cancelled = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed", output: { kind: "values", values: { status: "cancelled" } } }] };
     let now = NOW;
