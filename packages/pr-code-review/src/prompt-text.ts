@@ -1,8 +1,8 @@
 // The tags the review's messages wrap pull request text in. Only a `<` that would open or close one of them is
 // rewritten, so code with arrows, generics or markup reaches the model as written.
 const TAGS = [
-  "pull_request", "title", "description", "diff", "changed_files", "plan", "findings", "finding", "candidate",
-  "quoted_code", "file", "cited_code", "repository", "budget",
+  "pull_request", "title", "description", "diff", "changed_files", "plan", "findings", "finding", "cited_code",
+  "repository", "budget",
 ];
 // A model may still read a tag broken up by invisible format characters, or by spaces after its slash.
 const TAG_START = new RegExp(`<(?=\\p{Cf}*(?:/[\\s\\p{Cf}]*)?(?:${TAGS.join("|")})\\b)`, "gu");

@@ -72,13 +72,6 @@ const PLAN_SCHEMA = {
   },
 };
 
-const CHECK_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["verdict", "reason"],
-  properties: { verdict: { type: "string", enum: ["real", "not_real"] }, reason: { type: "string" } },
-};
-
 const CONSOLIDATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -123,13 +116,13 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
     return { sources: [{ provider: profile.provider, model: profile.models[role] }] };
   }
 
-  function structuredAgent(id: string, name: "plan" | "check" | "write", schema: Record<string, unknown>) {
+  function structuredAgent(id: string, name: "plan" | "write", schema: Record<string, unknown>) {
     return defineAgent({ id, systemPrompt: SYSTEM_PROMPTS[name], tools: [], capabilities: [], inference: inference(name), director: structured.build({ name, schema }) });
   }
 
   /** The diff finder: one model turn over the pull request's diff, no tools, run by the reader so an unreadable answer fails its step. */
   function finderAgent(systemPrompt = SYSTEM_PROMPTS["finder-diff"]) {
-    return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference: inference("diffFinder"), director: reader.build({}) });
+    return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference: inference("diffFinder"), director: reader.build({ answer: "findings" }) });
   }
 
   /** The repository finder: the model reads the checkout its input names with the read tools, confined to it. */
@@ -140,7 +133,7 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
       tools: [repoReadUnder(dataDir)],
       capabilities: [],
       inference: inference("repoFinder"),
-      director: reader.build({ tools: "finder-repo" }),
+      director: reader.build({ tools: "finder-repo", answer: "findings" }),
     });
   }
 
@@ -160,8 +153,16 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
     finderAgent,
     repoFinderAgent,
     consolidateAgent,
+    /** Verifies one finding against the code, reading the checkout its input names with the read tools. */
+    checkAgent: defineAgent({
+      id: "code-review-check",
+      systemPrompt: SYSTEM_PROMPTS.check,
+      tools: [repoReadUnder(dataDir)],
+      capabilities: [],
+      inference: inference("check"),
+      director: reader.build({ tools: "check", answer: "verdict" }),
+    }),
     planAgent: structuredAgent("code-review-plan", "plan", PLAN_SCHEMA),
-    checkAgent: structuredAgent("code-review-check", "check", CHECK_SCHEMA),
     writeAgent: structuredAgent("code-review-write", "write", WRITE_SCHEMA),
   };
 }

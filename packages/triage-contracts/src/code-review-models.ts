@@ -1,10 +1,11 @@
 /**
  * The code review providers, each a package of its own (`@corbits/pr-code-review-<provider>`): the vault credential
  * that holds its key and the catalog models its steps name. A workspace runs the one whose key it stores.
- * Anthropic runs Opus for the diff finder, which found most of the bugs in the eval, and Haiku for every other step.
+ * Anthropic's smart model, Opus, runs the diff finder, which found most of the bugs in the eval, and the check that
+ * verifies each finding; its fast model, Haiku, runs every other step.
  */
 export const CODE_REVIEW_PROVIDERS = {
-  anthropic: { credential: "anthropic", models: { diffFinder: "claude-opus-5-5", other: "claude-haiku-5-5" } },
+  anthropic: { credential: "anthropic", models: { smart: "claude-opus-5-5", fast: "claude-haiku-5-5" } },
 } as const;
 
 export type CodeReviewProvider = keyof typeof CODE_REVIEW_PROVIDERS;

@@ -20,7 +20,7 @@ function foundOf(output: { reply: string }, finder: "diff" | "repo"): Candidate[
 function saved(diff: object[], repo: object[], kept: Candidate[], groups: Group[]): SavedOutputs {
   const findDiff = reply(diff);
   const findRepo = reply(repo);
-  const consolidated = { groups, sites: kept.map(({ path, start, end }) => ({ path, start, end })), excerpts: kept.map(() => ""), unreadFindings: [] };
+  const consolidated = { groups, sites: kept.map(({ path, start, end }) => ({ path, start, end })), unreadFindings: [] };
   const findings = orderedGroups(kept, consolidated).map((o) => o.finding);
   return {
     findDiff,

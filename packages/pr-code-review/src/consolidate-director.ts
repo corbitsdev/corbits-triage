@@ -100,9 +100,9 @@ function readsOf(findings: readonly Finding[]): Read[] {
  * Reads the lines around each finding the input lists at the head it names, through the host's `*_read_file`, out of
  * the model's history, each stretch of a file once, and moves each finding onto the line its quoted code names. Then
  * one model call, with the cited lines appended to the system prompt, decoded against the schema. The reply is the
- * model's JSON with `sites`, each finding's anchored range by index, `excerpts`, the numbered lines read around
- * each, and `unreadFindings`, the index of each finding the model was shown no line of, which keeps its range. A failed
- * model call or an answer that isn't JSON fails the step, so its retry asks again.
+ * model's JSON with `sites`, each finding's anchored range by index, and `unreadFindings`, the index of each finding
+ * the model was shown no line of, which keeps its range. A failed model call or an answer that isn't JSON fails the
+ * step, so its retry asks again.
  */
 function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { name, schema }: ConsolidateDirectorConfig): ReactorDirector {
   const reads = new Map<string, Read>();
@@ -147,7 +147,7 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
     if (!named) throw new Error(`${name}: the input names no repository head`);
     checkout = named;
     findings = findingsIn(content);
-    if (findings.length === 0) return caps.reply(JSON.stringify({ groups: [], sites: [], excerpts: [], unreadFindings: [] }));
+    if (findings.length === 0) return caps.reply(JSON.stringify({ groups: [], sites: [], unreadFindings: [] }));
     return run(readsOf(findings).map(read));
   }
 
@@ -178,9 +178,8 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
   function onTurn(turn: AssistantTurn) {
     const text = turnText(turn);
     try {
-      const excerpts = sites.map((site) => numbered(linesOf(site.path), site.start - READ_AROUND, site.end + READ_AROUND));
       const unreadFindings = sites.flatMap((site, i) => (shown(site, linesOf(site.path)) === "" ? [i] : []));
-      return caps.reply(JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), sites, excerpts, unreadFindings }));
+      return caps.reply(JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), sites, unreadFindings }));
     } catch {
       throw new Error(`${name}: replied without JSON: ${text.slice(0, 200)}`);
     }

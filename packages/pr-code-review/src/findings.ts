@@ -41,15 +41,20 @@ function findingsListOf(json: unknown): Record<string, unknown>[] | undefined {
   return json.findings.every(isRecord) ? json.findings : undefined;
 }
 
-/** The `findings` array of the first balanced JSON object in `text` that parses and holds one, trying each `{` in turn. */
-export function firstFindingsList(text: string): Record<string, unknown>[] | undefined {
+/** What `pick` takes from the first balanced JSON object in `text` that parses and that it accepts, trying each `{` in turn. */
+export function firstObject<T>(text: string, pick: (json: unknown) => T | undefined): T | undefined {
   for (let open = text.indexOf("{"); open !== -1; open = text.indexOf("{", open + 1)) {
     const close = closingBrace(text, open);
     if (close === -1) continue;
-    const list = findingsListOf(parseJson(text.slice(open, close + 1)));
-    if (list) return list;
+    const picked = pick(parseJson(text.slice(open, close + 1)));
+    if (picked !== undefined) return picked;
   }
   return undefined;
+}
+
+/** The `findings` array of the first JSON object in `text` that holds one. */
+export function firstFindingsList(text: string): Record<string, unknown>[] | undefined {
+  return firstObject(text, findingsListOf);
 }
 
 function closingBrace(text: string, open: number): number {
