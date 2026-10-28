@@ -3,8 +3,8 @@ import { CONVENTIONAL_FIELDS, DEFAULT_MARKS, DEFAULT_RISK, DEFAULT_SENSITIVE, RE
 
 export const ISSUE_TRACKER_NAMES: Record<IssueTracker, string> = { github: "GitHub", linear: "Linear", either: "GitHub or Linear", off: "Not required" };
 
-function count(value: number | undefined): string {
-  return value?.toLocaleString() ?? "any number of";
+function sizeSentence(value: number | undefined, measure: string, unset: string): string {
+  return value === undefined ? `Flag pull requests that ${unset}` : `Flag pull requests over ${value.toLocaleString()} ${measure}`;
 }
 
 const CONVENTIONAL_SUBJECTS = { title: "a conventional commit title", commits: "conventional commit messages", both: "a conventional commit title and messages" } as const;
@@ -23,11 +23,11 @@ function conventionalSentence(row: CatalogCheck | undefined): string {
 }
 
 const CATALOG_SENTENCES: Record<CatalogId, (row: CatalogCheck | undefined) => string> = {
-  "max-files-changed": (row) => `Flag pull requests over ${count(row?.maxFiles)} files changed`,
-  "max-lines-changed": (row) => `Flag pull requests over ${count(row?.maxLines)} lines changed`,
-  "max-lines-changed-per-file": (row) => `Flag pull requests over ${count(row?.maxFileLines)} lines changed in one file`,
-  "max-additions": (row) => `Flag pull requests over ${count(row?.maxAdditions)} lines added`,
-  "max-deletions": (row) => `Flag pull requests over ${count(row?.maxDeletions)} lines deleted`,
+  "max-files-changed": (row) => sizeSentence(row?.maxFiles, "files changed", "change too many files"),
+  "max-lines-changed": (row) => sizeSentence(row?.maxLines, "lines changed", "change too many lines"),
+  "max-lines-changed-per-file": (row) => sizeSentence(row?.maxFileLines, "lines changed in one file", "change too many lines in one file"),
+  "max-additions": (row) => sizeSentence(row?.maxAdditions, "lines added", "add too many lines"),
+  "max-deletions": (row) => sizeSentence(row?.maxDeletions, "lines deleted", "delete too many lines"),
   "linked-issue": (row) => `Require a linked issue from ${ISSUE_TRACKER_NAMES[row?.tracker && row.tracker !== "off" ? row.tracker : RECOMMENDED_ISSUE.tracker]}`,
   "no-merge-conflicts": () => "Flag merge conflicts with the base branch",
   "ci-green": () => "CI must pass before merge",

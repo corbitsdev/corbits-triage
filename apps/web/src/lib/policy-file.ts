@@ -1,6 +1,6 @@
 import { queryOptions, skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { RepoSource } from "@corbits/triage-contracts";
-import { exportPolicyFile, loadPolicyFile, loadPolicyPushAccess, previewPolicy, pushPolicyFile } from "./hub-api.ts";
+import type { PolicyPatchChange, RepoSource } from "@corbits/triage-contracts";
+import { exportPolicyFile, loadPolicyFile, loadPolicyPushAccess, patchPolicyFile, previewPolicy, pushPolicyFile, type CheckPackArtifact } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
 import { usePortal } from "./portal.tsx";
 
@@ -66,4 +66,51 @@ export function usePolicyEditActions(repo: string, source: RepoSource) {
     onSuccess: reread,
   });
   return { preview, propose, push };
+}
+
+/** The policy Triage would read from the open policy pull request's file, which the page's switches show until it merges. */
+export function useBranchPolicy(repo: string, source: RepoSource, text: string | undefined) {
+  const { snapshot } = usePortal();
+  const tenantId = snapshot?.workspace.tenantId;
+  const queryFn = tenantId === undefined || text === undefined ? skipToken : async function readBranchPolicy(): Promise<CheckPackArtifact> {
+    return previewPolicy(createHubTransport(), tenantId, repo, source, text);
+  };
+  return useQuery({ queryKey: ["policy-branch", tenantId, repo, source, text], queryFn, staleTime: Infinity });
+}
+
+/** The file before and after a batch, and the policy Triage would read from the file after it. */
+export type PatchPreview = { before: string; after: string; read: CheckPackArtifact };
+
+/** What a batch of changes would make of the file, read again whenever the batch changes; it writes nothing. */
+export function usePatchPreview(repo: string, source: RepoSource, changes: readonly PolicyPatchChange[]) {
+  const { snapshot } = usePortal();
+  const tenantId = snapshot?.workspace.tenantId;
+  const queryFn = tenantId === undefined || changes.length === 0 ? skipToken : async function readPreview(): Promise<PatchPreview> {
+    const transport = createHubTransport();
+    const patched = await patchPolicyFile(transport, tenantId, repo, source, changes, true);
+    if (!("after" in patched)) throw new Error("The preview opened a pull request.");
+    return { ...patched, read: await previewPolicy(transport, tenantId, repo, source, patched.after) };
+  };
+  return useQuery({ queryKey: ["policy-patch-preview", tenantId, repo, source, changes], queryFn, retry: false });
+}
+
+/** Opening one pull request with a batch of changes, or adding them to the open one; the policy and its pull request are read again. */
+export function usePolicyPatch(repo: string, source: RepoSource) {
+  const { snapshot } = usePortal();
+  const tenantId = snapshot?.workspace.tenantId;
+  const queryClient = useQueryClient();
+
+  async function reread() {
+    await Promise.all([POLICY_FILE_QUERY_KEY, "check-pack", "policy-upgrades"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId] })));
+  }
+
+  return useMutation({
+    mutationFn: async function openPull(changes: readonly PolicyPatchChange[]) {
+      if (tenantId === undefined) throw new Error("The workspace is not known yet.");
+      const opened = await patchPolicyFile(createHubTransport(), tenantId, repo, source, changes, false);
+      if (!("status" in opened)) throw new Error("Nothing in the file changed, so no pull request was opened.");
+      return opened;
+    },
+    onSuccess: reread,
+  });
 }

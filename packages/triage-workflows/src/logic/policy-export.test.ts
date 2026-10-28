@@ -112,7 +112,7 @@ describe("a saved policy exported as a policy file", () => {
     };
     const { text, unexpressed } = exportPolicyFile(saved);
     expect(unexpressed).toEqual([
-      "Flag pull requests over any number of lines changed stops after the merge; a policy file can't hold it without a value.",
+      "Flag pull requests that change too many lines stops after the merge; a policy file can't hold it without a value.",
       "Risk level is called Risk in the file.",
       "Risk level stops after the merge; a policy file can't hold it.",
       "Per file stops after the merge; a policy file can't hold it.",
