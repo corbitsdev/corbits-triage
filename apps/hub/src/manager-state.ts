@@ -13,6 +13,7 @@ import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./git
 import { timings } from "./timings.js";
 import { triageSchema } from "./triage-db.js";
 import { START_DEADLINE_MS } from "./workflow-release/rollout.js";
+import { CAPACITY_UNAVAILABLE } from "./sidecar/host-capacity.js";
 
 const managerState = triageSchema.table("manager_state", {
   tenantId: text("tenant_id").notNull(),
@@ -34,6 +35,9 @@ const ClaimState = type({
   starts: "number.integer >= 0",
   "overdueWokenAt?": "string.date.iso",
   "deployAskedAt?": "string.date.iso",
+  /** The manager the listener last deployed for the pull request, and that run once a provisioner refused its placement for capacity. */
+  "deployedRunId?": "string > 0",
+  "refusedRunId?": "string > 0",
 });
 const EventPayload = type("Record<string, unknown>").narrow(function plainObject(value) {
   return !Array.isArray(value);
@@ -222,6 +226,7 @@ type ManagerRun = {
   allocationId: string | null;
   generation: number | null;
   allocationStatus: string | null;
+  allocationFailure: string | null;
   sidecarId: string | null;
 };
 
@@ -242,6 +247,7 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
       allocationId: schema.sidecarAllocation.id,
       generation: schema.sidecarAllocation.generation,
       allocationStatus: schema.sidecarAllocation.status,
+      allocationFailure: schema.sidecarAllocation.failureCode,
       sidecarId: schema.sidecarAllocation.sidecarId,
     })
     .from(schema.workflowRun)
@@ -368,7 +374,9 @@ async function claimFor(tx: Tx, tenantId: string, pr: PullRequestRef, runId: str
   if (claim.status === "live" && claim.runId === runId) return claim;
   if (claim.status === "live" && claim.runId !== undefined && !(await runGone(tx, claim.runId, now))) return undefined;
   if (claim.runId !== undefined && claim.runId !== runId) await releaseStuck(tx, claim.runId, now, "manager deployed without a sidecar or never ran");
-  const taken = { ...claim, ...fresh, starts: claim.starts + 1 };
+  // A manager runs now, so a refusal recorded for the one deployed earlier no longer holds the pull request.
+  const { refusedRunId: _refused, ...kept } = claim;
+  const taken = { ...kept, ...fresh, starts: claim.starts + 1 };
   await writeClaim(tx, tenantId, pr, taken);
   return taken;
 }
@@ -570,10 +578,12 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
  * A pull request a manager claimed: its closed passes; while its manager is up, that run, the head of the newest pull
  * request mail recorded, the pass it has open, since when it has waited for that head's CI and what its reviewers on
  * that head have yet to report before their deadlines; the pass a manager that went away left open; and, once no
- * manager is up, the newest head its last pass left waiting for CI, with that pass's run and since when it waited.
+ * manager is up, the newest head its last pass left waiting for CI, with that pass's run and since when it waited;
+ * `roomless` while no manager is up and the last one deployed for it was refused a placement for capacity.
  */
 export type ManagedPull = {
   pr: PullRequestRef;
+  roomless?: true;
   history: ClosedPass[];
   live?: { runId: string; head?: string; pass?: Pass; waitingSince?: string; awaiting: AwaitedStage[] };
   gone?: { runId: string; pass: Pass };
@@ -623,6 +633,36 @@ export async function askDeploy(db: DB["db"], tenantId: string, pr: PullRequestR
     await writeClaim(tx, tenantId, pr, { ...claim, deployAskedAt: at });
     return at;
   });
+}
+
+/** `unasked`: the hub never asked for a manager for the pull request; `elsewhere`: another pull request's claim names the run. */
+export type DeployedOutcome = "noted" | "unasked" | "elsewhere";
+
+/** Records the manager the listener deployed for the pull request. */
+export async function recordDeployed(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string): Promise<DeployedOutcome> {
+  return db.transaction(async function deployed(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (!claim) return "unasked";
+    const [other] = await tx.select({ key: managerState.key }).from(managerState)
+      .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'claim'`, sql`${managerState.key} <> ${claimKey(pr)}`, sql`${managerState.state}->>'deployedRunId' = ${runId}`))
+      .limit(1);
+    if (other) return "elsewhere";
+    // A provisioner may refuse the run before the listener names it, when no claim yet names it for the refusal to land on.
+    const run = await managerRun(tx, runId);
+    const waiting = run?.allocationStatus === "replacing" && run.allocationFailure === CAPACITY_UNAVAILABLE;
+    await writeClaim(tx, tenantId, pr, { ...claim, deployedRunId: runId, ...(waiting && { refusedRunId: runId }) });
+    return "noted";
+  });
+}
+
+/**
+ * Records on the claim naming `runId` as its deployed manager that a provisioner refused the run's placement for
+ * capacity. Stock keeps that reason only while the placement waits, so it is kept here for the reconciler.
+ */
+export async function recordRefused(db: DB["db"], tenantId: string, runId: string): Promise<void> {
+  await db.update(managerState)
+    .set({ state: sql`${managerState.state} || jsonb_build_object('refusedRunId', ${runId}::text)` })
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'claim'`, sql`${managerState.state}->>'deployedRunId' = ${runId}`));
 }
 
 /** Withdraws the ask made `at` once its mail to the listener failed, so the next mail asks again. */
@@ -793,7 +833,8 @@ export async function managedPulls(db: DB["db"], tenantId: string, pulls: readon
       const runId = claim.status === "live" ? claim.runId : undefined;
       if (runId === undefined) {
         const waiting = await endedWaiting(tx, tenantId, pr, claim.history);
-        managed.push({ pr, history: claim.history, ...(waiting && { waiting }) });
+        const roomless = claim.deployedRunId !== undefined && claim.refusedRunId === claim.deployedRunId;
+        managed.push({ pr, history: claim.history, ...(waiting && { waiting }), ...(roomless && { roomless }) });
       } else if (await runGone(tx, runId, now)) {
         managed.push({ pr, history: claim.history, ...(claim.pass && { gone: { runId, pass: claim.pass } }) });
       } else {

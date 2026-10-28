@@ -1,12 +1,13 @@
 // The local sidecar cap with no sandbox to overflow to: a manager placed while the listener and another manager fill
-// both slots is refused for capacity and retried, and runs once the other ends.
+// both slots is refused for capacity and retried, its head reads queued for capacity meanwhile, and it runs once the
+// other ends.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
-import { DEFAULT_TIMINGS, TIMING_VARIABLES } from "@corbits/triage-contracts";
+import { DEFAULT_TIMINGS, parseTriageState, TIMING_VARIABLES, triageStateName, WAITING_FOR_CAPACITY, type PrTriageRow } from "@corbits/triage-contracts";
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { stubModel } from "./model.ts";
 import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
@@ -86,7 +87,26 @@ async function until<T>(what: string, read: () => Promise<T | undefined>, ms = 1
   throw new Error(`Timed out waiting for ${what}.\n${hub.logs.slice(-80).join("\n")}`);
 }
 
-type Claim = { status: "live" | "ended"; runId?: string; starts: number; deployAskedAt?: string; history: { head: string; runId: string }[] };
+async function triageRow(repo: string): Promise<PrTriageRow | undefined> {
+  const [stored] = await rows(`select content from artifacts.artifact where tenant_id = '${workspace.tenantId}' and title = '${triageStateName(repo)}' and archived_at is null`);
+  return parseTriageState(stored?.["content"], repo)?.prs.find((row) => row.number === 1);
+}
+
+/** The refused head once it reads queued for capacity; on a timeout, the error names its claim's runs and its row. */
+async function waitingForCapacity(): Promise<PrTriageRow> {
+  try {
+    return await until("the refused head to read queued for capacity", async () => {
+      const row = await triageRow(SECOND);
+      return row?.error === WAITING_FOR_CAPACITY ? row : undefined;
+    });
+  } catch (err) {
+    const claim = await claimOf(SECOND);
+    const seen = { deployedRunId: claim?.deployedRunId, refusedRunId: claim?.refusedRunId, row: await triageRow(SECOND) };
+    throw new Error(`${String(err)}\n${SECOND}: ${JSON.stringify(seen)}`, { cause: err });
+  }
+}
+
+type Claim = { status: "live" | "ended"; runId?: string; starts: number; deployAskedAt?: string; deployedRunId?: string; refusedRunId?: string; history: { head: string; runId: string }[] };
 
 async function claimOf(repo: string): Promise<Claim | undefined> {
   const [row] = await rows(`select state from corbits_triage.manager_state where kind = 'claim' and key = 'mgr:github:${repo}#1'`);
@@ -108,6 +128,8 @@ test("with every local slot taken and no sandbox, a manager waits for one to fre
   expect(waiting).toEqual({ failure_code: "capacity_unavailable" });
   expect(hub.logs.some((line) => line.includes('"msg":"local_sidecar_refused"') && line.includes("2 local sidecars already run"))).toBe(true);
   expect(await claimOf(SECOND)).toMatchObject({ status: "ended", starts: 0, deployAskedAt: expect.any(String), history: [] });
+  const queued = await waitingForCapacity();
+  expect(queued).toMatchObject({ status: "queued", attempts: 0 });
 
   releaseFirst();
   const second = await until("the second manager to post its verdict", async () => {

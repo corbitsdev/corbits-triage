@@ -1,6 +1,6 @@
 // Decides, from what the host and the managers' runs say now, which open pull
 // requests to queue again. Pure, so every recovery path is decided in one place.
-import { PR_TRIAGE_STUCK_RUN_MS, type AwaitedStage, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
+import { PR_TRIAGE_STUCK_RUN_MS, WAITING_FOR_CAPACITY, type AwaitedStage, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
 import { MODEL_NOT_ASKED } from "@corbits/triage-workflows/logic/settled";
 
 /** `labels` only where the host lists them. */
@@ -81,6 +81,8 @@ export type TenantPlanInput = {
   repos: readonly RepoPlanInput[];
   /** Every observed run, by repository, then by `${number}@${headSha}`, whether or not its repository or head is still here. */
   runs: ReadonlyMap<string, ReadonlyMap<string, readonly ObservedRun[]>>;
+  /** By `pullKey`, the pull requests whose last manager every provisioner refused a placement for capacity. */
+  roomless: ReadonlySet<string>;
   now: Date;
   policy: ReconcilePolicy;
 };
@@ -93,6 +95,10 @@ export type RepoPlan = { rows: PrTriageRow[]; enqueue: QueuedPr[] };
 
 export function runKey(number: number, headSha: string): string {
   return `${number}@${headSha}`;
+}
+
+export function pullKey(repo: string, number: number): string {
+  return `${repo}#${number}`;
 }
 
 export function runKeyNumber(key: string): number {
@@ -162,9 +168,11 @@ function sinceStale(row: PrTriageRow, runs: readonly ObservedRun[], policy: Reco
  * only sees runs since it was queued, so a head queued again on top of a
  * verdict stays queued until its new run starts. Runs from before the base
  * branch last moved settle nothing; one of them in flight holds the head
- * until it ends, and the head is stale then.
+ * until it ends, and the head is stale then. A queued head whose last manager
+ * was refused for capacity stays queued, never aging, until a manager deployed
+ * since is not refused.
  */
-function observe(row: PrTriageRow, observed: readonly ObservedRun[], now: Date, policy: ReconcilePolicy): PrTriageRow {
+function observe(row: PrTriageRow, observed: readonly ObservedRun[], roomless: boolean, now: Date, policy: ReconcilePolicy): PrTriageRow {
   const at = now.toISOString();
   const waiting = row.status === "queued" || row.status === "running";
   const current = sinceStale(row, observed, policy);
@@ -184,6 +192,12 @@ function observe(row: PrTriageRow, observed: readonly ObservedRun[], now: Date, 
   if (ended) {
     const failed = withStatus(row, { status: "failed", run: ended, error: failure(ended, isStuck(ended, now, policy)) }, at);
     return row.status === "triaged" && ended.unsettled === MODEL_NOT_ASKED ? { ...failed, attempts: 0 } : failed;
+  }
+  if (row.status === "queued" && roomless) return withStatus(row, { status: "queued", error: WAITING_FOR_CAPACITY }, at);
+  if (row.status === "queued" && row.error === WAITING_FOR_CAPACITY) {
+    // A manager deployed since the refusal was not refused, so the head waits for it from now as any queued head does.
+    const { error: _error, ...rest } = row;
+    return { ...rest, queuedAt: at, updatedAt: at };
   }
   if (row.status === "queued" && row.queuedAt !== undefined && now.getTime() - ms(row.queuedAt) > policy.unstartedAfterMs) {
     return withStatus(row, { status: "failed", error: NEVER_STARTED }, at);
@@ -208,6 +222,8 @@ function isDue(row: PrTriageRow, pr: OpenPr, runs: readonly ObservedRun[], now: 
   if (row.status === "new") return now.getTime() - ms(pr.updatedAt) >= policy.webhookGraceMs;
   // Mail that reached no listener says nothing about the head, so it goes out again on the first pass a listener is up.
   if (row.status === "failed" && row.unrouted) return true;
+  // A head waiting for capacity asks for a manager again on every pass; the hub's hold on a recent ask paces the deploys.
+  if (row.status === "queued" && row.error === WAITING_FOR_CAPACITY) return true;
   if (row.status !== "failed" || row.attempts >= policy.maxAttempts) return false;
   const last = row.queuedAt === undefined ? -Infinity : ms(row.queuedAt);
   const verdict = runs.find((run) => run.runId === row.runId);
@@ -281,7 +297,7 @@ export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: D
 }
 
 /** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running, a manager waiting for CI aside. */
-export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<string, RepoPlan> {
+export function planTenant({ repos, runs, roomless, now, policy }: TenantPlanInput): Map<string, RepoPlan> {
   const at = now.toISOString();
   const plans = new Map<string, RepoPlan>();
   const due: Due[] = [];
@@ -294,18 +310,22 @@ export function planTenant({ repos, runs, now, policy }: TenantPlanInput): Map<s
       const key = runKey(pr.number, pr.headSha);
       const current = fresh(pr, byHead.get(key), at);
       const runsOfHead = observed?.get(key) ?? [];
-      const row = uncapped(observe(current, runsOfHead, now, policy), now, policy);
+      const row = uncapped(observe(current, runsOfHead, roomless.has(pullKey(name, pr.number)), now, policy), now, policy);
       if (inFlight(row) && !parked(runsOfHead)) busy.add(`${name} ${key}`);
       if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row });
       next.push(row);
     }
     plans.set(name, { rows: next, enqueue: [] });
   }
-  for (const { repo, index, row } of due.sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0))) {
+  // A head waiting for capacity already holds its slot, so it asks again whatever the others leave free.
+  const holding = due.filter((entry) => inFlight(entry.row));
+  const next = due.filter((entry) => !inFlight(entry.row)).sort(byWait).slice(0, Math.max(policy.maxInFlight - busy.size, 0));
+  for (const { repo, index, row } of [...holding, ...next]) {
     const plan = plans.get(repo)!;
-    const { runId: _run, error: _error, unrouted, ...rest } = row;
-    const attempts = unrouted ? row.attempts : row.attempts + 1;
-    plan.rows[index] = { ...rest, status: "queued", attempts, queuedAt: at, updatedAt: at };
+    const { runId: _run, error, unrouted, ...rest } = row;
+    const roomless = error === WAITING_FOR_CAPACITY;
+    const attempts = unrouted || roomless ? row.attempts : row.attempts + 1;
+    plan.rows[index] = { ...rest, status: "queued", attempts, queuedAt: at, updatedAt: at, ...(roomless && { error }) };
     const reason = row.error ?? "never triaged";
     const noWait = decideNow(attempts, policy);
     plan.enqueue.push({ number: row.number, reason, ...(noWait && { noWait }) });

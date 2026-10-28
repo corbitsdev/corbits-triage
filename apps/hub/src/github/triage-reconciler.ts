@@ -408,6 +408,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const plans = planTenant({
       repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored.rows })),
       runs: managed.byRepo,
+      roomless: managed.roomless,
       now: deps.now(),
       policy: deps.policy,
     });

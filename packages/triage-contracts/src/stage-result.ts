@@ -6,6 +6,8 @@ import { REPO_SOURCES } from "./repo-source.js";
 /** The grant on a pull request's manager claim and events that the hub's manager routes require. */
 export const MANAGER_STATE_RESOURCE = "triage-manager:state";
 export const MANAGER_STATE_ACTION = "write";
+/** The grant a listener needs to name the manager it deployed for a pull request, and nothing else on its state. */
+export const MANAGER_DEPLOYED_ACTION = "deployed";
 
 /** The grant a reviewer needs to report its result to the pull request's manager, and nothing else. */
 export const MANAGER_RESULT_RESOURCE = "triage-manager:result";

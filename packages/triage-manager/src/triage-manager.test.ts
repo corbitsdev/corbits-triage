@@ -26,6 +26,7 @@ const HUB_ORIGIN = "https://hub.test";
 const TENANT_PATH = `/api/tenants/${TENANT}`;
 const END = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${RUN}` };
 const DEPLOY = { method: "POST", path: `${TENANT_PATH}/workflows/deployments` };
+const NOTE = { method: "POST", path: `${TENANT_PATH}/manager/deployed` };
 const DEPLOYED = "run_deployed";
 const STOP_REVIEW = { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` };
 /** The eval fixture's head. */
@@ -102,6 +103,7 @@ function fakeHub({ takes, dones = [], deployed = [DEPLOYED] }: { takes: HubAnswe
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
     if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
     if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: deployed.length > 1 ? deployed.shift() : deployed[0] }, { status: 201 });
+    if (method === NOTE.method && url.pathname === NOTE.path) return Response.json({ noted: true });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });
   }
   return { hub, calls };
@@ -1058,7 +1060,8 @@ describe("triage-listener", () => {
     const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }, { prNumber: 9, headSha: "h9" }] });
     const { terminalStatus } = await runMail(listener, mail, githubHost().host, hub.hub, mailed);
     expect(terminalStatus).toBe("completed");
-    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, DEPLOY]);
+    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, DEPLOY, NOTE]);
+    expect(hub.calls.filter((call) => call.path === NOTE.path).map((call) => call.body)).toEqual([{ ...PULL, runId: DEPLOYED }, { ...PULL, number: 9, runId: DEPLOYED }]);
     expect((mailed as { to: string; content: string }[]).map((sent) => [sent.to, JSON.parse(sent.content)])).toEqual([
       [DEPLOYED, JSON.parse(manageMail(TENANT, PULL))],
       [DEPLOYED, JSON.parse(manageMail(TENANT, { ...PULL, number: 9 }))],
@@ -1071,7 +1074,7 @@ describe("triage-listener", () => {
     const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }] });
     const { terminalStatus, outputs } = await runMail(listener, mail, githubHost().host, hub.hub, mailed, [false, true]);
     expect(terminalStatus).toBe("completed");
-    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }, DEPLOY]);
+    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }, DEPLOY, NOTE]);
     expect((mailed as { to: string; content: string }[]).map((sent) => [sent.to, JSON.parse(sent.content)])).toEqual([
       [DEPLOYED, JSON.parse(manageMail(TENANT, PULL))],
       ["run_again", JSON.parse(manageMail(TENANT, PULL))],
@@ -1085,7 +1088,7 @@ describe("triage-listener", () => {
     const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }] });
     const { terminalStatus, outputs } = await runMail(listener, mail, githubHost().host, hub.hub, [], false);
     expect(terminalStatus).toBe("completed");
-    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }, DEPLOY, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/run_again` }]);
+    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }, DEPLOY, NOTE, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/run_again` }]);
     expect(outputs["unwokenAgain"]).toEqual({ cancelled: [{ runId: "run_again", reason: expect.stringContaining("public key") }] });
   });
 
@@ -1103,8 +1106,8 @@ describe("grants", () => {
   const DEPLOY_GRANTS = [{ resource: "workflow:*", action: "create", source: "creator" }, { resource: "asset:ast_review", action: "read", source: "creator" }, { resource: "workflow-run:*", action: "read", source: "creator" }];
   const MANAGER_GRANTS = [{ resource: "triage-manager:state", action: "write", source: "creator" }, { resource: "workflow-run:self", action: "manage", source: "creator" }];
 
-  test("a listener built with the release's manager declares the grants to deploy exactly that asset, and one built without declares none", () => {
-    expect(triageListener({ id: "triage-listener-github", manager: RELEASE }).grantRequirements).toEqual(DEPLOY_GRANTS);
+  test("a listener built with the release's manager declares the grants to deploy exactly that asset and name what it deployed, and one built without declares none", () => {
+    expect(triageListener({ id: "triage-listener-github", manager: RELEASE }).grantRequirements).toEqual([...DEPLOY_GRANTS, { resource: "triage-manager:state", action: "deployed", source: "creator" }]);
     expect(triageListener({ id: "triage-listener-github", manager: undefined }).grantRequirements).toEqual([]);
   });
 

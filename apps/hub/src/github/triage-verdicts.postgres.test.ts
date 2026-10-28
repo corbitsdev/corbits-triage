@@ -53,16 +53,17 @@ function live(runId: string, status: ObservedRun["status"], startedAt: Date, tri
 }
 
 function observed(byHead: Array<[string, ObservedRun[]]>): ObservedRuns {
-  return { byRepo: new Map([[REPO, new Map(byHead)]]) };
+  return { byRepo: new Map([[REPO, new Map(byHead)]]), roomless: new Set() };
 }
 
-const NO_RUNS: ObservedRuns = { byRepo: new Map() };
+const NO_RUNS: ObservedRuns = { byRepo: new Map(), roomless: new Set() };
 
 /**
  * The managers' runs: #8's newest run failed after its verdict, #9 and #10 are still running, #7's ended waiting for its CI, and #6's run failed early.
  * #4 of the repository GitHub could not list has a failed run.
  */
 const MANAGED: ObservedRuns = {
+  roomless: new Set(),
   byRepo: new Map([
     ...observed([
       ["8@sha_run_3", [live("run_3", "failed", minutes(9))]],

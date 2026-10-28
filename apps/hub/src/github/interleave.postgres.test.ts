@@ -41,7 +41,7 @@ function stubDb() {
 }
 
 async function noRuns(): Promise<ObservedRuns> {
-  return { byRepo: new Map() };
+  return { byRepo: new Map(), roomless: new Set() };
 }
 
 function route(store: TriageStateStore, deliver: Deliver) {

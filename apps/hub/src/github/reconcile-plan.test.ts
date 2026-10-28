@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { PrTriageRow } from "@corbits/triage-contracts";
-import { DEFAULT_RECONCILE_POLICY, planTenant, requeue, runKey, type ObservedRun, type OpenPr, type RepoPlan } from "./reconcile-plan.js";
+import { WAITING_FOR_CAPACITY, type PrTriageRow } from "@corbits/triage-contracts";
+import { DEFAULT_RECONCILE_POLICY, planTenant, pullKey, requeue, runKey, type ObservedRun, type OpenPr, type RepoPlan } from "./reconcile-plan.js";
 
 const MINUTE = 60_000;
 const T0 = new Date("2026-10-07T00:00:00.000Z");
@@ -20,9 +20,9 @@ function run(runId: string, status: ObservedRun["status"], startedMinute: number
 
 const REPO = "acme/widgets";
 
-function plan(prs: OpenPr[], rows: readonly PrTriageRow[], now: Date, runs: Array<[OpenPr, ObservedRun[]]> = [], maxInFlight = prs.length): RepoPlan {
+function plan(prs: OpenPr[], rows: readonly PrTriageRow[], now: Date, runs: Array<[OpenPr, ObservedRun[]]> = [], maxInFlight = prs.length, roomless: readonly number[] = []): RepoPlan {
   const byHead = new Map(runs.map(([open, observed]) => [runKey(open.number, open.headSha), observed]));
-  const input = { repos: [{ name: REPO, prs, rows }], runs: new Map([[REPO, byHead]]), now, policy: { ...policy, maxInFlight } };
+  const input = { repos: [{ name: REPO, prs, rows }], runs: new Map([[REPO, byHead]]), roomless: new Set(roomless.map((number) => pullKey(REPO, number))), now, policy: { ...policy, maxInFlight } };
   return planTenant(input).get(REPO)!;
 }
 
@@ -217,7 +217,7 @@ describe("reconcile plan", () => {
     ]);
     const rows = [row(1, { headSha: "sha1-old", status: "running", runId: "r_live", queuedAt: at(-6).toISOString() })];
     const prs = [pr(1, "sha1-new"), pr(2), pr(3), pr(4), pr(5), pr(6)];
-    const plans = planTenant({ repos: [{ name: REPO, prs, rows }], runs, now: at(0), policy });
+    const plans = planTenant({ repos: [{ name: REPO, prs, rows }], runs, roomless: new Set(), now: at(0), policy });
     expect(enqueued(plans.get(REPO)!)).toEqual([1, 2]);
   });
 
@@ -269,6 +269,34 @@ describe("reconcile plan", () => {
     const result = plan([pr(1)], queued, at(205), [[pr(1), [run("run_dead", "running", 0)]]]);
     expect(enqueued(result)).toEqual([]);
     expect(status(result, 1)).toMatchObject({ status: "queued" });
+  });
+});
+
+describe("a head whose manager was refused for capacity", () => {
+  test("stays queued past the never-started window and asks again every pass without spending an attempt, while another head's failures back off", () => {
+    const heads = [pr(1), pr(2)];
+    let rows = plan(heads, [], at(0)).rows;
+    const runs: Array<[OpenPr, ObservedRun[]]> = [[pr(2), [run("run_a", "failed", 1)]]];
+    const passes: Array<[number, number[], number]> = [[5, [1, 2], 2], [10, [1], 2], [15, [1, 2], 3], [20, [1], 3], [30, [1], 3]];
+    for (const [minute, asked, failedAttempts] of passes) {
+      if (minute === 10) runs[0]![1].push(run("run_b", "failed", 6));
+      const pass = plan(heads, rows, at(minute), runs, 2, [1]);
+      expect(enqueued(pass)).toEqual(asked);
+      expect(pass.enqueue.find((entry) => entry.number === 1)?.reason).toBe(WAITING_FOR_CAPACITY);
+      expect(status(pass, 1)).toMatchObject({ status: "queued", attempts: 1, error: WAITING_FOR_CAPACITY });
+      expect(status(pass, 2)).toMatchObject({ attempts: failedAttempts });
+      rows = pass.rows;
+    }
+  });
+
+  test("ages from the next pass as any queued head once a manager deployed after the refusal is not refused", () => {
+    const queued = plan([pr(1)], [], at(0)).rows;
+    const waiting = plan([pr(1)], queued, at(30), [], 1, [1]).rows;
+    const placed = plan([pr(1)], waiting, at(31));
+    expect(enqueued(placed)).toEqual([]);
+    expect(status(placed, 1)).toEqual(expect.not.objectContaining({ error: expect.anything() }));
+    expect(status(plan([pr(1)], placed.rows, at(41)), 1)).toMatchObject({ status: "queued", attempts: 1 });
+    expect(status(plan([pr(1)], placed.rows, at(42)), 1)).toMatchObject({ status: "queued", attempts: 2 });
   });
 });
 

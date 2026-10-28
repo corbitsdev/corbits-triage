@@ -138,7 +138,7 @@ function harness(runs: Runs | (() => Runs), prs: OpenPr[] | Record<string, OpenP
         throw new Error("transient read failure");
       }
       const byRepo = typeof runs === "function" ? runs() : runs;
-      return { byRepo: new Map(Object.entries(byRepo).map(([repo, byHead]) => [repo, new Map(Object.entries(byHead))])) };
+      return { byRepo: new Map(Object.entries(byRepo).map(([repo, byHead]) => [repo, new Map(Object.entries(byHead))])), roomless: new Set<string>() };
     },
     headChecks: async () => options.headChecks ?? [],
     verdicts: { latest: async () => options.recorded ?? [] },
@@ -490,7 +490,7 @@ describe("triage reconciler", () => {
     const row: PrTriageRow = { number: 7, headSha: "abc", status: "queued", attempts: 1, firstSeenAt: LONG_AGO, queuedAt: iso(moved + 50), staleBefore: iso(moved), updatedAt: iso(moved + 50) };
     const run: ObservedRun = { runId: "run_after", source: "github", status: "completed", startedAt: iso(moved + 50 - 500) };
     const pr = { number: 7, headSha: "abc", updatedAt: LONG_AGO, draft: false };
-    const plans = planTenant({ repos: [{ name: REPO, prs: [pr], rows: [row] }], runs: new Map([[REPO, new Map([["7@abc", [run]]])]]), now: at(1), policy: DEFAULT_RECONCILE_POLICY });
+    const plans = planTenant({ repos: [{ name: REPO, prs: [pr], rows: [row] }], runs: new Map([[REPO, new Map([["7@abc", [run]]])]]), roomless: new Set(), now: at(1), policy: DEFAULT_RECONCILE_POLICY });
     expect(plans.get(REPO)!.rows[0]!.status).toBe("triaged");
   });
 

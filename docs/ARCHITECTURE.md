@@ -190,11 +190,22 @@ GitHub, Bitbucket DC ──webhook──► Hub ◄──── portal (/api)
   to the first matching sandbox provisioner once the cap is reached. With no
   sandbox it stays local, where stock retries its placement with backoff
   (1, 2, 4, 8 and 16 seconds, then 30) for up to 10 ensure attempts, about
-  two and a half minutes, and then fails it. The manager never ran, so the
-  pull request gets no comment or label; its head stays queued until the
-  reconciler marks it never started after 10 minutes. The reconciler's next
-  pass, every 5 minutes, queues it again, and later attempts follow its
-  backoff (5 minutes, doubling), unless a new event comes first. Probes run on a local
+  two and a half minutes, and then fails it. Stock keeps that reason only
+  while the placement waits, so each provisioner's refusal for
+  `capacity_unavailable` is recorded as it answers
+  (`apps/hub/src/sidecar/refusals.ts`) on the claim whose last deployed
+  manager it was; the listener names each manager it deploys through
+  `POST /api/tenants/{tenantId}/manager/deployed`, under the `deployed`
+  grant on `triage-manager:state`, and a run refused before it is named is
+  read as refused from its allocation then. A manager taking the claim
+  clears the refusal. While no manager has run since, the
+  reconciler keeps the head `queued` with `waiting for capacity` as its
+  reason: it is never marked never started, spends no attempt and has no
+  backoff, and every pass asks for a manager again, at the pace the claim's
+  hold on a recent deploy ask allows, until one is placed. The manager never
+  ran, so the pull request gets no comment or label, and the portal shows no
+  failure for it. A manager deployed after the refusal that is not refused
+  ends the wait, and the head then ages and backs off as any other. Probes run on a local
   sidecar only when no sandbox is registered, since with one they require
   `isolation:workload`. The Docker provisioner (`packages/provisioner-docker`),
   registered after it when a daemon with the sidecar image answers, runs each
@@ -1164,8 +1175,8 @@ creator. The hub keeps a system `Deployer` role per workspace
 roll, which gives it to the workspace's `triage-publisher` system principal.
 It holds exactly `DEPLOYER_GRANTS` (`@corbits/triage-contracts`), and any
 other grant on it is dropped: `create` on `workflow:*`, `manage` and `read`
-on `workflow-run:*`, `write` on `triage-manager:state` and `create` on
-`triage-manager:result`. Stock gives an asset's creator no grant on it, so
+on `workflow-run:*`, `write` and `deployed` on `triage-manager:state` and
+`create` on `triage-manager:result`. Stock gives an asset's creator no grant on it, so
 the publisher also holds `read`, granted as its creator, on the asset of
 each workflow another one deploys: the manager, the judge and the code
 review, not the listener.
@@ -1255,12 +1266,13 @@ read it, and passes the rest of the request to stock.
   closes the pass and, under the claim's lock, ends the claim when no event
   is pending and the pass did not ask to `wait`, so an event committed before
   it is taken by this manager and one after it by the next. A manager run reaches take and done, and a reviewer run records its
-  result (under its own run id), through `POST
-  /api/tenants/:tenantId/manager/{take,done,reviewer-result}`
+  result (under its own run id), and a listener names the manager it deployed,
+  through `POST /api/tenants/:tenantId/manager/{take,done,reviewer-result,deployed}`
   (`apps/hub/src/manager-routes.ts`). They admit a run token only, as the
   hub's extra run-token routes. Take and done need `write` on
   `triage-manager:state`; reviewer-result needs `create` on
-  `triage-manager:result` and nothing more. The calling run is the token's
+  `triage-manager:result` and nothing more; deployed needs `deployed` on
+  `triage-manager:state` and nothing more. The calling run is the token's
   run, never a body field. Take and done
   answer 409 `not_manager` to a run the claim does not name. Done's body
   carries the pass's `report` and `approvals`: the hub keeps the report on the

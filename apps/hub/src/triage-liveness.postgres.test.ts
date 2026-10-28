@@ -163,7 +163,7 @@ test("a head whose mail finds no listener stays stalled while the reconciler ret
     for (let retry = 0; retry < 3; retry++) {
       hub.advance(60 * 60_000);
       const open = [{ number: 7, headSha: "h1", updatedAt: queuedAt, draft: false }];
-      const plan = planTenant({ repos: [{ name: RECORD.name, prs: open, rows: store.rows() }], runs: new Map(), now: hub.now(), policy: DEFAULT_RECONCILE_POLICY }).get(RECORD.name)!;
+      const plan = planTenant({ repos: [{ name: RECORD.name, prs: open, rows: store.rows() }], runs: new Map(), roomless: new Set(), now: hub.now(), policy: DEFAULT_RECONCILE_POLICY }).get(RECORD.name)!;
       expect(plan.enqueue.map((queued) => queued.number)).toEqual([7]);
       await store.save(TENANT, RECORD.name, plan.rows);
       await failHead(store, head, triageStopped("github"), hub.now());
@@ -179,7 +179,7 @@ test("a head whose mail finds no listener stays stalled while the reconciler ret
     expect(hub.alarms()).toEqual(["triage_stalled github"]);
 
     const running = [{ runId: "run_7", source: "github" as const, status: "running" as const, startedAt: hub.now().toISOString() }];
-    const seen = planTenant({ repos: [{ name: RECORD.name, prs: [{ number: 7, headSha: "h1", updatedAt: queuedAt, draft: false }], rows: store.rows() }], runs: new Map([[RECORD.name, new Map([["7@h1", running]])]]), now: hub.now(), policy: DEFAULT_RECONCILE_POLICY }).get(RECORD.name)!;
+    const seen = planTenant({ repos: [{ name: RECORD.name, prs: [{ number: 7, headSha: "h1", updatedAt: queuedAt, draft: false }], rows: store.rows() }], runs: new Map([[RECORD.name, new Map([["7@h1", running]])]]), roomless: new Set(), now: hub.now(), policy: DEFAULT_RECONCILE_POLICY }).get(RECORD.name)!;
     await store.save(TENANT, RECORD.name, seen.rows);
     expect(store.rows()).toEqual([expect.not.objectContaining({ undeliveredSince: expect.anything() })]);
     await hub.check();

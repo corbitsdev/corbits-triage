@@ -31,7 +31,7 @@ function stubDb(repo: Record<string, unknown>) {
 
 function observed(runs: ObservedRun[]): GithubPrTriageDeps["managerRuns"] {
   return async function managerRuns() {
-    return { byRepo: new Map([[REPO, new Map([["8@abc123", runs]])]]), runCount: runs.length, verdicts: [], approved: [] };
+    return { byRepo: new Map([[REPO, new Map([["8@abc123", runs]])]]), roomless: new Set<string>(), runCount: runs.length, verdicts: [], approved: [] };
   };
 }
 
@@ -263,6 +263,7 @@ describe("createGithubPrTriage", () => {
     rows = planTenant({
       repos: [{ name: REPO, prs: [{ number: 8, headSha: "abc123", updatedAt: at(3_600_000), draft: false }], rows }],
       runs: new Map([[REPO, new Map([["8@abc123", [oldVerdict]]])]]),
+      roomless: new Set(),
       now: NOW, policy: DEFAULT_RECONCILE_POLICY,
     }).get(REPO)!.rows;
     const second = await handler(ENABLED, s, deps)(request(), MEMBER);
