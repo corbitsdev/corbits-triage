@@ -509,21 +509,29 @@ any other tenant or an unknown sender.
   failed on that pass's head, which is retried with backoff; a recorded verdict settles its head as
   a pr-triage run's does. Triage again can queue a head again as soon as its
   manager has reported done, or went away, since it was queued.
-  The same pass watches each workspace's liveness (`createTriageLiveness`,
-  `apps/hub/src/triage-liveness.ts`). It reads when a manager last took a
-  pull request (the newest `claimedAt` or pass `takenAt` on the workspace's
-  claims), then the oldest pull request queued after that which still waits:
-  a pull request mail recorded that no pass has taken, or a triage state row
-  still `queued`, or failed because its mail found no listener or did not
-  go out. Once that one waited past `TRIAGE_STALLED_AFTER_MS` (five minutes
-  by default) the workspace is stalled: the hub logs `triage_stalled`, the
-  workflow versions route carries `stalled`, which the portal shows on every
-  page and in Settings → Triage, and with SMTP set up the workspace's owners
-  and admins with a verified address get one email. When a manager takes a
-  pull request again, the hub logs `triage_stall_cleared` and emails them
-  once more. Without SMTP the hub logs `triage_stall_not_emailed` once. The
-  alarm lives in process, so a restart on a stalled workspace raises it
-  again on its first pass.
+  The hub also checks, every `TRIAGE_LIVENESS_INTERVAL_MS` (a minute by
+  default) and apart from the reconcile pass, whether each workspace's pull
+  requests still reach a manager, host by host (`createTriageLiveness`,
+  `apps/hub/src/triage-liveness.ts`). The take route notes when a manager of
+  each workspace and host last took a pull request; as the hub starts it reads
+  that back from the claims' newest `claimedAt` or pass `takenAt`. A check
+  finds the oldest of the host's pull requests queued after that take which
+  still waits: a pull request mail recorded that no pass has taken, or a
+  triage state row still `queued`, or failed because its mail found no
+  listener or did not go out. A head whose mail did not go out keeps when it
+  first did not (`undeliveredSince` on its row) while the reconciler queues it
+  again, until a run of it is seen. Once that one waited past
+  `TRIAGE_STALLED_AFTER_MS` (five minutes by default) the host is stalled:
+  the hub logs `triage_stalled`, the workflow versions route lists the host
+  under `stalled`, which the portal shows on every page and in Settings →
+  Triage, and with SMTP set up the workspace's owners and admins with a
+  verified address get one email naming the host. The alarm clears only once
+  a manager of that host took a pull request after the alarm's `since`: the
+  hub logs `triage_stall_cleared` and emails them once more. Without SMTP the
+  hub logs `triage_stall_not_emailed` once. A workspace whose check fails is
+  logged as `triage_liveness_failed` and the rest are still checked. Alarms
+  and takes live in process, so a restart on a stalled host raises its alarm
+  again on its first check.
   Approving a held Do of a manager's verdict reads the Do from the recorded
   verdict and sends it with the mirror request its pass kept; a Do the run's
   newer verdict no longer holds answers `verdict_superseded`.
