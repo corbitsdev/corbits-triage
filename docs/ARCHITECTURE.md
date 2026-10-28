@@ -66,7 +66,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     passes; on Bitbucket Data Center no `read-only` or `pull-request-only`
     branch permission may apply to it unless it exempts the connected
     account by name (unreadable permissions count as no). `POST …/policy/push`
-    writes exactly the file, at its own path, as one commit with the message
+    skips review, so it also needs stock `create` on `grant:*` or `manage` on
+    the workspace, and logs who pushed; it writes exactly the file, at its own path, as one commit with the message
     `chore: update the Corbits Triage policy` through the App (GitHub) or the
     account (Bitbucket Data Center), after asking that, refused when the file
     on the branch is no longer the blob the editor loaded; the push then

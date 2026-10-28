@@ -397,6 +397,13 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return pushBitbucketPolicy(await repoBitbucket(tenantId), record.name, change);
   }
 
+  /** A push skips review and can let Triage approve or merge on its own, so it needs what granting Triage a kind needs, or managing the workspace. */
+  async function pushRefusal({ principalId, tenantId }: Member): Promise<Response | undefined> {
+    if (await deps.authorize(principalId, tenantId, "grant:*", "create")) return undefined;
+    if (await deps.authorize(principalId, tenantId, `tenant:${tenantId}`, "manage")) return undefined;
+    return failure(403, "forbidden", "You may not push the policy file straight to the default branch. Create a pull request instead.");
+  }
+
   /**
    * Commits `text` over the policy file on the default branch, as one commit with a fixed message. Refused as triage
    * would refuse the file, where the branch's rules would not let the hub push, and when the file is no longer the one
@@ -405,6 +412,8 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function pushRoute(body: typeof PolicyPushBody.infer, member: Member): Promise<Response> {
     const record = await grantedRecord(member, body.repo, body.source, "use");
     if (record instanceof Response) return record;
+    const refused = await pushRefusal(member);
+    if (refused) return refused;
     return serialized(repoKey(member.tenantId, record), function pushOne() {
       return pushRecord(body, member, record);
     });
@@ -421,7 +430,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       if (file?.sha !== sha) return fileMoved(file?.path ?? POLICY_FILE_PATH);
       if (file.text === text) return failure(409, "policy_file_unchanged", `${file.path} already holds this text.`);
       const pushed = await push(member.tenantId, record, { branch: access.branch, path: file.path, text, sha });
-      deps.log({ level: "info", msg: "policy_file_pushed_from_portal", tenantId: member.tenantId, repo, path: file.path, commit: pushed.commit });
+      deps.log({ level: "info", msg: "policy_file_pushed_from_portal", tenantId: member.tenantId, principalId: member.principalId, repo, path: file.path, commit: pushed.commit });
       // The push's webhook reads the file again; until it is heard, the kept read would be the file before.
       cache.delete(repoKey(member.tenantId, record));
       deps.changed(member.tenantId, record.name);

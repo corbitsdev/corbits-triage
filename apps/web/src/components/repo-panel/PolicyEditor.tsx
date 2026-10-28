@@ -3,6 +3,8 @@ import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import type { MergeRisk, PolicyExported, PolicyFileStatus, PolicyPushed, RepoSource } from "@corbits/triage-contracts";
 import { usePolicyEditActions, usePolicyPushAccess } from "../../lib/policy-file.ts";
+import { usePortal } from "../../lib/portal.tsx";
+import { useAllowed } from "../../lib/tenant-entities.ts";
 import { ExternalIcon } from "../inbox-icons.tsx";
 import { MergeCaution } from "./MergeCaution.tsx";
 import { HOST_NAME } from "./PolicyStart.tsx";
@@ -26,6 +28,10 @@ export default function PolicyEditor({ repo, source, file, onDone }: PolicyEdito
   const [saved, setSaved] = useState<PolicyExported | PolicyPushed | null>(null);
   const { preview, propose, push } = usePolicyEditActions(repo, source);
   const access = usePolicyPushAccess(repo, source, true);
+  const { snapshot } = usePortal();
+  const createsGrants = useAllowed("grant:*", "create");
+  const managesWorkspace = useAllowed(`tenant:${snapshot?.workspace.tenantId}`, "manage");
+  const pushes = access.data?.allowed === true && (createsGrants || managesWorkspace);
   const textId = useId();
   const busy = preview.isPending || propose.isPending || push.isPending;
   const error = preview.error ?? propose.error ?? push.error;
@@ -85,7 +91,7 @@ export default function PolicyEditor({ repo, source, file, onDone }: PolicyEdito
     <section className="move" aria-labelledby="edit-title">
       <header>
         <b id="edit-title"><label htmlFor={textId}>Edit <code>{file.path}</code></label></b>
-        <span>Save it as a pull request to review first{access.data?.allowed ? `, or push it straight to ${access.data.branch}` : ""}.</span>
+        <span>Save it as a pull request to review first{pushes ? `, or push it straight to ${branch}` : ""}.</span>
       </header>
       <textarea id={textId} className="policy-text" value={text} spellCheck={false} disabled={busy} aria-invalid={problem ? true : undefined} onChange={(event) => edited(event.target.value)} />
       {problem ? <div className="sentences">{problem.split("\n").map((line) => <p key={line} className="reason">{line}</p>)}</div> : null}
@@ -100,7 +106,7 @@ export default function PolicyEditor({ repo, source, file, onDone }: PolicyEdito
       ) : (
         <div className="acts">
           <Button type="button" size="sm" disabled={busy || text === file.text} onClick={() => void check("pull")}>{saveWords("pull")}</Button>
-          {access.data?.allowed ? <Button type="button" variant="outline" size="sm" disabled={busy || text === file.text} onClick={() => void check("push")}>{saveWords("push")}</Button> : null}
+          {pushes ? <Button type="button" variant="outline" size="sm" disabled={busy || text === file.text} onClick={() => void check("push")}>{saveWords("push")}</Button> : null}
           <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onDone}>Cancel</Button>
         </div>
       )}

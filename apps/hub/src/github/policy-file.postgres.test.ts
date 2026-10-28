@@ -33,6 +33,8 @@ const BOTH = "acme/both";
 const UNHEARD = "acme/unheard";
 const BITBUCKET_UNHEARD = "PROJ/unheard";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
+/** Uses the host credential, but may neither create grants nor manage the workspace. */
+const USER = { tenantId: TENANT, principalId: "prn_plain" };
 const FILE = `rules:
   - check: ci-green
     text: CI passes.
@@ -197,6 +199,7 @@ beforeAll(async () => {
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
+    { id: "prn_plain", tenantId: TENANT, kind: "user", refId: "usr_plain", status: "active" },
     { id: "prn_github", tenantId: TENANT, kind: "user", refId: "github", status: "active" },
   ]);
   await db.insert(schema.provider).values([
@@ -210,7 +213,8 @@ beforeAll(async () => {
     secret: await cipher.encrypt(JSON.stringify({ appId: "1", privateKey }), credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "triage" },
   });
   async function authorize(principalId: string, _tenantId: string, resource: string, action: string) {
-    return (resource === "credential:crd_github" || resource === "credential:crd_bb") && action === "use" && principalId === "prn_user";
+    if (resource === "grant:*") return action === "create" && principalId === "prn_user";
+    return (resource === "credential:crd_github" || resource === "credential:crd_bb") && action === "use" && (principalId === "prn_user" || principalId === "prn_plain");
   }
   const list = createTenantOpenPrs({ db, cipher, onKeyMoved: noKeyPush, githubApiOrigin, tenantBitbucket: async () => undefined });
   policyFile = createPolicyFile({
@@ -261,8 +265,8 @@ async function exportOf(repo: string, text?: string, sha?: string | null): Promi
   return { http: res.status, ...(await res.json() as Record<string, unknown>) };
 }
 
-async function pushOf(repo: string, source: RepoSource, text: string, sha: string): Promise<Record<string, unknown>> {
-  const res = await policyFile.pushRoute({ repo, source, text, sha }, MEMBER);
+async function pushOf(repo: string, source: RepoSource, text: string, sha: string, member = MEMBER): Promise<Record<string, unknown>> {
+  const res = await policyFile.pushRoute({ repo, source, text, sha }, member);
   return { http: res.status, ...(await res.json() as Record<string, unknown>) };
 }
 
@@ -602,6 +606,7 @@ test("PostgreSQL: edited text is pushed to the default branch as one commit wher
     expect(await pushOf(repo, source, "rules: [", `${source}-push1`)).toMatchObject({ http: 422, error: { code: "policy_file_invalid" } });
     expect(await pushOf(repo, source, edited, "stale")).toMatchObject({ http: 409, error: { code: "policy_file_changed" } });
     expect(await pushOf(repo, source, FILE, `${source}-push1`)).toMatchObject({ http: 409, error: { code: "policy_file_unchanged" } });
+    expect(await pushOf(repo, source, edited, `${source}-push1`, USER)).toMatchObject({ http: 403, error: { code: "forbidden" } });
     const pushed = await pushOf(repo, source, edited, `${source}-push1`);
     expect(pushed).toEqual({ http: 200, status: "pushed", path: YML, sha: files.get(`${repo}@main/${YML}`)!.sha, commit: expect.any(String) });
     expect(files.get(`${repo}@main/${YML}`)!.text).toBe(edited);
