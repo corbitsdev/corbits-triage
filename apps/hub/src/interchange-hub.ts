@@ -329,6 +329,7 @@ export async function createInterchangeHub({
   });
 
   const sessionService = createSessionService({
+    loadRunCredentials,
     sidecarRouter,
     sidecarAllocationRouter: sidecarRouter,
     agentRepoStore,
