@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
-import { Tabs, useDismissablePopover } from "@corbits/react-ui";
+import { Button, Tabs, useDismissablePopover } from "@corbits/react-ui";
 import type { PrItem } from "../lib/hub-api.ts";
 import {
   FACET_LABEL,
@@ -79,10 +79,11 @@ export function FilterMenu({ items, now, filters, onChange, triggerRef }: Filter
 
   return (
     <div className="menu-wrap" ref={rootRef}>
-      <button
+      <Button
         ref={setTrigger}
         type="button"
-        className="tbtn"
+        variant="outline"
+        size="sm"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? `${id}-dialog` : undefined}
@@ -90,7 +91,7 @@ export function FilterMenu({ items, now, filters, onChange, triggerRef }: Filter
         onClick={() => setOpen(!open)}
       >
         <FilterIcon />Filter{active > 0 ? <span className="n">{active}</span> : null}
-      </button>
+      </Button>
       {open ? (
         <>
           <div className="filter-scrim" onClick={close} />
@@ -107,7 +108,7 @@ export function FilterMenu({ items, now, filters, onChange, triggerRef }: Filter
             </Tabs>
             <div className="pfoot">
               <span>Filters combine. Pick several in one group to widen it.</span>
-              <button type="button" className="linkish" onClick={close}>Done</button>
+              <Button type="button" variant="link" size="sm" onClick={close}>Done</Button>
             </div>
           </div>
         </>
@@ -144,11 +145,11 @@ export function FilterPills({ filters, onChange, triggerRef }: FilterPillsProps)
   return (
     <div className="pills" role="group" aria-label="Active filters" ref={listRef}>
       {active.map((pill, index) => (
-        <button key={`${pill.facet}:${pill.value}`} type="button" className="pill" aria-label={`Remove filter ${FACET_LABEL[pill.facet]}: ${pill.label}`} onClick={() => remove(index)}>
+        <Button key={`${pill.facet}:${pill.value}`} type="button" variant="secondary" size="sm" className="pill" aria-label={`Remove filter ${FACET_LABEL[pill.facet]}: ${pill.label}`} onClick={() => remove(index)}>
           {FACET_LABEL[pill.facet]}: <span>{pill.label}</span><b aria-hidden="true">×</b>
-        </button>
+        </Button>
       ))}
-      <button type="button" className="linkish" onClick={clear}>Clear</button>
+      <Button type="button" variant="link" size="sm" onClick={clear}>Clear</Button>
     </div>
   );
 }

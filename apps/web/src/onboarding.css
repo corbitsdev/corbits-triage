@@ -85,9 +85,6 @@ body:has(.setup-flow),
 .signin-error, .signin-notice { padding: 8px 12px; border: 1px solid; border-radius: var(--radius-sm); }
 .signin-error { border-color: var(--bad); color: var(--bad); }
 .signin-notice { border-color: var(--rule); color: var(--ink-soft); }
-.signin-link { padding: 0; border: 0; background: none; color: var(--ink); font: inherit; font-weight: 560; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.signin-link:hover { color: var(--heat-press); }
-.signin-link:disabled { cursor: default; opacity: 0.6; }
 .signin-footer { color: var(--ink-mute); text-align: center; }
 @media (max-width: 720px) {
   .signin { align-items: stretch; justify-content: flex-start; padding-top: 32px; }
@@ -106,7 +103,6 @@ body:has(.setup-flow),
 .setup h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin-bottom: 8px; }
 .setup-lede { font-size: 15px; margin-bottom: 26px; }
 .other-workspaces { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 26px; font-size: 13px; }
-.other-workspaces .linkish { background: none; border: 0; padding: 0; font: 600 13px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .setup-steps {
   list-style: none;
   margin: 0;
@@ -174,27 +170,17 @@ body:has(.setup-flow),
 .setup-flow .install-row + .install-row { border-top: 1px solid var(--rule); }
 .setup-flow .catching-up { display: inline-flex; align-items: center; gap: 8px; }
 
-/* Decision model presets as radio cards; resets the stock radiogroup pill. */
+/* Decision model presets as radio cards. */
 :is(.setup-flow, .settings) .segmented[role="radiogroup"] {
   display: grid;
   gap: 8px;
   width: 100%;
-  border: 0;
-  border-radius: 0;
 }
 :is(.setup-flow, .settings) .segmented[role="radiogroup"] button[role="radio"] {
-  display: flex;
-  align-items: center;
+  justify-content: flex-start;
   gap: 10px;
+  height: auto;
   min-height: 44px;
-  margin: 0;
-  padding: 0 14px;
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--r-md);
-  background: var(--white);
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 700;
   text-align: left;
 }
 :is(.setup-flow, .settings) .segmented[role="radiogroup"] button[role="radio"]::before {
@@ -204,13 +190,6 @@ body:has(.setup-flow),
   flex: none;
   border-radius: 50%;
   border: 1.5px solid var(--rule-strong);
-}
-:is(.setup-flow, .settings) .segmented[role="radiogroup"] button[role="radio"]:hover { background: var(--fill); }
-:is(.setup-flow, .settings) .segmented[role="radiogroup"] button[aria-checked="true"] {
-  border-color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--ink);
-  background: var(--white);
-  color: var(--ink);
 }
 :is(.setup-flow, .settings) .segmented[role="radiogroup"] button[aria-checked="true"]::before { border: 5px solid var(--ink); }
 

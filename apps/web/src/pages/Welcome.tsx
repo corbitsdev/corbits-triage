@@ -97,13 +97,13 @@ export function Welcome({ intro }: { intro?: string }) {
 
   const resetting = mode === "reset";
   const signingUp = mode === "sign-up";
-  const back = <button type="button" className="signin-link" onClick={() => switchTo("sign-in")}>Back to sign in</button>;
+  const back = <Button type="button" variant="link" size="sm" onClick={() => switchTo("sign-in")}>Back to sign in</Button>;
   const switcher = methods.data?.emailPassword && (
     <>
       {signingUp ? "Have an account? " : "New to Corbits Triage? "}
-      <button type="button" className="signin-link" disabled={pending} onClick={() => switchTo(signingUp ? "sign-in" : "sign-up")}>
+      <Button type="button" variant="link" size="sm" disabled={pending} onClick={() => switchTo(signingUp ? "sign-in" : "sign-up")}>
         {signingUp ? "Sign in" : "Create an account"}
-      </button>
+      </Button>
     </>
   );
 
@@ -148,7 +148,7 @@ export function Welcome({ intro }: { intro?: string }) {
             busy={pending}
             error={resetting ? null : shownError}
             footer={methods.data.passwordReset && !signingUp
-              ? <button type="button" className="signin-link" disabled={pending} onClick={() => switchTo("reset")}>Forgot password?</button>
+              ? <Button type="button" variant="link" size="sm" disabled={pending} onClick={() => switchTo("reset")}>Forgot password?</Button>
               : undefined}
           />
         </div>

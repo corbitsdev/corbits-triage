@@ -1,4 +1,4 @@
-import { Badge, type BadgeTone } from "@corbits/react-ui";
+import { Badge, Button, type BadgeTone } from "@corbits/react-ui";
 import type { CodeReviewPlaceOption } from "@corbits/triage-contracts";
 import { anthropicSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
@@ -31,7 +31,7 @@ function PlaceSetup({ place }: { place: CodeReviewPlaceOption }) {
       ) : (
         <span>Nothing to add to <code>.env</code>; the setup guide has every step.</span>
       )}
-      <a className="linkish" href={place.guide} target="_blank" rel="noreferrer">Setup guide <ExternalIcon /></a>
+      <Button asChild variant="link" size="sm"><a href={place.guide} target="_blank" rel="noreferrer">Setup guide <ExternalIcon /></a></Button>
     </div>
   );
 }

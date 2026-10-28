@@ -112,7 +112,7 @@ export function DiffView({ file, layout, canSplit, onLayout }: {
           {canSplit ? (
             <div className="segmented diff-layout" role="radiogroup" aria-label="Diff layout">
               {LAYOUTS.map((option) => (
-                <button key={option.id} type="button" role="radio" aria-checked={option.id === layout} onClick={() => onLayout(option.id)}>{option.label}</button>
+                <Button key={option.id} type="button" variant={option.id === layout ? "secondary" : "ghost"} size="sm" role="radio" aria-checked={option.id === layout} onClick={() => onLayout(option.id)}>{option.label}</Button>
               ))}
             </div>
           ) : null}

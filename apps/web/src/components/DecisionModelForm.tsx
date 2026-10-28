@@ -52,7 +52,7 @@ export function DecisionModelForm({ onSaved }: { onSaved: () => void }) {
   }
 
   function renderPreset(option: DecisionModelPreset) {
-    return <button key={option.id} type="button" role="radio" aria-checked={option.id === preset.id} disabled={disabled} onClick={() => choose(option)}>{option.label}</button>;
+    return <Button key={option.id} type="button" variant={option.id === preset.id ? "secondary" : "outline"} role="radio" aria-checked={option.id === preset.id} disabled={disabled} onClick={() => choose(option)}>{option.label}</Button>;
   }
 
   return <form className="connection-fields" aria-label="Decision model" onSubmit={submit}>

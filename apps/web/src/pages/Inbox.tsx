@@ -105,13 +105,17 @@ function sliceTarget(params: URLSearchParams, view: TriageView, waiting: boolean
   return search === "" ? "/" : `/?${search}`;
 }
 
+function SliceButton({ pressed, onClick, children }: { pressed: boolean; onClick: () => void; children: ReactNode }) {
+  return <Button type="button" variant={pressed ? "secondary" : "ghost"} size="sm" aria-pressed={pressed} onClick={onClick}>{children}</Button>;
+}
+
 type SliceButtonsProps = { view: TriageView; waiting: boolean; waitingCount: number; onShow: (view: TriageView, waiting: boolean) => void };
 
 function SliceButtons({ view, waiting, waitingCount, onShow }: SliceButtonsProps) {
   return (
     <div className="seg" role="group" aria-label="Show">
       {SLICES.map((slice) => (
-        <button key={slice.label} type="button" aria-pressed={slice.waiting ? waiting : !waiting && view === slice.view} onClick={() => onShow(slice.view, slice.waiting)}>{slice.label}{slice.waiting && waitingCount > 0 ? <span className="n">{waitingCount}</span> : null}</button>
+        <SliceButton key={slice.label} pressed={slice.waiting ? waiting : !waiting && view === slice.view} onClick={() => onShow(slice.view, slice.waiting)}>{slice.label}{slice.waiting && waitingCount > 0 ? <span className="n">{waitingCount}</span> : null}</SliceButton>
       ))}
     </div>
   );
@@ -536,7 +540,7 @@ function Toasts({ notices, onUndo }: { notices: Notices; onUndo: () => void }) {
       {held === null ? null : (
         <div key={held.id} className="toast">
           <span>{held.message}</span>
-          <button type="button" aria-keyshortcuts="u" onClick={onUndo}>Undo</button>
+          <Button type="button" variant="secondary" size="sm" aria-keyshortcuts="u" onClick={onUndo}>Undo</Button>
           <span className="drain" aria-hidden="true"><i style={{ animationDuration: `${HOLD_MS}ms` }} /></span>
         </div>
       )}
@@ -767,7 +771,7 @@ export default function Inbox() {
               {groupings.length > 0 ? (
                 <div className="seg" role="group" aria-label="Group by">
                   {groupings.map((mode, index) => (
-                    <button key={mode} type="button" aria-pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</button>
+                    <SliceButton key={mode} pressed={grouping === mode} onClick={() => groupBy(index)}>{GROUPING_LABEL[mode]}</SliceButton>
                   ))}
                 </div>
               ) : null}

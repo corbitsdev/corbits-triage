@@ -48,7 +48,7 @@ export default function PolicySection({ repo, source, pack, disabled }: PolicySe
   function body() {
     if (row?.error) return <p role="alert" className="error">{row.error}</p>;
     if (policyFile.isError) {
-      return <p role="alert" className="error">Could not read <code>{POLICY_FILE_PATH}</code>: {errorText(policyFile.error)} <button type="button" className="linkish quiet" onClick={() => void policyFile.refetch()}>Try again</button></p>;
+      return <p role="alert" className="error">Could not read <code>{POLICY_FILE_PATH}</code>: {errorText(policyFile.error)} <Button type="button" variant="link" size="sm" onClick={() => void policyFile.refetch()}>Try again</Button></p>;
     }
     if (file === undefined || policy.isLoading) return null;
     if (file === null) return <PolicyStart repo={repo} source={source} pull={row?.pull} disabled={disabled} />;

@@ -271,10 +271,10 @@ const SLIVER_ICONS: Record<SliverTab, LucideIcon> = {
 function SliverTabButton({ id, label, current, onSelect }: { id: SliverTab; label: string; current: SliverTab; onSelect: (id: SliverTab) => void }) {
   const TabIcon = SLIVER_ICONS[id];
   return (
-    <button type="button" className={`sliver-tab${current === id ? " is-on" : ""}`} title={label} aria-pressed={current === id} onClick={() => onSelect(id)}>
+    <Button type="button" variant={current === id ? "secondary" : "ghost"} className="sliver-tab" title={label} aria-pressed={current === id} onClick={() => onSelect(id)}>
       <TabIcon strokeWidth={1.7} aria-hidden="true" />
       <span className="sliver-tab-label">{label}</span>
-    </button>
+    </Button>
   );
 }
 
@@ -530,10 +530,10 @@ export default function PRDetail() {
       return (
         <div className="sliver-list">
           {files.map((file) => (
-            <button type="button" className={`sliver-file${selected?.path === file.path ? " is-on" : ""}`} key={file.path} onClick={() => selectFile(file.path)}>
+            <Button type="button" variant={selected?.path === file.path ? "secondary" : "ghost"} className="sliver-file" key={file.path} onClick={() => selectFile(file.path)}>
               <span className="sliver-file-name">{file.path}</span>
               <span className="sliver-file-stat"><span className="add">+{file.additions}</span> <span className="del">−{file.deletions}</span></span>
-            </button>
+            </Button>
           ))}
         </div>
       );

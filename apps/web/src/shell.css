@@ -34,8 +34,7 @@
 .shell .rail { display: flex; flex-direction: column; gap: 4px; padding: 18px 12px 14px; min-height: 0; overflow: auto; }
 .shell .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 12px; color: inherit; text-decoration: none; font-size: 16px; font-weight: 620; letter-spacing: -0.02em; line-height: 1.3; }
 .shell .brand img { width: 26px; height: 26px; }
-.shell .ws { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; margin-bottom: 4px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--white); font: inherit; font-size: 14px; font-weight: 600; color: inherit; }
-.shell button.ws { cursor: pointer; }
+.shell .ws { justify-content: space-between; margin-bottom: 4px; }
 .shell .ws-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shell .rail h3 { font-size: 12px; font-weight: 700; margin: 14px 10px 4px; }
 .shell .nav-a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--r-md); text-decoration: none; font-size: 14px; font-weight: 500; cursor: pointer; border: 0; background: none; text-align: left; width: 100%; color: inherit; }
@@ -43,8 +42,7 @@
 .shell .nav-a[aria-current="true"] { background: var(--white); font-weight: 700; box-shadow: 0 0 0 1px var(--rule); }
 .shell .nav-a .n { margin-left: auto; font: 700 12px var(--mono); }
 .shell .rail .grow { flex: 1; }
-.shell .me { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--r-md); background: none; font: inherit; font-size: 13px; color: inherit; text-align: left; cursor: pointer; }
-.shell .me:hover, .shell .me[aria-expanded="true"] { background: var(--fill-hover); }
+.shell .me { justify-content: flex-start; gap: 10px; width: 100%; height: auto; padding: 8px 10px; text-align: left; }
 .shell .me[aria-current="true"] { background: var(--white); box-shadow: 0 0 0 1px var(--rule); }
 .shell .me-t { min-width: 0; display: grid; }
 .shell .me-t b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -159,18 +157,11 @@
 .inbox .search input { border: 0; outline: 0; font: 400 13px var(--font); flex: 1; min-width: 0; background: none; color: inherit; }
 .inbox .search:focus-within { border-color: var(--ink); }
 .inbox .seg { display: inline-flex; background: var(--fill); border-radius: var(--r-md); padding: 2px; }
-.inbox .seg button { border: 0; background: none; font: 500 12px var(--font); color: inherit; padding: 5px 9px; border-radius: 7px; cursor: pointer; }
-.inbox .seg button[aria-pressed="true"] { background: var(--white); font-weight: 700; box-shadow: 0 0 0 1px var(--rule); }
-.inbox .tbtn { height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); background: var(--white); font: 600 13px var(--font); color: inherit; cursor: pointer; white-space: nowrap; }
-.inbox .tbtn:hover, .inbox .tbtn[aria-expanded="true"] { background: var(--fill); }
-.inbox :is(.tbtn, .seg button) .n { font: 700 11px var(--mono); background: var(--ink); color: var(--white); border-radius: 8px; padding: 0 5px; }
-.inbox .seg button .n { margin-left: 5px; }
-.inbox .linkish { background: none; border: 0; padding: 0; font: 600 12px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.inbox :is(.menu-wrap, .seg) button .n { font: 700 11px var(--mono); background: var(--ink); color: var(--white); border-radius: 8px; padding: 0 5px; }
 .inbox .pills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
-.inbox .pill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 24px; padding: 0 4px 0 9px; border-radius: 12px; background: var(--fill-hover); font: 600 12px var(--font); color: inherit; border: 0; cursor: pointer; }
+.inbox .pill { gap: 4px; max-width: 100%; height: 24px; padding: 0 4px 0 9px; border-radius: 12px; }
 .inbox .pill span { font-weight: 400; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox .pill b { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 13px; }
-.inbox .pill:hover b { background: var(--white); }
 
 /* Filter popover: facet tabs above the chosen facet's values */
 .inbox .tools .menu-wrap { position: static; }
@@ -266,10 +257,8 @@
 .inbox .desc-t.fade { mask-image: linear-gradient(to bottom, #000 65%, transparent); }
 .inbox .desc-sk { height: 14px; margin-bottom: 8px; }
 .inbox .desc-sk.short { width: 60%; }
-.inbox .desc-more { display: block; min-height: 32px; padding: 8px 0; border: 0; background: none; font: 500 13px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .inbox .disc3 { margin-top: 36px; border-top: 1px solid var(--rule); }
-.inbox .dr { width: 100%; display: flex; align-items: center; gap: 8px; padding: 11px 0; border: 0; border-bottom: 1px solid var(--rule); background: none; font: 500 14px var(--font); color: inherit; text-align: left; cursor: pointer; }
-.inbox .dr:hover { background: var(--fill); }
+.inbox .dr { width: 100%; height: auto; justify-content: flex-start; gap: 8px; padding: 11px 0; border-bottom: 1px solid var(--rule); border-radius: 0; text-align: left; }
 .inbox .dr .chev { transition: transform 0.15s; }
 .inbox .dr[aria-expanded="true"] { border-bottom: 0; font-weight: 700; }
 .inbox .dr[aria-expanded="true"] .chev { transform: rotate(90deg); }
@@ -331,8 +320,7 @@
 .inbox .toasts { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; justify-items: center; }
 .inbox .toast { position: relative; display: flex; align-items: center; gap: 14px; padding: 9px 9px 9px 16px; background: var(--ink); color: var(--white); border-radius: var(--r-md); font-size: 14px; white-space: nowrap; }
 .inbox .toast.note { padding: 9px 16px; max-width: min(560px, calc(100vw - 32px)); white-space: normal; }
-.inbox .toast button { flex: none; display: inline-flex; align-items: center; gap: 6px; background: none; border: 1px solid rgba(255, 255, 255, 0.4); color: var(--white); border-radius: var(--r-sm); padding: 3px 10px; font: 700 13px var(--font); cursor: pointer; }
-.inbox .toast button:hover { background: rgba(255, 255, 255, 0.12); }
+.inbox .toast button { flex: none; }
 .inbox .toast button:focus-visible { outline: 2px solid var(--white); outline-offset: 2px; }
 .inbox .toast .drain { position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; background: rgba(255, 255, 255, 0.25); border-radius: 1px; overflow: hidden; }
 .inbox .toast .drain i { display: block; height: 100%; background: var(--white); animation: drain linear forwards; }
@@ -360,8 +348,8 @@
   .shell > .stage { margin: 12px 0 0; border-width: 1px 0 0; border-radius: 0; }
   .ws-menu [role="menuitem"], .ws-new :is(input, [data-slot="button"]) { min-height: 44px; }
   .settings .place-steps > summary { padding: 13px 0; }
-  .inbox :is(.search, .tbtn) { height: 44px; }
-  .inbox .seg button { min-height: 36px; padding: 0 12px; }
+  .inbox :is(.search, .menu-wrap > button) { height: 44px; }
+  .inbox .seg button { min-height: 36px; }
   .inbox .groups { padding: 4px 4px 24px; }
   .inbox .row { grid-template-columns: 8px auto minmax(0, 1fr) auto auto; min-height: 56px; padding: 9px 8px; }
   .inbox .row .who { display: none; }

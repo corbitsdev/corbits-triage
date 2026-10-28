@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { presetFor, TRIAGE_LISTENERS, type DeployedVersions, type RepoSource } from "@corbits/triage-contracts";
@@ -106,7 +107,7 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
           <div className="sentences">
             <div className="sentence">
               <span className="txt">{statusText(status)}</span>
-              <Link className="linkish" to="/repositories">Choose repositories</Link>
+              <Button asChild variant="link" size="sm"><Link to="/repositories">Choose repositories</Link></Button>
             </div>
             {deployed.stalled?.map((host) => (
               <div className="sentence" key={host.source}>

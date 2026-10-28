@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
 import { BUDGET_EXHAUSTED_NOTE, UNVERIFIED_FINDING } from "@corbits/triage-contracts";
 import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-review.ts";
@@ -73,14 +74,14 @@ function SendToGithub({ item, completed, carriedTo, send }: { item: Reviewed; co
   const heads = [completed.headSha, carriedTo];
   const sent = pull.data?.reviews.some((review) => review.codeReview === true && heads.includes(review.commitId)) === true;
   if (sent) return <span className="hint">Sent to GitHub</span>;
-  return <button type="button" className="linkish" disabled={readOnly || pull.isPending || send.isPending} onClick={() => send.mutate(carriedTo ?? completed.headSha)}>Send to GitHub</button>;
+  return <Button type="button" variant="link" size="sm" disabled={readOnly || pull.isPending || send.isPending} onClick={() => send.mutate(carriedTo ?? completed.headSha)}>Send to GitHub</Button>;
 }
 
 /** "Send to Bitbucket": sending it again posts only what is missing, so the button stays until a send answers. */
 function SendToBitbucket({ completed, carriedTo, send }: { completed: CodeReviewRun; carriedTo: string | null; send: ReturnType<typeof useSendCodeReview> }) {
   const { readOnly } = usePortal();
   if (send.isSuccess) return <span className="hint">Sent to Bitbucket</span>;
-  return <button type="button" className="linkish" disabled={readOnly || send.isPending} onClick={() => send.mutate(carriedTo ?? completed.headSha)}>Send to Bitbucket</button>;
+  return <Button type="button" variant="link" size="sm" disabled={readOnly || send.isPending} onClick={() => send.mutate(carriedTo ?? completed.headSha)}>Send to Bitbucket</Button>;
 }
 
 function SendReview({ item, completed, carriedTo, send }: { item: Reviewed; completed: CodeReviewRun; carriedTo: string | null; send: ReturnType<typeof useSendCodeReview> }) {
@@ -132,7 +133,7 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
         Code review<span className="hint">{review ? hint(review, completed) : "Not reviewed"}</span>
         <span className="sp" />
         {completed ? <SendReview item={item} completed={completed} carriedTo={carriedTo} send={send} /> : null}
-        {askable ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}
+        {askable ? <Button type="button" variant="link" size="sm" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</Button> : null}
       </h3>
       {again.error ? <p role="alert" className="error">Could not review again. {errorText(again.error)}</p> : null}
       {send.error ? <p role="alert" className="error">Could not send to {hostName(item.source)}. {errorText(send.error)}</p> : null}

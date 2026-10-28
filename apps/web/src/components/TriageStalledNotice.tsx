@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { Link } from "react-router-dom";
 import type { DeployedVersions } from "@corbits/triage-contracts";
 import { hostFullName } from "../lib/pull-link.ts";
@@ -17,7 +18,7 @@ export function TriageStalledNotice({ stalled }: { stalled: DeployedVersions["st
       {stalled?.map((host) => (
         <div className="triage-stalled" key={host.source}>
           <span>{stalledText(host)}</span>
-          <Link className="linkish" to="/settings/triage">See Triage settings</Link>
+          <Button asChild variant="link" size="sm"><Link to="/settings/triage">See Triage settings</Link></Button>
         </div>
       ))}
     </div>

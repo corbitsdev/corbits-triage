@@ -86,7 +86,7 @@ export function GithubSource({ snapshot }: { snapshot: PortalSnapshot }) {
             <span className="txt">
               {ready ? <>The GitHub App{slug && <> <b>{slug}</b></>} is connected and installed on {counted(installed, "repository", "repositories")}.</> : notReadyText(lapsed)}
             </span>
-            {!ready && !lapsed && <Link className="linkish" to="/connect">Connect it</Link>}
+            {!ready && !lapsed && <Button asChild variant="link" size="sm"><Link to="/connect">Connect it</Link></Button>}
             {ready && canManage && <Button type="button" variant="outline" size="sm" onClick={chooseOnGithub}>Choose repositories on GitHub</Button>}
           </div>
           {secrets.map(({ credential, name }) => (credential.name === GITHUB_CREDENTIAL_NAME

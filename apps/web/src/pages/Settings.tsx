@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useParams } from "react-router-dom";
 import { connectedSources, isPerson, type HubPrincipal, type PortalSnapshot } from "../lib/hub-api.ts";
@@ -79,7 +80,7 @@ export default function Settings() {
       <h1>Workspace settings</h1>
       <p className="lede">{byline(snapshot, people)}</p>
       <nav className="byline" aria-label="Settings sections">
-        {SECTIONS.map((section) => <span key={section.id}><Link className="linkish quiet" to={`/settings/${section.id}`} replace onClick={() => jumpTo(section.id)}>{section.label}</Link></span>)}
+        {SECTIONS.map((section) => <span key={section.id}><Button asChild variant="link" size="sm"><Link to={`/settings/${section.id}`} replace onClick={() => jumpTo(section.id)}>{section.label}</Link></Button></span>)}
       </nav>
       <TriageSection snapshot={snapshot} deployed={deployed} />
       <CodeReviewSection snapshot={snapshot} />

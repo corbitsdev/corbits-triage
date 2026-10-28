@@ -28,7 +28,7 @@ export function ResetPassword() {
   }
 
   return (
-    <SignInShell footer={done ? undefined : <a className="signin-link" href="/">Back to sign in</a>}>
+    <SignInShell footer={done ? undefined : <Button asChild variant="link" size="sm"><a href="/">Back to sign in</a></Button>}>
       <div className="signin-head">
         <h1>Set a password</h1>
       </div>

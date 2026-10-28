@@ -69,7 +69,7 @@ export default function RepoPanel({ repo, row, live, stats: statsReader, onClose
     return (
       <>
         <TriageSwitch repo={repo.name} enabled={enabled} triaging={triaging} disabled={locked || switching.isPending} onSwitch={switching.mutate} ruleOn={ruleOn} needsModel={pack !== null && policyNeedsModel(pack)} rerunnable={repo.source === "github"} />
-        {switching.error ? <p role="alert" className="error">Could not switch triage. {errorText(switching.error)} <button type="button" className="linkish" onClick={() => switching.mutate(!triaging)}>Try again</button></p> : null}
+        {switching.error ? <p role="alert" className="error">Could not switch triage. {errorText(switching.error)} <Button type="button" variant="link" size="sm" onClick={() => switching.mutate(!triaging)}>Try again</Button></p> : null}
         {manualWebhook ? <BitbucketDatacenterWebhook webhook={manualWebhook} open={sawTriageOff} /> : null}
         <PolicySection repo={repo.name} source={repo.source} pack={pack} disabled={locked} />
         <CodeReviewCard />

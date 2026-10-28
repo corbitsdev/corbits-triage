@@ -119,10 +119,10 @@ function Disclosure({ label, children }: { label: ReactNode; children: ReactNode
   const id = useId();
   return (
     <>
-      <button type="button" className="dr" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+      <Button type="button" variant="ghost" className="dr" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
         <ChevronIcon />
         <span>{label}</span>
-      </button>
+      </Button>
       <div id={id} className="dr-b" hidden={!open}>
         {open ? <DetailsBoundary>{children}</DetailsBoundary> : null}
       </div>
@@ -188,9 +188,9 @@ export function Description({ pull }: { pull: PullState }) {
         <Markdown text={body} />
       </div>
       {(long || expanded) && (
-        <button type="button" className="desc-more" aria-expanded={expanded} aria-controls={id} onClick={toggle}>
+        <Button type="button" variant="link" size="sm" aria-expanded={expanded} aria-controls={id} onClick={toggle}>
           {expanded ? "Show less" : "Show more"}
-        </button>
+        </Button>
       )}
     </section>
   );

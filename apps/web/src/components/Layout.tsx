@@ -56,10 +56,10 @@ function WorkspaceSwitcher() {
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button type="button" className="ws" aria-label={`Workspace: ${snapshot.tenantName}`}>
+        <Button type="button" variant="outline" className="ws" aria-label={`Workspace: ${snapshot.tenantName}`}>
           <span className="ws-name">{snapshot.tenantName}</span>
           <UpDownIcon />
-        </button>
+        </Button>
       </MenuTrigger>
       <MenuContent side="top" align="start" className="ws-menu">
         {snapshot.workspaces.map((workspace) => (
@@ -99,11 +99,11 @@ function UserBlock() {
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button type="button" className="me" aria-current={onSettingsOrRepos ? "true" : undefined}>
+        <Button type="button" variant="ghost" className="me" aria-current={onSettingsOrRepos ? "true" : undefined}>
           <span className="av lg">{initialsOf(session.name || session.email)}</span>
           <span className="me-t"><b>{session.name || session.email}</b><span>{session.email}</span></span>
           <UpDownIcon />
-        </button>
+        </Button>
       </MenuTrigger>
       <MenuContent side="top" align="start" className="me-menu">
         <MenuItem onSelect={() => navigate("/settings")}><GearIcon />Settings</MenuItem>

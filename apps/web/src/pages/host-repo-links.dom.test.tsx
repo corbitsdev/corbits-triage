@@ -204,7 +204,7 @@ test("the same repository name on GitHub and Bitbucket Data Center opens each ho
   show("github");
   const pane = document.querySelector("a.repo-link")?.getAttribute("href") ?? "";
   const waiting = hrefs(".note a[href^='/repositories/']");
-  const starting = [...document.querySelectorAll("a.linkish")].filter((link) => link.textContent === "Start a policy file").map((link) => link.getAttribute("href") ?? "");
+  const starting = [...document.querySelectorAll("a")].filter((link) => link.textContent === "Start a policy file").map((link) => link.getAttribute("href") ?? "");
   expect(opened(pane)?.source).toBe("github");
   expect(waiting.map((href) => opened(href)?.source)).toEqual(["github", "bitbucket-datacenter"]);
   expect(starting.map((href) => opened(href)?.source)).toEqual(["github", "bitbucket-datacenter"]);

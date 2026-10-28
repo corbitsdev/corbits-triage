@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { Link } from "react-router-dom";
 import { POLICY_FILE_PATH } from "@corbits/triage-contracts";
 import { DeniedNotice } from "../../lib/denied.tsx";
@@ -21,7 +22,7 @@ function PolicyFileRow({ repo }: { repo: RepoRecord }) {
       <span className="txt mono small-text">{repo.name}</span>
       <span className="key-acts">
         <span className="model">{policyText(file.data, file.isError)}</span>
-        {canStart && <Link className="linkish" to={repoHref(repo)}>Start a policy file</Link>}
+        {canStart && <Button asChild variant="link" size="sm"><Link to={repoHref(repo)}>Start a policy file</Link></Button>}
       </span>
     </div>
   );
@@ -43,7 +44,7 @@ export function PolicyFiles({ snapshot }: { snapshot: PortalSnapshot }) {
           {repos.map((repo) => <PolicyFileRow key={`${repo.source}:${repo.name}`} repo={repo} />)}
           <div className="sentence">
             <span className="txt">{repos.length === 0 ? "No repository is connected yet." : "Turn triage on or off per repository."}</span>
-            <Link className="linkish" to="/repositories">Open Repositories</Link>
+            <Button asChild variant="link" size="sm"><Link to="/repositories">Open Repositories</Link></Button>
           </div>
         </div>
       </div>

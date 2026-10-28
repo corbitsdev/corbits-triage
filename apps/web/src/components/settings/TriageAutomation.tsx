@@ -1,3 +1,4 @@
+import { Button } from "@corbits/react-ui";
 import { useId } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
@@ -44,7 +45,7 @@ function AutomationRow({ tenantId, repo, grants, ask, disabled }: RowProps) {
     return (
       <span key={kind}>
         {at > 0 ? ", " : null}{name}
-        {grant === undefined ? null : <> <button type="button" className="linkish quiet" aria-label={`Remove ${name} in ${repo.name}`} disabled={disabled || remove.isPending} onClick={() => remove.mutate(grant.id)}>Remove</button></>}
+        {grant === undefined ? null : <> <Button type="button" variant="link" size="sm" aria-label={`Remove ${name} in ${repo.name}`} disabled={disabled || remove.isPending} onClick={() => remove.mutate(grant.id)}>Remove</Button></>}
       </span>
     );
   }

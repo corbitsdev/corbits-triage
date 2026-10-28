@@ -40,14 +40,7 @@
 :is(.repos, .settings) .sw[aria-checked="true"] { background: var(--green); }
 :is(.repos, .settings) .sw > span { background: var(--white); }
 :is(.repos, .settings) .sw:focus-visible { outline: 0; box-shadow: var(--focus); }
-:is(.repos, .settings) .glob { font: 400 12px var(--mono); padding: 2px 2px 2px 8px; border: 1px solid var(--rule-strong); border-radius: var(--r-sm); display: inline-flex; gap: 2px; align-items: center; }
-:is(.repos, .settings) .glob button { border: 0; background: none; font: 700 12px var(--font); color: inherit; padding: 0 5px; border-radius: 4px; cursor: pointer; }
-:is(.repos, .settings) .glob button:hover { background: var(--fill-hover); }
 :is(.repos, .settings) .tokens { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-:is(.repos, .settings) .linkish { background: none; border: 0; padding: 0; font: 600 12px var(--font); color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-:is(.repos, .settings) .linkish.quiet { font-weight: 500; }
-:is(.repos, .settings) .linkish:disabled { opacity: 0.45; cursor: not-allowed; }
-:is(.repos, .settings) .linkish:focus-visible { outline: 0; box-shadow: var(--focus); border-radius: 2px; }
 
 /* On narrow screens a long settings sentence takes its own line and its buttons wrap under it. */
 @media (max-width: 960px) {

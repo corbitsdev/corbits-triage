@@ -88,12 +88,15 @@ body {
   font-feature-settings: "kern" 1, "liga" 1;
 }
 button { cursor: pointer; }
-a {
-  color: inherit;
-  text-underline-offset: 0.18em;
-  text-decoration-thickness: 1px;
+/* In the base layer so a library Button rendered as a link keeps its own colour. */
+@layer base {
+  a {
+    color: inherit;
+    text-underline-offset: 0.18em;
+    text-decoration-thickness: 1px;
+  }
+  a:hover { color: var(--heat-hover); }
 }
-a:hover { color: var(--heat-hover); }
 h1, h2, h3, p, ul, dl, dd { margin: 0; }
 
 ::selection {
@@ -224,21 +227,14 @@ input, textarea { caret-color: var(--heat); }
   padding: 8px 4px 4px;
 }
 .sliver-tab {
-  display: flex;
-  align-items: center;
+  justify-content: flex-start;
   gap: 10px;
+  height: auto;
   min-height: 40px;
   min-width: 36px;
   padding: 0 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-mute);
-  font-size: 13px;
-  font-weight: 650;
   text-align: left;
   overflow: hidden;
-  white-space: nowrap;
 }
 .sliver-tab svg {
   width: 20px;
@@ -252,11 +248,6 @@ input, textarea { caret-color: var(--heat); }
 .pr-sliver:hover .sliver-tab-label,
 .pr-sliver:focus-within .sliver-tab-label {
   opacity: 1;
-}
-.sliver-tab:hover { color: var(--ink); background: var(--paper); }
-.sliver-tab.is-on {
-  color: var(--heat-ink);
-  background: var(--heat-wash);
 }
 .sliver-body {
   display: none;
@@ -277,21 +268,13 @@ input, textarea { caret-color: var(--heat); }
 }
 .sliver-file {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
   width: 100%;
-  gap: 2px;
+  height: auto;
   min-height: 36px;
   padding: 6px 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink);
   text-align: left;
-  transition: background var(--duration) var(--ease), color var(--duration) var(--ease);
-}
-.sliver-file {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
 }
 .sliver-file-name {
   font-family: var(--mono);
@@ -311,15 +294,6 @@ input, textarea { caret-color: var(--heat); }
 .diff-stat .add { color: var(--ok); }
 .sliver-file-stat .del,
 .diff-stat .del { color: var(--bad); }
-.sliver-file:hover {
-  background: var(--paper);
-  color: var(--ink);
-}
-.sliver-file.is-on {
-  background: var(--heat-wash);
-  color: var(--heat-ink);
-}
-.sliver-file.is-on .sliver-file-stat { color: var(--heat-ink); }
 
 .main-shell {
   min-width: 0;
@@ -795,11 +769,6 @@ input, textarea { caret-color: var(--heat); }
   gap: 12px;
   flex-shrink: 0;
 }
-.diff-layout.segmented[role="radiogroup"] button {
-  min-height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
-}
 .diff-old-path { color: var(--ink-mute); }
 .diff-eof {
   margin-left: 6px;
@@ -994,51 +963,8 @@ input, textarea { caret-color: var(--heat); }
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  border-bottom: 1px solid var(--rule);
-  border-radius: 0;
-  overflow: visible;
-  background: transparent;
-  width: 100%;
-  max-width: 100%;
-}
-.segmented button {
-  min-height: 40px;
-  padding: 0 14px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  background: transparent;
-  font-weight: 560;
-  font-size: 13px;
-  color: var(--ink-mute);
-  border-radius: 0;
-  transition: color var(--duration) var(--ease), border-color var(--duration) var(--ease);
-}
-.segmented button + button { border-left: 0; }
-.segmented button:hover { color: var(--ink); }
-.segmented button[aria-checked="true"] {
-  background: transparent;
-  color: var(--heat);
-  font-weight: 650;
-  border-bottom-color: var(--heat);
-}
-.segmented[role="radiogroup"] {
   width: fit-content;
-  border: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-}
-.segmented[role="radiogroup"] button {
-  min-height: 36px;
-  border-bottom: 0;
-  margin-bottom: 0;
-}
-.segmented[role="radiogroup"] button + button {
-  border-left: 1px solid var(--rule);
-}
-.segmented[role="radiogroup"] button[aria-checked="true"] {
-  background: var(--heat-wash);
-  color: var(--heat-ink);
+  max-width: 100%;
 }
 
 label.field {
