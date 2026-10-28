@@ -134,9 +134,9 @@ function hurried() {
 
 /**
  * Runs one mail's body; the mail agent's director runs its one tool, so the mail it would send is recorded and answered
- * `mailed` in the `{ reply, turn }` a live agent step outputs.
+ * `mailed` in the `{ reply, turn }` a live agent step outputs. `delivers`, whether every mail goes, or whether each in
+ * turn does; one that does not fails its step unless the agent tolerates it.
  */
-/** `delivers`, whether every mail goes, or whether each in turn does; one that does not fails its step unless the agent tolerates it. */
 async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers: boolean | readonly boolean[] = true, clock?: () => Date) {
   const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the body is not inline");

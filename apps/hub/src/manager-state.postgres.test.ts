@@ -522,12 +522,12 @@ test("PostgreSQL: a listener counts as live as a manager does, and one deployed 
   });
 }, 120_000);
 
-test("PostgreSQL: a deployment without a sidecar past its start grace reads as not live, though still inside the mail hold", async () => {
+test("PostgreSQL: a deployment without a sidecar past the listener's start grace reads as not live, though still inside the mail hold", async () => {
   await withDatabase(async function unstarted(db) {
     await db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: "triage-listener-github" });
     await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date() });
     expect(await deploymentUp(db, "run_listener")).toBe(true);
-    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 3 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 7 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
     expect(await deploymentUp(db, "run_listener")).toBe(false);
   });
 }, 120_000);

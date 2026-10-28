@@ -262,9 +262,6 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
 /** A just-deployed listener counts as live longer than a roll waits for it, so one a roll still waits on is never released. */
 const LISTENER_START_GRACE_MS = START_DEADLINE_MS + 60_000;
 
-/** How long a just-deployed run without a sidecar still counts as up when the portal reads which deployments are live. */
-const DEPLOYMENT_START_GRACE_MS = 2 * 60_000;
-
 /** A run that is running, or whose sidecar is up. */
 function runIsRunning(run: ManagerRun | undefined): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
@@ -287,7 +284,7 @@ async function runGone(tx: Tx | DB["db"], runId: string, now: Date): Promise<boo
 
 /** Whether a deployment is up as the hub counts a listener: running, on its sidecar, or just deployed. */
 export async function deploymentUp(db: DB["db"], runId: string): Promise<boolean> {
-  return runIsUp(await managerRun(db, runId), new Date(), { graceMs: DEPLOYMENT_START_GRACE_MS, startedByMail: false });
+  return runIsUp(await managerRun(db, runId), new Date(), { graceMs: LISTENER_START_GRACE_MS, startedByMail: false });
 }
 
 /**
