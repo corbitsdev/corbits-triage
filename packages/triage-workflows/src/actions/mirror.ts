@@ -6,7 +6,7 @@ import { asText } from "../logic/extract.js";
 import { call, data, hostWrite, toolName, type HostWrite } from "../logic/host.js";
 import type { Verdict, WaitingMark } from "../logic/render.js";
 import { decidesDos } from "../logic/settled.js";
-import type { WaitingOutput } from "./waiting.js";
+import type { UnreadyOutput } from "./waiting.js";
 
 const MIRRORED_KINDS: readonly ActionKind[] = ["comment", "labels", "approve", "request-changes"];
 
@@ -87,12 +87,12 @@ function mirrorCall(v: Verdict): ToolCall {
 /**
  * Writes triage's labels when the pr-triage role holds labels and its reply when it holds comment; a host without labels
  * writes the verdict build status with the comment. It takes back what earlier approve and request-changes Dos left
- * standing; the portal offers the rest. A waiting output writes only its marker.
+ * standing; the portal offers the rest. An unready output, and a verdict that waits on the host's checks, writes only its marker.
  */
 export async function mirrorVerdicts(input: unknown, write: HostWrite): Promise<MirrorOutput> {
   if (!isRecord(input)) return { skipped: true, reason: "mirror: input is not JSON" };
-  if (typeof input.waiting === "boolean") {
-    const { mark } = input as WaitingOutput;
+  if (input.unready === true) {
+    const { mark } = input as UnreadyOutput;
     if (!mark) return { skipped: true };
     return outcome(await write(mark.repoSource, markCall(mark)));
   }

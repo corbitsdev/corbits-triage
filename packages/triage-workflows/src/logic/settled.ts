@@ -52,11 +52,6 @@ export function unsettledBy(verdict: VerdictFields, headSha?: string): Unsettled
   return {};
 }
 
-/** The verdict waited for CI still running on its head, so the hub holds the head for its CI as one it held itself. */
-export function heldForCi(verdict: VerdictFields): boolean {
-  return verdict.waiting === true && checksOf(verdict).some((check) => check["check"] === "ci-green" && check["result"] === "unconfirmed");
-}
-
 function unasked(reason: unknown): boolean {
   return reason === NEEDS_JUDGE_REASON || String(reason).startsWith(QUALITY_EVALUATION_LIMIT_ERROR);
 }

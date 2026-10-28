@@ -1,9 +1,9 @@
 import type { EffectContext } from "@intx/workflow";
-import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_KIND, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import type { MarkArgs, WaitingMark } from "../logic/render.js";
 
-/** `mark` is absent when triage does not write the verdict on this host, so nothing is written either. */
-export type WaitingOutput = { waiting: boolean; mark?: WaitingMark };
+/** `mark` is absent when there is nothing to take off, so nothing is written either. */
+export type UnreadyOutput = { unready: true; mark?: WaitingMark };
 
 type Pull = { repo: string; number: number; onHead: string };
 
@@ -30,20 +30,17 @@ export function waitingMark(source: RepoSource, { repo, number, headSha }: { rep
 }
 
 /**
- * A waiting mail from the hub's sender marks its head as held for CI and triages nothing. A pull request mail from it goes on
- * to triage once Ready is off its head on GitHub; Bitbucket's build status is per commit already. Any other mail goes on to triage.
+ * A pull request mail from the hub's sender goes on to triage once Ready is off its head on GitHub; Bitbucket's build
+ * status is per commit already. Any other mail goes on to triage as it is.
  */
-export async function waiting(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<WaitingOutput> {
+export async function unready(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<UnreadyOutput> {
   const { request, trusted } = trustedRequestOf(input);
-  const held = request?.["kind"] === WAITING_KIND;
-  if (!request || !trusted || (!held && request["kind"] !== "pr")) return { waiting: false };
+  if (!request || !trusted || request["kind"] !== "pr") return { unready: true };
   const source = repoSourceOf(request["repoSource"]);
   const { repo, prNumber, headSha, automatic } = request;
   const pack = parseCheckPack(request["pack"] ?? request["checkPack"]);
-  if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !pack) return { waiting: held };
-  if (!marks(source, automatic) || (!held && source !== "github")) return { waiting: held };
-  const pull = { repo, number: prNumber, onHead: headSha };
+  if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !pack) return { unready: true };
+  if (!marks(source, automatic) || source !== "github") return { unready: true };
   const appLogin = typeof request["appLogin"] === "string" ? request["appLogin"] : undefined;
-  if (held) return { waiting: true, mark: mark("waiting", source, pull, pack.labels, request["noCi"] !== true, appLogin) };
-  return { waiting: false, mark: mark("unready", source, pull, pack.labels, false, appLogin) };
+  return { unready: true, mark: mark("unready", source, { repo, number: prNumber, onHead: headSha }, pack.labels, false, appLogin) };
 }

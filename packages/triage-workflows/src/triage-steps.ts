@@ -27,21 +27,18 @@ export function hostAction(handler: "facts" | "mirror" | "execute", sources: Sou
 // Facts, mirror and execute reach the pull request's host through its bound credential; each host call they make is
 // one call of the host's tool. The judge maps over the rules output's chunks, one System One call each; a second map
 // asks focused's file questions only for the items it failed, and makes no call otherwise. An approval mail skips triage
-// and executes the one held action it names; a waiting mail skips triage and mirrors only the waiting marker; any other
-// takes Ready off its head before triaging it. The mirror writes the verdict's comment and label (or build status)
-// before execute, so a merge or close finds them on the head it closes; a mirror on a closed pull request would write
-// nothing. Each gate branch evaluates, mirrors and executes on its own: a live run never hands a skipped step's output
+// and executes the one held action it names; any other takes Ready off its head before triaging it. The mirror writes
+// the verdict's comment and label (or build status) before execute, so a merge or close finds them on the head it
+// closes; a mirror on a closed pull request would write nothing. Each gate branch evaluates, mirrors and executes on its own: a live run never hands a skipped step's output
 // to a selector, so a join after the gate could not read the judge when it was skipped.
 export function triageSteps(sources: Sources = ["github"]) {
   return {
     approval: action({ handler: "approval", input: { from: "trigger.payload" } }),
-    approved: gate({ when: { from: "steps.approval.output.approved" }, then: "executeApproved", else: "waiting", after: ["approval"] }),
+    approved: gate({ when: { from: "steps.approval.output.approved" }, then: "executeApproved", else: "unready", after: ["approval"] }),
     executeApproved: hostAction("execute", sources, outputOf("approval"), ["approved"]),
-    waiting: action({ handler: "waiting", input: { from: "trigger.payload" }, after: ["approved"] }),
-    held: gate({ when: { from: "steps.waiting.output.waiting" }, then: "markWaiting", else: "unready", after: ["waiting"] }),
-    markWaiting: hostAction("mirror", sources, outputOf("waiting"), ["held"]),
-    unready: hostAction("mirror", sources, outputOf("waiting"), ["held"]),
-    facts: hostAction("facts", sources, { from: "trigger.payload" }, ["unready"]),
+    unready: action({ handler: "unready", input: { from: "trigger.payload" }, after: ["approved"] }),
+    markUnready: hostAction("mirror", sources, outputOf("unready"), ["unready"]),
+    facts: hostAction("facts", sources, { from: "trigger.payload" }, ["markUnready"]),
     rules: action({ handler: "rules", input: outputOf("facts"), after: ["facts"] }),
     route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "judge", else: "evaluateRules", after: ["rules"] }),
     judge: map({ over: { from: "steps.rules.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["route"] }),

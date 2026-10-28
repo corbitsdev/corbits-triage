@@ -66,10 +66,7 @@ export function trustedRequestOf(input: unknown): { request: Record<string, unkn
 
 export const APPROVE_DO_KIND = "approve-do";
 
-/** The hub's mail for a head it holds for its CI; triage writes only the waiting marker. */
-export const WAITING_KIND = "waiting";
-
-/** Whether triage marks a held head: only where it writes the verdict, as labels on GitHub and as the build status beside its comment on Bitbucket Data Center. */
+/** Whether triage marks a head waiting on its CI: only where it writes the verdict, as labels on GitHub and as the build status beside its comment on Bitbucket Data Center. */
 export function marksWaiting(source: RepoSource, automatic: readonly ActionKind[]): boolean {
   return automatic.includes(source === "bitbucket-datacenter" ? "comment" : "labels");
 }

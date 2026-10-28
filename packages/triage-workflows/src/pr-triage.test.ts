@@ -180,17 +180,17 @@ function runTriage(gh: GithubFetch, judged: SystemOne[], judgeFails: boolean, tr
   }).complete;
 }
 
-const HOST_STEPS = ["unready", "facts", "markWaiting", "mirror", "mirrorRules", "execute", "executeRules", "executeApproved"];
+const HOST_STEPS = ["markUnready", "facts", "mirror", "mirrorRules", "execute", "executeRules", "executeApproved"];
 
 function hostSteps(outputs: Record<string, unknown>): string[] {
   return HOST_STEPS.filter((id) => id in outputs);
 }
 
-const RULES_PATH = { hostSteps: ["unready", "facts", "mirrorRules", "executeRules"], judgeCalls: 0 };
+const RULES_PATH = { hostSteps: ["markUnready", "facts", "mirrorRules", "executeRules"], judgeCalls: 0 };
 // Without judged rules to ask first, the verdict question is the judge's only call.
-const VERDICT_PATH = { hostSteps: ["unready", "facts", "mirror", "execute"], judgeCalls: 1 };
+const VERDICT_PATH = { hostSteps: ["markUnready", "facts", "mirror", "execute"], judgeCalls: 1 };
 // `judgeText` fails focused, so the judge is called again for its file questions; a failed judged rule decides Fail without the verdict question.
-const JUDGE_PATH = { hostSteps: ["unready", "facts", "mirror", "execute"], judgeCalls: 2 };
+const JUDGE_PATH = { hostSteps: ["markUnready", "facts", "mirror", "execute"], judgeCalls: 2 };
 
 type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; noWait?: true; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
 
@@ -609,43 +609,20 @@ describe("pr-triage body", () => {
     expect((await approve(github, mail)).dos).toEqual([{ effectId: held.effectId, status: "skipped", error: expect.stringContaining("has new commits") }]);
   });
 
-  test("a waiting mail labels an unlabelled head Waiting for CI without triaging it; the verdict takes it back", async () => {
-    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-    const waiting = { kind: "waiting", repo: REPO, prNumber: 8, headSha: "abc0000000000000000000000000000000000000", pack, automatic: ["labels"] };
-    const held = fakeGithub();
-    expect(await approve(held, hubMail(waiting, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", hostSteps: ["markWaiting"] });
-    expect(held.requests.filter((r) => r.method !== "GET")).toEqual([{ method: "POST", path: `/repos/${REPO}/issues/8/labels` }]);
-    expect(held.labels).toEqual([WAITING_LABEL]);
-    const ungranted = fakeGithub();
-    expect(await approve(ungranted, hubMail({ ...waiting, automatic: ["comment"] }, "github@acme.test"))).toMatchObject({ terminalStatus: "completed", hostSteps: ["markWaiting"] });
-    expect(ungranted.requests).toEqual([]);
-    const moved = fakeGithub();
-    await approve(moved, hubMail({ ...waiting, headSha: "old" }, "github@acme.test"));
-    expect(moved.requests.filter((r) => r.method !== "GET")).toEqual([]);
-    const { requests } = await triage(pack, { labels: [WAITING_LABEL] });
-    expect(requests).toContainEqual({ method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Triage%3A%20Waiting%20for%20CI` });
-  });
-
-  test("a new head swaps Ready for Waiting for CI until it passes", async () => {
+  test("a new head swaps Ready for Waiting for CI until it passes, and the verdict takes the waiting label back", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
     const github = fakeGithub({ labels: ["bug", "Triage: Ready"] });
     github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.ci = "pending";
-    await approve(github, hubMail({ kind: "waiting", repo: REPO, prNumber: 8, headSha: "def0000000000000000000000000000000000000", pack, automatic: ["labels"] }, "github@acme.test"));
+    await triage(pack, { github });
     expect(github.labels).toEqual(["bug", WAITING_LABEL]);
     github.pr.ci = "success";
     await triage(pack, { github });
     expect(github.labels).toEqual(["bug", "Triage: Ready"]);
   });
 
-  test("a new head with no CI takes Ready off as soon as it is seen and puts no Triage label on until it passes", async () => {
+  test("a new head with no CI takes Ready off and puts it back once it passes", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-    const held = fakeGithub({ labels: ["bug", "Triage: Ready"] });
-    held.pr.head = "def0000000000000000000000000000000000000";
-    await approve(held, hubMail({ kind: "waiting", repo: REPO, prNumber: 8, headSha: "def0000000000000000000000000000000000000", noCi: true, pack, automatic: ["labels"] }, "github@acme.test"));
-    expect(held.labels).toEqual(["bug"]);
-    await triage(pack, { github: held });
-    expect(held.labels).toEqual(["bug", "Triage: Ready"]);
     const triaged = fakeGithub({ labels: ["bug", "Triage: Ready"] });
     triaged.pr.head = "def0000000000000000000000000000000000000";
     await triage(pack, { github: triaged });
@@ -665,7 +642,6 @@ describe("pr-triage body", () => {
     for (const head of ["def0000000000000000000000000000000000000", "ccc0000000000000000000000000000000000000", "ddd0000000000000000000000000000000000000"]) {
       github.pr.head = head;
       github.pr.ci = "pending";
-      await approve(github, hubMail({ kind: "waiting", repo: REPO, prNumber: 8, headSha: head, pack, automatic: ["labels"] }, "github@acme.test"));
       await triage(pack, { github });
       github.pr.ci = "failure";
       await triage(pack, { github });

@@ -240,21 +240,18 @@ dismissed once none still fails.
 
 ### Waiting for CI
 
-When the policy depends on CI (CI green is on, a step has a `ci` condition, or
-a step approves or merges), Triage waits for CI to finish on the head, or for
-its first check to fail, before it triages it. A head with no checks after 2
-minutes is taken as having no CI, and none waits longer than an hour; a run by
-hand does not wait. Meanwhile Triage shows **Waiting for CI**. On GitHub a
+Triage checks a new head at once. When the only rules it cannot confirm yet
+are the host's own (CI still running, mergeability not computed yet), the head
+gets no verdict yet: Triage shows **Waiting for CI**, posts nothing, runs no
+action, and decides once they are done, as soon as a check fails, or after an
+hour at most. A head with no checks is taken as having no CI. Triage again,
+and a head's last retry, decide at once. On GitHub a
 pull request labelled `Triage: Not Ready` or `Triage: Needs Human Review`
 keeps it, so a push that leaves the verdict as it was changes no label; any
 other shows `Triage: Waiting for CI` until the verdict replaces it, or no
 Triage label while the head has no checks. On Bitbucket the head's `Corbits
-Triage` build status is in progress until its verdict.
-A head triaged anyway while the only rules left to confirm are the host's own
-(CI still running, mergeability not computed yet) gets no verdict yet: it
-shows the same marker, nothing is posted or run, and it is triaged again once
-they are done. Past the hour, on Triage again, or on its last retry, it gets
-its verdict anyway. A head triaged while CI still runs for a step's CI condition
+Triage` build status is in progress until its verdict. A head triaged while CI
+still runs for a step's CI condition
 has every action held until its checks finish.
 
 ### Labels

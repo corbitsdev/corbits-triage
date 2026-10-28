@@ -1,7 +1,6 @@
 // Pull requests' managers as the reconciler reads a deployment's runs, from their claims and the verdicts they
 // reported: a manager that is up runs the newest head the hub recorded a mail for, one that went away mid-pass failed
-// on its pass's head, a head its last pass held for CI waits for it, and each verdict a manager recorded settles its
-// head as a pr-triage run's does.
+// on its pass's head, and each verdict a manager recorded settles its head as a pr-triage run's does.
 import type { DB } from "@intx/db";
 import { unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import { managedPulls, type PullRequestRef } from "../manager-state.js";
@@ -34,16 +33,11 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
       else byHead.set(key, [run]);
     }
 
-    for (const { pr, history, live, gone } of pulls) {
+    for (const { pr, live, gone } of pulls) {
       const { source } = pr;
       // The hub checked the run is up, so it is running now and never stuck.
-      if (live?.head !== undefined) observed(pr.repo, pr.number, live.head, { runId: live.runId, source, status: "running", startedAt: now().toISOString(), ...(live.pass && { passAt: live.pass.takenAt }), ...(live.awaiting.length > 0 && { awaiting: live.awaiting }) });
+      if (live?.head !== undefined) observed(pr.repo, pr.number, live.head, { runId: live.runId, source, status: "running", startedAt: now().toISOString(), ...(live.pass && { passAt: live.pass.takenAt }), ...(live.awaiting.length > 0 && { awaiting: live.awaiting }), ...(live.waitingSince !== undefined && { waitingSince: live.waitingSince }) });
       if (gone) observed(pr.repo, pr.number, gone.pass.head, { runId: gone.runId, source, status: "failed", startedAt: gone.pass.takenAt });
-      // A head's last pass decides whether it still waits for CI; a waiting run is listed first so it outranks an older verdict.
-      const lastOfHead = new Map(history.map((pass) => [pass.head, pass]));
-      for (const pass of lastOfHead.values()) {
-        if (pass.waiting) observed(pr.repo, pr.number, pass.head, { runId: pass.runId, source, status: "completed", startedAt: pass.takenAt, heldForCi: true });
-      }
       for (const verdict of recorded.filter((row) => row.repo === pr.repo && row.number === pr.number)) {
         observed(pr.repo, pr.number, verdict.headSha, { runId: verdict.runId, source, status: "completed", startedAt: verdict.startedAt.toISOString(), ...settlesBy(verdict), ...(verdict.trigger !== null && { trigger: verdict.trigger }) });
       }

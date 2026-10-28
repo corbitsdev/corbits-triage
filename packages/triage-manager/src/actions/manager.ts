@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, VerdictFacts, WAITING_KIND } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CodeReviewOutput, JudgeVerdict, StageResult, VerdictFacts } from "@corbits/triage-contracts";
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
 
@@ -9,16 +9,31 @@ export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "s
 export type Reviewer = typeof Reviewer.infer;
 
 const TakenEvent = type({ key: "string", event: { type: "string", head: "string", payload: "Record<string, unknown>" } });
-const Latest = { "request?": "Record<string, unknown>", reviewers: Reviewer.array() } as const;
+const Latest = { "request?": "Record<string, unknown>", reviewers: Reviewer.array(), "waitingSince?": "string" } as const;
 const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 
+/** How long a manager waits for its head's CI, from its first pass that waited for it, before it decides without it. */
+const CI_WAIT_MS = 60 * 60_000;
+
+/** How often a manager reads its waiting head's CI again itself, for a host whose builds send no event when they finish. */
+const RECHECK_MS = 5 * 60_000;
+
+/** Polls come about 30 seconds apart, so a window of a minute holds each recheck boundary at least once. */
+const RECHECK_WINDOW_MS = 60_000;
+
+/** Whether the head, waiting for CI `elapsed` milliseconds, crossed a recheck boundary since about the last poll. */
+function rechecks(elapsed: number): boolean {
+  return Math.floor(elapsed / RECHECK_MS) > Math.floor(Math.max(0, elapsed - RECHECK_WINDOW_MS) / RECHECK_MS);
+}
+
 /**
- * What a pass works on. `run` when there is anything to do: a pass, or the code review the manager waits for is past
- * its deadline. `approvals` are the held Dos approved since, each run as pr-triage runs one. `triage` when the head is
- * triaged: `taken` is the newest pull request mail the hub recorded, or the mail that holds the head for CI when that
- * is the newest for it. `review` or `reviewFailed`, and `judge` or `judgeFailed`, is what one of its own reviewers
- * reported on `head` on this pass; `verdict` is the judge's verdict on `head`, reported on this pass or an earlier one.
+ * What a pass works on. `run` when there is anything to do: a pass, a reviewer the manager waits for is past its
+ * deadline, or its head waited out its CI. `approvals` are the held Dos approved since, each run as pr-triage runs one.
+ * `triage` when the head is triaged: `taken` is the newest pull request mail the hub recorded, deciding without the
+ * host's checks once the head waited out its CI. `review` or `reviewFailed`, and `judge` or `judgeFailed`, is what one
+ * of its own reviewers reported on `head` on this pass; `verdict` is the judge's verdict on `head`, reported on this
+ * pass or an earlier one. `waitingSince` is when the head started waiting for its CI, while it still does.
  */
 export const TakeOutput = type({
   run: "boolean",
@@ -34,6 +49,7 @@ export const TakeOutput = type({
   "verdict?": JudgeVerdict,
   overdue: "boolean",
   reviewers: Reviewer.array(),
+  "waitingSince?": "string",
 });
 export type TakeOutput = typeof TakeOutput.infer;
 
@@ -101,7 +117,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const answer = await asManager(ctx, mail, "take", mail.pullRequest, Taken);
   const nothing = { run: false, approvals: [], triage: false, overdue: false };
   if (answer === undefined) return { ...nothing, refused: true, reviewers: [] };
-  const { request, reviewers } = answer;
+  const { request, reviewers, waitingSince } = answer;
   const head = answer.outcome === "pass" ? answer.pass.head : request?.["headSha"];
   if (typeof head !== "string") return { ...nothing, reviewers };
   const events = answer.outcome === "pass" ? answer.events : [];
@@ -110,13 +126,15 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
   const report = reportOf(events, head, reviewers);
   const overdue = late(reviewers, head, "code-review", report.review !== undefined || report.reviewFailed !== undefined) || late(reviewers, head, "judge", report.judge !== undefined || report.judgeFailed !== undefined);
-  const held = forHead?.payload["kind"] === WAITING_KIND;
-  // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage; a head held for CI is
-  // marked waiting even before its first pull request mail.
-  const triage = held || (request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue));
-  const taken = held ? forHead.payload : request;
+  const waited = waitingSince === undefined ? undefined : Date.now() - Date.parse(waitingSince);
+  const waitedOut = waited !== undefined && waited >= CI_WAIT_MS;
+  const recheck = waited !== undefined && !waitedOut && rechecks(waited);
+  // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage.
+  const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue || waitedOut || recheck);
+  const taken = request && (waitedOut ? { ...request, noWait: true } : request);
   const verdict = report.judge ?? storedVerdict(reviewers, head);
-  return { run: answer.outcome === "pass" || overdue, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers };
+  const waiting = waitingSince !== undefined && !waitedOut;
+  return { run: answer.outcome === "pass" || overdue || waitedOut || recheck, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }) };
 }
 
 const Output = { output: "Record<string, unknown>" } as const;
@@ -125,7 +143,6 @@ const DoneInput = type({
   payload: "unknown",
   take: { output: TakeOutput },
   "approvals?": { output: { results: "Record<string, unknown>[]" } },
-  "waiting?": { output: { waiting: "boolean" } },
   "rules?": { output: { items: type({ facts: "Record<string, unknown>", "det?": "unknown" }).array() } },
   "cleared?": Output,
   "reviewScope?": { output: { "skipped?": "string" } },
@@ -141,14 +158,14 @@ type DoneInput = typeof DoneInput.infer;
 const RuledReasons = type({ "+": "delete", "reason?": "string", "findings?": type({ "+": "delete", "reason?": "string" }).array() });
 
 /**
- * What the pass did on its head, for the hub to record: held it for CI, or posted the verdict its mirror ran on, with
- * why the policy left code review out, and only the facts and reasons the verdict keeps, never the diff.
+ * What the pass did on its head, for the hub to record: triaged it with a reviewer still out, or posted the verdict its
+ * mirror ran on, with why the policy left code review out, and only the facts and reasons the verdict keeps, never the
+ * diff. A pass that triaged nothing reports nothing.
  */
-function doneReport({ take, waiting, rules, cleared, reviewScope, mirrorRules, executeRules }: DoneInput): Record<string, unknown> | undefined {
+function doneReport({ take, rules, cleared, reviewScope, mirrorRules, executeRules }: DoneInput): Record<string, unknown> | undefined {
   const { head } = take.output;
-  if (head === undefined) return undefined;
-  if (waiting?.output.waiting) return { head, waiting: true };
-  if (!rules || !cleared || !mirrorRules) return undefined;
+  if (head === undefined || !rules) return undefined;
+  if (!cleared || !mirrorRules) return { head };
   const items = rules.output.items.map(({ facts, det }) => ({ facts: { ...VerdictFacts.assert(facts), repo: facts["repo"], number: facts["number"] }, ...(det !== undefined && { det: RuledReasons.assert(det) }) }));
   const skipped = reviewScope?.output.skipped;
   const verdict = skipped === undefined ? cleared.output : { ...cleared.output, codeReviewSkipped: skipped };
@@ -212,9 +229,19 @@ function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
 }
 
 /**
- * Closes the pass with what it ran and stops the reviewers it no longer waits for. A pass that posted to the host or
- * mailed a reviewer asks the hub to `wait`. `more` runs the next pass at once, or with `wait` after waiting for what the
- * pass brought; `ended` ends the run, and a reviewer's result or a later event starts the next one.
+ * Whether the pass's head still waits for something that comes to this manager: a reviewer of it still out, or CI, as
+ * the verdict it posted waits for the host's checks, or, on a pass that triaged nothing, as the hub says it does.
+ */
+function awaiting({ take, cleared }: DoneInput, report: Record<string, unknown> | undefined, reviewers: readonly Reviewer[]): boolean {
+  const { head, waitingSince } = take.output;
+  if (reviewers.some((reviewer) => reviewer.head === head && reviewer.result === undefined)) return true;
+  return report === undefined ? waitingSince !== undefined : cleared?.output["waiting"] === true;
+}
+
+/**
+ * Closes the pass with what it ran and stops the reviewers it no longer waits for. A pass whose head still awaits CI or
+ * a reviewer asks the hub to `wait`. `more` runs the next pass at once, or with `wait` after polling for what it awaits;
+ * `ended` ends the run once the head has its final verdict, and a later event starts the next one.
  */
 export async function done(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ outcome: "ended" | "refused" } | { outcome: "more"; wait: boolean }> {
   const parsed = DoneInput(input);
@@ -223,8 +250,9 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const mail = managerMailOf(parsed.payload);
   const mailed = parsed.judgeMailed?.output.reviewer ?? parsed.reviewMailed?.output.reviewer;
   const report = doneReport(parsed);
-  const wait = mailed !== undefined || report !== undefined || (parsed.approvals?.output.results.length ?? 0) > 0;
-  const body = { ...mail.pullRequest, reviewers: reviewersAfter(parsed.take.output, mailed), wait, ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }) };
+  const reviewers = reviewersAfter(parsed.take.output, mailed);
+  const wait = awaiting(parsed, report, reviewers);
+  const body = { ...mail.pullRequest, reviewers, wait, ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }) };
   const answer = await asManager(ctx, mail, "done", body, Done);
   if (answer === undefined) return { outcome: "refused" };
   for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);

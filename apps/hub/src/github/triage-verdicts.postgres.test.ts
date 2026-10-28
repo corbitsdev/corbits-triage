@@ -59,7 +59,7 @@ function observed(byHead: Array<[string, ObservedRun[]]>): ObservedRuns {
 const NO_RUNS: ObservedRuns = { byRepo: new Map() };
 
 /**
- * The managers' runs: #8's newest run failed after its verdict, #9 and #10 are still running and #6's run failed early; #7 has no run, but waits for CI.
+ * The managers' runs: #8's newest run failed after its verdict, #9 and #10 are still running, #7's waits for its CI, and #6's run failed early.
  * #4 of the repository GitHub could not list has a failed run.
  */
 const MANAGED: ObservedRuns = {
@@ -67,6 +67,7 @@ const MANAGED: ObservedRuns = {
     ...observed([
       ["8@sha_run_3", [live("run_3", "failed", minutes(9))]],
       ["9@sha9", [live("run_9", "running", minutes(-5), "pull_request:synchronize")]],
+      ["7@sha_waiting", [{ ...live("run_7", "running", minutes(-3)), waitingSince: minutes(-3).toISOString() }]],
       ["10@sha10", [live("run_10", "running", minutes(-120))]],
       ["6@sha6", [live("run_6", "failed", minutes(-3))]],
     ]).byRepo,
@@ -81,11 +82,10 @@ const OPEN: RepoPulls[] = [
 ];
 
 /**
- * #7 waits for CI; #8's degraded run kept its verdict, #11's run never started, #12's mail failed to send and #6's run failed on a head since pushed over.
+ * #8's degraded run kept its verdict, #11's run never started, #12's mail failed to send and #6's run failed on a head since pushed over.
  * The runs of #13, since closed, and #14, open while its host gives no head, failed.
  */
 const waitingRows: PrTriageRow[] = [
-  { number: 7, headSha: "sha_waiting", status: "waiting", attempts: 0, firstSeenAt: minutes(-3).toISOString(), updatedAt: minutes(-3).toISOString() },
   { number: 8, headSha: "sha_run_3", status: "failed", attempts: 1, error: "degraded: the policy could not be read", firstSeenAt: minutes(9).toISOString(), updatedAt: minutes(10).toISOString() },
   { number: 11, headSha: "sha11", status: "failed", attempts: 3, error: "run never started", firstSeenAt: minutes(-4).toISOString(), updatedAt: minutes(-4).toISOString() },
   { number: 12, headSha: "sha12", status: "failed", attempts: 1, error: "delivery failed: connection refused", firstSeenAt: minutes(-4).toISOString(), updatedAt: minutes(-4).toISOString() },

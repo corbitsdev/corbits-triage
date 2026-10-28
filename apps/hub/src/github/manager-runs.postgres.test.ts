@@ -65,7 +65,7 @@ function open(number: number, now: Date): OpenPr {
   return { number, headSha: "h1", updatedAt: new Date(now.getTime() - 30 * MINUTE).toISOString(), draft: false };
 }
 
-test("PostgreSQL: the reconciler does not mail a head again while a live manager holds it, and settles a head a manager triaged or held for CI", async () => {
+test("PostgreSQL: the reconciler does not mail a head again while a live manager holds it, as while it waits for CI, and settles a head a manager triaged", async () => {
   await withDatabase(async function reconciled(db) {
     const now = new Date();
     const verdicts = createVerdictRecordStore(db);
@@ -80,8 +80,7 @@ test("PostgreSQL: the reconciler does not mail a head again while a live manager
     const queuedAt = new Date(now.getTime() - 20 * MINUTE).toISOString();
     const queued: PrTriageRow = { number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt };
     function plan(rows: PrTriageRow[], runs: Awaited<ReturnType<typeof managerRuns>>) {
-      const ci = new Map([[runKey(8, "h1"), "pending" as const]]);
-      return planTenant({ repos: [{ name: REPO, prs: [open(7, now), open(8, now)], rows, ci }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY }).get(REPO)!;
+      return planTenant({ repos: [{ name: REPO, prs: [open(7, now), open(8, now)], rows }], runs: runs.byRepo, now, policy: DEFAULT_RECONCILE_POLICY }).get(REPO)!;
     }
 
     const running = plan([queued], await managerRuns(TENANT, [pr7, pr8]));
@@ -91,12 +90,14 @@ test("PostgreSQL: the reconciler does not mail a head again while a live manager
     await reportedDone(db, triaged, "run_triaged", now);
     await mailed(db, held, "h1");
     await take(db, TENANT, held, "run_held");
-    await done(db, TENANT, held, "run_held", [], { report: { head: "h1", waiting: true } });
+    await done(db, TENANT, held, "run_held", [], { wait: true, report: { head: "h1", waiting: true } });
     const firstSeenAt = new Date(now.getTime() - MINUTE).toISOString();
     const fresh: PrTriageRow = { number: 8, headSha: "h1", status: "new", attempts: 0, firstSeenAt, updatedAt: firstSeenAt };
 
-    const settled = plan([...running.rows.filter((row) => row.number === 7), fresh], await managerRuns(TENANT, [pr7, pr8]));
-    expect(settled.rows).toEqual([expect.objectContaining({ number: 7, status: "triaged", runId: "run_triaged" }), expect.objectContaining({ number: 8, status: "waiting", runId: "run_held" })]);
+    const observed = await managerRuns(TENANT, [pr7, pr8]);
+    expect(observed.byRepo.get(REPO)?.get(runKey(8, "h1"))).toEqual([expect.objectContaining({ runId: "run_held", status: "running", waitingSince: expect.any(String) })]);
+    const settled = plan([...running.rows.filter((row) => row.number === 7), fresh], observed);
+    expect(settled.rows).toEqual([expect.objectContaining({ number: 7, status: "triaged", runId: "run_triaged" }), expect.objectContaining({ number: 8, status: "running", runId: "run_held" })]);
     expect(settled.enqueue).toEqual([]);
   });
 }, 60_000);

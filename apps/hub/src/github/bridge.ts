@@ -14,7 +14,7 @@
 // traffic then flows through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATHS, repoPolicy, triageEventOf, WAITING_KIND, type ActionKind, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATHS, repoPolicy, triageEventOf, type ActionKind, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, errorText, isRecord } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
@@ -186,11 +186,6 @@ export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy:
     ...workflowPart(policyWorkflow),
     ...(pauseLabel && { pauseLabel }),
   };
-}
-
-/** The mail for a head held for its CI: triage marks it waiting where it writes the verdict, and triages nothing. `noCi` names a head with no checks yet. */
-export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, pack: ResolvedPack, head: { number: number; headSha: string }, noCi: boolean) {
-  return { ...mailPayload(record, policy, pack, { prNumber: head.number, headSha: head.headSha, ...(noCi && { noCi }) }), kind: WAITING_KIND };
 }
 
 /** A policy triage can't read is mailed in place of a pack, so the run marks the head failed instead of nothing happening. */

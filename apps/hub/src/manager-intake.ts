@@ -1,4 +1,4 @@
-// The hub's side of a pull request's manager. In a workspace with a host's listener live, each pull request, waiting,
+// The hub's side of a pull request's manager. In a workspace with a host's listener live, each pull request,
 // held-Do approval and backlog mail is recorded as one event per pull request it names, as a reviewer's result is by
 // its route. A pull request whose manager is up is mailed that manager. One with none is sent to the listener, which
 // deploys a manager and wakes it. A manager reads the newest recorded mail back through take.
@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, repoSourceOf, WAITING_KIND, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, repoSourceOf, type RepoSource } from "@corbits/triage-contracts";
 import { reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import { dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, type PullRequestRef } from "./manager-state.js";
@@ -29,8 +29,8 @@ export type ManagerIntakeDeps = {
   log: (entry: Record<string, unknown>) => void;
 };
 
-/** The mails a manager runs: a pull request's, its head held for CI, a held Do's approval, and a backlog of open ones. */
-const MANAGED = new Set<unknown>(["pr", WAITING_KIND, APPROVE_DO_KIND, "backlog"]);
+/** The mails a manager runs: a pull request's, a held Do's approval, and a backlog of open ones. */
+const MANAGED = new Set<unknown>(["pr", APPROVE_DO_KIND, "backlog"]);
 
 /** One pull request a mail names: its number and head, the request recorded for it, and the event's id. */
 type Named = { number: number; head: string; request: Record<string, unknown>; id: string };
@@ -172,7 +172,6 @@ export function createManagerIntake(deps: ManagerIntakeDeps) {
       const step = asRecord(request["step"]);
       return named(request, asRecord(request["request"])?.["number"], step?.["headSha"]);
     }
-    if (kind === WAITING_KIND) return named(request, prNumber, headSha);
     if (kind === "backlog") {
       const heads = (await deps.openHeads(tenantId, record)).filter((pull) => !pull.draft);
       return heads.flatMap((pull) => named({ ...request, kind: "pr", prNumber: pull.number, headSha: pull.headSha }, pull.number, pull.headSha));

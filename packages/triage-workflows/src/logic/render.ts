@@ -541,9 +541,12 @@ function unsettledMachine(c: CheckResult): boolean {
   return c.kind === "machine" && c.result === "unconfirmed";
 }
 
-/** A rule the host had not computed yet: CI still running, or mergeability not computed. */
+/** The rules the host computes: CI, and whether the pull request merges cleanly. */
+const HOST_CHECKS: ReadonlySet<string> = new Set(["ci-green", "no-merge-conflicts"]);
+
+/** A rule the host had not computed yet: CI still running, or mergeability not computed. A rule Triage could not check itself, as code patterns in a patch not read in full, waits on nothing. */
 function hostPending(c: CheckResult): boolean {
-  return unsettledMachine(c) && c.output.kind === "could-not-check";
+  return HOST_CHECKS.has(c.check) && unsettledMachine(c) && c.output.kind === "could-not-check";
 }
 
 /** Whether a rule waits on the host's own checks, which the hub waits for unless it waits no longer (`noWait`). */
@@ -818,12 +821,13 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const reasons = reasonsOf(det, deciding);
   const hard = hardFailures(det.checks);
   if (hard.length > 0) return withChecks({ ...render(det.state), verdict: "fail", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
+  const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
+  const waitsOnHost = !noWait && unconfirmed.length > 0 && unconfirmed.every(hostPending);
   if (!det.needsJudgment) {
+    if (waitsOnHost) return waitingOf(null);
     const verdict = withChecks({ ...render(det.state), verdict: "unsure", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
     return { ...verdict, feedback: "" };
   }
-  const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
-  const waitsOnHost = !noWait && unconfirmed.length > 0 && unconfirmed.every(hostPending);
   if (evaluated.instructed) return unsureOf(INSTRUCTED_REASON);
   // A judge held back for the host's checks has not decided anything yet, so the head waits for them.
   if (judgeSkipped === true && hostChecksPending(det, noWait)) return waitingOf(null);

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { PrTriageRow } from "@corbits/triage-contracts";
-import type { CiState } from "@corbits/github-reads";
 import { DEFAULT_RECONCILE_POLICY, planTenant, requeue, runKey, type ObservedRun, type OpenPr, type RepoPlan } from "./reconcile-plan.js";
 
 const MINUTE = 60_000;
@@ -271,39 +270,6 @@ describe("triage again on a head that already has a verdict", () => {
   });
 });
 
-describe("a head waiting for CI", () => {
-  const waiting = row(1, { status: "waiting", firstSeenAt: at(0).toISOString(), queuedAt: at(0).toISOString(), events: ["opened"] });
-
-  function release(ci: CiState | undefined, minute: number): RepoPlan {
-    const input = { repos: [{ name: REPO, prs: [pr(1)], rows: [waiting], ci: new Map(ci === undefined ? [] : [[runKey(1, "sha1"), ci]]) }], runs: new Map(), now: at(minute), policy };
-    return planTenant(input).get(REPO)!;
-  }
-
-  test("waits while CI runs or has not started, within its bounds, then is queued once with the events it held", () => {
-    expect(enqueued(release("pending", 59))).toEqual([]);
-    expect(status(release("pending", 59), 1)).toEqual(waiting);
-    expect(enqueued(release("none", 1))).toEqual([]);
-    for (const [ci, minute] of [["none", 2], ["success", 1], ["failure", 1], [undefined, 1]] as const) {
-      const released = release(ci, minute);
-      expect(released.enqueue).toEqual([{ number: 1, reason: "waited for CI", events: ["opened"] }]);
-      expect(status(released, 1)).toMatchObject({ status: "queued", events: ["opened"], attempts: 1, queuedAt: at(minute).toISOString() });
-    }
-  });
-
-  test("past the CI wait a head whose CI still runs is queued to be decided anyway", () => {
-    expect(release("pending", 60).enqueue).toEqual([{ number: 1, reason: "waited for CI", events: ["opened"], noWait: true }]);
-  });
-
-  test("a head no webhook queued waits for its running CI too", () => {
-    function seen(ci: CiState): RepoPlan {
-      return planTenant({ repos: [{ name: REPO, prs: [pr(2)], rows: [], ci: new Map([[runKey(2, "sha2"), ci]]) }], runs: new Map(), now: at(0), policy }).get(REPO)!;
-    }
-    expect(enqueued(seen("pending"))).toEqual([]);
-    expect(status(seen("pending"), 2)?.status).toBe("waiting");
-    expect(enqueued(seen("none"))).toEqual([2]);
-  });
-});
-
 describe("a head queued again because its CI changed", () => {
   function requeued(attempts: number, minute: number): RepoPlan {
     const result: RepoPlan = { rows: [row(1, { status: "triaged", runId: "run1", attempts, firstSeenAt: at(0).toISOString() })], enqueue: [] };
@@ -326,10 +292,9 @@ describe("a head queued again because its CI changed", () => {
     expect(status(retried, 1)).toMatchObject({ status: "queued", attempts: 2 });
   });
 
-  test("is decided without waiting on its last attempt or past the CI wait", () => {
+  test("is decided without waiting on its last attempt", () => {
     expect(requeued(4, 1).enqueue).toEqual([{ number: 1, reason: "build_status_changed" }]);
     expect(requeued(5, 1).enqueue).toEqual([{ number: 1, reason: "build_status_changed", noWait: true }]);
-    expect(requeued(0, 60).enqueue).toEqual([{ number: 1, reason: "build_status_changed", noWait: true }]);
     expect(status(requeued(5, 1), 1)).toMatchObject({ status: "queued", attempts: 5 });
   });
 });

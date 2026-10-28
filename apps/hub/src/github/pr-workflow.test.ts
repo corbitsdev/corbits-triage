@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { WorkflowRunEvent } from "@intx/hub-sessions";
-import { decideOf, defaultActions, WAITING_KIND, type PolicyWorkflow } from "@corbits/triage-contracts";
+import { decideOf, defaultActions, type PolicyWorkflow } from "@corbits/triage-contracts";
 import type { PullRequestToReview } from "../pull-request-reader.js";
 import { createPauseGate, prWorkflowKeys, workflowPart } from "./pr-workflow.js";
 import type { RepoRecord } from "./tenant-config.js";
@@ -58,10 +58,10 @@ test("a pull request carrying the pause label on GitHub starts no run, and one w
   expect(await unread.route(unlabelled)).toEqual(unlabelled);
 });
 
-test("a policy writing its own decide leaves approve and merge to a person; code review alone, or a waiting mail, leaves the job as it is", async () => {
+test("a policy writing its own decide leaves approve and merge to a person; code review alone leaves the job as it is", async () => {
   const { route } = gate();
   expect(await route(job({ decide: DECIDE }))).toMatchObject({ automatic: ["comment"] });
-  for (const sent of [job(undefined), job({ "code-review": { on: true } }), job({ decide: DECIDE }, WAITING_KIND)]) {
+  for (const sent of [job(undefined), job({ "code-review": { on: true } })]) {
     expect(await route(sent)).toEqual(sent);
   }
 });

@@ -83,15 +83,10 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     tenant system sender, the same path cron uses, naming the host as
     `repoSource`. A workspace with no live listener runs nothing: the head
     fails saying Triage is not running on that host and that Settings →
-    Triage shows why. When the policy depends on CI, a head whose CI is still
-    running is not mailed: its triage-state row turns `waiting` and keeps the
-    window's events (`triage_waiting_ci`). The window that sees CI finish, or
-    its first check fail, mails the head once with those events; a head with
-    no checks waits up to 2 minutes, and none waits more than 60. Manual runs,
-    the backlog run and retries after the base branch moves are not held.
-    When a head starts waiting and the role holds Labels (GitHub) or Comment
-    (Bitbucket), the hub also mails it once with `kind: "waiting"`, which only
-    mirrors the waiting marker.
+    Triage shows why. Every window is mailed when it closes, whatever the
+    head's CI: the pull request's manager waits for CI itself (see
+    `triage-manager-github` below), and a window that sees a check finish
+    reaches that manager as one more event.
   - **Reconciler**: one per host, for workspaces whose listener for the host
     is live. On an interval it compares each enabled repository's open pull
     requests with the managers' runs, their recorded verdicts and stored
@@ -102,12 +97,11 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     after that webhook since the host's listing can trail it, or its last
     listing is 30 minutes old. Once its webhook heard nothing for 30 minutes
     (on GitHub the App's, for every repository; on Bitbucket the repository's
-    own) it is listed every pass. It reads the CI of every
-    `waiting` head and queues it once CI finished or its wait ran out; this
-    releases Bitbucket heads, whose builds send no webhook, and any head whose
-    `check_run` never arrived. Moving a head from `waiting` to `queued` is a
-    compare-and-swap write, so a check run and the reconciler releasing it
-    together start one run. It mails its heads to the listener. A listener
+    own) it is listed every pass. It reads the CI of a settled head whose
+    verdict CI left unsure or failed and queues it again once its builds
+    changed. A head whose manager is up, as one waiting for its CI, is not
+    mailed again. It mails its heads to the
+    listener. A listener
     counts as live while it runs or is on its sidecar, and as starting for six
     minutes after it is deployed, longer than a roll waits for it; the
     reconciler mails the newest running listener, else the newest starting
@@ -345,8 +339,8 @@ any other tenant or an unknown sender.
   again while stock has given up on it, and a replaced workflow once as
   `rollout_cancel_stuck` with its name.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
-  (`triageManager`): one live run per pull request, which runs only while it
-  has work, and the only workflow that writes to the pull request. It takes
+  (`triageManager`): one live run per pull request, which lives until its head
+  has its final verdict, and the only workflow that writes to the pull request. It takes
   mail from the hub (`tenant`) and the listener that deployed it (`invoker`).
   A mail starts a loop of passes. Each pass
   takes, which claims the pull request and its pending events and answers the
@@ -355,24 +349,35 @@ any other tenant or an unknown sender.
   its head. Then, when the pass has a mail for its head, a judge or code
   review report, or an overdue reviewer, pr-triage's own steps run on the
   newest mail for the head, handed over as `{ taken }`, which they trust as
-  the hub's: a head held for CI is marked waiting when that mail is the newest
-  for it. Anything else is triaged. Every pass runs its approvals step, which
+  the hub's. A head is unready first: on a pull request mail on GitHub its pass
+  label comes off (`markUnready`) before facts are read. Every pass runs its approvals step, which
   approves nothing when there is nothing to run. A policy of only deterministic
   rules posts on this pass. One whose rules need the judge, or that asks for
   code review, posts once, after each of those has reported or given up: the machine
-  verdict, the judge's verdict and the code review together. Done reports what
-  the pass ran: the approved Dos' outcomes, a head it held for CI, or the
-  verdict it posted as its evaluate, mirror, execute and rules steps output
-  it, with the facts the verdict keeps rather than the diff. Each branch that
-  reports one of these has its own done step. A pass that posted to the host
-  or mailed a judge or code review asks done to `wait`. Done then answers
-  `more` when an event is pending, and the next pass runs at once; `more` with
-  `wait` after a pass that asked, and the next pass runs once 30 seconds have
-  passed, taking whatever arrived meanwhile; otherwise `ended`. So a manager
-  ends 30 seconds after it last posted or mailed, never waiting out a judge or
-  a code review: their results reach the hub, which wakes the pull request's
-  manager the way a host event does, and the listener deploys a fresh one once
-  the claim has ended.
+  verdict, the judge's verdict and the code review together. A verdict whose
+  only unconfirmed rules are the host's (CI green pending, mergeability not
+  computed) waits: its pass writes only the waiting marker and records no
+  verdict. Done reports what the pass ran: the approved Dos' outcomes, a head
+  that waits for CI, or the verdict it posted as its evaluate, mirror, execute
+  and rules steps output it, with the facts the verdict keeps rather than the
+  diff. Each branch that reports one of these has its own done step. A pass
+  asks done to `wait` while its head awaits CI, or a judge or code review it
+  mailed for that head has not reported. Done then answers `more` when an
+  event is pending, and the next pass runs at once; `more` with `wait` after
+  a pass that asked, and the next pass runs once 30 seconds have passed,
+  taking whatever arrived meanwhile; otherwise `ended`. So a manager ends
+  only once its head has its final verdict and the policy's actions ran or
+  were held: a check finishing, a reviewer's result or a new head reaches the
+  hub, which mails the live manager, and a new head's pass starts over. A
+  pull request with nothing outstanding has no manager. The hub keeps, on
+  the claim, whether each closed pass waited for CI, and answers take with
+  `waitingSince`, when the head's unbroken run of waiting passes began. Every
+  5 minutes of that wait a pass triages the head again with no event, which
+  settles a Bitbucket head, whose builds send no webhook, and a GitHub head
+  whose `check_run` never arrived. A pass whose head has waited 60 minutes is
+  triaged with `noWait`, so it is
+  decided with CI still running; a manager's passes run out after three
+  hours, time for CI, the judge and code review to each take their hour.
   Once the passes end, fail or run out, or take finds another run holds the
   claim, the run's last step stops it through the stop-run route under a
   `manage` grant on its own run, so the run is ended once and never keeps
@@ -386,7 +391,7 @@ any other tenant or an unknown sender.
   that from the sidecar's connection for the run, or from its own start for a
   run placed before it.
   When the rules need the judge, the host's own checks have finished (or the
-  hub waits for them no longer) and `release.json` publishes a judge for the
+  manager waits for them no longer) and `release.json` publishes a judge for the
   host, a pass deploys it under `workflow:*` `create` and `read` on exactly
   the judge's asset, which the definition declares when its module loads with
   that release, mails it the rules output until the judge's one-hour deadline,
@@ -458,8 +463,7 @@ any other tenant or an unknown sender.
   at from their claims and those rows (`apps/hub/src/github/manager-runs.ts`):
   a manager that is up runs the head of the newest pull request mail recorded
   for it, so its head is not mailed again; one that went away with a pass open
-  failed on that pass's head, which is retried with backoff; a head whose last
-  pass was held for CI waits for its CI; a recorded verdict settles its head as
+  failed on that pass's head, which is retried with backoff; a recorded verdict settles its head as
   a pr-triage run's does. Triage again can queue a head again as soon as its
   manager has reported done, or went away, since it was queued.
   Approving a held Do of a manager's verdict reads the Do from the recorded
@@ -601,33 +605,29 @@ label off that head, so it never stands on a head not yet triaged.
 6. **evaluate**: decides the verdict, renders the one comment, and resolves
    the verdict's steps when the policy's When is woken, skipping each step
    whose conditions do not hold. While CI is pending every runnable action is
-   held and an approve that may not stand is skipped; the head settles, so
-   the reconciler does not retry it, and the completed `check_run` (or the
-   reconciler's CI re-read) triages it again. A verdict other than Fail whose
-   only unconfirmed rules are the host's (CI green pending, mergeability not
-   computed) is `waiting` instead: no comment, no actions, the waiting marker
-   as its mirror (`mark`). The hub records no verdict for it, nor for one on a
-   closed pull request (`closed`); a waiting run with CI pending turns the
-   head's row `waiting` within the 60-minute CI wait, which the coalescer or
-   reconciler releases like a head it held itself. A mail with `noWait`
-   (past the CI wait, a head's last attempt, or Triage again) is decided
+   held and an approve that may not stand is skipped; the completed
+   `check_run` (or the reconciler's CI re-read) triages it again. A verdict
+   other than Fail whose only unconfirmed rules are the host's (CI green
+   pending, mergeability not computed) is `waiting` instead: no comment, no
+   actions, the waiting marker as its mirror (`mark`). A rule Triage could
+   not check for its own reasons, as code patterns in a patch it could not
+   read in full, does not wait. The hub records no verdict for a waiting
+   one, nor for one on a closed pull request (`closed`); the manager keeps
+   polling until CI finishes. A mail with `noWait` (a manager past its
+   60-minute CI wait, a head's last attempt, or Triage again) is decided
    instead of waiting. A CI re-read that queues a head again keeps its
-   attempts, since the head did not fail, and sets `noWait` by the same rule.
+   attempts, since the head did not fail, and sets `noWait` on its last.
 7. **mirror**: writes the verdict label when the `pr-triage` role holds
    Labels, and the marker comment when it holds Comment; on Bitbucket, Comment
    also writes the verdict as the `Corbits Triage` build status. It runs
    before execute, so a merge or close finds the final verdict on the head. A
-   waiting verdict writes only its waiting marker. A
-   waiting mail skips every other step: `markWaiting` writes only the waiting
-   label or `INPROGRESS` build status under the effect id
-   `waiting:<owner>--<name>:<number>:<head sha>`, and nothing once the pull
-   request moved past that head. On GitHub the marker passes the fail and
+   waiting verdict writes only its waiting marker: the waiting label or
+   `INPROGRESS` build status. On GitHub the marker passes the fail and
    unsure verdict labels as `keep`, so a pull request carrying one keeps its
    labels until the verdict, which swaps them only when it differs. A head
-   with no checks (the coalescer's `noCi` on the waiting mail, or facts'
-   `checks: "none"` in a run) gets no waiting label: the marker only takes the
-   pass label off. The portal reads the wait from the head's triage-state
-   row, not the label.
+   with no checks (facts' `checks: "none"`) gets no waiting label: the marker
+   only takes the pass label off. The portal reads the wait from the live
+   manager's claim (`waitingSince`), not the label.
 8. **execute**: runs the actions whose kind the `pr-triage` role holds on the
    repository. Every other action is held in the verdict (`held: true`). One
    the role may write, held only because CI is still running on the head, carries
@@ -977,7 +977,7 @@ read it, and passes the rest of the request to stock.
   deployments and runs.
 - Artifacts: the triage state (`triage-state/{owner}/{repo}`) per
   repository, which the hub writes itself. It holds each open head's status
-  (`new`, `queued`, `waiting`, `running`, `triaged`, `failed`, `stale`) and
+  (`new`, `queued`, `running`, `triaged`, `failed`, `stale`) and
   attempts. No policy is stored (see Policy file above); the trigger mail
   still names `policy.checkPack.name` for deployments that read it.
 - A policy file whose `extends` is a repository name is resolved over that
@@ -1017,8 +1017,8 @@ read it, and passes the rest of the request to stock.
   invited principal.
 - `manager_state` (`apps/hub/src/manager-state.ts`) holds a pull request's
   manager claim (`mgr:<source>:<repo>#<n>`: status, the run it names, the
-  open pass, reviewers and closed passes, each closed pass with whether it
-  held its head for CI, and the newest pass of a run on a head with the mirror
+  open pass, reviewers and closed passes, each closed pass with whether its
+  head waited for CI, and the newest pass of a run on a head with the mirror
   request of the verdict it posted) and its pending events
   (`evt:<source>:<repo>#<n>:<deliveryId>`), each change one short
   transaction. Recording an event is a no-op on a redelivery; the database
@@ -1073,7 +1073,7 @@ read it, and passes the rest of the request to stock.
   manager reports, then the hub stops each the claim holds on a head older
   than the newest, as one the pass deployed while a push arrived, the way
   intake does below.
-- Pull request, waiting, held-Do approval and backlog mail goes to the
+- Pull request, held-Do approval and backlog mail goes to the
   host's listener (`apps/hub/src/manager-intake.ts`), on both hosts. Each
   pull request the mail names (a reconciler's `items`, a backlog's open pull
   requests) passes one gate first, whatever sent the mail: on GitHub, a pull

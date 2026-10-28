@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { formatRunAddress } from "@intx/types";
 import { emptyPack, type ActionKind, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import type { CheckRun } from "@corbits/github-reads";
-import { heldForCi, unsettledBy } from "@corbits/triage-workflows/logic/settled";
+import { unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
@@ -46,7 +46,7 @@ function current(number: number): Record<string, unknown> {
 /** A manager's run of `number`'s head as the hub reads it: running, or completed with what its verdict settles. */
 function ran(runId: string, number: number, verdict?: Record<string, unknown>, startedAt = STARTED): ObservedRun {
   if (!verdict) return { runId, source: "github", status: "running", startedAt };
-  return { runId, source: "github", status: "completed", startedAt, ...unsettledBy(verdict, `sha${number}`), ...(heldForCi(verdict) && { heldForCi: true }) };
+  return { runId, source: "github", status: "completed", startedAt, ...unsettledBy(verdict, `sha${number}`) };
 }
 
 /** The managers' runs by repository, then by head. */
@@ -261,14 +261,6 @@ describe("triage reconciler", () => {
     const run = harness({}, [head(1)], { rows: [triaged], recorded: [recorded], headChecks: [{ name: "build", status: "completed", conclusion: "success" }] });
     await run.reconcile();
     expect(run.delivered).toHaveLength(0);
-  });
-
-  test("a head the reconciler holds for CI is mailed to be marked waiting once, where triage writes labels", async () => {
-    const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-    const run = harness({}, [head(1)], { pack, automatic: ["labels"], headChecks: [{ name: "build", status: "in_progress", conclusion: null }] });
-    await run.reconcile();
-    await run.reconcile();
-    expect(run.delivered.map((entry) => entry.payload)).toEqual([expect.objectContaining({ kind: "waiting", prNumber: 1, headSha: "sha1" })]);
   });
 
   test("a repository with every rule off, or no policy, starts no run and is logged once per head", async () => {

@@ -168,12 +168,10 @@ and the hex HMAC of the raw body, in `X-Hub-Signature`, with the event in
   `pr:comment:added`, `pr:merged`, `pr:declined`, `pr:deleted`
 - Repository: `repo:refs_changed`
 
-Data Center sends no webhook when a build finishes, so the reconciler polls.
-A head waiting for CI is released by the pass that finds its build statuses no
-longer in progress, up to one reconcile interval after its builds end. While
-it waits, its `Corbits Triage` build status reads `INPROGRESS` "Triage:
-Waiting for CI" where Comment is on; the hub's own CI read leaves that status
-out. A verdict left unsure or failed by `ci-green` is re-read on the
+Data Center sends no webhook when a build finishes, so the manager of a head
+waiting for CI reads its build statuses again every 5 minutes and decides once
+they are no longer in progress. While it waits, its `Corbits Triage` build
+status reads `INPROGRESS` "Triage: Waiting for CI" where Comment is on. A verdict left unsure or failed by `ci-green` is re-read on the
 unconfirmed retry interval (5 minutes, doubling) and queued again once its
 builds changed (`triage_requeued` with `reason: build_status_changed`).
 
