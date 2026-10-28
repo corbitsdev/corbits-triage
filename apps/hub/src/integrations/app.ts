@@ -465,7 +465,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/file`,
     describeRoute({
       summary: "A repository's policy file and why triage refuses it, if it does",
-      description: "Needs `read` or `use` on the workspace's source credential and a connected repository. Reads `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the default branch, with its `text` unless it is too large to read; `file` is null when there is none, and triage then runs nothing in the repository. Triage runs on the file, and runs nothing while it has a `problem`. `source` is the repository's host; without it, a name connected on both hosts is refused.",
+      description: "Needs `read` or `use` on the workspace's source credential and a connected repository. Reads `.corbits-triage.yml`, else `.corbits-triage.yaml`, on the default branch, with its `text` unless it is too large to read; `file` is null when there is none, and triage then runs nothing in the repository. Triage runs on the file, and runs nothing while it has a `problem`. While a policy pull request is open, `pull` is its branch's copy of the file and the pull request's head `headSha`. `source` is the repository's host; without it, a name connected on both hosts is refused.",
       tags: TAGS,
       parameters: [{ in: "query", name: "repo", required: true, schema: { type: "string", pattern: "^[\\w.-]+\\/[\\w.-]+$" } }],
       responses: { 200: json("The policy file, or null", PolicyFileRead), ...invalid, ...failures, ...githubFailed },

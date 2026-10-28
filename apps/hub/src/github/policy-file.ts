@@ -15,7 +15,7 @@ import { bitbucketPushAccess, pushBitbucketPolicy } from "../bitbucket-datacente
 import { bitbucketConnection, splitName } from "../bitbucket-datacenter/records.js";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
 import { checkPolicyFile, exportPolicyFile, fileRuleId, patchPolicyFile, POLICY_FILE_PATH, PolicyPatchChanges, notAFileReason, POLICY_FILE_PATHS, policyFileReason, REPO_SOURCES, starterPack, type ActionKind, type PolicyFileStatus, type PolicyPatchChange, type PolicyPushAccess, type PolicyUpgrades, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
-import { forInstallation, type MemberOpenPulls, type OpenPullsRead } from "./open-pulls.js";
+import { forInstallation, type MemberOpenPulls, type OpenPullsRead, type RepoPulls } from "./open-pulls.js";
 import * as github from "./policy-pull.js";
 import { githubPushAccess, pushGithubPolicy, type PolicyPush, type Pushed } from "./policy-push.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
@@ -91,12 +91,15 @@ function hostFailed(record: RepoRecord, what: string, err: unknown): Response {
  * on each load. A member the listing refuses is not told of one; opening the pull request answers it.
  */
 export function listedPolicyPull(listing: OpenPullsRead | Response, repo: string, source: RepoSource): github.PolicyPull | undefined {
-  if (listing instanceof Response) return undefined;
-  const listed = listing.repos.find((row) => row.repo === repo && row.source === source);
-  const pr = listed?.prs.find((row) => row.branch === github.POLICY_BRANCH);
+  const pr = listedPolicyRow(listing, repo, source);
   if (!pr?.url) return undefined;
   // Only a GitHub pull request is merged from the portal, at the head it was shown.
-  return listed?.source === "github" && pr.sha ? { url: pr.url, number: pr.number, headSha: pr.sha } : { url: pr.url, number: pr.number };
+  return source === "github" && pr.sha ? { url: pr.url, number: pr.number, headSha: pr.sha } : { url: pr.url, number: pr.number };
+}
+
+function listedPolicyRow(listing: OpenPullsRead | Response, repo: string, source: RepoSource): RepoPulls["prs"][number] | undefined {
+  if (listing instanceof Response) return undefined;
+  return listing.repos.find((row) => row.repo === repo && row.source === source)?.prs.find((row) => row.branch === github.POLICY_BRANCH);
 }
 
 export type PolicyFileDeps = PortalCredentialDeps & {
@@ -260,15 +263,32 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function fileRoute({ repo, source }: typeof PolicyFileBody.infer, member: Member): Promise<Response> {
     const record = await grantedRecord(member, repo, source, "read");
     if (record instanceof Response) return record;
-    let state: PolicyFileState;
     try {
-      state = await cached(member.tenantId, record, maxAgeOf(member.tenantId, record));
+      const file = statusOf(await cached(member.tenantId, record, maxAgeOf(member.tenantId, record)));
+      if (file instanceof Response) return file;
+      const pull = file && await pullCopy(member, record);
+      return Response.json({ file: pull ? { ...file, pull } : file });
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_file_status_failed", tenantId: member.tenantId, repo, error: errorText(err) });
       return githubFailed(`read ${POLICY_FILE_PATH} from`, err);
     }
-    const file = statusOf(state);
-    return file instanceof Response ? file : Response.json({ file });
+  }
+
+  /**
+   * The open policy pull request's copy of the file, found through the shared listing; none while its branch holds no
+   * readable file, or cannot be read, which leaves the default branch's file to answer on its own.
+   */
+  async function pullCopy(member: Member, record: RepoRecord): Promise<PolicyFileStatus["pull"]> {
+    const pr = listedPolicyRow(await deps.openPulls(member, false), record.name, sourceOf(record));
+    if (!pr?.sha) return undefined;
+    try {
+      const found = await findFile(member.tenantId, record, github.POLICY_BRANCH);
+      if (found?.read.kind !== "file" || found.read.text === null) return undefined;
+      return { text: found.read.text, headSha: pr.sha };
+    } catch (err) {
+      deps.log({ level: "warn", msg: "policy_pull_file_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
+      return undefined;
+    }
   }
 
   async function bitbucketBase(bb: bitbucket.BitbucketFetch, record: RepoRecord): Promise<string> {

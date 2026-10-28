@@ -49,7 +49,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     stored as `check-pack/…` tenant artifacts are archived, not migrated, by
     the first hub start after the change (`archiveStoredPolicies`, through the
     artifact package's archive). Routes:
-    `GET …/policy/file` (the file, its text and why it is refused),
+    `GET …/policy/file` (the file, its text and why it is refused, and
+    while a policy pull request is open, its branch's copy as `pull`),
     `POST …/policy/preview` (edited text read as the policy read would read
     it once it is the file, merge risks included; writes nothing),
     `POST /api/integrations/policy/validate` (open, reads only its body),
