@@ -1,12 +1,13 @@
 // A manager whose wake mail failed.
 import { expect, test } from "bun:test";
-import { chainStack, UNWOKEN, isLiveDeployment, sha, pullOf, comments, once } from "./chain.ts";
+import { TIMINGS } from "./stack.ts";
+import { chainStack, SETTLE_MS, UNWOKEN, isLiveDeployment, sha, pullOf, comments, once } from "./chain.ts";
 
 const { github, pushed, eachRunEvent, until, rows, managers, settled } = chainStack();
 
-// The listener waits two minutes for each manager's key before its wake mail fails, for the first and the one it deploys in
-// its place; stock then stops each within its 30-second cancel grace.
-const UNWOKEN_MS = 8 * 60_000;
+// The listener waits `managerReadyMs` for each manager's key before its wake mail fails, for the first and the one it
+// deploys in its place; stock then stops each within its 30-second cancel grace.
+const UNWOKEN_MS = 2 * (TIMINGS.managerReadyMs + 30_000) + SETTLE_MS;
 
 const INLINE = "inline:";
 

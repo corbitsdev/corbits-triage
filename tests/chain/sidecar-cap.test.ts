@@ -6,9 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
+import { DEFAULT_TIMINGS, TIMING_VARIABLES } from "@corbits/triage-contracts";
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { stubModel } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 setDefaultTimeout(10 * 60_000);
 
@@ -30,7 +31,12 @@ beforeAll(async () => {
   github.addRepo(SECOND, POLICY);
   const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
   database = created;
-  hub = await startHub(database, github, portalDir, { TRIAGE_MAX_LOCAL_SIDECARS: "2" });
+  // The second manager's wake waits out the first manager's whole pass for a slot, so it keeps the production windows.
+  hub = await startHub(database, github, portalDir, {
+    TRIAGE_MAX_LOCAL_SIDECARS: "2",
+    [TIMING_VARIABLES.managerReadyMs]: String(DEFAULT_TIMINGS.managerReadyMs),
+    [TIMING_VARIABLES.managerStartGraceMs]: String(DEFAULT_TIMINGS.managerStartGraceMs),
+  });
   workspace = await signUp(hub, database);
   await setUpWorkspace(workspace, github, model.origin);
   await listenerStarted(workspace);
@@ -75,7 +81,7 @@ async function until<T>(what: string, read: () => Promise<T | undefined>, ms = 1
   while (Date.now() < deadline) {
     const value = await read();
     if (value !== undefined) return value;
-    await Bun.sleep(500);
+    await Bun.sleep(POLL_MS);
   }
   throw new Error(`Timed out waiting for ${what}.\n${hub.logs.slice(-80).join("\n")}`);
 }

@@ -10,10 +10,9 @@ const { github, pushed, claimOf, managers, settled } = chain;
 const unset = once(async function unset() {
   const head = sha("unset-1");
   const [before, missed] = [(await managers()).length, github.misses.length];
-  await pushed(UNSET, pullOf(1, head));
-  // The hub answers a pull request without a policy file at once, so a short wait shows a manager it should not have deployed.
-  await Bun.sleep(5_000);
-  const withoutFile = { claim: await claimOf(UNSET, 1), deployed: (await managers()).slice(before), writes: [...github.writesTo(UNSET, 1)] };
+  // The hub decides a pull request without a policy file as it answers the delivery.
+  const answered = await pushed(UNSET, pullOf(1, head));
+  const withoutFile = { answered, claim: await claimOf(UNSET, 1), deployed: (await managers()).slice(before), writes: [...github.writesTo(UNSET, 1)] };
   github.setPolicy(UNSET, policy([MAX_FILES]));
   await deliver(chain.hub, chain.workspace, "push", {
     ref: "refs/heads/main", installation: { id: 1 }, repository: { full_name: UNSET, default_branch: "main" },
@@ -25,7 +24,7 @@ const unset = once(async function unset() {
 
 test("a repository with no policy file gets no manager, and adding the file triages its open pull requests", async () => {
   const { withoutFile, deployed, writes, misses } = await unset();
-  expect(withoutFile).toEqual({ claim: undefined, deployed: [], writes: [] });
+  expect(withoutFile).toEqual({ answered: "needs-setup", claim: undefined, deployed: [], writes: [] });
   expect(misses).toEqual([]);
   expect(deployed).toHaveLength(1);
   expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);

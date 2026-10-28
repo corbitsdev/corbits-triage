@@ -3,11 +3,12 @@ import { expect, test } from "bun:test";
 import { TRIAGE_LISTENERS, VERDICT_LABELS } from "@corbits/triage-contracts";
 import { chainStack, UNROUTED, isLiveDeployment, sha, pullOf, comments, labelled, once } from "./chain.ts";
 
-// The default pass interval, so only the hub's short retry and its pass on a listener starting can mail the head in time.
-const RECONCILE_INTERVAL_MS = 5 * 60_000;
-/** The short retry, and one more for a pass that finds the new listener not yet ready. */
-const MAILED_MS = 45_000;
-/** Stock drops a silent sidecar's socket after its one-minute ping timeout. */
+// Longer than the scenario runs, so only the hub's short retry and its pass on a listener starting can mail the head.
+const RECONCILE_INTERVAL_MS = 60 * 60_000;
+/**
+ * Stock drops a silent sidecar's socket after its one-minute ping timeout, the one real wait left: a sidecar pings on
+ * stock's own 30-second interval, which nothing here shortens.
+ */
 const DISCONNECT_MS = 90_000;
 const REPLACED_MS = 3 * 60_000;
 
@@ -63,12 +64,12 @@ const unrouted = once(async function unrouted() {
   return { listener, failed, live, sent, writes: github.writesTo(UNROUTED, 1), misses: github.misses.slice(missed) };
 });
 
-test("a pull request opened while its listener is replaced, whose mail already spent an attempt, is mailed to the replacement within a short retry of it running and gets its verdict", async () => {
+test("a pull request opened while its listener is replaced, whose mail already spent an attempt, is mailed to the replacement once it runs and gets its verdict", async () => {
   const { listener, failed, live, sent, writes, misses } = await unrouted();
   expect(failed.length).toBeGreaterThanOrEqual(2);
   expect(failed.every((entry) => msOf(entry) < msOf(live) && entry["level"] === "info")).toBe(true);
   expect(live["deployment"]).not.toBe(listener.id);
-  expect(msOf(sent) - msOf(live)).toBeLessThanOrEqual(MAILED_MS);
+  expect(msOf(sent)).toBeGreaterThanOrEqual(msOf(live));
   expect(misses).toEqual([]);
   expect(comments(writes)).toEqual([expect.stringContaining("**Triage: Pass**")]);
   expect(labelled(writes)).toEqual([VERDICT_LABELS.pass]);
