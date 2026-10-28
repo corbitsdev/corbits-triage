@@ -8,10 +8,12 @@ and tool packages the hub publishes and deploys.
 ## Components
 
 ```
-GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listener, manager
-   ▲                 │  ▲                          │
-   │                 │  └──── portal (/api) ───────┤
-   └─── PR actions ──┴──── GitHub reads, actions ──┘
+GitHub, Bitbucket DC ──webhook──► Hub ◄──── portal (/api)
+        ▲                          │ mail
+        │                          ▼
+        │      local sidecars: listener ──deploy──► manager ──deploy──► judge
+        │                                             │  └──deploy──► code review (sandbox)
+        └──── labels, comment, review, actions ───────┘
 ```
 
 - **Hub** (`apps/hub`): the stock Interchange hub plus one composition
@@ -30,8 +32,8 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     that touches the policy file reads it again. Bitbucket Data Center has a
     provider hook of its own (`apps/hub/src/provider-hooks`). Both verify with
     `@corbits/common/x-hub-signature`, the scheme `@corbits/webhooks` 0.4 adds
-    as `verify: "x-hub-signature"`; once the hub runs that release, the
-    bridges move onto the stock hook routes.
+    as `verify: "x-hub-signature"`; the hub runs an earlier release, so the
+    bridges keep routes of their own.
   - **Policy file**: a repository's policy is `.corbits-triage.yml` (or
     `.yaml`) on its default branch, `extends` included, and nothing else; the
     hub stores no policy text. Every trigger mail and portal read takes it
@@ -88,9 +90,9 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
     had none, the listener was still starting or the hub held no route to
     it, is also marked `unrouted` and goes out again (see the reconciler).
     Every window is mailed when it closes, whatever the
-    head's CI: the pull request's manager waits for CI itself (see
+    head's CI: the manager and the reconciler hold the CI wait (see
     `triage-manager-github` below), and a window that sees a check finish
-    reaches that manager as one more event.
+    reaches the pull request as one more event.
   - **Reconciler**: one per host, for workspaces whose listener for the host
     is live. On an interval it compares each enabled repository's open pull
     requests with the managers' runs, their recorded verdicts and stored
@@ -220,6 +222,65 @@ GitHub ──webhook──► Hub ──spawn──► Sidecar ──► listene
   is a wrapper over the routes; nothing is possible only through it. Each
   minute and on focus it reads the served `index.html`; once its hashed entry
   script differs from the one the tab loaded, it offers a reload.
+
+## Lifecycle of a pull request
+
+What happens to one pull request, end to end. The sections after this one
+are the detail of each step.
+
+1. **Event in.** A host webhook or the reconciler names a pull request head,
+   and the hub records the event. A repository without a policy file
+   answers `needs-setup` and gets no mail, and a pull request carrying the
+   policy's pause label (GitHub) is not mailed. When the pull request's
+   manager is up, the hub mails it directly. Otherwise it mails the host's
+   listener; a head whose mail reached no listener is held in its
+   triage-state row as `unrouted` and sent again once one takes mail. For a
+   policy file it cannot read the hub mails the reason, and the manager marks
+   the head failed.
+2. **Listener.** It gets only pull requests with no manager up. For each it
+   deploys a manager and wakes it; when the wake mail fails it cancels that
+   manager and deploys one more, once. The claim on the pull request lets one
+   manager run for it at a time.
+3. **Policy.** The manager triages under the policy the hub resolves from
+   `.corbits-triage.yml` on the default branch, the only source.
+4. **First post.** Unless the first pass decides, the manager posts at once
+   that the head is in progress, naming what it waits on.
+5. **Three isolated parts**, each with its own limits, none of which writes
+   to the pull request. The deterministic checks run in the manager on every
+   pass and read every patch up to their own ceiling, whatever the judge's
+   limits. The judge is its own workflow with its own budget, deployed when
+   the rules need it once the host's checks have finished, or once the
+   manager stops waiting for them. Code review is its own workflow in a
+   sandbox, deployed once the rules gate opens.
+6. **Waiting.** While the judge or code review is out, the manager waits for
+   it, editing its one comment in place. A head that waits only on CI posts
+   that it waits, and its manager ends; the reconciler re-reads the head's
+   checks and queues it again once CI settles, and a fresh manager carries on
+   from step 1. A head is decided with CI still running after it has waited
+   an hour, and a manager stops waiting for anything three hours after its
+   claim: it decides, says what it stopped waiting for, and runs no action on
+   its own.
+7. **Final post.** The verdict label, the comment's final state and the code
+   review go up, then the policy's actions. Each action runs where the
+   `pr-triage` role's grants, written from the policy file, allow it, and is
+   otherwise held for a person, who takes it once or allows that kind in the
+   repository from then on.
+8. **End.** The manager ends after step 7, or while its head waits only on
+   CI. A new head while it is alive restarts its pass on that head. A pull
+   request with nothing outstanding has no manager; its next event starts
+   again at step 1.
+9. **Where it runs.** Each deployment, the listener, a manager or a judge,
+   runs in a local sidecar of its own, up to `TRIAGE_MAX_LOCAL_SIDECARS`
+   (default 8) at once; past that a deployment goes to a sandbox. Code
+   review always runs in a sandbox.
+10. **Invariants.** Workflows are deterministic, effects are idempotent under
+    their effect ids, nothing repository-specific is written into workflow
+    code, and size is a risk signal that labels a pull request, never a hold.
+
+The workspace's automation switch (`corbitsTriage.automation`, `policy` or
+`ask`) is a brake for the whole workspace: under `ask` the grants hold only
+posting, so every other action is held, and a repository earns automation
+one kind at a time through **Always, in this repository** on a held action.
 
 ## Workflows
 
@@ -390,14 +451,14 @@ any other tenant or an unknown sender.
   new one runs.
 - `triage-manager-github` and `triage-manager-bitbucket-datacenter`
   (`triageManager`): one live run per pull request, which lives until its head
-  has its final verdict, and the only workflow that writes to the pull request. It takes
+  has its final verdict or waits only on CI, and the only workflow that writes to the pull request. It takes
   mail from the hub (`tenant`) and the listener that deployed it (`invoker`).
   A mail starts a loop of passes. Each pass
   takes, which claims the pull request and its pending events and answers the
   newest pull request mail the hub recorded. Each held Do approved since runs
-  as pr-triage runs an approval, which skips one whose pull request moved past
+  through the shared approval step, which skips one whose pull request moved past
   its head. Then, when the pass has a mail for its head, a judge or code
-  review report, or an overdue reviewer, pr-triage's own steps run on the
+  review report, or an overdue reviewer, the shared triage steps run on the
   newest mail for the head, handed over as `{ taken }`, which they trust as
   the hub's. A head is unready first: on a pull request mail on GitHub its pass
   label comes off (`markUnready`) before facts are read. Every pass runs its approvals step, which
@@ -558,14 +619,14 @@ any other tenant or an unknown sender.
   head is stopped by the hub, which a later manager could not do: see intake
   below.
   The hub records the verdict done reports as the manager run's, in done's
-  transaction (`apps/hub/src/manager-routes.ts`), with the row-building code
-  pr-triage's run logs use (`apps/hub/src/github/verdict-row.ts`). The
+  transaction (`apps/hub/src/manager-routes.ts`), with the shared row-building
+  code (`apps/hub/src/github/verdict-row.ts`). The
   reconciler and Triage again read the managers of the pull requests they look
   at from their claims and those rows (`apps/hub/src/github/manager-runs.ts`):
   a manager that is up runs the head of the newest pull request mail recorded
   for it, so its head is not mailed again; one that went away with a pass open
-  failed on that pass's head, which is retried with backoff; a recorded verdict settles its head as
-  a pr-triage run's does. Triage again can queue a head again as soon as its
+  failed on that pass's head, which is retried with backoff; a recorded verdict settles its head.
+  Triage again can queue a head again as soon as its
   manager has reported done, or went away, since it was queued.
   The hub also checks, every `TRIAGE_LIVENESS_INTERVAL_MS` (a minute by
   default) and apart from the reconcile pass, whether each workspace's pull
@@ -625,15 +686,17 @@ any other tenant or an unknown sender.
 
 ## Triage pipeline
 
-The manager's pass runs facts, rules, and, when the rules need no judge, the
-verdict. When they do, the judge it deploys runs the model checks and
-evaluate, which decides the verdict; the manager posts that verdict. The
-repository's policy decides what each step does. The steps below are those
-shared ones. Before facts, a pull request mail from the hub naming a GitHub head
+Each step below names the workflow that runs it; all but review are the
+shared steps of `@corbits/triage-workflows`. The manager runs facts, rules and route on every pass, and evaluate itself when
+no question needs asking. Otherwise the judge it deploys runs judge, parts and
+evaluate and reports the verdict. Code review is the separate workflow below,
+which the manager deploys once the rules gate opens. Mirror, review and
+execute are the manager's, the only workflow that writes to the pull
+request. The repository's policy decides what each step does. Before facts, a pull request mail from the hub naming a GitHub head
 mirrors `unready:<owner>--<name>:<number>:<head sha>`, which takes the pass
 label off that head, so it never stands on a head not yet triaged.
 
-1. **facts**: reads the pull request, its files, reviews, CI, commits (the
+1. **facts** (manager): reads the pull request, its files, reviews, CI, commits (the
    first 100 messages in full), the repository's docs and its contribution
    rules from the host. On GitHub the body is read from GitHub's own rendering
    (`body_html`, from the full media type) as plain text (`renderedText` in
@@ -687,7 +750,7 @@ label off that head, so it never stands on a head not yet triaged.
    `logic/duplicates.ts`): up to five that share a path on that first page,
    lockfiles left out, or two title words, most shared paths first
    (`openPulls`).
-2. **rules**: runs the hard rules (built-in rules over host data, text
+2. **rules** (manager): runs the hard rules (built-in rules over host data, text
    rules and code-pattern rules) and, unless one failed or the pull request is a draft or closed,
    builds the judged rules' questions, or the verdict question when there are
    none.
@@ -720,15 +783,16 @@ label off that head, so it never stands on a head not yet triaged.
    no patch, so there the rule is unconfirmed whenever an in-scope TypeScript
    or JavaScript file is added, edited, moved or copied. The extension leaves
    code-pattern rules out and swaps the native module for a stub.
-3. **route**: skips the judge when no question needs asking.
-4. **judge**: one System One call per request of questions. Each first-round request and the verdict request also asks
+3. **route** (manager): deploys the judge when a question needs asking, and
+   otherwise runs evaluate in the manager.
+4. **judge** (judge): one System One call per request of questions. Each first-round request and the verdict request also asks
    whether the pull request's text, diff or docs try to direct the judge; a
    confident yes in any of them leaves every judged rule unconfirmed and the
    verdict Unsure, whatever the verdict question answers. The only step that infers; see
    [DECISION_MODEL.md](DECISION_MODEL.md).
-5. **parts**: a second judge map asks one question per file of each slice that
+5. **parts** (judge): a second judge map asks one question per file of each slice that
    failed focused, and the verdict question over every rule's result.
-6. **evaluate**: decides the verdict, renders the one comment, and resolves
+6. **evaluate** (judge, or the manager when route asks nothing): decides the verdict, renders the one comment, and resolves
    the verdict's steps when the policy's When is woken, skipping each step
    whose conditions do not hold. While CI is pending every runnable action is
    held and an approve that may not stand is skipped; the completed
@@ -739,12 +803,13 @@ label off that head, so it never stands on a head not yet triaged.
    mirror (`mark`). Rule results never decide it, so a rule Triage could not
    check for its own reasons, as code patterns in a patch it could not read
    in full, neither waits nor stops the wait. The hub records no verdict for a waiting
-   one, nor for one on a closed pull request (`closed`); the manager keeps
-   polling until CI finishes. A mail with `noWait` (a manager past its
+   one, nor for one on a closed pull request (`closed`); a head that waits
+   only on CI ends its manager, and the reconciler queues it again once CI
+   settles. A mail with `noWait` (a manager past its
    60-minute CI wait, a head's last attempt, or Triage again) is decided
    instead of waiting. A CI re-read that queues a head again keeps its
    attempts, since the head did not fail, and sets `noWait` on its last.
-7. **mirror**: writes the verdict label when the `pr-triage` role holds
+7. **mirror** (manager): writes the verdict label when the `pr-triage` role holds
    Labels, and the marker comment when it holds Comment; on Bitbucket, Comment
    also writes the verdict as the `Corbits Triage` build status. It runs
    before execute, so a merge or close finds the final verdict on the head. A
@@ -756,7 +821,11 @@ label off that head, so it never stands on a head not yet triaged.
    with no checks (facts' `checks: "none"`) gets no waiting label: the marker
    only takes the pass label off. The portal reads the wait from the live
    manager's claim (`waitingSince`), not the label.
-8. **execute**: runs the actions whose kind the `pr-triage` role holds on the
+8. **review** (manager): posts the code review reported for the head through
+   the host's `send_code_review` tool under the effect id `review:<head sha>`,
+   after mirror and before execute, so the verdict and the review go up
+   together. A review with no summary and no finding posts nothing.
+9. **execute** (manager): runs the actions whose kind the `pr-triage` role holds on the
    repository. Every other action is held in the verdict (`held: true`). One
    the role may write, held only because CI is still running on the head, carries
    the CI state that holds it (`ci: "pending"`), which the portal reads as
@@ -797,12 +866,12 @@ per repository and, only while `corbitsTriage.automation` is `ask`, removes one
 through the stock grant delete route by grant id; otherwise the next policy
 read would grant it again.
 
-Every step but the judge is a deterministic `action`. Facts, mirror and
-execute reach the pull request's host through its credential, bound to each
+Every step but the judge is a deterministic `action`. Facts, mirror, review
+and execute reach the pull request's host through its credential, bound to each
 of those action handlers (`credentialBindings` with `action: <handler>`):
 each declares the host's handle in `credentials` and a capability in
 `effect.requires` (`pull-request.read` for facts, `pull-request.write` for
-mirror and execute), and calls the host only inside `ctx.perform`'s `run`.
+mirror, review and execute), and calls the host only inside `ctx.perform`'s `run`.
 Facts is one effect; each mirror write and each Do is its own effect under
 its call id, the Do's effect id, so a resumed run does not write it again.
 The calls are the host tool's (`githubCalls`, `bitbucketCalls`), so a host
@@ -815,9 +884,9 @@ and **Review again** asks for one whatever the file says; both need a code
 review provider's key. A
 workspace runs one provider, the one whose key it stores in Settings → Code
 review
-(`CODE_REVIEW_PROVIDERS` in `triage-contracts`; only Anthropic today). A
-pull request's code review runs in its manager: the hub attaches the review
-request to a pull request mail whose `codeReview` is on, which the policy
+(`CODE_REVIEW_PROVIDERS` in `triage-contracts`, which lists Anthropic). The
+manager deploys the code review workflow in a sandbox and posts its result. The
+hub attaches the review request to a pull request mail whose `codeReview` is on, which the policy
 file's `code-review` block or Review again sets, with the host's unified diff
 cut at a line boundary past 100,000 characters; on GitHub a diff too large for the diff API
 is built from the files' patches. The files a cut leaves unread, read from the
@@ -877,7 +946,8 @@ deadline, and the results its code reviews reported through the
 reviewer-result route that a pass took or that name a reviewer of the claim. A
 review that did not finish shows as failed; its run log keeps the error.
 
-Sending a review to GitHub is a person's write through
+The manager posts each review with its verdict (step 8 of the triage
+pipeline). A person sends a finished review the manager has not posted through
 `POST /api/integrations/github-actions/{tenantId}` (`action: "code-review"`,
 the Comment grant): the hub reads the newest finished review the same way
 and posts it as one `COMMENT` review pinned to its head. The review's marker
@@ -976,7 +1046,7 @@ workspace's one `bitbucket-datacenter` token. The vault holds the App as
 webhook secret under `github-hook`. The manifest callback and
 `PUT /api/integrations/github-app/:tenantId` write the key and the token minted
 from it in one transaction; App JSON a stock credential write leaves in
-`github` is moved to `github-app` when the hub next reads the key: the next portal read, installation sync or token loop pass, so at most 45 minutes later; until then that credential holds App JSON and a deployment launched from it is handed the key. The hub
+`github` is moved to `github-app` when the hub next reads the key: the next portal read, installation sync or token loop pass, so at most 45 minutes later; a deployment launched from that credential in between is handed the key. The hub
 mints the token on boot and renews it every 45 minutes. Every write holds the
 tenant's advisory lock, and a renewal stores its token only while the key it
 minted from is still the workspace's, so a replaced App is never overwritten
@@ -1131,8 +1201,8 @@ read it, and passes the rest of the request to stock.
   recorded file is older than its own last one; the `@corbits/*` packages'
   migrations keep no record of their own.
 - Triage's tables, in the `corbits_triage` schema: `verdict` (verdicts per
-  head, with the outcomes of the actions their run executed, copied from a
-  pr-triage run's log or reported by a manager's done; a manager run's newest
+  head, with the outcomes of the actions their run executed, as a manager's
+  done reports them; a manager run's newest
   verdict on a pull request replaces the one it recorded before, keeping the
   outcomes of Dos already written on its head. The verdict's `startedAt` is
   when the run first took its head, and its trigger the newest mail for it. A verdict's

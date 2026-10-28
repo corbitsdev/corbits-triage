@@ -66,6 +66,12 @@ A rule answers one question about a pull request: pass, fail, or unconfirmed.
 | Rule | Host data only: files, size, linked issue, mergeability, reviews, CI, text. No inference. | Host API calls. | Anything the host already knows. |
 | Decision model | Fixed-shape questions to a System One model (Jev), citing the pull request as evidence. | One model request per batch of questions, billed by the model provider. | Judgment a rule cannot make: is the change focused, does it need docs. |
 
+Rules over host data, decision-model rules and [code review](#code-review) are
+three separate parts, each with its own limits. Rules over host data read
+every changed file's patch up to a ceiling of their own, however much of the
+diff the decision model's budget leaves out, and code review cuts its own
+diff. A limit one part reaches never changes what another reads.
+
 ### Rules over host data
 
 The same pull request and policy give the same result. A rule is unconfirmed
@@ -230,6 +236,10 @@ Triage only posts its comment and verdict label on its own, and a policy pull
 request from the portal lists the actions that will wait. Turning triage off
 for a repository takes back everything Triage did there on its own. Close
 never runs on its own on Unsure, and merge never on anything but Pass.
+
+That switch is a brake for the whole workspace. With it off, a repository
+earns more one action at a time: **Always, in this repository** on a held
+action lets Triage take that kind of action there on its own from then on.
 
 Approve runs only on a Pass with CI green. A merge waits until CI passes on
 the head (or runs without CI only when the policy switches CI green off), and
@@ -419,23 +429,27 @@ lines and breakage the change causes elsewhere in the repository. Each defect
 names the line, why it is wrong, what triggers it and a fix, most severe and
 most agreed-on first. It is separate from the verdict and optional.
 
-A workspace turns it on by saving an Anthropic key under Settings → Code review and
-switching it on per repository; each reviewed commit is billed to that
-Anthropic account. Every new commit of a non-draft pull request is reviewed,
-and **Review again** reviews the current one once more. A diff over 100,000
-characters is cut; the review says how much it read and names the files it left
-out, and so does the review sent to GitHub.
+A repository's policy file turns it on with its `code-review` block, which
+also says whose pull requests (`for`) and which verdicts and paths (`when`) it
+reviews. It needs an Anthropic key saved under Settings → Code review, and each
+reviewed commit is billed to that Anthropic account. A commit is reviewed once
+the rules that fail a pull request without the decision model have passed, or
+whatever they say with `when: { rules: any }`; drafts are not reviewed.
+**Review again** reviews the current commit once more, whatever the file says.
+A diff over 100,000 characters is cut; the review says how much it read and
+names the files it left out.
 
 Each review checks out the pull request's code, so it runs in an isolated
-place of its own; until the server has one, the repository page links
+place of its own; while the server has none, the repository page links
 Settings → Code review, which lists the places this server knows and how to
-set each up ([provisioners](provisioners/README.md)), in place of the switch.
-Findings show in the reading pane. On GitHub,
-**Send to GitHub** posts the newest review as one review from the Triage App,
-inline where the diff shows the lines, once per commit and never on its own.
-On Bitbucket Data Center, **Send to Bitbucket** posts each finding the diff
-shows as a comment on its first shown line and one summary comment with the
-rest, once per commit. Sending needs only a finished review, so it works without an isolated place.
+set each up ([provisioners](provisioners/README.md)).
+Findings show in the reading pane, and Triage posts the review with its
+verdict: on GitHub as one review from the Triage App, inline where the diff
+shows the lines; on Bitbucket Data Center as a comment per finding the diff
+shows, on its first shown line, and one summary comment with the rest. A
+finished review that is not on the pull request yet is posted with **Send to
+GitHub** or **Send to Bitbucket**, once per commit. Sending needs only a
+finished review, so it works without an isolated place.
 
 ## Triage over time
 
@@ -443,8 +457,9 @@ Turning triage on triages a GitHub repository's open pull requests; after
 that, events are triaged as they arrive, and the hub re-queues any open pull
 request whose latest commit has no verdict. A pull request merged into the
 default branch makes the repository's other open pull requests due again, each
-at most once per 15 minutes. A re-check reuses the decision model's earlier
-answers for anything unchanged.
+at most once per 15 minutes. A re-check of a commit whose verdict nothing on
+the host can still change posts that verdict again without asking the decision
+model; a new commit is judged afresh.
 
 ## Limits
 
