@@ -54,6 +54,7 @@ import {
   listHref,
   matchesQuery,
   regroupInbox,
+  stoppedNotes,
   triageView,
   waitingOnOthers,
   withTriageView,
@@ -487,6 +488,11 @@ function RefusedPolicies({ repos }: { repos: string[] }) {
   ));
 }
 
+/** Triage not running on a host is said once here, not on each of its pull requests. */
+function StoppedNotes({ items }: { items: readonly PrItem[] }) {
+  return stoppedNotes(items).map((note) => <p key={note} role="status" className="note">{note} <Link to="/settings/triage">Open Settings</Link></p>);
+}
+
 /**
  * Each repository whose saved rules still need moving into its policy file, its panel walking through it; those with
  * no policy file yet are counted, however many there are.
@@ -800,6 +806,7 @@ export default function Inbox() {
         </div>
         <PullToRefresh className="scroll" id="main">
           <RefusedPolicies repos={enabledNames} />
+          <StoppedNotes items={open.map((entry) => entry.item)} />
           <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}
           {flat.length === 0 ? (

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { triageStopped } from "@corbits/triage-contracts";
 import type { CheckResult, PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
-import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, notPostedText, primaryAction, readyToMerge, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
+import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, notPostedText, primaryAction, readyToMerge, stoppedNotes, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -85,6 +86,19 @@ describe("groupInbox", () => {
       item({ key: "urgent", priority: "P1", waitingSince: "2026-10-07T00:00:00.000Z" }),
     ], READY);
     expect(view.groups[0]?.items.map((row) => row.key)).toEqual(["urgent", "human", "early", "late"]);
+  });
+
+  test("Triage not running on a host is one note for the inbox, while a pull request Triage could not check is under Failed", () => {
+    const stopped = triageStopped("github");
+    const items = [
+      item({ key: "a", state: "new", runId: null, verdict: null, untriaged: stopped }),
+      item({ key: "b", state: "new", runId: null, verdict: null, untriaged: stopped }),
+      item({ key: "c", state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }),
+    ];
+    const view = groupInbox(items, READY);
+    expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([["failed", ["c"]]]);
+    expect(view.awaiting).toBe(0);
+    expect(stoppedNotes(items)).toEqual([stopped]);
   });
 
   test("a pull request Triage is at work on leaves Needs you until it has something for you", () => {

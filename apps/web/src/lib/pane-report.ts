@@ -1,7 +1,7 @@
 import { askRules, citationOf, NO_CHANGES_REQUESTED, type CheckPack, type VerdictWord } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, HeldBlock, PrItem, RunFailure } from "./hub-api.ts";
 import { paneActions, paneFacts, type ActionBlocker, type MenuEntry, type PaneFacts, type PaneGate, type PaneKind } from "./inbox-pane.ts";
-import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, primaryLabel, progressText, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
+import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, primaryLabel, progressText, triageStoppedOn, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
 import { checkLabel } from "./pack-prose.ts";
 import { pendingDos, postedActions, type PendingDo } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
@@ -258,6 +258,7 @@ export function paneStatus({ item, detail, handled, pack }: StatusInput): PaneSt
     const why = item.untriaged ?? (item.failure === null ? "Couldn't triage" : `Couldn't triage: ${FAILURE_TEXT[item.failure]}`);
     return settled(item, item.draft === true ? said("quiet", `${why} · use Triage again in More`) : said("you", why));
   }
+  if (triageStoppedOn(item) && item.untriaged !== undefined) return settled(item, said("quiet", item.untriaged));
   const facts = paneFacts(item, detail);
   const author = facts.author === null ? "the author" : `@${facts.author}`;
   if (item.draft === true) return settled(item, said("author", `Draft · waiting on ${author}`));

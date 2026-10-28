@@ -1,4 +1,4 @@
-import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind, type AwaitedStage } from "@corbits/triage-contracts";
+import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, triageStopped, type AuthorKind, type AwaitedStage } from "@corbits/triage-contracts";
 import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
 import { holdsActionForYou, mergesOnItsOwn, pendingDos, triageActed } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
@@ -50,6 +50,16 @@ const PRIMARY_LABEL: Record<PrimaryAction, string> = {
   triage: "Triage again",
 };
 
+/** Triage is not running on the pull request's host, which the inbox says once rather than on each pull request. */
+export function triageStoppedOn(item: Pick<PrItem, "untriaged" | "source">): boolean {
+  return item.untriaged === triageStopped(item.source);
+}
+
+/** The note for each host Triage is not running on, once however many of its pull requests are listed. */
+export function stoppedNotes(items: readonly PrItem[]): string[] {
+  return [...new Set(items.flatMap((item) => (triageStoppedOn(item) && item.untriaged !== undefined ? [item.untriaged] : [])))];
+}
+
 export function inboxAction(item: PrItem): InboxAction | null {
   switch (item.state) {
     case "needs-decision":
@@ -64,7 +74,7 @@ export function inboxAction(item: PrItem): InboxAction | null {
     case "ready":
       return "merge";
     case "new":
-      return item.failure === null && item.untriaged === undefined ? null : "failed";
+      return item.failure === null && (item.untriaged === undefined || triageStoppedOn(item)) ? null : "failed";
   }
 }
 
@@ -122,7 +132,7 @@ export function progressText(item: PrItem): string | null {
   if (item.draft === true) return null;
   if (hasUncheckedCommits(item)) return "checking new commits";
   if (item.state === "stale") return "rechecking";
-  return inboxAction(item) === null ? "not triaged yet" : null;
+  return inboxAction(item) === null && !triageStoppedOn(item) ? "not triaged yet" : null;
 }
 
 /**
@@ -186,7 +196,7 @@ export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
   if ((entry === null && inNeedsYou(item)) || awaitsYourDecision(item)) return "maintainer";
   if (item.draft === true || item.state === "needs-author-update" || (entry !== null && AUTHOR_TURN.has(entry.kind))) return "author";
   if (item.ci === "pending") return "ci";
-  return "nobody";
+  return triageStoppedOn(item) ? "triage" : "nobody";
 }
 
 /** `did` is what Triage did on its own and `reason` why; `person` also leaves the next step to you. */
@@ -258,7 +268,7 @@ export function groupInbox(items: PrItem[], ready: ReadonlySet<string>): InboxVi
   const groups = INBOX_ACTION_ORDER
     .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inNeedsYou(item) && listedAction(item) === action) }))
     .filter((group) => group.items.length > 0);
-  return { groups, awaiting: items.filter((item) => ready.has(item.repo) && inboxAction(item) === null).length };
+  return { groups, awaiting: items.filter((item) => ready.has(item.repo) && inboxAction(item) === null && !triageStoppedOn(item)).length };
 }
 
 export function awaitingText(count: number): string {
