@@ -101,6 +101,7 @@ Two different numbers come out of the answers:
 | Patch the judge reads per file | 65,536 chars | `MAX_PATCH_INPUT_CHARS` |
 | Patch the judge reads per pull request | 270,000 chars | `MAX_PATCH_CHARS` |
 | Patch the rules that run in code read per pull request | 2,000,000 chars | `MAX_CODE_RULES_PATCH_CHARS` |
+| Patch text in one facts step's output | 2,000,000 chars: one pull request per step, as the hub records backlog and catch-up mails per pull request and each manager reads its own | `MAX_CODE_RULES_PATCH_CHARS` × 1 |
 | GitHub tool page | 9,000 chars | `PR_FILES_PAGE_CHARS` |
 
 - **Docs.** Docs are read from the default branch in this order: root `README`, then `docs/`, then other root markdown, then nested markdown, each in path order. Reading stops at 24,000 bytes; a doc that crosses the cap is cut and later docs are not seen. The same docs are in every request's state.

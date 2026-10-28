@@ -96,10 +96,9 @@ function readPages(hostFiles: PrFileFacts[], first: FilesCursor = FIRST_FILES_PA
     if (typeof cursor === "string") throw new Error(cursor);
     const { patch, ...meta } = hostFiles[cursor.offset]!;
     const next = cursor.offset + 1 < hostFiles.length ? { next: cursor.offset + 1 } : {};
-    const half = Math.floor(patch!.length / 2);
     let page: FilesPage = { files: [meta], ...next };
-    if (cursor.patches && cursor.patchOffset === undefined) page = { files: [{ ...meta, patch: patch!.slice(0, half) }], next: cursor.offset, patchNext: half };
-    else if (cursor.patches) page = { files: [{ ...meta, patch: patch!.slice(cursor.patchOffset) }], ...next };
+    if (cursor.patches && patch !== undefined && cursor.patchOffset === undefined) page = { files: [{ ...meta, patch: patch.slice(0, Math.floor(patch.length / 2)) }], next: cursor.offset, patchNext: Math.floor(patch.length / 2) };
+    else if (cursor.patches && patch !== undefined) page = { files: [{ ...meta, patch: patch.slice(cursor.patchOffset) }], ...next };
     cursor = addFilesPage(listed, cursor, page);
   }
   return listed.files;
@@ -169,6 +168,17 @@ describe("a diff past the code rules' ceiling", () => {
     if (!("det" in item)) throw new Error("the item was not ruled");
     expect(item.facts.files[1]).toMatchObject({ path: "src/a.ts", patchUnread: true });
     expect(item.det.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", reason: "code patterns could not be checked: src/a.ts: the pull request's diff is larger than Triage reads" });
+  });
+
+  test("names a file the host sent no patch for by that cause, and only files it did not ask patches for by the ceiling", () => {
+    const filler = `+const filler = "${"x".repeat(1_000)}";`;
+    const omitted = { path: "src/omitted.ts", status: "modified", additions: 9_000, deletions: 0 };
+    const big: PrFileFacts = { path: "src/big.ts", status: "added", additions: 2_000, deletions: 0, patch: ["@@ -0,0 +1,2000 @@", ...Array.from({ length: 2_000 }, () => filler)].join("\n") };
+    const later = { path: "src/later.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const a = 1;" };
+    const listed = readPages([omitted, big, later]);
+    expect(listed).toEqual([omitted, big, { path: "src/later.ts", status: "added", additions: 1, deletions: 0, patchUnread: true }]);
+    const contents = { "src/big.ts": `${Array.from({ length: 2_000 }, () => filler.slice(1)).join("\n")}\n` };
+    expect(patternsResult(pack.custom.find(isPatternsCheck)!, listed, contents, "github")).toEqual({ unread: "src/omitted.ts: the host sent no diff; src/later.ts: the pull request's diff is larger than Triage reads" });
   });
 
   test("keeps no lockfile patch, so a lockfile neither counts nor rides in the output, and marks nothing when no patches were asked for", () => {
