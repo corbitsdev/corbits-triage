@@ -1,8 +1,8 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { isFromTriageSender, MANAGER_READY_MS, repoSourceOf, TRIAGE_LISTENERS } from "@corbits/triage-contracts";
+import { isFromTriageSender, repoSourceOf, TRIAGE_LISTENERS } from "@corbits/triage-contracts";
 import { Mailed, MailInput } from "../mail.js";
-import { publishedFor } from "../release.js";
+import { publishedFor, TIMINGS } from "../release.js";
 import { deploy, endRun, mailOf, managedBy, manageMail } from "./hub.js";
 
 /** The hub's mail to a listener: the repository and, as a reconciler's mail does, the heads it names as `items`. */
@@ -32,7 +32,7 @@ export async function forward(input: unknown, ctx: EffectContext, _signal: Abort
   for (const number of numbers) {
     const pullRequest = { source, repo: mail.repo, number };
     const runId = await deploy(ctx, `deploy:${number}`, mail.tenantId, release);
-    mails.push({ tenantId: mail.tenantId, to: runId, content: manageMail(mail.tenantId, pullRequest), readyBy: new Date(Date.now() + MANAGER_READY_MS).toISOString() });
+    mails.push({ tenantId: mail.tenantId, to: runId, content: manageMail(mail.tenantId, pullRequest), readyBy: new Date(Date.now() + TIMINGS.managerReadyMs).toISOString() });
   }
   return { mails };
 }
@@ -68,7 +68,7 @@ export async function retry(input: unknown, ctx: EffectContext, _signal: AbortSi
     const release = publishedFor(source, "manager");
     if (!release) throw new Error(`${TRIAGE_LISTENERS[source]} needs the release's manager in release.json, which the hub publishes beside it`);
     const runId = await deploy(ctx, `redeploy:${pullRequest.number}`, tenantId, release);
-    mails.push({ ...mail, to: runId, readyBy: new Date(Date.now() + MANAGER_READY_MS).toISOString() });
+    mails.push({ ...mail, to: runId, readyBy: new Date(Date.now() + TIMINGS.managerReadyMs).toISOString() });
   }
   return { mails };
 }

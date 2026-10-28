@@ -1,5 +1,6 @@
 import { CODE_REVIEW_PROVIDERS } from "./code-review-models.js";
 import type { RepoSource } from "./repo-source.js";
+import type { WorkflowTimings } from "./timings.js";
 
 /** The catalog provider that serves the decision model. */
 export const INFERENCE_PROVIDER = "corbits-system-one";
@@ -93,15 +94,14 @@ async function hex8(text: string): Promise<string> {
 }
 
 /**
- * A chain workflow's tree carries the release of each workflow it deploys, published before it, and its hash covers
- * the build and that release together, so the same build with other offerings publishes a new asset. A workflow left
- * out for a missing model, such as code review in a workspace without its model, is omitted from the release; when
- * every one was, the tree keeps the build's empty release. Any other gap is an ordering mistake and fails the publish.
+ * A chain workflow's tree carries the release of each workflow it deploys, published before it, and the waits it runs
+ * on; its hash covers the build and that release together, so the same build with other offerings or waits publishes a
+ * new asset. A workflow left out for a missing model, such as code review in a workspace without its model, is omitted
+ * from the release. Any other gap is an ordering mistake and fails the publish.
  */
-export async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[]): Promise<{ hash: string; tree: SourceTree }> {
-  const plain = { hash: entry.hash, tree };
+export async function withRelease(models: readonly ModelInfo[], entry: SourceIndexEntry, tree: SourceTree, published: readonly PublishedSource[], timings: WorkflowTimings): Promise<{ hash: string; tree: SourceTree }> {
   const chain = chainOf(entry.workflow);
-  if (!chain?.deploys) return plain;
+  if (!chain?.deploys) return { hash: entry.hash, tree };
   const file = `packages/${entry.workflow}/release.json`;
   if (!(file in tree)) throw new Error(`The build's ${entry.workflow} does not read a release.`);
   const body: Record<string, unknown> = {};
@@ -113,7 +113,6 @@ export async function withRelease(models: readonly ModelInfo[], entry: SourceInd
     if (!deployed || !target || !offerings) throw new Error(`${entry.workflow} deploys ${slot.workflow}, which this release has not published before it.`);
     body[slot.as] = { workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
   }
-  if (Object.keys(body).length === 0) return plain;
-  const json = `${JSON.stringify({ [chain.source]: body }, null, 2)}\n`;
+  const json = `${JSON.stringify({ ...(Object.keys(body).length > 0 && { [chain.source]: body }), timings }, null, 2)}\n`;
   return { hash: await hex8(`${entry.hash}\n${json}`), tree: { ...tree, [file]: json } };
 }

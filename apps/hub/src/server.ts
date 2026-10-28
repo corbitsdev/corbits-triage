@@ -33,13 +33,14 @@ import {
 } from "@corbits/cron";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { policyKinds, REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
+import { policyKinds, REPO_SOURCES, repoSourceOf, timingsFrom, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest } from "./manager-state.js";
 import { createTakeLedger, createTriageLiveness } from "./triage-liveness.js";
+import { setTimings } from "./timings.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
 import { archiveStoredPolicies } from "./stored-policies.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
@@ -73,7 +74,7 @@ import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
 import { createRolloutQueue, createWorkflowRollout, stopGivenUp, type DeployRequest } from "./workflow-release/rollout.js";
-import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcileIntervalMs, triageReconcilePolicy, triageLivenessIntervalMs, triageStalledAfterMs } from "./env.js";
+import { bitbucketEgressAllowlist, childProcessEnv, clientIpHeaders, databaseConfig, dockerSettings, e2bSettings, emailSettings, interchangeSettings, githubApiOrigin, loadHubEnv, inviteLinkOrigin, maxLocalSidecars, railwaySandboxSettings, signInSettings, triageCoalesceWindow, triageReconcilePolicy } from "./env.js";
 import { HOOK_MOUNT_PATH } from "./hooks.js";
 import { assertMigrated } from "./migrations.js";
 import { createBridgeHandler, logJson, withAppLogin } from "./github/bridge.js";
@@ -132,7 +133,6 @@ const EXPECTED_DEPLOYMENT_SET = {
   "bitbucket-datacenter": { workflows: hostWorkflows("bitbucket-datacenter"), tools: [bitbucketRead.id] },
 };
 
-const TRIAGE_RETRY_MS = 15_000;
 const TRIAGE_RETRY_MAX_MS = 120_000;
 /** A repository is listed again once its listing is this old, and every pass once its webhook (the App's, on GitHub) heard nothing this long. */
 const TRIAGE_RELIST_QUIET_MS = 30 * 60_000;
@@ -154,6 +154,8 @@ const WORKFLOW_RELEASE_CONCURRENCY = 2;
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
+const triageTimings = timingsFrom(env);
+setTimings(triageTimings);
 const database = databaseConfig(env);
 const githubOrigin = githubApiOrigin(env);
 
@@ -652,7 +654,7 @@ const triageLiveness = createTriageLiveness({
   db: composition.db,
   store: triageStateStore,
   takes,
-  stalledAfterMs: triageStalledAfterMs(env),
+  stalledAfterMs: triageTimings.stalledAfterMs,
   mail: smtp && async function mailStall(notice) {
     await smtp.triageStall({ ...notice, link: triageSettingsLink });
   },
@@ -699,7 +701,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
   const outcome: ReconcileOutcome = { retry, ...(unrouted && { unrouted: true }) };
   return limits.length === 0 ? outcome : { ...outcome, retryAt: Math.min(...limits) };
 }
-triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
+triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageTimings.reconcileIntervalMs, retryMs: triageTimings.reconcileRetryMs, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
 const kickTriage = triageLoop.kick;
 const githubPrTriage = createGithubPrTriage({
   ...credentialDeps,
@@ -778,7 +780,7 @@ coalescer = createCoalescer({
   sendMail: sendTriageMail,
   retry: kickTriage,
   openHeadFor: tenantOpenHead,
-  window: triageCoalesceWindow(env, reconcilePolicy),
+  window: triageCoalesceWindow(triageTimings.coalesceQuietMs, reconcilePolicy),
   setTimer,
   now,
   log: logJson,
@@ -1087,7 +1089,7 @@ await takes.seed(composition.db);
 function checkLiveness(): void {
   void triageLiveness.check(reconcileTenants);
 }
-livenessTimer = setInterval(checkLiveness, triageLivenessIntervalMs(env));
+livenessTimer = setInterval(checkLiveness, triageTimings.livenessIntervalMs);
 
 /** Rolls every workspace onto a new build's release, as many at once as the queue allows. */
 async function rollWorkspaces(): Promise<void> {

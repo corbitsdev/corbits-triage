@@ -8,16 +8,13 @@ import { HUB_WRITE } from "./actions/hub.js";
 import { LIFETIME_MS } from "./actions/manager.js";
 import { mailDirector } from "./directors.js";
 import { mailAgentOf } from "./mail.js";
-import { deployGrants, type Release } from "./release.js";
-
-/** How long a manager whose head awaits CI or a reviewer waits between passes for what it awaits. */
-const POLL_MS = 30_000;
+import { deployGrants, TIMINGS, type Release } from "./release.js";
 
 /**
  * A backstop on passes, twice a lifetime of polls for the passes events bring between them; the lifetime clock, which
  * take reads from the claim, ends a manager first.
  */
-export const PASSES = (2 * LIFETIME_MS) / POLL_MS;
+export const PASSES = Math.ceil((2 * LIFETIME_MS) / TIMINGS.managerPollMs);
 
 const PAYLOAD = { project: { from: "trigger" }, fields: ["payload"] } as const;
 
@@ -104,7 +101,7 @@ function judgeSteps(sources: Sources): Record<string, Primitive> {
  * is triaged, pr-triage's own steps run on the newest mail the hub recorded for it. A verdict that waits for the host's
  * checks shows the waiting marker. A policy of only deterministic rules is triaged on this pass. One that asks the
  * judge or for code review posts once both have reported or given up. A pass after one whose head awaits CI or a
- * reviewer first waits `POLL_MS`.
+ * reviewer first waits `managerPollMs`.
  */
 function passOf(id: string, sources: Sources) {
   const { unready, markUnready, rules, mirrorRules, executeRules } = triageSteps(sources);
@@ -114,7 +111,7 @@ function passOf(id: string, sources: Sources) {
     steps: {
       paused: gate({ when: { from: "trigger.payload.wait" }, then: "poll", else: "take" }),
       // Nothing signals it: the timeout is the wait, which a loop body cannot sleep.
-      poll: awaitSignal({ name: "manager-poll", timeout: POLL_MS, onTimeout: "take", after: ["paused"] }),
+      poll: awaitSignal({ name: "manager-poll", timeout: TIMINGS.managerPollMs, onTimeout: "take", after: ["paused"] }),
       take: hubAction("take", { from: "trigger.payload.payload" }, ["paused", "poll"]),
       // Runs on every pass, approving nothing when there is nothing to run, so every branch's done reports its outcomes.
       approvals: { ...hostAction("execute", sources, stepsOf("take"), ["take"]), handler: "executeApprovals" },
@@ -145,7 +142,7 @@ function passOf(id: string, sources: Sources) {
  * A pull request's manager under `id`, also its mail address, for the given hosts: the only workflow that writes to the
  * pull request, one live run per pull request, which lives until its head has its final verdict. A mail wakes it to run
  * passes until done ends the claim or another run holds the claim, after which its last step stops it. While its head
- * awaits CI, the judge or code review, it polls every `POLL_MS` for the event that brings it, which the hub records and
+ * awaits CI, the judge or code review, it polls every `managerPollMs` for the event that brings it, which the hub records and
  * mails it: a check finishing, a reviewer's result, or a new head, whose pass starts over. When the host's release
  * publishes a code review or a judge, each runs as its own deployment, which reports its result to the hub.
  * `codeReview` and `judge`, the ones published as the definition loads, name the assets it declares the grants to

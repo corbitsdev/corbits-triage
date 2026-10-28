@@ -6,9 +6,9 @@ import type { ReactorDirector } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { type } from "arktype";
 import { setTimeout as sleep } from "node:timers/promises";
+import { TIMINGS } from "./release.js";
 
 const MAIL_TOOL = "mail";
-const READY_POLL_MS = 2_000;
 
 /**
  * A mail to the run `to` in this run's tenant. With `readyBy`, the run was just deployed and its public key may not be
@@ -37,7 +37,7 @@ async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: st
     const run = Run(await response.json());
     if (run instanceof type.errors) throw new Error(`run ${to}: ${run.summary}`);
     if (run.publicKey) return;
-    await sleep(READY_POLL_MS, undefined, { signal });
+    await sleep(TIMINGS.wakePollMs, undefined, { signal });
   }
   throw new Error(`run ${to}: public key was not published by ${readyBy}`);
 }
