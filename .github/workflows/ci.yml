@@ -75,13 +75,15 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/actions/**'
 
+  # Every shard job reports so its required check is satisfied; the steps run only when platform code changed.
   # Each shard lists its files: the slow scenarios are spread by measured time, which --shard cannot do.
   chain:
     name: chain (${{ matrix.shard }})
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.platform == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      RUN: ${{ github.event_name != 'pull_request' || needs.changes.outputs.platform == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -98,9 +100,12 @@ jobs:
             files: tests/chain/pushed.test.ts tests/chain/sidecar-cap.test.ts tests/chain/always.test.ts
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: ./.github/actions/postgres
-      - uses: ./.github/actions/setup
-      - run: bun --conditions=intx-src test --parallel=2 ${{ matrix.files }}
+      - if: env.RUN == 'true'
+        uses: ./.github/actions/postgres
+      - if: env.RUN == 'true'
+        uses: ./.github/actions/setup
+      - if: env.RUN == 'true'
+        run: bun --conditions=intx-src test --parallel=2 ${{ matrix.files }}
 
   policy:
     if: github.event_name == 'pull_request'
