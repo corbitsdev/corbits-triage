@@ -1,30 +1,27 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
-import { evaluate, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
+import { evaluate, verdictOnFacts, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
-import { hostChecksPending } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
 import { deploy, managerMailOf } from "./hub.js";
-import { Reviewer, TakeOutput } from "./manager.js";
+import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
+import { ClearedVerdict } from "./review-clean.js";
 
 /** How long the manager waits for a judge it deployed, from its deploy to its report. */
 export const JUDGE_DEADLINE_MS = 60 * 60_000;
 
-const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: "object[]", batch: "boolean" } } });
-
-/** Whether an item's rules wait on the host's own checks, so its judge is held until they finish. */
-function waitingOnHost(items: readonly object[]): boolean {
-  return (items as Item[]).some((item) => item.det !== undefined && hostChecksPending(item.det, item.noWait));
-}
+const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: type("object[]").as<Item[]>(), batch: "boolean" } } });
 
 /**
  * The verdict the pass posts. When its rules need the judge and the judge reported a verdict for its head, that
- * verdict as the judge made it, after checking that its repository, number, head and host, and its comment's
- * repository and number, are the pass's. Otherwise pr-triage's evaluate of the rules output, the judge held back while
- * the host's checks run, so the head waits for them.
+ * verdict, after checking that its repository, number, head and host, and its comment's repository and number, are the
+ * pass's: its judgement as the judge made it, and its Dos made again from the pass's facts, which may have changed on
+ * the same head since, as when CI finished. While the host's checks run, even with a verdict reported, and once the
+ * manager stopped waiting with none, pr-triage's evaluate of the rules output with the judge held back, so the head
+ * waits for them or is decided without it. Otherwise that evaluate as it is.
  */
 export async function verdict(input: unknown, ctx: EffectContext, signal: AbortSignal): Promise<JudgeVerdict | EvaluateOutput> {
   const parsed = VerdictInput(input);
@@ -37,9 +34,19 @@ export async function verdict(input: unknown, ctx: EffectContext, signal: AbortS
     const matches = repo === pullRequest.repo && number === pullRequest.number && judged.headSha === parsed.take.output.head
       && request.repo === pullRequest.repo && request.number === pullRequest.number && repoSourceOf(judged.repoSource) === repoSourceOf(pullRequest.source);
     if (!matches) throw new Error(`verdict: the judge's verdict names ${repo}#${number} at ${judged.headSha}, not the pass's pull request and head`);
-    return judged;
   }
-  if (rules.needsJudgment && waitingOnHost(rules.items)) return evaluate({ ...rules, items: rules.items.map((item) => ({ ...item, judgeSkipped: true })) }, ctx, signal);
+  const unjudged = { ...rules, items: rules.items.map((item) => ({ ...item, judgeSkipped: true })) };
+  // A head waiting on the host again, as when its CI runs again on the same commit, waits before any judgement is posted.
+  if (rules.needsJudgment && waitingOnHost(rules.items)) return evaluate(unjudged, ctx, signal);
+  if (rules.needsJudgment && judged) {
+    const { number } = judged;
+    const item = rules.items.find(({ facts }) => facts.number === number && facts.headSha === judged.headSha);
+    const stored = ClearedVerdict(judged);
+    if (stored instanceof type.errors) throw new Error(`verdict: ${stored.summary}`);
+    // Rules that read past the judge's head have no facts for it, so its verdict stands as the judge made it.
+    return item ? verdictOnFacts(item, stored) : judged;
+  }
+  if (rules.needsJudgment && parsed.take.output.stopped !== undefined) return evaluate(unjudged, ctx, signal);
   return evaluate(rules, ctx, signal);
 }
 
@@ -60,7 +67,7 @@ function undecided(reviewer: Reviewer, head: string | undefined): boolean {
  * it, the release publishes one and the host's checks have finished; while they run, the pass goes on to a verdict that
  * waits for them. A pass that deploys it, and every pass until it reports, posts nothing. One that reported, reported a
  * failure, or ran past its deadline goes on to the verdict and is not deployed again; one whose stored verdict the
- * host's checks could still change is deployed again.
+ * host's checks could still change is deployed again. A manager that stopped waiting deploys no judge it would not wait for.
  */
 export async function judgeScope(input: unknown): Promise<{ deploy: boolean; post: boolean }> {
   const parsed = ScopeInput(input);
@@ -72,7 +79,7 @@ export async function judgeScope(input: unknown): Promise<{ deploy: boolean; pos
   const open = pending.filter((reviewer) => reviewer.result === undefined);
   const overdue = open.some((reviewer) => Date.parse(reviewer.deadline) <= Date.now());
   const settled = judge !== undefined || judgeFailed !== undefined || pending.some((reviewer) => reviewer.result !== undefined && !undecided(reviewer, head));
-  if (overdue || settled) return { deploy: false, post: true };
+  if (overdue || settled || parsed.take.output.stopped !== undefined) return { deploy: false, post: true };
   if (open.length > 0) return { deploy: false, post: false };
   if (waitingOnHost(parsed.rules.output.items)) return { deploy: false, post: true };
   return { deploy: true, post: false };

@@ -1,6 +1,6 @@
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
-import { findingSection, HTML_MARKERS, inlineFindingText, upsertMarked, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, writeHeadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, writeHeadedComment, writeUnheadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -114,7 +114,7 @@ function issueCommentHost(gh: GithubFetch, repo: string, number: number): Commen
 /** `login` names the App's bot account, whose comments alone are edited. */
 export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput, login: string): Promise<WrittenComment> {
   const current = marked(await issueComments(gh, input.repo, input.number), login).filter((c) => !HTML_MARKERS.isSuperseded(c.body)).map(markedComment);
-  return upsertMarked(issueCommentHost(gh, input.repo, input.number), `${TRIAGE_COMMENT_MARKER}\n${input.body}`, current);
+  return writeUnheadedComment(issueCommentHost(gh, input.repo, input.number), HTML_MARKERS, TRIAGE_COMMENT_MARKER, current, input.body);
 }
 
 /**

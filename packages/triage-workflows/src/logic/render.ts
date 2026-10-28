@@ -1,10 +1,10 @@
-import { BUDGET_EXHAUSTED_NOTE, citationOf, citationUrl, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, notReviewedNote, render, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, notReviewedNote, render, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
 import { type } from "arktype";
 import type { SuggestedAction } from "./actions.js";
-import { forMaintainer, hasModelChecks, holdsOthersChanges, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult } from "./checks.js";
+import { CI_NOT_STARTED, CI_RUNNING, forMaintainer, hasModelChecks, holdsOthersChanges, MERGEABILITY_UNKNOWN, REVIEW_ANSWERED_REASON, type CheckResult, type DeterministicResult, type PrFacts } from "./checks.js";
 import { asText } from "./extract.js";
 import { actionText, askedQuestionIds, DOCS_CHOICES, DUPLICATE_LEVELS, failureText, FOCUSED_CHOICES, INSTRUCTED_QUESTION, isScoped, passText, SLICE_CHOICES, type FilePlan, type FocusedPlan, type QualityPlan, type VerdictChoice } from "./quality.js";
 
@@ -123,8 +123,8 @@ export interface RenderInput {
   choice?: Record<VerdictChoice, number>;
   /** Why the verdict question could not be asked: the pull request is too large for it. */
   choiceRefused?: string;
-  /** The hub waits no longer for the host's checks, so a verdict is made while they are pending. */
-  noWait?: true;
+  /** What the host has still to settle before the verdict, from `hostAwaited`. */
+  hostAwaited?: HostAwaited;
 }
 
 export type Actor = "author" | "maintainer" | "system";
@@ -483,7 +483,7 @@ function failedStep(c: CheckResult, sources: Sources): Step {
 
 function unconfirmedSteps(c: CheckResult, sources: Sources): Step[] {
   if (c.check === "no-merge-conflicts") return [{ actor: "system", action: "Wait for GitHub to compute mergeability" }];
-  if (c.check === "ci-green") return [hostPending(c) ? { actor: "system", action: "Wait for checks to finish" } : { actor: "maintainer", action: "Re-run the cancelled checks" }];
+  if (c.check === "ci-green") return [c.output.kind === "could-not-check" ? { actor: "system", action: "Wait for checks to finish" } : { actor: "maintainer", action: "Re-run the cancelled checks" }];
   if (c.kind === "model" && sources && c.reason !== NOT_ASKED_REASON) return [{ actor: "maintainer", action: `Confirm ${passText(c.check, sources)}` }];
   return [];
 }
@@ -541,14 +541,21 @@ function unsettledMachine(c: CheckResult): boolean {
   return c.kind === "machine" && c.result === "unconfirmed";
 }
 
-/** A rule the host had not computed yet: CI still running, or mergeability not computed. */
-function hostPending(c: CheckResult): boolean {
-  return unsettledMachine(c) && c.output.kind === "could-not-check";
-}
+/** What a head's verdict waits on the host for: CI that has not started or is still running, or mergeability. */
+export type HostAwaited = "ci-starting" | "ci-pending" | "mergeability";
 
-/** Whether a rule waits on the host's own checks, which the hub waits for unless it waits no longer (`noWait`). */
-export function hostChecksPending(det: Pick<DeterministicResult, "checks">, noWait: boolean | undefined): boolean {
-  return !noWait && det.checks.some(hostPending);
+const HOST_AWAITED_TEXT: Record<HostAwaited, string> = { "ci-starting": CI_NOT_STARTED, "ci-pending": CI_RUNNING, mergeability: MERGEABILITY_UNKNOWN };
+
+/**
+ * What the head's verdict waits on the host for, read from its facts: CI still running where the policy reads CI (its
+ * CI green rule, or a step's CI condition, approve or merge), or mergeability not computed where it checks for
+ * conflicts. Nothing once the manager waits no longer (`noWait`).
+ */
+export function hostAwaited(item: { facts: Pick<PrFacts, "checks" | "pendingChecks" | "mergeable">; pack?: CheckPack; noWait?: true }): HostAwaited | undefined {
+  if (item.noWait === true || item.pack === undefined) return undefined;
+  if (item.facts.checks === "pending" && dependsOnCi(item.pack)) return item.facts.pendingChecks.length === 0 ? "ci-starting" : "ci-pending";
+  if (item.facts.mergeable === null && catalogCheckEnabled(item.pack, "no-merge-conflicts")) return "mergeability";
+  return undefined;
 }
 
 /** "Risk: high (schema paths, 42 files, no tests)" */
@@ -809,7 +816,8 @@ export const INSTRUCTED_REASON = "the pull request tries to direct the decision 
  * the host's own checks waits for them instead of being Unsure, unless the hub waits no longer.
  */
 export function renderVerdict(input: RenderInput): RenderOutput {
-  const { author, repo, repoSource, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused, noWait } = input;
+  const { author, repo, repoSource, headSha, det, judgeError, judgeLimitExceeded, judgeSkipped, reviewers = [], choice, choiceRefused } = input;
+  const awaited = input.hostAwaited === undefined ? undefined : HOST_AWAITED_TEXT[input.hostAwaited];
   const evaluated = evaluateModel(input);
   const { deciding, labelled } = splitLabelled(det, evaluated.checks);
   const ctx = { author, repo, repoSource, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, stack: input.stack, labelled };
@@ -818,26 +826,25 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const reasons = reasonsOf(det, deciding);
   const hard = hardFailures(det.checks);
   if (hard.length > 0) return withChecks({ ...render(det.state), verdict: "fail", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
+  const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
   if (!det.needsJudgment) {
+    if (awaited !== undefined) return waitingOf(awaited, null);
     const verdict = withChecks({ ...render(det.state), verdict: "unsure", degraded: null, reason: det.reason }, checks, null, reasons, ctx);
     return { ...verdict, feedback: "" };
   }
-  const unconfirmed = checks.filter((check) => check.result === "unconfirmed");
-  const waitsOnHost = !noWait && unconfirmed.length > 0 && unconfirmed.every(hostPending);
   if (evaluated.instructed) return unsureOf(INSTRUCTED_REASON);
   // A judge held back for the host's checks has not decided anything yet, so the head waits for them.
-  if (judgeSkipped === true && hostChecksPending(det, noWait)) return waitingOf(null);
+  if (judgeSkipped === true && awaited !== undefined) return waitingOf(awaited, null);
   if (!decidesByModel(det)) {
+    if (awaited !== undefined) return waitingOf(awaited, null);
     if (det.checks.every((c) => c.result === "pass")) return withChecks({ ...render("ready-monitoring"), verdict: "pass", degraded: null, reason: RULES_PASS_REASON }, checks, null, reasons, ctx);
-    if (waitsOnHost) return waitingOf(null);
     if (flaggedReason) return unsureOf(flaggedReason);
     return unsureOf(RULES_UNSURE_REASON);
   }
   function unsureOf(reason: string, degraded: RenderOutput["degraded"] = null, score: number | null = null): RenderOutput {
     return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, score, reasons, ctx);
   }
-  function waitingOf(score: number | null): RenderOutput {
-    const reason = checks.filter(hostPending).map((c) => c.reason).join("; ");
+  function waitingOf(reason: string, score: number | null): RenderOutput {
     return { ...unsureOf(reason, null, score), waiting: true, labels: [WAITING_LABEL], feedback: "" };
   }
   if (judgeSkipped === true) return unsureOf(NEEDS_JUDGE_REASON);
@@ -848,10 +855,10 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   // A judged rule's own answer decides it, so nothing the pull request says to the verdict question can pass it.
   const failing = deciding.filter((check) => check.result === "fail" && !isFlagged(check)).map((check) => reasonOf(check, det.sources));
   if (failing.length) return withChecks({ ...render(VERDICT_STATES.fail), verdict: "fail", degraded: null, reason: failing.join("; ") }, checks, null, reasons, ctx);
-  if (flaggedReason) return waitsOnHost ? waitingOf(null) : unsureOf(flaggedReason);
+  if (flaggedReason) return awaited === undefined ? unsureOf(flaggedReason) : waitingOf(awaited, null);
   if (choice === undefined) return unsureOf(outage, "inference-outage");
   const decided = decide(choice);
-  if (decided !== "fail" && waitsOnHost) return waitingOf(choice.pass);
+  if (decided !== "fail" && awaited !== undefined) return waitingOf(awaited, choice.pass);
   if (decided === "pass" && unconfirmed.length > 0) return unsureOf(UNCONFIRMED_REASON, null, choice.pass);
   return withChecks({ ...render(VERDICT_STATES[decided]), verdict: decided, degraded: null, reason: DECIDED_REASONS[decided] }, checks, choice.pass, reasons, ctx);
 }
@@ -874,7 +881,23 @@ export function degradedVerdict(reason: string): RenderOutput {
 }
 
 /** The mirror tool's arguments for a marker: the label on GitHub, the build status on Bitbucket Data Center. */
-export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS" | "FAILED"; description: string }; appLogin?: string };
+export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; build?: { state: "INPROGRESS" | "FAILED"; description: string }; comment?: string; appLogin?: string };
+
+/** What a head's verdict still waits for. */
+export type Awaits = "ci" | "judge" | "code-review";
+
+const AWAITS_NAMES: Record<Awaits, string> = { ci: "CI to finish", judge: "the decision model's answer", "code-review": "code review" };
+
+/** What a verdict waits for, in words. */
+export function awaitsText(awaits: readonly Awaits[]): string {
+  const names = awaits.map((awaited) => AWAITS_NAMES[awaited]);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]!;
+}
+
+/** The one comment while the verdict waits, naming what it waits for; the verdict replaces it in place. */
+export function progressComment(awaits: readonly Awaits[]): string {
+  return `**Triage: In progress**\n\nTriage is waiting for ${awaitsText(awaits)} before it decides. This comment shows the verdict once it has.`;
+}
 
 /** `effectId` names the marker on its head; the write itself is a no-op where the head already shows it, and skipped once the head moved. */
 export type WaitingMark = { effectId: string; repoSource: RepoSource; args: MarkArgs };

@@ -3,7 +3,7 @@
 // mail does not go out. Shared by the manual-run route and the webhook
 // coalescer.
 import { setTimeout as sleep } from "node:timers/promises";
-import type { PrTriageRow, TriageEvent } from "@corbits/triage-contracts";
+import type { PrTriageRow } from "@corbits/triage-contracts";
 import { TriageStoppedError } from "./deployment.js";
 import { BASE_MOVED, type ReconcilePolicy } from "./reconcile-plan.js";
 import type { RepoRecord } from "./tenant-config.js";
@@ -30,7 +30,7 @@ export type QueuedHead = { tenantId: string; repo: string; number: number; headS
 export type Remembered = { prior: PrTriageRow | undefined; rows: PrTriageRow[]; version: TriageStateVersion };
 
 export type QueueOutcome =
-  | { status: "queued"; remembered: Remembered; held: TriageEvent[] }
+  | { status: "queued"; remembered: Remembered }
   | { status: "kept"; prior: PrTriageRow | undefined }
   | { status: "conflict" };
 
@@ -47,7 +47,7 @@ export function isRunningSince(row: PrTriageRow | undefined, now: Date, policy: 
 function queuedAgain(prior: PrTriageRow | undefined, number: number, headSha: string, at: string): PrTriageRow {
   if (prior === undefined) return { number, headSha, status: "queued", attempts: 0, firstSeenAt: at, queuedAt: at, updatedAt: at };
   // The last run and version stay named so the plan can tell this head from one it has never seen.
-  const { error: _error, events: _events, ...rest } = prior;
+  const { error: _error, ...rest } = prior;
   return { ...rest, status: "queued", queuedAt: at, updatedAt: at };
 }
 
@@ -60,24 +60,16 @@ function withRow(rows: readonly PrTriageRow[], { number, headSha }: QueuedHead, 
   return next === undefined ? others : [...others, next];
 }
 
-function replacedBy({ number, headSha }: QueuedHead, row: PrTriageRow): boolean {
-  return row.number === number && row.headSha !== headSha && row.status === "waiting";
-}
-
-/**
- * Marks the head queued on top of what is stored now unless `keep` holds for its row; a write refused as stale is retried once on a fresh load, `keep` included.
- * With `supersedes`, the same save removes the pull request's rows waiting for CI on heads a new commit replaced, and `held` is the events they held.
- */
-export async function queueHead(store: TriageStateStore, head: QueuedHead, now: Date, keep: (prior: PrTriageRow | undefined) => boolean, supersedes: boolean): Promise<QueueOutcome> {
+/** Marks the head queued on top of what is stored now unless `keep` holds for its row; a write refused as stale is retried once on a fresh load, `keep` included. */
+export async function queueHead(store: TriageStateStore, head: QueuedHead, now: Date, keep: (prior: PrTriageRow | undefined) => boolean): Promise<QueueOutcome> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const state = await store.load(head.tenantId, head.repo);
     const prior = rowOf(state.rows, head);
     if (keep(prior)) return { status: "kept", prior };
-    const replaced = supersedes ? state.rows.filter((row) => replacedBy(head, row)) : [];
-    const rows = withRow(state.rows.filter((row) => !replaced.includes(row)), head, queuedAgain(prior, head.number, head.headSha, now.toISOString()));
+    const rows = withRow(state.rows, head, queuedAgain(prior, head.number, head.headSha, now.toISOString()));
     try {
       const version = await store.save(head.tenantId, head.repo, rows, state.version);
-      return { status: "queued", remembered: { prior, rows, version }, held: replaced.flatMap((row) => row.events ?? []) };
+      return { status: "queued", remembered: { prior, rows, version } };
     } catch (err) {
       if (!(err instanceof TriageStateConflictError)) throw err;
     }
@@ -117,17 +109,6 @@ async function replaceQueued(store: TriageStateStore, head: QueuedHead, next: (r
 export function failHead(store: TriageStateStore, head: QueuedHead, error: string, now: Date): Promise<void> {
   return replaceQueued(store, head, function failed(row) {
     return { ...row, status: "failed", error, updatedAt: now.toISOString() };
-  });
-}
-
-/**
- * Marks a still queued head waiting for its CI instead of mailing it, holding `events` for the run that starts once CI finishes.
- * `since` starts the CI wait then; omitted, the head keeps the time it was first seen.
- */
-export function waitHead(store: TriageStateStore, head: QueuedHead, events: TriageEvent[], now: Date, since?: Date): Promise<void> {
-  return replaceQueued(store, head, function waiting(row) {
-    const at = now.toISOString();
-    return { ...row, status: "waiting", events, ...(since !== undefined && { firstSeenAt: since.toISOString() }), updatedAt: at };
   });
 }
 

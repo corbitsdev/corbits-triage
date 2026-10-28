@@ -11,7 +11,6 @@ import { schema, type DB } from "@intx/db";
 import type { RequireGrant, RunTokenRoute, TenantEnv } from "@intx/hub-api";
 import { asRecord } from "@corbits/common";
 import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult } from "@corbits/triage-contracts";
-import { heldForCi } from "@corbits/triage-workflows/logic/settled";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
@@ -32,22 +31,23 @@ export const MANAGER_RUN_TOKEN_ROUTES: readonly RunTokenRoute[] = [
 
 const PullRequest = type({ source: type.enumerated(...REPO_SOURCES), repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0" });
 /**
- * What the pass did on its head: held it for CI, or posted a verdict, given as its evaluate, mirror, execute and rules
- * steps output it. A pass that posted nothing reports nothing.
+ * What the pass did on its head: triaged it, with a reviewer still out, or posted a verdict, given as its evaluate,
+ * mirror, execute and rules steps output it. A pass that triaged nothing reports nothing.
  */
 const Report = type({
   head: "string > 0",
+  // A pass that triaged a head still waiting for CI while a reviewer is out, so it posted no verdict.
   "waiting?": "true",
   "verdict?": "Record<string, unknown>",
   "mirror?": "Record<string, unknown>",
   "executed?": "Record<string, unknown>",
   "rules?": "Record<string, unknown>",
 });
-/** `approvals` is the pass's approved Dos as its approvals step ran them; `wait` that the pass posted to the host or mailed a reviewer. */
+/** `approvals` is the pass's approved Dos as its approvals step ran them; `wait` that the pass's head still awaits CI or a reviewer. */
 const DoneBody = PullRequest.and({ reviewers: ReviewerState.array(), "wait?": "boolean", "report?": Report, "approvals?": { results: "Record<string, unknown>[]" } });
 const ReviewerResultBody = PullRequest.and(StageResult);
 
-const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array() } as const;
+const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array(), "waitingSince?": "string", "headSince?": "string", claimedAt: "string" } as const;
 const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean", ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 const Recorded = type({ recorded: "boolean" });
@@ -86,10 +86,10 @@ function postedOf(report: Reported | undefined): Record<string, unknown> | undef
   return report?.verdict && withResults(report.verdict, doResultsOf(report.executed));
 }
 
-/** What done keeps on the closed pass: whether it held its head for CI, or the mirror request of its verdict. */
+/** What done keeps on the closed pass: whether its verdict waits for the host's checks, or the mirror request of its verdict. */
 function passReport(report: Reported | undefined, posted: Record<string, unknown> | undefined): PassReport | undefined {
   if (!report) return undefined;
-  if (report.waiting || (posted && heldForCi(posted))) return { head: report.head, waiting: true };
+  if (posted?.["waiting"] === true || report.waiting === true) return { head: report.head, waiting: true };
   const request = asRecord(posted?.["request"]);
   return { head: report.head, ...(request && { request }) };
 }
@@ -119,7 +119,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede }: 
     TAKE_PATH,
     describeRoute({
       summary: "Take the pull request's pending events as its manager",
-      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded and \`request\`, the newest pull request mail the hub recorded. ${NOT_MANAGER}`,
+      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded, \`request\`, the newest pull request mail the hub recorded, \`waitingSince\`, when the passes on the head began waiting for its CI while the last of them still does, \`headSince\`, when the head's first closed pass was taken, and \`claimedAt\`, when the calling run claimed the pull request. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("The pass to work on, or idle", Taken), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),
@@ -138,7 +138,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede }: 
     DONE_PATH,
     describeRoute({
       summary: "Close the manager's pass and record its reviewers and its verdict",
-      description: `Run token only. In the same transaction, a \`report\` of a verdict the pass posted is recorded as the run's verdict on the pull request, replacing one the run recorded before, and \`approvals\` sets each approved Do's outcome on the verdicts that suggest it. A reviewer the claim recorded that ran past its deadline with no result and that \`reviewers\` no longer waits for is logged. Each reviewer the claim then holds on a head older than the newest a pull request mail named, as one the pass deployed while a push arrived, is stopped and taken off the claim. \`more\`: an event is pending, so the manager takes again at once, or the pass asked to \`wait\` because it posted to the host or mailed a reviewer, so it takes again after waiting. \`ended\`: otherwise; the claim ended and the run should end, and a later event or reviewer result starts the next manager. ${NOT_MANAGER}`,
+      description: `Run token only. In the same transaction, a \`report\` of a verdict the pass posted is recorded as the run's verdict on the pull request, replacing one the run recorded before, and \`approvals\` sets each approved Do's outcome on the verdicts that suggest it. A reviewer the claim recorded that ran past its deadline with no result and that \`reviewers\` no longer waits for is logged. Each reviewer the claim then holds on a head older than the newest a pull request mail named, as one the pass deployed while a push arrived, is stopped and taken off the claim. \`more\`: an event is pending, so the manager takes again at once, or the pass asked to \`wait\` because its head still awaits CI or a reviewer, so it takes again after polling. \`ended\`: otherwise, as once the head has its final verdict; the claim ended and the run should end, and a later event starts the next manager. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("Whether the manager is done", Done), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),

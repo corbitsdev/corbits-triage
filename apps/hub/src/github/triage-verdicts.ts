@@ -1,6 +1,6 @@
 // The latest verdict of each open pull request, with its manager's run in flight,
 // so the portal lists pull requests without reading run logs. Reads only: the
-// tables, the managers' claims, the triage state of heads waiting for CI and the
+// tables, the managers' claims, the triage state of heads and the
 // open pull requests GitHub last listed. The body is kept per workspace until any
 // of those changes, so polling tabs are answered from memory. It needs the grant
 // the portal needed to read run logs, `workflow-run:*` read.
@@ -63,15 +63,12 @@ export type TriageVerdictsDeps = PortalCredentialDeps & {
   now: () => Date;
 };
 
-type LivePull = HostedPull & { runs: ObservedRun[] };
-
-/** A pull request whose newest head waits for CI, first seen `since`. */
-type WaitingPull = HostedPull & { since: string; headSha: string };
+type LivePull = HostedPull & { runs: (ObservedRun & { headSha: string })[] };
 
 /** Why the pull request's current head has no verdict, in words for the portal, with the pull request and head it belongs to. */
 type Untriaged = HostedPull & { untriaged: string; headSha: string };
 
-type PullNotes = { waiting: Map<string, WaitingPull>; untriaged: Map<string, Untriaged> };
+type PullNotes = { untriaged: Map<string, Untriaged> };
 
 /** Each listed repository on its host, with the head sha of each open pull request. */
 type OpenHeads = Map<string, HostedRepo & { heads: Map<number, string> }>;
@@ -104,7 +101,7 @@ function livePulls(runs: ObservedRuns): Map<string, LivePull> {
       for (const run of list) {
         const ref = { repo, source: run.source, number: runKeyNumber(key) };
         const pull = byPull.get(pullKey(ref)) ?? { ...ref, runs: [] };
-        pull.runs.push(run);
+        pull.runs.push({ ...run, headSha: key.slice(key.indexOf("@") + 1) });
         byPull.set(pullKey(ref), pull);
       }
     }
@@ -113,20 +110,16 @@ function livePulls(runs: ObservedRuns): Map<string, LivePull> {
   return byPull;
 }
 
-/** A manager up between passes runs nothing, so it is awaiting its reviewers or has none out; a running one counts from the pass it took. */
-function runOf(live: ObservedRun | undefined, now: Date): Run | null {
+/** A manager waiting for its head's CI shows that; one up between passes runs nothing, so it is awaiting its reviewers or has none out; a running one counts from the pass it took. */
+function runOf(live: LivePull["runs"][number] | undefined, now: Date): Run | null {
   if (!live || live.status === "completed") return null;
   const { runId } = live;
+  if (live.waitingSince !== undefined) return { status: "waiting-ci", since: live.waitingSince, headSha: live.headSha };
   if (live.status === "failed" || live.status === "cancelled") return { runId, startedAt: live.startedAt, status: live.status };
   if (live.passAt === undefined) return live.awaiting === undefined ? null : { runId, status: "awaiting", on: live.awaiting };
   const startedAt = live.passAt;
   const stuck = now.getTime() - Date.parse(startedAt) > PR_TRIAGE_STUCK_RUN_MS;
   return { runId, startedAt, status: stuck ? "stuck" : "running" };
-}
-
-/** Waiting for CI holds the head's run back, so an earlier head's run says nothing about it. */
-function runFor(waiting: WaitingPull | undefined, live: ObservedRun | undefined, now: Date): Run | null {
-  return waiting === undefined ? runOf(live, now) : { status: "waiting-ci", since: waiting.since, headSha: waiting.headSha };
 }
 
 const STATE_VERDICTS: Record<string, VerdictWord> = { "ready-monitoring": "pass", blocked: "fail", "needs-decision": "fail", "needs-author-update": "fail" };
@@ -235,22 +228,20 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     return connected.map((record) => ({ repo: record.name, source: sourceOf(record) })).filter((repo) => seen.has(hostKey(repo)));
   }
 
-  /** The newest stored head of each pull request: one waiting for CI, and why triage produced no verdict when a person can read it and the head is `current`. */
+  /** Why triage produced no verdict on each pull request's newest stored head, when a person can read it and the head is `current`. */
   async function notesOf(tenantId: string, records: readonly RepoRecord[], current: (pull: HostedPull, headSha: string) => boolean): Promise<PullNotes> {
     const states = await Promise.all(records.map((record) => deps.triageState.load(tenantId, triageStateKey(record))));
-    const waiting = new Map<string, WaitingPull>();
     const untriaged = new Map<string, Untriaged>();
     for (const [index, { rows }] of states.entries()) {
       const newest = new Map<number, PrTriageRow>();
       for (const row of [...rows].sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt))) newest.set(row.number, row);
       for (const row of newest.values()) {
         const pull = { repo: records[index]!.name, source: sourceOf(records[index]!), number: row.number };
-        if (row.status === "waiting") waiting.set(pullKey(pull), { ...pull, since: row.firstSeenAt, headSha: row.headSha });
         const text = row.error === undefined ? undefined : untriagedText(row.error, pull.source);
         if (text !== undefined && current(pull, row.headSha)) untriaged.set(pullKey(pull), { ...pull, untriaged: text, headSha: row.headSha });
       }
     }
-    return { waiting, untriaged };
+    return { untriaged };
   }
 
   /** `noted`: the pull requests a note alone lists, being known open. */
@@ -258,7 +249,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     const now = deps.now();
     const byPull = new Map(latest.map((verdict) => [pullKey(verdict), verdict]));
     const refs = new Map<string, HostedPull>();
-    for (const ref of [...latest, ...live.values(), ...notes.waiting.values(), ...noted]) {
+    for (const ref of [...latest, ...live.values(), ...noted]) {
       if (wanted(ref)) refs.set(pullKey(ref), { repo: ref.repo, number: ref.number, source: ref.source });
     }
     const pulls = [...refs.values()].sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number || a.source.localeCompare(b.source));
@@ -277,7 +268,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
           ...ref,
           activityAt: activity.get(pullKey(ref)) ?? null,
           verdict,
-          run: runFor(notes.waiting.get(pullKey(ref)), live.get(pullKey(ref))?.runs[0], now),
+          run: runOf(live.get(pullKey(ref))?.runs[0], now),
           ...(untriaged !== undefined && { untriaged }),
         };
       }),
@@ -336,10 +327,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
       const note = notes.untriaged.get(key);
       const current = note !== undefined && !latest && noteCurrent(openHeads(await listingOf(member, `${tenantId}\n${triageStateKey(record)}`, [record]), [record], []), note, note.headSha);
       const untriaged = new Map(current ? [[key, note]] : []);
-      const one = await build(tenantId, latest ? [latest] : [], new Map([...livePulls(runs)].filter(([id]) => id === key)), {
-        waiting: new Map([...notes.waiting].filter(([id]) => id === key)),
-        untriaged,
-      }, [...untriaged.values()], () => true, connected);
+      const one = await build(tenantId, latest ? [latest] : [], new Map([...livePulls(runs)].filter(([id]) => id === key)), { untriaged }, [...untriaged.values()], () => true, connected);
       return respond(req, bodyOf(one.pulls.length > 0 ? one : { ...one, pulls: [{ ...pull, activityAt: null, verdict: null, run: null }] }));
     }
 

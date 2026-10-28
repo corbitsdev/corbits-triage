@@ -6,20 +6,24 @@ A workspace's listener and a pull request's manager.
   deploys a manager through Interchange's deploy route with its run token and wakes it with a mail that names only the
   pull request. A manager whose wake mail fails is cancelled, and the pull request's next event, or the reconciler
   re-queuing its head, deploys another.
-- **Manager** (`triageManager`, `triage-manager-<host>`): one live run per pull request, which runs only while it has
-  work, and the only workflow that writes to the pull request. A mail starts a loop of passes: `take` claims the pull
+- **Manager** (`triageManager`, `triage-manager-<host>`): one live run per pull request, which lives until its head has
+  its final verdict, and the only workflow that writes to the pull request. A mail starts a loop of passes: `take` claims the pull
   request and its pending events; each held Do approved since runs as pr-triage runs an approval; then pr-triage's own
   steps run on the newest mail the hub recorded for the head. A policy of only deterministic rules posts on that pass.
   One whose rules need the judge, or that asks for code review, posts once, after each of those has reported or given
-  up. The next pass runs at once while an event is pending; after a pass that posted to the host or mailed a reviewer,
-  the next runs once 30 seconds later, and a manager whose pass after that has nothing to do ends. It never waits out
-  a reviewer: a reviewer's result reaches the hub, which wakes the live manager or has the listener deploy a fresh
-  one. With a
+  up. The next pass runs at once while an event is pending. While the head waits for CI, or for a judge or code review
+  it mailed, the next runs 30 seconds later, taking what arrived meanwhile: a check finishing, a reviewer's result, or a
+  new head, whose pass starts over. Meanwhile the one triage comment reads In progress and names what it waits for; the
+  verdict replaces it in place. A head that waited an hour for CI is decided anyway, and three hours after its claim a
+  manager stops waiting: it decides, says what it stopped waiting for and runs no action on its own. The manager ends once its head
+  has its final verdict and the policy's actions ran or were held, so an idle pull request has no manager. With a
   published judge, a pass deploys [`@corbits/triage-judge`](../triage-judge) once the host's checks have finished and
   mails it the rules output; while they run the head waits. The pass that collects its report posts the judge's
-  verdict as the judge made it while the rules still need the judge, and so does every later pass on that head once
-  the verdict is decided, deploying no other judge. With code review, a pass then deploys the review and mails it the
-  head's request; the pass that collects its report mirrors the verdict and posts the review together, and a later
+  verdict while the rules still need the judge, its judgement as the judge made it and its Dos made again from the
+  pass's facts, and so does every later pass on that head once the verdict is decided, deploying no other judge. A
+  manager that stopped waiting deploys no judge. With code review, a pass then deploys the review and mails it the
+  head's request, or deploys it with the judge when it runs whatever the rules say and its `when` names every verdict; the
+  pass that collects its report mirrors the verdict and posts the review together, and a later
   pass on that head posts the stored review again without deploying another. A reviewer that could not be mailed,
   failed or ran past its one-hour deadline leaves the verdict to go up alone and is deployed again on the next event;
   a judge the release does not publish posts nothing. `done` stops a reviewer this run deployed that ran past its

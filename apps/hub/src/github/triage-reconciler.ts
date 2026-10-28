@@ -2,17 +2,17 @@
 // without relying on any webhook, sidecar or portal visit having survived:
 // reads GitHub's open pull requests, the managers' runs and the stored state,
 // then mails what the plan says to the host's listener. A workspace without a
-// live listener is left alone.
-// A head waiting for CI is released here once its CI finished or its wait ran
-// out, on hosts and pull requests whose CI results send no webhook.
-import { dependsOnCi, hasEnabledRules, marksWaiting, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
-import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable } from "./bridge.js";
+// live listener is left alone. A settled head whose verdict waited on CI is
+// queued again here once its CI finished, on hosts and pull requests whose CI
+// results send no webhook.
+import { hasEnabledRules, repoPolicy, type PrTriageRow, type RepoPolicy, type RepoSource, type VerdictDetail } from "@corbits/triage-contracts";
+import { mailPayload, unreadablePayload, type PolicyUnreadable } from "./bridge.js";
 import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { deliveryFailure, failHead } from "./triage-queue.js";
 import type { PolicyReader, ResolvedPack } from "./repo-policy.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
-import { summarizeChecks, type CiState } from "@corbits/github-reads";
+import { summarizeChecks } from "@corbits/github-reads";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import type { HeadChecksReader, OpenHeadsReader } from "./tenant-open-heads.js";
 import type { RepoActivity } from "./repo-activity.js";
@@ -34,9 +34,9 @@ export type TriageReconcilerDeps = {
   /** A repository's open pull requests are listed again only once its last listing may be stale. */
   activity: Pick<RepoActivity, "stale">;
   /**
-   * Reads the CI of heads waiting for it, and of settled heads whose verdict waits on CI: those are read again on the
-   * unconfirmed retry interval, with backoff, and queued once CI changed, for a host that sends no webhook when a build
-   * finishes and for a completed check run whose event was lost or not delivered.
+   * Reads the CI of settled heads whose verdict waits on CI: those are read again on the unconfirmed retry interval,
+   * with backoff, and queued once CI changed, for a host that sends no webhook when a build finishes and for a
+   * completed check run whose event was lost or not delivered.
    */
   headChecks: HeadChecksReader;
   /** Recorded verdicts, whose CI a settled head is polled for. */
@@ -53,7 +53,7 @@ export type TriageReconcilerDeps = {
 
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; openHeads: OpenHeadsReader };
-type LoadedRepo = EnabledRepo & (ResolvedPack | PolicyUnreadable) & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
+type LoadedRepo = EnabledRepo & (ResolvedPack | PolicyUnreadable) & { prs: OpenPr[]; stored: LoadedTriageState };
 
 /**
  * `retry` asks for another pass soon: a repository's or a tenant's pass failed.
@@ -184,24 +184,6 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
   }
 
-  /** CI of the open heads waiting for it or due as never seen, by run key; a head whose CI could not be read is left out, so it is not held. */
-  async function headsCi(tenantId: string, record: RepoRecord, prs: readonly OpenPr[], rows: readonly PrTriageRow[]): Promise<Map<string, CiState>> {
-    const byHead = new Map(rows.map((row) => [headKey(row), row]));
-    const now = deps.now().getTime();
-    const ci = new Map<string, CiState>();
-    for (const pr of prs) {
-      const key = runKey(pr.number, pr.headSha);
-      const status = byHead.get(key)?.status ?? "new";
-      if (status !== "waiting" && !(status === "new" && now - new Date(pr.updatedAt).getTime() >= deps.policy.webhookGraceMs)) continue;
-      try {
-        ci.set(key, summarizeChecks(await deps.headChecks(tenantId, record, pr.headSha)));
-      } catch (err) {
-        deps.log({ level: "warn", msg: "waiting_checks_unread", tenantId, repo: record.name, pr: pr.number, headSha: pr.headSha, error: String(err) });
-      }
-    }
-    return ci;
-  }
-
   async function loadRepo(pass: TenantPass, repo: EnabledRepo): Promise<LoadedRepo | undefined> {
     const read = await deps.readCheckPack(pass.tenantId, repo.record.name, sourceOf(repo.record));
     const pauseLabel = read.status === "ok" ? read.pauseLabel : undefined;
@@ -212,13 +194,12 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     if (read.status === "ok" && hasEnabledRules(read.pack)) {
       skippedRepos.delete(key);
       const stored = await deps.store.load(pass.tenantId, triageStateKey(repo.record));
-      const ci = dependsOnCi(read.pack) ? await headsCi(pass.tenantId, repo.record, prs, stored.rows) : new Map<string, CiState>();
-      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, ...(read.policyWorkflow && { policyWorkflow: read.policyWorkflow }), ...(read.pauseLabel && { pauseLabel: read.pauseLabel }), prs, stored, ci };
+      return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, ...(read.policyWorkflow && { policyWorkflow: read.policyWorkflow }), ...(read.pauseLabel && { pauseLabel: read.pauseLabel }), prs, stored };
     }
     // A policy triage can't read is mailed in place of a pack, so every open head is marked failed.
     if (read.status === "invalid") {
       skippedRepos.delete(key);
-      return { ...repo, policyUnreadable: read.reason, automatic: read.automatic, prs, stored: await deps.store.load(pass.tenantId, triageStateKey(repo.record)), ci: new Map<string, CiState>() };
+      return { ...repo, policyUnreadable: read.reason, automatic: read.automatic, prs, stored: await deps.store.load(pass.tenantId, triageStateKey(repo.record)) };
     }
     const skipped = read.status === "ok" ? "triage_skipped_no_rules" : "triage_skipped_no_policy";
     // Once per repository, and again only once a policy or rule came and went, so a repository left unset stays quiet.
@@ -257,28 +238,14 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     }
   }
 
-  /** Mails the heads this pass started holding for CI to be marked waiting. */
-  async function markHeld(pass: TenantPass, repo: LoadedRepo, rows: readonly PrTriageRow[]): Promise<void> {
-    if (!("pack" in repo) || !marksWaiting(sourceOf(repo.record), repo.automatic)) return;
-    const waited = new Set(repo.stored.rows.filter((row) => row.status === "waiting").map(headKey));
-    for (const row of rows.filter((candidate) => candidate.status === "waiting" && !waited.has(headKey(candidate)))) {
-      await deps.send({ tenantId: pass.tenantId, repo: triageStateKey(repo.record), number: row.number, headSha: row.headSha, payload: waitingPayload(repo.record, repo.policy, repo, row, false) });
-    }
-  }
-
   async function deliverRepo(pass: TenantPass, repo: LoadedRepo, plan: RepoPlan): Promise<void> {
     const key = triageStateKey(repo.record);
     const claimed = await claim(pass.tenantId, key, repo.stored, plan);
     if (claimed === undefined) return;
-    await markHeld(pass, repo, claimed.rows);
     const headShaOf = (queued: QueuedPr) => claimed.rows.find((row) => row.number === queued.number)!.headSha;
-    // A head that waited for CI carries the events it waited with.
     for (const queued of claimed.enqueue) {
       const headSha = headShaOf(queued);
-      const extra = queued.events === undefined
-        ? { items: [{ prNumber: queued.number, headSha }] }
-        : { prNumber: queued.number, headSha, events: queued.events };
-      const mailed = { ...extra, ...(queued.noWait && { noWait: true }) };
+      const mailed = { items: [{ prNumber: queued.number, headSha }], ...(queued.noWait && { noWait: true }) };
       const payload = "pack" in repo ? mailPayload(repo.record, repo.policy, repo, mailed) : unreadablePayload(repo.record, repo.policy, repo, mailed);
       try {
         await deps.send({ tenantId: pass.tenantId, repo: key, number: queued.number, headSha, record: repo.record, payload });
@@ -327,7 +294,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
     const pulls = loaded.flatMap((repo) => repo.prs.map((pr) => ({ source: deps.source, repo: repo.record.name, number: pr.number })));
     const managed = await deps.managerRuns(tenant.id, pulls);
     const plans = planTenant({
-      repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored.rows, ci: repo.ci })),
+      repos: loaded.map((repo) => ({ name: repo.record.name, prs: repo.prs, rows: repo.stored.rows })),
       runs: managed.byRepo,
       now: deps.now(),
       policy: deps.policy,

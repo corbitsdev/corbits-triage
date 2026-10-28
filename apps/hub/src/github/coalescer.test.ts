@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import type { CheckRun } from "@corbits/github-reads";
 import { emptyPack, repoPolicy, triageEventOf, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
 import { createCoalescer, type CoalescedEvent, type CoalescerDeps } from "./coalescer.js";
 import { GithubRateLimited } from "./github-usage.js";
@@ -98,16 +97,12 @@ function harness(rows: PrTriageRow[] = [], overrides: Partial<CoalescerDeps> = {
     async sendMail(job) {
       mails.push(job.payload as Record<string, unknown>);
     },
-    async headChecks() {
-      return [{ name: "build", status: "completed", conclusion: "success" }];
-    },
     async openHeadFor() {
       return async function openHead() {
         return { headSha: "sha1", draft: false };
       };
     },
     window: WINDOW,
-    ciWait: DEFAULT_RECONCILE_POLICY,
     setTimer: clock.setTimer,
     now: clock.now,
     log() {},
@@ -159,12 +154,8 @@ test("commented-only reviews 10 s apart fold into one run after the quiet period
 });
 
 function countedReads(pull: { headSha: string; draft: boolean }) {
-  const reads = { pulls: 0, checks: 0 };
+  const reads = { pulls: 0 };
   const overrides: Partial<CoalescerDeps> = {
-    async headChecks() {
-      reads.checks += 1;
-      return [{ name: "build", status: "completed", conclusion: "success" }];
-    },
     async openHeadFor() {
       return async function openHead() {
         reads.pulls += 1;
@@ -175,7 +166,7 @@ function countedReads(pull: { headSha: string; draft: boolean }) {
   return { reads, overrides };
 }
 
-test("a burst of check events gives one mail once none arrived for the quiet period, reading the pull request and its checks once", async () => {
+test("a burst of check events gives one mail once none arrived for the quiet period, reading the pull request once", async () => {
   const { reads, overrides } = countedReads({ headSha: "sha1", draft: false });
   const { clock, mails, coalescer } = harness([], overrides);
   const accepted = [];
@@ -188,18 +179,18 @@ test("a burst of check events gives one mail once none arrived for the quiet per
   expect(mails).toHaveLength(0);
   await clock.advance(1);
   expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", event: "check_run", events: ["checks"] })]);
-  expect(reads).toEqual({ pulls: 1, checks: 1 });
+  expect(reads).toEqual({ pulls: 1 });
 });
 
 for (const [why, pull] of [["a draft", { headSha: "sha1", draft: true }], ["a moved head", { headSha: "sha2", draft: false }]] as const) {
-  test(`a burst of check events on ${why} is dropped at its flush, reading the pull request once and its checks never`, async () => {
+  test(`a burst of check events on ${why} is dropped at its flush, reading the pull request once`, async () => {
     const { reads, overrides } = countedReads(pull);
     const { clock, state, mails, coalescer } = harness([], overrides);
     for (let i = 0; i < 5; i++) await coalescer.accept({ ...delivery("checks", "sha1"), draftUnread: true });
     await clock.advance(WINDOW.quietMs);
     expect(mails).toHaveLength(0);
     expect(state.rows()).toEqual([]);
-    expect(reads).toEqual({ pulls: 1, checks: 0 });
+    expect(reads).toEqual({ pulls: 1 });
   });
 }
 
@@ -306,50 +297,16 @@ test("each event restarts the quiet period, but the window still closes at the m
   expect(mails).toHaveLength(1);
 });
 
-test("a checks-only window while a check is in progress mails the listener, and so does one once CI is green", async () => {
-  const triaged: PrTriageRow = { number: 8, headSha: "sha1", status: "triaged", attempts: 1, runId: "wfr_1", firstSeenAt: new Date(START).toISOString(), updatedAt: new Date(START).toISOString() };
-  let checks: CheckRun[] = [{ name: "build", status: "completed", conclusion: "success" }, { name: "test", status: "in_progress", conclusion: null }];
-  const { clock, state, mails, coalescer } = harness([triaged], { headChecks: async () => checks });
+test("a policy that reads CI mails an opening at once while CI runs, and then each checks window, for the manager waits for CI itself", async () => {
+  const { clock, state, mails, coalescer } = harness();
   const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-
-  expect(await coalescer.accept({ ...delivery("checks", "sha1"), pack, automatic: ["labels" as const] })).toBe("queued");
-  await clock.advance(WINDOW.quietMs);
-  expect(mails).toEqual([expect.objectContaining({ kind: "pr", headSha: "sha1", events: ["checks"] })]);
-  expect(state.rows()).toEqual([expect.objectContaining({ status: "queued", headSha: "sha1", firstSeenAt: triaged.firstSeenAt })]);
-
-  checks = checks.map((check) => ({ ...check, status: "completed" as const, conclusion: "success" as const }));
+  await coalescer.accept({ ...delivery("opened", "sha1"), pack, automatic: ["labels" as const] });
+  await clock.advance(WINDOW.burstMs);
+  expect(mails).toEqual([expect.objectContaining({ kind: "pr", headSha: "sha1", events: ["opened"] })]);
   await coalescer.accept({ ...delivery("checks", "sha1"), pack });
   await clock.advance(WINDOW.quietMs);
-  expect(mails.map((mail) => mail.kind)).toEqual(["pr", "pr"]);
-  expect(mails[1]).toEqual(expect.objectContaining({ kind: "pr", headSha: "sha1", events: ["checks"] }));
-});
-
-test("a settled head first seen two hours ago is mailed while a check is still running, without restarting its CI wait", async () => {
-  const opened = new Date(START - 2 * 60 * 60_000).toISOString();
-  const triaged: PrTriageRow = { number: 8, headSha: "sha1", status: "triaged", attempts: 1, runId: "wfr_1", firstSeenAt: opened, updatedAt: opened };
-  const { clock, state, mails, coalescer } = harness([triaged], {
-    async headChecks() {
-      return [{ name: "check", status: "in_progress", conclusion: null }];
-    },
-  });
-  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-  await coalescer.accept({ ...delivery("checks", "sha1"), pack });
-  await clock.advance(WINDOW.quietMs);
-  expect(mails).toEqual([expect.objectContaining({ kind: "pr", headSha: "sha1", events: ["checks"], noWait: true })]);
-  expect(state.rows()).toEqual([expect.objectContaining({ status: "queued", firstSeenAt: opened })]);
-});
-
-test("a checks-only window on a settled head mails the listener while CI is still pending", async () => {
-  const triaged: PrTriageRow = { number: 8, headSha: "sha1", status: "triaged", attempts: 1, runId: "wfr_1", firstSeenAt: new Date(START).toISOString(), updatedAt: new Date(START).toISOString() };
-  const checks: CheckRun[] = [{ name: "cla", status: "completed", conclusion: "success" }, { name: "check", status: "in_progress", conclusion: null }];
-  const { clock, state, mails, coalescer } = harness([triaged], { headChecks: async () => checks });
-  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-
-  await coalescer.accept({ ...delivery("checks", "sha1"), pack, automatic: ["labels" as const] });
-  await clock.advance(WINDOW.quietMs);
-  expect(mails).toEqual([expect.objectContaining({ kind: "pr", prNumber: 8, headSha: "sha1", events: ["checks"] })]);
-  expect(mails.some((mail) => mail.kind === "waiting")).toBe(false);
-  expect(state.rows()).toEqual([expect.objectContaining({ status: "queued", firstSeenAt: triaged.firstSeenAt })]);
+  expect(mails.map((mail) => [mail.kind, mail.events])).toEqual([["pr", ["opened"]], ["pr", ["checks"]]]);
+  expect(state.rows()).toEqual([expect.objectContaining({ status: "queued", headSha: "sha1" })]);
 });
 
 test("a mail that fails at flush leaves the row failed for the reconciler", async () => {
@@ -402,134 +359,4 @@ test("stopping cancels every open window's timers", async () => {
   expect(clock.pending()).toBe(2);
   coalescer.stop();
   expect(clock.pending()).toBe(0);
-});
-
-test("a policy that reads CI holds an opening while CI runs, then mails each checks window, including one that still has a check running", async () => {
-  const running = { name: "test", status: "in_progress", conclusion: null };
-  let checks: CheckRun[] = [{ name: "lint", status: "in_progress", conclusion: null }, running];
-  const { clock, state, mails, coalescer } = harness([], { headChecks: async () => checks });
-  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-  const event = (name: TriageEvent) => ({ ...delivery(name, "sha1"), pack });
-
-  await coalescer.accept(event("opened"));
-  await clock.advance(WINDOW.burstMs);
-  expect(mails).toHaveLength(0);
-  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting", events: ["opened"] })]);
-
-  checks = [{ name: "lint", status: "completed", conclusion: "failure" }, running];
-  await coalescer.accept(event("checks"));
-  await clock.advance(WINDOW.quietMs);
-  expect(mails).toEqual([expect.objectContaining({ kind: "pr", headSha: "sha1", events: ["opened", "checks"] })]);
-
-  await coalescer.accept(event("checks"));
-  await clock.advance(WINDOW.quietMs);
-  expect(mails).toEqual([
-    expect.objectContaining({ kind: "pr", headSha: "sha1", events: ["opened", "checks"] }),
-    expect.objectContaining({ kind: "pr", headSha: "sha1", events: ["checks"] }),
-  ]);
-});
-
-test("a head held for CI where triage writes labels is mailed to be marked waiting once, then mailed for its verdict when CI finishes", async () => {
-  let checks: CheckRun[] = [{ name: "build", status: "in_progress", conclusion: null }];
-  const { clock, mails, coalescer } = harness([], { headChecks: async () => checks });
-  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-  const event = (name: TriageEvent) => ({ ...delivery(name, "sha1"), pack, automatic: ["labels" as const] });
-
-  await coalescer.accept(event("opened"));
-  await clock.advance(WINDOW.burstMs);
-  await coalescer.accept(event("commented"));
-  await clock.advance(WINDOW.quietMs);
-  expect(mails).toEqual([expect.objectContaining({ kind: "waiting", prNumber: 8, headSha: "sha1", automatic: ["labels"] })]);
-
-  checks = [{ name: "build", status: "completed", conclusion: "success" }];
-  await coalescer.accept(event("checks"));
-  await clock.advance(WINDOW.quietMs);
-  expect(mails.map((mail) => mail.kind)).toEqual(["waiting", "pr"]);
-});
-
-test("a cancelled check releases a head held for CI, so it is mailed for its verdict", async () => {
-  let checks: CheckRun[] = [{ name: "build", status: "in_progress", conclusion: null }];
-  const { clock, state, mails, coalescer } = harness([], { headChecks: async () => checks });
-  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-  await coalescer.accept({ ...delivery("opened", "sha1"), pack });
-  await clock.advance(WINDOW.burstMs);
-  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting" })]);
-
-  checks = [{ name: "build", status: "completed", conclusion: "cancelled" }];
-  await coalescer.accept({ ...delivery("checks", "sha1"), pack });
-  await clock.advance(WINDOW.quietMs);
-  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", events: ["opened", "checks"] })]);
-});
-
-test("a head with no checks yet is mailed to be marked waiting as having no CI", async () => {
-  const { clock, mails, coalescer } = harness([], { headChecks: async () => [] });
-  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-  await coalescer.accept({ ...delivery("updated", "sha2"), pack, automatic: ["labels" as const] });
-  await clock.advance(WINDOW.burstMs);
-  expect(mails).toEqual([expect.objectContaining({ kind: "waiting", headSha: "sha2", noCi: true })]);
-});
-
-function suiteCompleted(headSha: string): CoalescedEvent {
-  const input = delivery("checks", headSha);
-  return { ...input, mail: { ...input.mail, event: "check_suite" } };
-}
-
-function heldForCi() {
-  const running = Array.from({ length: 60 }, (_, index): CheckRun => ({ name: `job ${index}`, status: "in_progress", conclusion: null }));
-  const ci = { checks: running, reads: 0 };
-  const held = harness([], {
-    async headChecks() {
-      ci.reads += 1;
-      return ci.checks;
-    },
-  });
-  const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-  return { ...held, ci, pack };
-}
-
-test("a completed check suite on a head held for CI mails it after the burst once CI finished", async () => {
-  const { clock, state, mails, coalescer, ci, pack } = heldForCi();
-  await coalescer.accept({ ...delivery("opened", "sha1"), pack });
-  await clock.advance(WINDOW.burstMs);
-  expect(state.rows()).toEqual([expect.objectContaining({ status: "waiting" })]);
-
-  ci.checks = ci.checks.map((check) => ({ ...check, status: "completed", conclusion: "success" }));
-  await coalescer.accept({ ...suiteCompleted("sha1"), pack });
-  await clock.advance(WINDOW.burstMs - 1);
-  expect(mails).toHaveLength(0);
-  await clock.advance(1);
-  expect(mails).toEqual([expect.objectContaining({ headSha: "sha1", event: "check_suite", events: ["opened", "checks"] })]);
-});
-
-test("check runs finishing on a head held for CI fold on the quiet period and mail the listener once the window closes, while CI still runs", async () => {
-  const { clock, state, mails, coalescer, ci, pack } = heldForCi();
-  await coalescer.accept({ ...delivery("opened", "sha1"), pack });
-  await clock.advance(WINDOW.burstMs);
-  const before = { reads: ci.reads, saves: state.saves() };
-
-  for (let index = 0; index < 59; index++) {
-    ci.checks[index] = { ...ci.checks[index]!, status: "completed", conclusion: "success" };
-    await coalescer.accept({ ...delivery("checks", "sha1"), pack });
-    await clock.advance(5_000);
-  }
-  await clock.advance(WINDOW.quietMs);
-  expect(mails.length).toBeGreaterThan(0);
-  expect(mails.every((mail) => mail.kind === "pr" && mail.headSha === "sha1")).toBe(true);
-  expect(ci.reads - before.reads).toBe(mails.length);
-  expect(state.rows()[0]?.status).not.toBe("waiting");
-});
-
-test("a new commit on a head held for CI carries the events it held, whether or not a window is open", async () => {
-  for (const between of [[], ["approved"]] as TriageEvent[][]) {
-    const { clock, state, mails, coalescer, ci, pack } = heldForCi();
-    await coalescer.accept({ ...delivery("opened", "sha1"), pack });
-    await clock.advance(WINDOW.burstMs);
-    for (const event of between) await coalescer.accept({ ...delivery(event, "sha1"), pack });
-
-    ci.checks = [{ name: "build", status: "completed", conclusion: "success" }];
-    await coalescer.accept({ ...delivery("updated", "sha2"), pack });
-    await clock.advance(WINDOW.burstMs);
-    expect(mails).toEqual([expect.objectContaining({ headSha: "sha2", events: ["opened", ...between, "updated"] })]);
-    expect(state.rows().filter((row) => row.status === "waiting")).toEqual([]);
-  }
 });

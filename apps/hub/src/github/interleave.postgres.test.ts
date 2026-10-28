@@ -6,8 +6,7 @@ import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { runArtifactMigrations } from "@corbits/artifacts";
 import type { CheckRun } from "@corbits/github-reads";
-import { emptyPack, repoPolicy, type CheckPack, type PrTriageRow, type TriageEvent } from "@corbits/triage-contracts";
-import { createCoalescer, type CoalescedEvent } from "./coalescer.js";
+import { emptyPack, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { createGithubPrTriage } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
 import { createTriageReconciler } from "./triage-reconciler.js";
@@ -140,51 +139,5 @@ test("PostgreSQL: a failed mail whose first restore is refused still puts the he
     expect(rows.find((row) => row.number === 8)).toEqual(FAILED);
     expect(rows.find((row) => row.number === 9)?.status).toBe("queued");
     expect((await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" })).status).toBe(202);
-  });
-}, 120_000);
-
-test("PostgreSQL: a head waiting for CI that a check run and the reconciler release together starts one run, with the events it waited with", async () => {
-  await withStore(async (store) => {
-    const pack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-    let checks: CheckRun[] = [{ name: "build", status: "in_progress", conclusion: null }];
-    const mails: unknown[] = [];
-    const timers: Array<() => Promise<void>> = [];
-    const coalescer = createCoalescer({
-      store,
-      sendMail: async ({ payload }) => { mails.push(payload); },
-      headChecks: async () => checks,
-      openHeadFor: async () => async () => ({ headSha: "abc123", draft: false }),
-      window: { quietMs: 30_000, maxWaitMs: 120_000, burstMs: 3_000 },
-      ciWait: DEFAULT_RECONCILE_POLICY,
-      setTimer(fire) {
-        timers.push(fire);
-        return () => {};
-      },
-      now: () => NOW,
-      log: () => {},
-    });
-    function webhook(event: TriageEvent, name: string, action: string): CoalescedEvent {
-      const mail = { kind: "pr" as const, repo: REPO, prNumber: 8, deliveryId: event, event: name, action, headSha: "abc123", author: null, title: null, body: null, draft: null, review: null };
-      return { tenantId: TENANT, workflow: "pr-triage", record: { name: REPO, connected: true }, policy: repoPolicy({ enabled: true }), pack, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } }, mail, number: 8, headSha: "abc123", event };
-    }
-    async function flush() {
-      await Promise.all(timers.splice(0).map((fire) => fire()));
-    }
-    await store.save(TENANT, REPO, [], (await store.load(TENANT, REPO)).version);
-
-    await coalescer.accept(webhook("opened", "pull_request", "opened"));
-    await flush();
-    expect(mails).toEqual([]);
-    expect((await store.load(TENANT, REPO)).rows).toEqual([expect.objectContaining({ status: "waiting", events: ["opened"] })]);
-
-    checks = [{ name: "build", status: "completed", conclusion: "success" }];
-    await reconciler(store, [8], async (payload) => {
-      mails.push(payload);
-      await coalescer.accept(webhook("checks", "check_run", "completed"));
-    }, pack, checks)();
-    await flush();
-    expect(mailsFor8(mails)).toBe(1);
-    expect(mails[0]).toMatchObject({ prNumber: 8, headSha: "abc123", events: ["opened"] });
-    expect((await store.load(TENANT, REPO)).rows.map((row) => `${row.number}:${row.status}`)).toEqual(["8:queued"]);
   });
 }, 120_000);

@@ -4,11 +4,12 @@ import type { ReactorCapabilities, ReactorInboundEvent, ReactorState, ToolCall, 
 import { triageJudgeDirector } from "./directors.js";
 import { defaultActions, emptyPack, recommendedPack, TRIAGE_LABELS, WAITING_LABEL, type CheckPack } from "@corbits/triage-contracts";
 import { DEPLOYMENT_UNREADABLE, NEEDS_SETUP_REASON } from "./logic/checks.js";
-import { heldForCi, unsettledBy } from "./logic/settled.js";
+import { unsettledBy } from "./logic/settled.js";
 import { NO_FACTS } from "./logic/item.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
-import { INSTRUCTED_REASON, NEEDS_JUDGE_REASON, type Verdict } from "./logic/render.js";
-import { evaluate, parts, rules, waiting } from "./actions/index.js";
+import { INSTRUCTED_REASON, NEEDS_JUDGE_REASON, progressComment, type Verdict } from "./logic/render.js";
+import { evaluate, parts, rules } from "./actions/index.js";
+import { waitingMark } from "./actions/waiting.js";
 import { MAX_DOS_PER_RUN, executeDos } from "./actions/execute.js";
 import { MAX_HISTORY_READS, READ_CHUNK, readFacts } from "./actions/facts.js";
 import { MAX_CONTENT_READS } from "./logic/patterns.js";
@@ -379,7 +380,6 @@ describe("judge on a blocked pull request", () => {
     expect(verdict).toMatchObject({ waiting: true, reason: "checks are still running", nextAction: "Wait for checks to finish", labels: [WAITING_LABEL], feedback: "", actions: [] });
     expect(verdict.score).toBeGreaterThan(0);
     expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "unconfirmed", reason: "checks are still running", evidence: ["build"] });
-    expect(heldForCi(verdict)).toBe(true);
   });
 
   test("cancelled checks are Unsure, never Pass, and ask for a re-run instead of waiting", async () => {
@@ -389,7 +389,6 @@ describe("judge on a blocked pull request", () => {
     expect(verdict.waiting).toBeUndefined();
     expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "unconfirmed", reason: "checks were cancelled and need a re-run", evidence: ["build"] });
     expect(verdict.feedback).toContain("Waiting on:\n- checks were cancelled and need a re-run: `build`");
-    expect(heldForCi(verdict)).toBe(false);
   });
 
   test("a head with no check runs passes CI green as no checks configured", async () => {
@@ -633,14 +632,18 @@ describe("mirror grants", () => {
     expect(await mirrorVerdicts({ items: [{ ...verdict, automatic: ["comment"], mirror: false }] }, write)).toEqual({ results: [{ call: "mirror:acme--widgets:8", skipped: true, reason: "stale" }] });
   });
 
-  test("a Bitbucket Data Center head held for CI shows the waiting build status where its verdict would, under its effect id", async () => {
-    const mail = { headers: { from: "github@acme.test", to: ["run_1@acme.test"] }, kind: "waiting", repo: "acme/widgets", prNumber: 8, headSha: "abc", repoSource: "bitbucket-datacenter", pack: emptyPack("acme/widgets") };
-    expect(await mirrorCalls(await waiting({ ...mail, automatic: ["comment"] }, ctx, signal))).toEqual([{
+  test("a Bitbucket Data Center head waiting for CI shows the waiting build status where its verdict would, under its effect id", async () => {
+    const head = { repo: "acme/widgets", number: 8, headSha: "abc" };
+    const { labels } = emptyPack("acme/widgets");
+    function marked(automatic: ("comment" | "labels")[]) {
+      return mirrorCalls({ ...verdict, repoSource: "bitbucket-datacenter", waiting: true, mark: waitingMark("bitbucket-datacenter", head, automatic, labels, true, undefined) });
+    }
+    expect(await marked(["comment"])).toEqual([{
       id: "waiting:acme--widgets:8:abc",
       name: "bitbucket_datacenter_mirror_auto",
-      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], build: { state: "INPROGRESS", description: "Triage: Waiting for CI" } },
+      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], build: { state: "INPROGRESS", description: "Triage: Waiting for CI" }, comment: progressComment(["ci"]) },
     }]);
-    expect(await mirrorCalls(await waiting({ ...mail, automatic: ["labels"] }, ctx, signal))).toEqual([]);
+    expect(await marked(["labels"])).toEqual([]);
   });
 
   test("a Bitbucket Data Center repository holding labels but not comment writes no build status", async () => {

@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { APPROVE_DO_KIND, emptyPack, repoPolicy } from "@corbits/triage-contracts";
 import type { PullRequestToReview } from "./pull-request-reader.js";
-import { mailPayload, waitingPayload } from "./github/bridge.js";
+import { mailPayload } from "./github/bridge.js";
 import { createPauseGate } from "./github/pr-workflow.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { recordEvent } from "./manager-state.js";
@@ -102,7 +102,6 @@ test("PostgreSQL: each pull request a mail names is recorded as its own event, a
     expect(await toListener(TENANT, webhook)).toBe(true);
     expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
     expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
-    expect(await toListener(TENANT, waitingPayload(RECORD, POLICY, STORED, { number: 8, headSha: "h8" }, false))).toBe(true);
     const approval = { kind: APPROVE_DO_KIND, runId: "run_m", principalId: "prn_a", list: "pass", index: 0, request: { repo: RECORD.name, number: 7 }, step: { effectId: "e1", headSha: "h1" } };
     expect(await toListener(TENANT, approval)).toBe(true);
     expect(await toListener(TENANT, { ...mailPayload(RECORD, POLICY, STORED, {}), kind: "backlog" })).toBe(true);
@@ -115,13 +114,12 @@ test("PostgreSQL: each pull request a mail names is recorded as its own event, a
       "evt:github:acme/widgets#7 h1 pr",
       "evt:github:acme/widgets#7 h1 pr",
       "evt:github:acme/widgets#7 h1 pr",
-      "evt:github:acme/widgets#8 h8 waiting",
     ]);
     expect(recorded.map((row) => row.key)).toContain("evt:github:acme/widgets#7:d1");
     const item = recorded.find((row) => row.state.payload["kind"] === "pr" && row.state.payload["deliveryId"] === undefined)!;
     expect(item.state.payload).toMatchObject({ prNumber: 7, headSha: "h1", appLogin: "triage[bot]" });
     expect(item.state.payload).not.toHaveProperty("items");
-    expect(mailed.map((mail) => mail.address)).toEqual(Array(7).fill(LISTENER));
+    expect(mailed.map((mail) => mail.address)).toEqual(Array(6).fill(LISTENER));
     expect(mailed[0]!.payload).toEqual({ kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] });
   });
 }, 60_000);

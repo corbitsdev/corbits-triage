@@ -1,8 +1,6 @@
 import { isRecord } from "@corbits/common";
-import { ciRefusal } from "@corbits/github-reads";
 import { hardFailures, NOT_A_DRAFT } from "@corbits/triage-contracts";
 import type { CheckResult } from "./checks.js";
-import { CI_NOT_PASSED } from "./actions.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR } from "./quality.js";
 import { NEEDS_JUDGE_REASON, NOT_ASKED_REASON } from "./render.js";
 
@@ -52,11 +50,6 @@ export function unsettledBy(verdict: VerdictFields, headSha?: string): Unsettled
   return {};
 }
 
-/** The verdict waited for CI still running on its head, so the hub holds the head for its CI as one it held itself. */
-export function heldForCi(verdict: VerdictFields): boolean {
-  return verdict.waiting === true && checksOf(verdict).some((check) => check["check"] === "ci-green" && check["result"] === "unconfirmed");
-}
-
 function unasked(reason: unknown): boolean {
   return reason === NEEDS_JUDGE_REASON || String(reason).startsWith(QUALITY_EVALUATION_LIMIT_ERROR);
 }
@@ -71,17 +64,12 @@ export function decidesDos(verdict: VerdictFields): boolean {
   return unsettledBy(verdict).unsettled === undefined && !modelUnanswered(verdict, checksOf(verdict));
 }
 
-/** Why a Do waits on the head's CI: held for CI that has not passed, or an approve skipped until it does. */
-const CI_REASONS: ReadonlySet<unknown> = new Set([...(["failure", "pending", "cancelled", "none"] as const).map((ci) => `${ciRefusal(ci)}.`), CI_NOT_PASSED]);
-
 /**
- * A verdict made on `headSha` that nothing on the host can still change: it does not wait, settles its head with every
- * model check answered, confirmed every machine check, CI included, and holds or skips no Do for the head's CI, which
- * a run of CI on the same head can still change.
+ * A verdict made on `headSha` whose judgement nothing on the host can still change: it does not wait, settles its head
+ * with every model check answered, and confirmed every machine check, CI included. Its Dos are made again from the
+ * facts of the pass that posts it.
  */
-export function decided(verdict: VerdictFields & { actions?: unknown }, headSha: string): boolean {
-  const actions = Array.isArray(verdict.actions) ? verdict.actions.filter(isRecord) : [];
+export function decided(verdict: VerdictFields, headSha: string): boolean {
   return verdict.headSha === headSha && verdict.waiting !== true && decidesDos(verdict)
-    && !checksOf(verdict).some((check) => check["kind"] === "machine" && check["result"] === "unconfirmed")
-    && !actions.some((action) => CI_REASONS.has(action["reason"]));
+    && !checksOf(verdict).some((check) => check["kind"] === "machine" && check["result"] === "unconfirmed");
 }

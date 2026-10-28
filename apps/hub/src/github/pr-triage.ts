@@ -111,7 +111,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     const head = { tenantId, repo: triageStateKey(record), number, headSha };
     const queued = await queueHead(deps.store, head, now, function busy(prior) {
       return (isQueuedSince(prior, now, deps.policy) || isRunningSince(prior, now, deps.policy)) && !doneSince(prior, managed, deps.policy);
-    }, false);
+    });
     if (queued.status === "kept") {
       if (isQueuedSince(queued.prior, now, deps.policy)) return failure(409, "already_queued", `${repo}#${number} is already queued for triage.`);
       return failure(409, "already_running", `${repo}#${number} is already being triaged.`);

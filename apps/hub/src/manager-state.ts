@@ -53,10 +53,10 @@ const NewEvent = EventState.omit("receivedAt", "consumedBy", "consumedAt");
 export type PullRequestRef = { source: RepoSource; repo: string; number: number };
 type TakenEvent = { key: string; event: ManagerEvent };
 
-type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[] };
+type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[]; waitingSince?: string; headSince?: string; claimedAt: string };
 type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean } & Latest);
 type ClosedPass = Claim["history"][number];
-/** What a pass reports as done closes it: the head it worked on, held for CI, or the mirror request of the verdict it posted. */
+/** What a pass reports as done closes it: the head it worked on, whether its verdict waits for the host's checks, or the mirror request of the verdict it posted. */
 export type PassReport = { head: string; waiting?: true; request?: Record<string, unknown> };
 /** A reporting pass's head, when this run's first pass on it was taken, and the newest pull request mail for it. */
 export type Closing = { head: string; startedAt: string; mail?: Record<string, unknown> };
@@ -64,8 +64,8 @@ export type Closing = { head: string; startedAt: string; mail?: Record<string, u
 export type RecordDone = (tx: Tx, closing: Closing | undefined) => Promise<void>;
 type DoneResult = { outcome: "refused" } | { outcome: "ended" } | { outcome: "more"; wait: boolean };
 /**
- * `wait` when the pass posted to the host or mailed a reviewer, so the manager waits once for what that brings before
- * its claim ends. `report` and `record` record what the pass did; `log` names each reviewer it gave up on.
+ * `wait` when the pass's head still awaits CI or a reviewer, so the manager polls for it before its claim ends. `report`
+ * and `record` record what the pass did; `log` names each reviewer it gave up on.
  */
 export type DoneOptions = { wait?: boolean; report?: PassReport; record?: RecordDone; log?: (entry: Record<string, unknown>) => void };
 
@@ -377,9 +377,29 @@ async function claimFor(tx: Tx, tenantId: string, pr: PullRequestRef, runId: str
   return taken;
 }
 
-async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim): Promise<Latest> {
+/**
+ * Since when the passes on `head` have waited for its CI: the first of them since the last pass on it that did not
+ * wait, while the last one on it did.
+ */
+function waitingSince(history: Claim["history"], head: string): string | undefined {
+  let since: string | undefined;
+  for (const pass of history) {
+    if (pass.head !== head) continue;
+    since = pass.waiting ? since ?? pass.takenAt : undefined;
+  }
+  return since;
+}
+
+/**
+ * The newest pull request mail, the claim's reviewers, when the calling run claimed the pull request, and for `head`,
+ * the pass's or else that mail's, since when it has waited for its CI and when its first closed pass was taken.
+ */
+async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head?: string): Promise<Latest> {
   const request = await newestRequest(tx, tenantId, pr);
-  return { ...(request && { request }), reviewers: claim.reviewers };
+  const named = head ?? request?.["headSha"];
+  const since = typeof named === "string" ? waitingSince(claim.history, named) : undefined;
+  const first = claim.history.find((pass) => pass.head === named)?.takenAt;
+  return { ...(request && { request }), reviewers: claim.reviewers, claimedAt: claim.claimedAt, ...(since !== undefined && { waitingSince: since }), ...(first !== undefined && { headSince: first }) };
 }
 
 /** The newest pull request mail recorded for the pull request, or for its `head`, which triage runs on. */
@@ -446,7 +466,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
       const pass = { ...claim.pass, takes: claim.pass.takes + 1 };
       await writeClaim(tx, tenantId, pr, { ...claim, pass });
       const events = await eventsByKey(tx, tenantId, pass.events);
-      return { outcome: "pass", pass, events, resumed: true, ...(await latest(tx, tenantId, pr, claim)) };
+      return { outcome: "pass", pass, events, resumed: true, ...(await latest(tx, tenantId, pr, claim, pass.head)) };
     }
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
       .where(pending(tenantId, pr))
@@ -463,15 +483,21 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     if (kept.length === 0) return { outcome: "idle", ...(await latest(tx, tenantId, pr, claim)) };
     const pass = { id, head, events: kept.map((row) => row.key), takenAt, takes: 1 };
     await writeClaim(tx, tenantId, pr, { ...claim, pass });
-    return { outcome: "pass", pass, events: kept, resumed: false, ...(await latest(tx, tenantId, pr, claim)) };
+    return { outcome: "pass", pass, events: kept, resumed: false, ...(await latest(tx, tenantId, pr, claim, head)) };
   });
 }
 
-/** The open pass closed by `runId`, with what it reported; a pass that reported without taking events, as one past a reviewer's deadline, is closed as its own. */
+/**
+ * The open pass closed by `runId`, with what it reported; a pass that reported without taking events, as one past a
+ * reviewer's deadline, is closed as its own. One that triaged nothing, as one of approvals alone, leaves its head
+ * waiting for CI as the pass before it did.
+ */
 function closing(claim: Claim, runId: string, now: Date, report: PassReport | undefined): ClosedPass | undefined {
   const at = now.toISOString();
   const pass = claim.pass ?? (report && { id: randomUUID(), head: report.head, events: [], takenAt: at, takes: 1 });
-  return pass && { ...pass, runId, doneAt: at, ...(report?.waiting && { waiting: true }), ...(report?.request && { request: report.request }) };
+  if (!pass) return undefined;
+  const waiting = report === undefined ? claim.history.findLast((closed) => closed.head === pass.head)?.waiting : report.waiting;
+  return { ...pass, runId, doneAt: at, ...(waiting && { waiting: true }), ...(report?.request && { request: report.request }) };
 }
 
 /** The history with `closed` added; only the newest pass of a run on a head keeps a mirror request, the verdict that run's row now holds. */
@@ -546,10 +572,10 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
 
 /**
  * A pull request a manager claimed: its closed passes; while its manager is up, that run, the head of the newest pull
- * request mail recorded, the pass it has open and what its reviewers on that head have yet to report before their
- * deadlines; and the pass a manager that went away left open.
+ * request mail recorded, the pass it has open, since when it has waited for that head's CI and what its reviewers on
+ * that head have yet to report before their deadlines; and the pass a manager that went away left open.
  */
-export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass; awaiting: AwaitedStage[] }; gone?: { runId: string; pass: Pass } };
+export type ManagedPull = { pr: PullRequestRef; history: ClosedPass[]; live?: { runId: string; head?: string; pass?: Pass; waitingSince?: string; awaiting: AwaitedStage[] }; gone?: { runId: string; pass: Pass } };
 
 function awaitedOn(reviewers: readonly Reviewer[], head: string | undefined, now: Date): AwaitedStage[] {
   return AWAITED_STAGES.filter((kind) => reviewers.some((reviewer) => reviewer.kind === kind && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > now.getTime()));
@@ -689,7 +715,8 @@ export async function managedPulls(db: DB["db"], tenantId: string, pulls: readon
         managed.push({ pr, history: claim.history, ...(claim.pass && { gone: { runId, pass: claim.pass } }) });
       } else {
         const head = await newestHead(tx, tenantId, pr);
-        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }), ...(claim.pass && { pass: claim.pass }), awaiting: awaitedOn(claim.reviewers, head, now) } });
+        const since = head === undefined ? undefined : waitingSince(claim.history, head);
+        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }), ...(claim.pass && { pass: claim.pass }), ...(since !== undefined && { waitingSince: since }), awaiting: awaitedOn(claim.reviewers, head, now) } });
       }
     }
     return managed;

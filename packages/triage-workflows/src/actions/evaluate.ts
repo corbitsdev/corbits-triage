@@ -1,14 +1,13 @@
 import type { EffectContext } from "@intx/workflow";
 import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step } from "@corbits/triage-contracts";
 import { type } from "arktype";
-import { ciRefusal } from "@corbits/github-reads";
 import { approvalHeldBy, changesWanted, heldApprovals, holdDos, packApproves, stepActions, type ActionInput, type SuggestedAction } from "../logic/actions.js";
 import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation } from "../logic/quality.js";
-import { choiceOver, decidesByModel, degradedVerdict, evaluateModel, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, withFailure, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
+import { choiceOver, decidesByModel, hostAwaited, degradedVerdict, evaluateModel, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, withFailure, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
 
@@ -123,8 +122,6 @@ const DO_NAMES: Record<ActionKind, string> = {
 
 const FAILED_BUILD = "Triage couldn't run";
 
-const PENDING_CI = `${ciRefusal("pending")}.`;
-
 function doNames(actions: SuggestedAction[]): string {
   return [...new Set(actions.map((action) => DO_NAMES[action.kind]))].join(", ");
 }
@@ -136,8 +133,8 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
   const held = runnable.filter((action) => "held" in action);
   const groups: Array<[string, SuggestedAction[]]> = [
     ["Triage will", runnable.filter((action) => !("held" in action))],
-    ["Waiting for checks to finish:", held.filter((action) => action.reason === PENDING_CI)],
-    ["Waiting on a maintainer to approve:", held.filter((action) => action.reason !== PENDING_CI)],
+    ["Waiting for checks to finish:", held.filter((action) => action.ci === "pending")],
+    ["Waiting on a maintainer to approve:", held.filter((action) => action.ci !== "pending")],
   ];
   const lines = groups.filter(([, group]) => group.length > 0).map(([lead, group]) => `${lead} ${doNames(group)}.`);
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
@@ -226,13 +223,22 @@ export function verdictWithFailure(it: Item, verdict: Verdict, failed: CheckResu
     const made = withFailure(verdict, failed, { author, det: it.det, reviewers });
     return { ...verdict, ...made, request: { ...verdict.request, comment: made.feedback } };
   }
+  return verdictFrom(it, withFailure(renderedOf(it, verdict), failed, { author, det: it.det, reviewers }));
+}
+
+/** What `verdict` rendered, without what verdictFrom made of it on `it`. */
+function renderedOf(it: Item, verdict: Verdict): RenderOutput {
   // verdictFrom sets these only when the new verdict has them, so the old ones must not carry over.
   const { actions, approvable: _approvable, changesWanted: _changesWanted, mark: _mark, closed: _closed, ...rendered } = verdict;
   const dropped = it.pack?.dropped;
   // verdictFrom closes the reasons with what reading the policy left out, and does so again.
   const reasons = dropped ? rendered.reasons.slice(0, rendered.reasons.length - dropped.length) : rendered.reasons;
-  const feedback = withoutDos(rendered.feedback, actions);
-  return verdictFrom(it, withFailure({ ...rendered, feedback, reasons }, failed, { author, det: it.det, reviewers }));
+  return { ...rendered, feedback: withoutDos(rendered.feedback, actions), reasons };
+}
+
+/** `verdict`, a judgement made on an earlier read of `it`'s head, on `it`'s current facts: its Dos are made again from them. */
+export function verdictOnFacts(it: Item, verdict: Verdict): Verdict {
+  return verdictFrom(it, renderedOf(it, verdict));
 }
 
 /** Takes the item's own chunk replies off the front of `replies` and `partReplies`. */
@@ -261,7 +267,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const rendered = renderVerdict({
       author: it.facts.author, repo: it.facts.repo, repoSource: repoSourceOf(it.repoSource), headSha: it.facts.headSha, det: it.det, answers, plan, focused, stack: it.facts.stack, judgeError,
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
-      ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(it.noWait && { noWait: it.noWait }),
+      ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(hostAwaited(it) !== undefined && { hostAwaited: hostAwaited(it) }),
     });
     return verdictFrom(it, rendered);
   } catch (e) {

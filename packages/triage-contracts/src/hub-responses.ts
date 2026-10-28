@@ -31,8 +31,8 @@ const DetailAction = type({
   "target?": "Record<string, unknown>",
   "skipped?": "boolean",
   "held?": "boolean",
-  /** CI still running on the head holds it, and the run after CI finishes decides it again. */
-  "heldUntil?": "'ci-finishes'",
+  /** The head's CI state that alone holds or skips it; while `pending`, the run after CI finishes decides it again. */
+  "ci?": "'pending' | 'failure' | 'cancelled' | 'none'",
   "status?": "string",
   "error?": "string",
 });
@@ -89,7 +89,7 @@ export type AwaitedStage = (typeof AWAITED_STAGES)[number];
 
 /**
  * The pull request's latest run, when it has not completed: still going, ended early, or running longer than any run can.
- * `waiting-ci`: no run yet, as the policy reads CI and it is still running on `headSha`, seen `since`.
+ * `waiting-ci`: the pull request's manager waits for CI still running on `headSha`, since `since`, before it decides.
  * `awaiting`: the manager is up between passes and posts once each of `on` has reported on the newest head.
  */
 const Run = type({

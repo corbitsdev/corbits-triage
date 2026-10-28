@@ -29,13 +29,11 @@ export function doEffectId(ref: DoRef): string {
   return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
 }
 
-type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: string };
+/** `ci` is the head's CI state that alone holds or skips the Do; a Do held for a person, or one the run cannot write, carries none. */
+type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: string; ci?: Exclude<PrFacts["checks"], "success"> };
 
-/**
- * `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant.
- * `heldUntil` says CI still running on the head is what holds it, so the run after CI finishes decides it again.
- */
-export type SuggestedDo = Place & { effectId: string; target: ResolvedTarget; held?: true; heldUntil?: "ci-finishes" };
+/** `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant. */
+export type SuggestedDo = Place & { effectId: string; target: ResolvedTarget; held?: true };
 
 export type SuggestedAction = SuggestedDo | (Place & { skipped: true });
 
@@ -244,16 +242,16 @@ export function evaluateActions(input: ActionInput): SuggestedAction[] {
   return stepActions(input, input.pack.actions[input.verdict]);
 }
 
+/** Why an approval cannot stand on this head. */
+export type ApprovalHold = Pick<Place, "reason" | "ci">;
+
 /**
  * Why an approval cannot stand on this head, if it cannot: it says the pull request may merge, so the verdict must pass
  * and CI must have finished green. A head without CI cannot be told apart from one whose CI has not started yet, so it is not approved either.
  */
-/** Why an approve Do is skipped on a passing verdict whose head's CI has not passed. */
-export const CI_NOT_PASSED = "CI has not passed on this head.";
-
-export function approvalHeldBy(verdict: VerdictWord, ci: PrFacts["checks"]): string | undefined {
-  if (verdict !== "pass") return "The pull request does not pass its policy.";
-  if (ci !== "success") return CI_NOT_PASSED;
+export function approvalHeldBy(verdict: VerdictWord, ci: PrFacts["checks"]): ApprovalHold | undefined {
+  if (verdict !== "pass") return { reason: "The pull request does not pass its policy." };
+  if (ci !== "success") return { reason: "CI has not passed on this head.", ci };
   return undefined;
 }
 
@@ -276,24 +274,24 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
 }
 
 /** An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. */
-export function heldApprovals(actions: SuggestedAction[], approval: string | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
+export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
-    if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, reason: approval };
-    if (ci === "pending") return { ...action, held: true, heldUntil: "ci-finishes", reason: `${ciRefusal(ci)}.` };
-    if (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.` };
+    if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, ...approval };
+    if (ci === "pending") return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
+    if (ci !== "success" && action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
     return action;
   });
 }
 
 /**
  * `automatic` is the kinds the pr-triage role is granted on the repository; the run may not write the rest unattended.
- * `heldUntil` stays only on a Do the run would write on its own once CI finishes; one it cannot run, or held for a person, loses it.
+ * `ci` stays only on a Do the run would write on its own once CI allows it; one it cannot run, or held for a person, loses it.
  */
 export function holdDos(actions: SuggestedAction[], automatic: readonly ActionKind[]): SuggestedAction[] {
   return actions.map(function hold(action): SuggestedAction {
     if (!("effectId" in action)) return action;
-    const { heldUntil: _heldUntil, ...waiting } = action;
+    const { ci: _ci, ...waiting } = action;
     if (unrunnable(action) !== undefined) return waiting;
     if (automatic.includes(action.kind) && !alwaysHeld(action.list, action.kind)) return action;
     return { ...waiting, held: true };

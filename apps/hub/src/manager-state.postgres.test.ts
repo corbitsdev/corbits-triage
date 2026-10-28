@@ -230,7 +230,7 @@ test("PostgreSQL: a claim taken again after it ended keeps its history, starts a
     const ended = await stateOf(db, CLAIM);
 
     await liveRun(db, "run_b");
-    expect(await take(db, TENANT, GITHUB, "run_b")).toEqual({ outcome: "idle", reviewers: [reviewer] });
+    expect(await take(db, TENANT, GITHUB, "run_b")).toEqual({ outcome: "idle", reviewers: [reviewer], claimedAt: expect.any(String) });
     const retaken = await stateOf(db, CLAIM);
     expect(retaken).toMatchObject({ status: "live", runId: "run_b", history: ended["history"], starts: 2, reviewers: [reviewer] });
     expect(retaken["history"]).toMatchObject([{ head: "h1", runId: "run_a" }]);
@@ -245,7 +245,7 @@ test("PostgreSQL: a manager that posted or mailed takes once more, then the clai
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
     const reviewer = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date(Date.now() + 60_000).toISOString() };
     expect(await done(db, TENANT, GITHUB, "run_a", [reviewer], { wait: true })).toEqual({ outcome: "more", wait: true });
-    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [reviewer] });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [reviewer], claimedAt: expect.any(String) });
     expect(await done(db, TENANT, GITHUB, "run_a", [reviewer])).toEqual({ outcome: "ended" });
     expect(await stateOf(db, CLAIM)).toMatchObject({ status: "ended", reviewers: [reviewer] });
 
@@ -324,7 +324,7 @@ test("PostgreSQL: a reviewer result before the claim's first pass stays pending 
   await withDatabase(async function noHead(db) {
     await recordEvent(db, TENANT, GITHUB, "r1", { type: "reviewer-result", head: "h1", payload: { verdict: "pass" } });
     await startManager(db, GITHUB, "run_a");
-    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [] });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [], claimedAt: expect.any(String) });
     expect(await stateOf(db, "evt:github:acme/widgets#7:r1")).not.toHaveProperty("consumedBy");
 
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
@@ -545,7 +545,7 @@ test("PostgreSQL: a malformed event payload or reviewer is refused", async () =>
     }
     const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE kind = 'event'`);
     expect(stored.events).toBe(0);
-    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [] });
+    expect(await take(db, TENANT, GITHUB, "run_a")).toEqual({ outcome: "idle", reviewers: [], claimedAt: expect.any(String) });
     const later = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date().toISOString(), toJSON: () => ({}) };
     await expect(done(db, TENANT, GITHUB, "run_a", [later])).rejects.toThrow("are malformed");
     const nullResult = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date().toISOString(), result: null } as unknown as typeof later;
