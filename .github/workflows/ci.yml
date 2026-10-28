@@ -48,7 +48,7 @@ jobs:
       - if: matrix.suite == 'postgres'
         uses: ./.github/actions/postgres
       - uses: ./.github/actions/setup
-      # Files run one at a time within a shard: run side by side on the runner's four cores, tests that time a subprocess or a parse fail.
+      # Not --parallel: run side by side on the runner's four cores, tests that time a subprocess or a parse fail.
       - run: bun run test:${{ matrix.suite }} --shard=${{ matrix.shard }}
 
   chain:
