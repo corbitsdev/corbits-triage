@@ -12,7 +12,9 @@ import { createLocalSidecarManifestStore } from "./manifest-store.js";
 const HUB_ADAPTERS: AdapterManifest = [
   { provider: "corbits-system-one", specifier: "@corbits/system-one", export: "createSystemOneAdapterFactory" },
 ];
-const ALL_OPEN = { stillOpen: async (ids: readonly string[]) => new Set(ids) };
+async function allOpen(ids: readonly string[]): Promise<ReadonlySet<string>> {
+  return new Set(ids);
+}
 
 const roots: string[] = [];
 
@@ -40,6 +42,9 @@ async function setup({ maxSidecars = 4, freeBytes = async () => undefined }: { m
   const reported: { sidecarId: string; options: unknown }[] = [];
   const manifests = createLocalSidecarManifestStore({ dataRoot, log: () => {} });
   const retired = Promise.withResolvers<void>();
+  const retireFailed = Promise.withResolvers<void>();
+  const connected = new Set<string>();
+  const records = { stillOpen: allOpen, isConnected: (sidecarId: string) => connected.has(sidecarId) };
   function create() {
     return createLocalProcessSidecarProvisioner({
       dataRoot,
@@ -61,6 +66,7 @@ async function setup({ maxSidecars = 4, freeBytes = async () => undefined }: { m
       manifests,
       log(entry) {
         if (entry["msg"] === "local_sidecar_retired") retired.resolve();
+        if (entry["msg"] === "local_sidecar_retire_failed") retireFailed.resolve();
       },
     });
   }
@@ -73,13 +79,13 @@ async function setup({ maxSidecars = 4, freeBytes = async () => undefined }: { m
       },
     });
   }
-  async function started() {
+  async function started(fail?: string) {
     const local = create();
-    attach(local);
-    await local.boot(ALL_OPEN);
+    attach(local, fail);
+    await local.boot(records);
     return local;
   }
-  return { dataRoot, manifests, spawned, crashes, reported, retired: retired.promise, create, attach, started };
+  return { dataRoot, manifests, spawned, crashes, reported, connected, records, retired: retired.promise, retireFailed: retireFailed.promise, create, attach, started };
 }
 
 test("each allocation starts its own sidecar, and destroying it stops the process and removes its files", async () => {
@@ -116,14 +122,15 @@ test("past the cap an ensure is refused for capacity and retried, and the slot a
   await local.shutdown();
 });
 
-test("a sidecar not yet connected keeps its memory reserved, so the next start waits for it to connect", async () => {
-  const { started } = await setup({ freeBytes: async () => SIDECAR_BYTES * 1.5 });
+test("a sidecar keeps its memory reserved until the hub holds its connection, a probe's too, and ensures side by side each count the other", async () => {
+  const { connected, started } = await setup({ freeBytes: async () => SIDECAR_BYTES * 1.5 });
   const local = await started();
 
-  expect((await local.provisioner.ensure(request("a"))).kind).toBe("accepted");
-  expect(await local.provisioner.ensure(request("b"))).toMatchObject({ kind: "rejected", code: "capacity_unavailable", retryable: true });
-  local.connected({ allocationId: "a", generation: 1 });
-  expect((await local.provisioner.ensure(request("b", 2))).kind).toBe("accepted");
+  const sideBySide = await Promise.all([local.provisioner.ensure(request("probe")), local.provisioner.ensure(request("b"))]);
+  expect(sideBySide.map((result) => result.kind)).toEqual(["accepted", "rejected"]);
+  expect(await local.provisioner.ensure(request("b", 2))).toMatchObject({ kind: "rejected", code: "capacity_unavailable", retryable: true });
+  connected.add("sc_probe");
+  expect((await local.provisioner.ensure(request("b", 3))).kind).toBe("accepted");
 
   await local.shutdown();
 });
@@ -145,8 +152,22 @@ test("a sidecar that exits on its own is retired at once, freeing its slot and i
   await local.shutdown();
 });
 
+test("a sidecar whose retirement fails after it exits keeps its manifest for the next boot, and frees its slot", async () => {
+  const { manifests, crashes, retireFailed, started } = await setup({ maxSidecars: 1 });
+  const local = await started("sc_a");
+
+  await local.provisioner.ensure(request("a"));
+  crashes.get("sc_a")!();
+  await retireFailed;
+
+  expect(await manifests.listed()).toEqual(["sc_a"]);
+  expect((await local.provisioner.ensure(request("b"))).kind).toBe("accepted");
+
+  await local.shutdown();
+});
+
 test("boot retires every sidecar earlier boots started, from either layout, and removes their files; one it cannot retire fails boot and stays", async () => {
-  const { dataRoot, manifests, reported, create, attach, started } = await setup();
+  const { dataRoot, manifests, reported, records, create, attach, started } = await setup();
   const earlier = await started();
   await earlier.provisioner.ensure(request("a"));
   await earlier.provisioner.ensure(request("b"));
@@ -156,7 +177,7 @@ test("boot retires every sidecar earlier boots started, from either layout, and 
 
   const failing = create();
   attach(failing, "sc_b");
-  const outcomes = await Promise.allSettled([failing.provisioner.ensure(request("c")), failing.boot(ALL_OPEN)]);
+  const outcomes = await Promise.allSettled([failing.provisioner.ensure(request("c")), failing.boot(records)]);
   expect(outcomes.map((outcome) => outcome.status === "rejected" && errorText(outcome.reason))).toEqual(["database unavailable", "database unavailable"]);
   expect((await manifests.listed()).sort()).toEqual(["sc_a", "sc_b", "sc_shared"]);
 

@@ -52,13 +52,13 @@ export type CreateLocalProcessSidecarProvisionerOpts = {
 export type LocalSidecarRecords = {
   /** Those of these allocations and probes stock may still ensure: one it ended is never ensured again. */
   stillOpen(allocationIds: readonly string[]): Promise<ReadonlySet<string>>;
+  /** Whether the hub holds the sidecar's connection, so its memory shows in the box's own figures. */
+  isConnected(sidecarId: string): boolean;
 };
 
 export interface LocalProcessSidecarProvisioner {
   readonly provisioner: SidecarProvisioner;
   boot(records: LocalSidecarRecords): Promise<void>;
-  /** The hub saw this allocation's sidecar connect, so its memory now shows in the box's own figures. */
-  connected(allocation: { readonly allocationId: string; readonly generation: number }): void;
   shutdown(): Promise<void>;
 }
 
@@ -100,10 +100,6 @@ async function settle(operation: Promise<unknown>): Promise<void> {
   }
 }
 
-function startingKey({ allocationId, generation }: { readonly allocationId: string; readonly generation: number }): string {
-  return `${allocationId}@${String(generation)}`;
-}
-
 export function createLocalProcessSidecarProvisioner({
   dataRoot,
   spawnSidecar,
@@ -122,7 +118,7 @@ export function createLocalProcessSidecarProvisioner({
   const fences = new Map<string, Fence>();
   /** Allocations past the cap check whose sidecar is not in `live` yet, so ensures side by side each count the others. */
   const reserved = new Set<string>();
-  /** Sidecars started and not yet connected or exited, by allocation and generation. */
+  /** Sidecars started and not yet connected or exited. */
   const starting = new Set<string>();
   const operations = new Map<string, Promise<void>>();
   let shutdownPromise: Promise<void> | null = null;
@@ -197,7 +193,8 @@ export function createLocalProcessSidecarProvisioner({
     await removeStored(sidecar);
   }
 
-  // Retired at once, so its work is placed again without waiting out a reconnect window.
+  // Retired at once, so its work is placed again without waiting out a reconnect window. A report that fails keeps the
+  // manifest, so the next boot retires the sidecar.
   async function retireExited(sidecar: LiveSidecar): Promise<void> {
     if (live.get(sidecar.allocationId) !== sidecar) return;
     live.delete(sidecar.allocationId);
@@ -213,7 +210,7 @@ export function createLocalProcessSidecarProvisioner({
       if (!managed.stopping) log({ level: "error", msg: "local_sidecar_exited", allocationId: sidecar.allocationId, sidecarId: sidecar.sidecarId, pid: managed.handle.pid, code, signal });
     } finally {
       managed.exited = true;
-      starting.delete(startingKey(sidecar));
+      starting.delete(sidecar.sidecarId);
     }
     if (managed.stopping || shutdownPromise !== null) return;
     try {
@@ -223,10 +220,14 @@ export function createLocalProcessSidecarProvisioner({
     }
   }
 
-  /** Why no further sidecar can start now, or undefined while one can. */
+  /**
+   * Why no further sidecar can start now, or undefined while one can. A sidecar counts toward memory until the hub
+   * holds its connection, deployment or probe alike, and so does one past this check that has not started yet.
+   */
   function noRoom(free: number | undefined): string | undefined {
     if (live.size + reserved.size >= maxSidecars) return `${String(maxSidecars)} local sidecars already run`;
-    return shortfall(free, starting.size);
+    for (const sidecarId of starting) if (bootRecords().isConnected(sidecarId)) starting.delete(sidecarId);
+    return shortfall(free, starting.size + reserved.size);
   }
 
   async function ensureAllocation(request: EnsureSidecarRequest): Promise<EnsureSidecarResult> {
@@ -282,7 +283,7 @@ export function createLocalProcessSidecarProvisioner({
       const handle = spawnSidecar({ sidecarId: request.sidecarId, token: request.token, hubWebSocketUrl: request.hubWebSocketUrl, dataDir, adapterManifest });
       started = { ...stored, process: { handle, exited: false, stopping: false } };
       live.set(request.allocationId, started);
-      starting.add(startingKey(request));
+      starting.add(request.sidecarId);
       fences.delete(request.allocationId);
       void trackExit(started);
       log({ level: "info", msg: "local_sidecar_started", allocationId: request.allocationId, sidecarId: request.sidecarId, pid: handle.pid });
@@ -363,9 +364,6 @@ export function createLocalProcessSidecarProvisioner({
   return {
     provisioner,
     boot: bootOnce,
-    connected(allocation) {
-      starting.delete(startingKey(allocation));
-    },
     shutdown() {
       shutdownPromise ??= stopAll();
       return shutdownPromise;

@@ -37,7 +37,7 @@ describeProvisionerConformance("local-process", async () => {
     log: () => {},
   });
   local.provisioner.attach?.({ sidecarStopped: async () => ({ kind: "retired" }) });
-  await local.boot({ stillOpen: async (ids) => new Set(ids) });
+  await local.boot({ stillOpen: async (ids) => new Set(ids), isConnected: () => true });
 
   return {
     provisioner: local.provisioner,

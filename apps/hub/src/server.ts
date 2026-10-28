@@ -245,7 +245,6 @@ const composition = await createInterchangeHub({
 });
 const stock = composition.server;
 composition.sidecarRouter.events.on("sidecar.allocated.connected", notePlaced);
-composition.sidecarRouter.events.on("sidecar.allocated.connected", local.connected);
 
 /** The hub's credentials, and the push that takes back from sidecars an App key a read moved to the hub. */
 const credentialDeps = {
@@ -260,7 +259,7 @@ const movedAppKeys: string[] = [];
 for (const tenantId of await githubTenants(composition.db)) {
   if (await moveAppKey(credentialDeps, tenantId)) movedAppKeys.push(tenantId);
 }
-await bootLocalSidecars(composition.db, local);
+await bootLocalSidecars(composition.db, composition.sidecarRouter, local);
 if (dockerUp) logJson({ level: "info", msg: "docker_sidecars_swept", removed: await sweepDockerSidecarsOf(composition.db, dockerUp) });
 async function tendE2b(sidecars: E2bSidecarProvisioner): Promise<void> {
   try {
