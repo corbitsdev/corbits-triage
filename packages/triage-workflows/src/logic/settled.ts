@@ -66,12 +66,12 @@ export function decidesDos(verdict: VerdictFields): boolean {
 
 /**
  * A verdict made on `headSha` that nothing on the host can still change: it does not wait, settles its head with every
- * model check answered, confirmed every machine check, CI included, and holds or skips no Do for the head's CI, which
- * a run of CI on the same head can still change.
+ * model check answered, confirmed every machine check, CI included, and holds or skips no Do for CI still running on
+ * the head, whose result can still change it.
  */
 export function decided(verdict: VerdictFields & { actions?: unknown }, headSha: string): boolean {
   const actions = Array.isArray(verdict.actions) ? verdict.actions.filter(isRecord) : [];
   return verdict.headSha === headSha && verdict.waiting !== true && decidesDos(verdict)
     && !checksOf(verdict).some((check) => check["kind"] === "machine" && check["result"] === "unconfirmed")
-    && !actions.some((action) => action["awaits"] === "ci");
+    && !actions.some((action) => action["ci"] === "pending");
 }

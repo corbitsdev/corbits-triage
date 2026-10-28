@@ -317,14 +317,16 @@ describe("pr-triage body", () => {
     expect(verdict).toMatchObject({ waiting: true, reason: "checks are still running" });
   });
 
-  test("a policy that reads no CI decides at once, whether CI runs or there is none", async () => {
-    const pack: CheckPack = { ...emptyPack(REPO), checks: { "max-files-changed": { enabled: true, max: 30 } } };
-    for (const ci of ["none", "pending"] as const) {
+  test("a policy that reads no CI decides at once, whether CI runs or there is none, and its Dos wait only for running CI", async () => {
+    const empty = emptyPack(REPO);
+    const pack: CheckPack = { ...empty, checks: { "max-files-changed": { enabled: true, max: 30 } }, actions: { ...empty.actions, pass: [{ do: "comment", target: { body: "Thanks" } }] } };
+    for (const [ci, dos] of [["none", "Triage will comment."], ["pending", "Waiting for checks to finish: comment."]] as const) {
       const github = fakeGithub();
       github.pr.ci = ci;
       const { verdict } = await triage(pack, { github });
       expect(verdict).toMatchObject({ verdict: "pass" });
       expect((verdict as Verdict).waiting).toBeUndefined();
+      expect((verdict as Verdict).feedback.endsWith(dos)).toBe(true);
     }
   });
 

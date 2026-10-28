@@ -848,8 +848,8 @@ describe("triage-manager with a judge", () => {
   });
 
   test.each([
-    ["an approve skipped until CI passes", { kind: "approve", list: "pass", index: 0, skipped: true, reason: "CI has not passed on this head.", awaits: "ci" }],
-    ["a merge held for failing CI", { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has failed on this head.", awaits: "ci" }],
+    ["an approve skipped until CI passes", { kind: "approve", list: "pass", index: 0, skipped: true, reason: "CI has not passed on this head.", ci: "pending" }],
+    ["a merge held for running CI", { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has not finished on this head.", ci: "pending" }],
   ])("a stored verdict with %s is judged again, since CI on the same head can still change it", async (_name, action) => {
     const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail()).content).rules);
     const { host } = githubHost();
@@ -857,9 +857,11 @@ describe("triage-manager with a judge", () => {
     expect((await runMail(github, wake(), host, hub.hub)).ran).toContain("deployJudge");
   });
 
-  test("a stored verdict whose held Do only names CI in its reason, with no CI fact, is decided and not judged again", async () => {
+  test.each([
+    ["a merge held for failed CI", { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has failed on this head.", ci: "failure" }],
+    ["a held Do that only names running CI in its reason", { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has not finished on this head." }],
+  ])("a stored verdict with %s is decided and not judged again", async (_name, action) => {
     const verdict = await judgeVerdict(JSON.parse((await firstJudgeMail()).content).rules);
-    const action = { kind: "merge", list: "pass", index: 0, effectId: "do:merge", target: {}, held: true, reason: "CI has failed on this head." };
     const { host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED), reviewers: [{ ...JUDGE, result: { ...verdict, actions: [action] } }] }], dones: [ENDED] });
     expect((await runMail(github, wake(), host, hub.hub)).ran).not.toContain("deployJudge");

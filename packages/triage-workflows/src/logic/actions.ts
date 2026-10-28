@@ -29,8 +29,8 @@ export function doEffectId(ref: DoRef): string {
   return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
 }
 
-/** `awaits: "ci"` marks a Do held or skipped for the head's CI, which a run of CI on the same head can still change. */
-type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: string; awaits?: "ci" };
+/** `ci` is the head's CI state a Do was held or skipped on. */
+type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: string; ci?: Exclude<PrFacts["checks"], "success"> };
 
 /**
  * `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant.
@@ -246,7 +246,7 @@ export function evaluateActions(input: ActionInput): SuggestedAction[] {
 }
 
 /** Why an approval cannot stand on this head. */
-export type ApprovalHold = Pick<Place, "reason" | "awaits">;
+export type ApprovalHold = Pick<Place, "reason" | "ci">;
 
 /**
  * Why an approval cannot stand on this head, if it cannot: it says the pull request may merge, so the verdict must pass
@@ -254,7 +254,7 @@ export type ApprovalHold = Pick<Place, "reason" | "awaits">;
  */
 export function approvalHeldBy(verdict: VerdictWord, ci: PrFacts["checks"]): ApprovalHold | undefined {
   if (verdict !== "pass") return { reason: "The pull request does not pass its policy." };
-  if (ci !== "success") return { reason: "CI has not passed on this head.", awaits: "ci" };
+  if (ci !== "success") return { reason: "CI has not passed on this head.", ci };
   return undefined;
 }
 
@@ -281,8 +281,8 @@ export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
     if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, ...approval };
-    if (ci === "pending") return { ...action, held: true, heldUntil: "ci-finishes", reason: `${ciRefusal(ci)}.`, awaits: "ci" };
-    if (action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, awaits: "ci" };
+    if (ci === "pending") return { ...action, held: true, heldUntil: "ci-finishes", reason: `${ciRefusal(ci)}.`, ci };
+    if (ci !== "success" && action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
     return action;
   });
 }

@@ -1,7 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step } from "@corbits/triage-contracts";
 import { type } from "arktype";
-import { ciRefusal } from "@corbits/github-reads";
 import { approvalHeldBy, changesWanted, heldApprovals, holdDos, packApproves, stepActions, type ActionInput, type SuggestedAction } from "../logic/actions.js";
 import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
 import { errorText } from "@corbits/common";
@@ -123,8 +122,6 @@ const DO_NAMES: Record<ActionKind, string> = {
 
 const FAILED_BUILD = "Triage couldn't run";
 
-const PENDING_CI = `${ciRefusal("pending")}.`;
-
 function doNames(actions: SuggestedAction[]): string {
   return [...new Set(actions.map((action) => DO_NAMES[action.kind]))].join(", ");
 }
@@ -136,8 +133,8 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
   const held = runnable.filter((action) => "held" in action);
   const groups: Array<[string, SuggestedAction[]]> = [
     ["Triage will", runnable.filter((action) => !("held" in action))],
-    ["Waiting for checks to finish:", held.filter((action) => action.reason === PENDING_CI)],
-    ["Waiting on a maintainer to approve:", held.filter((action) => action.reason !== PENDING_CI)],
+    ["Waiting for checks to finish:", held.filter((action) => action.ci === "pending")],
+    ["Waiting on a maintainer to approve:", held.filter((action) => action.ci !== "pending")],
   ];
   const lines = groups.filter(([, group]) => group.length > 0).map(([lead, group]) => `${lead} ${doNames(group)}.`);
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
