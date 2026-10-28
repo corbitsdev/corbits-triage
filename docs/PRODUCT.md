@@ -334,7 +334,7 @@ verdict is unchanged, the comment notes it, and an Add labels action adds its la
 `docs: check`, `<id>: check`, or the rule's own `label`). The label follows
 the rule: the same action takes it back once the rule passes, and takes back
 a level label of sensitive paths or risk when the level changes. A label a
-person added that the policy does not name for a rule is never taken back. A label starting `Triage:` or `rule: `, or a verdict label,
+person added that the policy does not name for a rule is never taken back. A label a `labels` step in the policy also names is left alone. A label starting `Triage:` or `rule: `, or a verdict label,
 is refused. On Bitbucket Data Center it is only noted.
 
 ```yaml
