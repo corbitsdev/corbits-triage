@@ -1,4 +1,4 @@
-import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind } from "@corbits/triage-contracts";
+import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, type AuthorKind, type AwaitedStage } from "@corbits/triage-contracts";
 import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
 import { holdsActionForYou, mergesOnItsOwn, pendingDos, triageActed } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
@@ -64,7 +64,7 @@ export function inboxAction(item: PrItem): InboxAction | null {
     case "ready":
       return "merge";
     case "new":
-      return item.failure === null ? null : "failed";
+      return item.failure === null && item.untriaged === undefined ? null : "failed";
   }
 }
 
@@ -96,7 +96,12 @@ export function isReReview(item: Omit<StatusFields, "running">): boolean {
   return item.reviewAnswered && (item.state === "awaiting-review" || onlyRequestedChanges(item));
 }
 
-function waitsOnAuthor(item: PrItem): boolean {
+export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha" | "waitingHeadSha">): boolean {
+  const head = item.waitingHeadSha ?? item.headSha;
+  return item.verdictSha !== null && head !== null && item.verdictSha !== head;
+}
+
+export function waitsOnAuthor(item: PrItem): boolean {
   return isPostedToAuthor(item) || (onlyRequestedChanges(item) && !item.reviewAnswered);
 }
 
@@ -104,11 +109,28 @@ function awaitsYourDecision(item: PrItem): boolean {
   return item.pendingApprovalId !== null || holdsActionForYou(item);
 }
 
+const STAGE_TEXT: Record<AwaitedStage, string> = { judge: "the judgement rules", "code-review": "code review" };
+
 /**
- * A pull request with a verdict that needs you stays while Triage checks it again or waits for CI, so it does not flicker out.
- * A draft is its author's until marked ready, whatever its last verdict said, unless something waits on your approval.
+ * What Triage is doing or waiting on, in the order it comes, read from the hub's state of the run; null once it has
+ * nothing under way. A draft is its author's until marked ready, so only a run already going counts for one.
+ */
+export function progressText(item: PrItem): string | null {
+  if (item.running) return "checking this pull request";
+  if (item.waitingForCi) return "waiting on CI";
+  if (item.awaiting.length > 0) return `waiting on ${item.awaiting.map((stage) => STAGE_TEXT[stage]).join(", then ")}`;
+  if (item.draft === true) return null;
+  if (hasUncheckedCommits(item)) return "checking new commits";
+  if (item.state === "stale") return "rechecking";
+  return inboxAction(item) === null ? "not triaged yet" : null;
+}
+
+/**
+ * Only a pull request with a decision for you: none while Triage is still at work on it, and a draft or one on its
+ * author's turn only while something waits on your approval.
  */
 export function inNeedsYou(item: PrItem): boolean {
+  if (progressText(item) !== null) return false;
   if (awaitsYourDecision(item)) return true;
   return item.draft !== true && inboxAction(item) !== null && !waitsOnAuthor(item);
 }
@@ -160,10 +182,10 @@ const AUTHOR_TURN: ReadonlySet<HandledKind | null> = new Set(["changes", "reply"
 
 /** Who must act next, checked in order; `entry` is the pull request's handled mark, null while it is in Needs you. */
 export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
+  if (progressText(item) !== null) return item.waitingForCi ? "ci" : "triage";
   if ((entry === null && inNeedsYou(item)) || awaitsYourDecision(item)) return "maintainer";
   if (item.draft === true || item.state === "needs-author-update" || (entry !== null && AUTHOR_TURN.has(entry.kind))) return "author";
-  if (item.ci === "pending" || item.waitingForCi) return "ci";
-  if (inboxAction(item) === null) return "triage";
+  if (item.ci === "pending") return "ci";
   return "nobody";
 }
 
@@ -197,20 +219,6 @@ export function actionMode(item: PrItem): ActionMode | null {
 export function waitsOnIn(entry: OpenItem, needsSetup: ReadonlySet<string>): WaitsOn {
   const waits = waitsOn(entry.item, entry.handled);
   return waits === "triage" && needsSetup.has(entry.item.repo) ? "setup" : waits;
-}
-
-const POSTED_LABEL: Record<HandledKind, string> = {
-  approve: "Approved",
-  reply: "Replied",
-  changes: "Requested changes",
-  comment: "Commented",
-  merge: "Merged",
-  close: "Closed",
-};
-
-export function postedLabel(item: Pick<PrItem, "posted">, entry: HandledMark | null): string | null {
-  if (entry?.kind) return POSTED_LABEL[entry.kind];
-  return item.posted ? "Posted" : null;
 }
 
 const NOT_POSTED: Record<string, string> = {

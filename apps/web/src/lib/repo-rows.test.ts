@@ -11,7 +11,7 @@ function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
     draft: null, mergeable: null, mergeBlock: null, state: "new",
     priority: null, owner: null, nextAction: null, verdict: null, score: null, reasons: [], evidence: [], checks: [], labels: [], comment: null,
     sha: null, verdictSha: null, degraded: null, needsHuman: false, closed: false, pendingApprovalId: null, runId: null, waitingSince: null, updatedAt: null,
-    ci: null, headSha: null, activityAt: null, reviewAnswered: false, posted: false, running: false, waitingForCi: false, waitingHeadSha: null,
+    ci: null, headSha: null, activityAt: null, reviewAnswered: false, posted: false, running: false, waitingForCi: false, waitingHeadSha: null, awaiting: [],
     failure: null, actions: [], automatic: [], href: "", source: "github", url: null,
   };
   return Object.assign(base, extra);

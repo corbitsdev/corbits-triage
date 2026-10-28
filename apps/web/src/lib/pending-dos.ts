@@ -1,8 +1,11 @@
-import type { ActionKind, VerdictWord } from "@corbits/triage-contracts";
+import { alwaysHeld, type ActionKind, type VerdictWord } from "@corbits/triage-contracts";
 import { strings, type HeldDoRef, type PrItem, type SuggestedAction } from "./hub-api.ts";
 
-/** `sentKey` also names the status it had when approved, so a later failure offers it again. */
-export type PendingDo = { key: string; sentKey: string; label: string; list: VerdictWord; kind: ActionKind; reason: string; ref: HeldDoRef; error: string | null };
+/**
+ * `sentKey` also names the status it had when approved, so a later failure offers it again. `until` is what lets an
+ * action the policy has Triage take on its own run without you, null for one that waits on you.
+ */
+export type PendingDo = { key: string; sentKey: string; label: string; list: VerdictWord; kind: ActionKind; reason: string; ref: HeldDoRef; error: string | null; until: string | null };
 
 /** Resolution keeps only team slugs, and only the repository owner's teams can review. */
 function teamName(slug: string, repo: string): string {
@@ -96,6 +99,16 @@ function offered(item: PrItem, action: SuggestedAction): boolean {
   return awaitsApproval(action) && !(item.byTriage && REVIEWS.has(action.kind));
 }
 
+/** Triage may take it on its own, so only CI holds it, and the next run takes it once CI allows. */
+function heldForCi(item: PrItem, action: SuggestedAction): boolean {
+  return action.held && action.status === undefined && item.automatic.includes(action.kind) && !alwaysHeld(action.list, action.kind);
+}
+
+function untilText(item: PrItem, action: SuggestedAction): string | null {
+  if (!heldForCi(item, action)) return null;
+  return item.ci === "pending" ? "CI finishes" : "CI passes";
+}
+
 function sentKeyOf(action: SuggestedAction): string {
   return `${action.effectId}:${action.status ?? "held"}`;
 }
@@ -115,7 +128,7 @@ export function pendingDos(item: PrItem): PendingDo[] {
     const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind };
     // A merge may be approved off a Fail or Unsure list, and the card says so.
     const shown = action.kind === "merge" && action.list !== "pass" ? `${text} (the verdict was ${action.list}, not pass)` : text;
-    out.push({ key: action.effectId, sentKey: sentKeyOf(action), label: shown, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null });
+    out.push({ key: action.effectId, sentKey: sentKeyOf(action), label: shown, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null, until: untilText(item, action) });
   }
   return out;
 }
@@ -125,9 +138,14 @@ export function offersClose(item: PrItem): boolean {
   return pendingDos(item).some((pending) => pending.kind === "close");
 }
 
-/** Only a held action waits on a person: the next run tries an unattended one again, and a refused one cannot run. */
+/** Only a held action waits on a person: the next run tries an unattended one again, one held only for CI runs once CI allows, and a refused one cannot run. */
 export function holdsActionForYou(item: PrItem): boolean {
-  return item.actions.some((action) => action.held && (action.status === undefined || action.status === "failed") && label(action, item.repo) !== null);
+  return item.actions.some((action) => action.held && (action.status === undefined || action.status === "failed") && !heldForCi(item, action) && label(action, item.repo) !== null);
+}
+
+/** What Triage posted on its own for this verdict, said in the past tense. */
+export function postedActions(item: PrItem): string[] {
+  return item.actions.flatMap((action) => (item.automatic.includes(action.kind) && action.status === "done" ? [pastText(action, item.repo)].filter((text) => text !== null) : []));
 }
 
 /** This verdict has a merge step Triage will run without asking. */

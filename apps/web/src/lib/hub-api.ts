@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, checkPackName, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 import { createGrantBody, type CreateGrantInput } from "./grant-actions.ts";
 
 const WORKSPACE_SLUG =
@@ -1319,6 +1319,8 @@ export type PrItem = {
   waitingForCi: boolean;
   /** The head Triage is holding for CI, when it is. */
   waitingHeadSha: string | null;
+  /** What the pull request's manager waits on before it posts, in the order it asks them; empty unless it is up between passes. */
+  awaiting: AwaitedStage[];
   /** Why the latest pr-triage run for this pull request ended without a verdict, when it did. */
   failure: RunFailure | null;
   /** Why this pull request has no verdict, as the hub words it. Absent once there is a verdict, or when the hub has nothing to say. */
@@ -1419,11 +1421,12 @@ function isGithubWriteApproval(approval: HubApproval): boolean {
 
 /** A stuck run is a failure, not running, so its Dos stay enabled: running them again is the way out. */
 function failureOf(run: PullRun | null): RunFailure | null {
-  return run === null || run.status === "running" || run.status === "waiting-ci" ? null : run.status;
+  return run === null || run.status === "running" || run.status === "waiting-ci" || run.status === "awaiting" ? null : run.status;
 }
 
-function waitingFields(run: PullRun | null | undefined): Pick<PrItem, "waitingForCi" | "waitingHeadSha"> {
-  return run?.status === "waiting-ci" ? { waitingForCi: true, waitingHeadSha: run.headSha } : { waitingForCi: false, waitingHeadSha: null };
+function waitingFields(run: PullRun | null | undefined): Pick<PrItem, "waitingForCi" | "waitingHeadSha" | "awaiting"> {
+  if (run?.status === "awaiting") return { waitingForCi: false, waitingHeadSha: null, awaiting: run.on };
+  return run?.status === "waiting-ci" ? { waitingForCi: true, waitingHeadSha: run.headSha, awaiting: [] } : { waitingForCi: false, waitingHeadSha: null, awaiting: [] };
 }
 
 function isRunning(run: PullRun | null): boolean {

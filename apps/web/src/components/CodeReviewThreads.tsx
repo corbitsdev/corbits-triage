@@ -106,22 +106,24 @@ function CutNote({ cut }: { cut: NonNullable<CodeReviewRun["cut"]> }) {
   );
 }
 
-/** The pull request's code review, and Review again on a pull request that is not a draft while code review has a place to run. */
+/**
+ * The pull request's code review once there is one, or why its head was left out; Review again on a reviewed pull request
+ * that is not a draft while code review has a place to run. Before the first review the status line says it is awaited.
+ */
 export function CodeReviewThreads({ item }: { item: Reviewed }) {
   const { snapshot, readOnly } = usePortal();
   const reviews = useCodeReview(item).data;
   const again = useReviewAgain(item);
   const send = useSendCodeReview(item);
-  const askable = Boolean(snapshot?.codeReviewPlace) && item.draft !== true;
   const skipped = item.codeReviewSkipped !== undefined && !again.isSuccess && reviews?.review?.headSha !== item.verdictSha;
-  if (!reviews || (!reviews.review && !askable && !skipped)) return null;
+  if (!reviews || (!reviews.review && !skipped)) return null;
   const { review, completed, carriedTo } = reviews;
-  const unreviewed = again.isSuccess ? "Review requested" : "No review yet";
+  const askable = Boolean(snapshot?.codeReviewPlace) && item.draft !== true && review !== null;
 
   return (
     <section className="code-review" aria-label="Code review">
       <h3 className="lbl-h">
-        Code review<span className="hint">{review ? hint(review, completed) : unreviewed}</span>
+        Code review<span className="hint">{review ? hint(review, completed) : "Not reviewed"}</span>
         <span className="sp" />
         {completed ? <SendReview item={item} completed={completed} carriedTo={carriedTo} send={send} /> : null}
         {askable ? <button type="button" className="linkish" disabled={readOnly || again.isPending} onClick={() => again.mutate()}>Review again</button> : null}

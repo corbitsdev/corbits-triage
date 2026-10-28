@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button } from "@corbits/react-ui";
 import type { ActionMode } from "../lib/inbox-view.ts";
+import { heldText } from "../lib/pane-report.ts";
 import type { PendingDo } from "../lib/pending-dos.ts";
 
 type PrActionCardProps = {
@@ -26,7 +27,7 @@ export function PrActionCard({ mode, dos, disabled, onApprove, onSkip, children 
   function heldDo(pending: PendingDo) {
     return (
       <div key={pending.key} className="suggest">
-        <h2>{pending.label}</h2>
+        <h2>{heldText(pending)}</h2>
         <p className="suggest-text">{pending.reason}</p>
         {pending.error !== null ? <p role="alert" className="error">{pending.label} failed last time: {pending.error}</p> : null}
         <div className="pr-actions-row">

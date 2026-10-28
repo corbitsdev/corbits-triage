@@ -11,9 +11,9 @@ import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
 import type { RepoSource } from "@corbits/triage-contracts";
-import { approvedHead, canRun, checkedHead, hasUncheckedCommits, paneFacts, titleText } from "../lib/inbox-pane.ts";
-import { actionMode, notPostedText, type ActionMode } from "../lib/inbox-view.ts";
-import { heldReason, isHeldBlock } from "../lib/pane-report.ts";
+import { approvedHead, canRun, checkedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
+import { actionMode, hasUncheckedCommits, notPostedText, type ActionMode } from "../lib/inbox-view.ts";
+import { heldReason, isHeldBlock, lineText, paneStatus } from "../lib/pane-report.ts";
 import { offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
@@ -336,6 +336,12 @@ export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
   );
 }
 
+/** The one line the reading pane opens with: what Triage is at, what it needs from you, or what it did. */
+function PullLine({ item, detail }: { item: PrItem; detail: GithubPullDetail | undefined }) {
+  const pack = useRepoPack(item.repo);
+  return <p role="status" className="pr-composer pr-line">{lineText(paneStatus({ item, detail, handled: null, pack }))}</p>;
+}
+
 function MissingPull({ denied, loading }: { denied: boolean; loading: boolean }) {
   if (denied) return <DeniedNotice section="approvals" />;
   if (loading) return null;
@@ -579,6 +585,7 @@ export default function PRDetail() {
             </div>
           </div>
         </header>
+        <PullLine item={item} detail={pull.data} />
         {composer && (
           <form className="pr-composer" onSubmit={submitComposerForm}>
             <textarea

@@ -2,7 +2,7 @@ import { errorText } from "@corbits/common";
 import type { Outcome } from "./held-actions.ts";
 import type { GithubPullDetail, HeldBlock, HeldDoRef, MergeBlock, MergeState, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import type { PendingDo } from "./pending-dos.ts";
-import { inboxAction, hasDraftComment, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
+import { inboxAction, hasDraftComment, hasUncheckedCommits, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
 
 const UNTITLED = "Untitled pull request";
 
@@ -44,11 +44,6 @@ export function paneFacts(item: PrItem, detail: GithubPullDetail | undefined): P
 }
 
 export type ActionBlocker = "no-number" | "running" | "read-only" | "busy" | "unchecked-commits" | "not-mergeable" | "draft" | HostBlock;
-
-export function hasUncheckedCommits(item: Pick<PrItem, "verdictSha" | "headSha" | "waitingHeadSha">): boolean {
-  const head = item.waitingHeadSha ?? item.headSha;
-  return item.verdictSha !== null && head !== null && item.verdictSha !== head;
-}
 
 export type PaneGate = { item: PrItem; facts: PaneFacts; readOnly: boolean; busy: boolean };
 
