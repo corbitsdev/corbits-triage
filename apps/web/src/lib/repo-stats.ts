@@ -1,7 +1,8 @@
 import { queryOptions, skipToken, useQuery, type Query } from "@tanstack/react-query";
 import type { OutcomeMedians, OutcomeTimes, RepoSource, TriageOutcomes, TriageStats } from "@corbits/triage-contracts";
 import { hostName } from "./pull-link.ts";
-import type { RepoPackStore } from "./repo-pack-store.ts";
+import type { Transport } from "@intx/hub-client";
+import { loadTriageStats } from "./hub-api.ts";
 
 const REPO_STATS_QUERY_KEY = "triage-stats";
 
@@ -14,20 +15,23 @@ function pollWhileMeasuring(query: Query<TriageStats>): number | false {
   return query.state.data?.outcomes?.state === "measuring" ? MEASURING_POLL_MS : false;
 }
 
+/** The workspace whose stats are read, and the hub that answers for it. */
+export type StatsReader = { tenantId: string; transport: Transport };
+
 /** The hub caches the stats for a minute, so reading sooner returns the same answer. */
-export function repoStatsQuery(store: RepoPackStore | null, repo: string, days: number) {
-  const queryFn = store === null ? skipToken : async function loadStats() {
-    return store.loadStats(repo, days);
+export function repoStatsQuery(reader: StatsReader | null, repo: string, days: number) {
+  const queryFn = reader === null ? skipToken : async function loadStats() {
+    return loadTriageStats(reader.transport, reader.tenantId, repo, days);
   };
-  return queryOptions({ queryKey: [REPO_STATS_QUERY_KEY, store?.tenantId, repo, days], queryFn, staleTime: 60_000, refetchInterval: pollWhileMeasuring });
+  return queryOptions({ queryKey: [REPO_STATS_QUERY_KEY, reader?.tenantId, repo, days], queryFn, staleTime: 60_000, refetchInterval: pollWhileMeasuring });
 }
 
 export function isRepoStatsQuery(query: Query): boolean {
   return query.queryKey[0] === REPO_STATS_QUERY_KEY;
 }
 
-export function useRepoStats(store: RepoPackStore | null, repo: string, days = WEEK_DAYS): TriageStats | undefined {
-  return useQuery(repoStatsQuery(store, repo, days)).data;
+export function useRepoStats(reader: StatsReader | null, repo: string, days = WEEK_DAYS): TriageStats | undefined {
+  return useQuery(repoStatsQuery(reader, repo, days)).data;
 }
 
 const MINUTE = 60_000;
@@ -61,7 +65,7 @@ function noAnswer(source: RepoSource): string {
 }
 
 function baselineMissing(outcomes: Extract<TriageOutcomes, { state: "measured" }>, source: RepoSource): string | null {
-  if (outcomes.baselineState === "no_policy") return "The baseline needs a saved policy.";
+  if (outcomes.baselineState === "no_policy") return "The baseline starts once Triage gives its first verdict here.";
   if (outcomes.baselineState === "source_failed") return noAnswer(source);
   if (outcomes.baseline === null) return "No pull requests closed before Triage was switched on.";
   return null;

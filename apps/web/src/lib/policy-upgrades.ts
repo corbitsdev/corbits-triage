@@ -1,21 +1,22 @@
 import { queryOptions, skipToken, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import type { PolicyUpgrades } from "@corbits/triage-contracts";
-import { archiveArtifact, exportPolicyFile, loadPolicyUpgrades } from "./hub-api.ts";
+import type { PolicyUpgrades, RepoSource } from "@corbits/triage-contracts";
+import { exportPolicyFile, loadPolicyUpgrades } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
+import { POLICY_FILE_QUERY_KEY } from "./policy-file.ts";
 import { usePortal } from "./portal.tsx";
 
 export type PolicyUpgradeRow = PolicyUpgrades["repos"][number];
 
-/** `settled`: each repository that came to run on its file, started or moved from saved rules, while the portal was open. */
+/** `settled`: each repository whose policy file was merged while the portal was open. */
 type Upgrades = { rows: PolicyUpgradeRow[]; settled: string[] };
 
-function unsettled(row: PolicyUpgradeRow): boolean {
-  return row.upgrade !== undefined && row.upgrade.state !== "ok";
+function starting(row: PolicyUpgradeRow): boolean {
+  return row.upgrade?.state === "start";
 }
 
-/** The repositories that had a file to start or saved rules to move before and now stand settled on their file. */
+/** The repositories that had no policy file before and now have one. */
 function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): string[] {
-  return before.filter((row) => unsettled(row) && now.some((next) => next.repo === row.repo && next.upgrade?.state === "ok")).map((row) => row.repo);
+  return before.filter((row) => starting(row) && now.some((next) => next.repo === row.repo && next.upgrade?.state === "ok")).map((row) => row.repo);
 }
 
 const PULL_POLL_MS = 30_000;
@@ -28,8 +29,8 @@ function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryCli
     const rows = await loadPolicyUpgrades(createHubTransport(), tenantId);
     const before = queryClient.getQueryData<Upgrades>(queryKey);
     const settled = newlySettled(before?.rows ?? [], rows);
-    // A merge on the host moves the repository onto its file, so its policy is read again.
-    await Promise.all(settled.flatMap((repo) => ["policy-file", "check-pack", "repo-pack-session"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, repo] }))));
+    // A merge on the host gives the repository its file, so its policy is read again.
+    await Promise.all(settled.flatMap((repo) => [POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, repo] }))));
     return { rows, settled: [...(before?.settled ?? []), ...settled] };
   };
   // A merge on the host changes a repository's standing without the portal knowing, so each load reads it again, and
@@ -52,32 +53,29 @@ function useUpgradeRows(): PolicyUpgradeRow[] {
   return useUpgrades()?.rows ?? [];
 }
 
-/** Whether the repository came to run on its file while the portal was open. */
+/** Whether the repository's policy file was merged while the portal was open. */
 export function useSettled(repo: string): boolean {
   return useUpgrades()?.settled.includes(repo) ?? false;
 }
 
-const UPGRADE_LABELS = { start: "Add a policy file", upgrade: "Move rules to a file", differs: "Rules differ from file" } as const;
-
-/** The repository's standing in a few words, wherever it is listed; undefined once its rules come from its file. */
+/** The repository's standing in a few words, wherever it is listed; undefined once it has a policy file. */
 export function upgradeLabel(row: PolicyUpgradeRow): string | undefined {
   if (row.pull) return "Waiting for merge";
-  if (row.upgrade?.state === "differs" && !row.upgrade.fixable && !row.upgrade.problem) return "Switch to the file";
-  return row.upgrade && row.upgrade.state !== "ok" ? UPGRADE_LABELS[row.upgrade.state] : undefined;
+  return starting(row) ? "Add a policy file" : undefined;
 }
 
-/** Each enabled repository that still needs a policy file, or whose saved rules still need moving into it. */
+/** Each enabled repository that still needs a policy file. */
 export function usePolicyUpgrades(): PolicyUpgradeRow[] {
-  return useUpgradeRows().filter(unsettled);
+  return useUpgradeRows().filter(starting);
 }
 
-/** The repository's standing when there is something to say: a file to start, saved rules to move, or why it could not be read. */
+/** The repository's standing when there is something to say: a file to start, or why it could not be read. */
 export function usePolicyUpgrade(repo: string): PolicyUpgradeRow | undefined {
-  return useUpgradeRows().find((row) => row.repo === repo && (row.error !== undefined || row.upgrade?.state !== "ok"));
+  return useUpgradeRows().find((row) => row.repo === repo && (row.error !== undefined || starting(row)));
 }
 
-/** Opening the pull request, merging it, and keeping the file in place of the saved rules; each is followed by reading every view of the policy again. */
-export function usePolicyUpgradeActions(repo: string, onSettled: () => void) {
+/** Opening the pull request that adds the starter policy, and merging it; each is followed by reading every view of the policy again. */
+export function usePolicyStartActions(repo: string, source: RepoSource) {
   const { snapshot, writeGithub } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   const queryClient = useQueryClient();
@@ -88,19 +86,12 @@ export function usePolicyUpgradeActions(repo: string, onSettled: () => void) {
   }
 
   async function reread() {
-    await Promise.all([POLICY_UPGRADES_QUERY_KEY, "policy-file", "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId] })));
-    onSettled();
+    await Promise.all([POLICY_UPGRADES_QUERY_KEY, POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId] })));
   }
 
   const propose = useMutation({
     mutationFn: function openPull() {
-      return exportPolicyFile(createHubTransport(), workspace(), repo);
-    },
-    onSuccess: reread,
-  });
-  const keepFile = useMutation({
-    mutationFn: function archiveSaved(savedId: string) {
-      return archiveArtifact(createHubTransport(), workspace(), savedId);
+      return exportPolicyFile(createHubTransport(), workspace(), repo, source);
     },
     onSuccess: reread,
   });
@@ -110,5 +101,5 @@ export function usePolicyUpgradeActions(repo: string, onSettled: () => void) {
     },
     onSuccess: reread,
   });
-  return { propose, keepFile, merge };
+  return { propose, merge };
 }

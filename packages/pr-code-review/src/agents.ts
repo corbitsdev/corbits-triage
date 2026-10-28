@@ -30,13 +30,19 @@ function fileReadsOf(sources: Sources) {
 }
 
 /**
+ * The review runs a model over untrusted code, so on GitHub it binds the token the hub mints with contents read only.
+ * Bitbucket Data Center has no token the hub can narrow, so its review binds the workspace's one.
+ */
+const CREDENTIAL: Record<RepoSource, string> = { github: "github-read", "bitbucket-datacenter": "bitbucket-datacenter" };
+
+/**
  * Each host's read bundle and the checkout action bound to the tenant's credential for that host, whose handle is the
  * host's name; an unresolved binding fails the deployment, so only the given hosts are bound.
  */
 export function credentialBindingsFor(sources: Sources) {
   return sources.flatMap((source) => [
-    { package: READS[source].id, handle: source, provider: source, name: source, locator: "tenant" } as const,
-    { action: "checkout", handle: source, provider: source, name: source, locator: "tenant" } as const,
+    { package: READS[source].id, handle: source, provider: source, name: CREDENTIAL[source], locator: "tenant" } as const,
+    { action: "checkout", handle: source, provider: source, name: CREDENTIAL[source], locator: "tenant" } as const,
   ]);
 }
 

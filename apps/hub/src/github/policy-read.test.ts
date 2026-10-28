@@ -11,7 +11,7 @@ async function risks({ globs = [".github/**"], onFail, pass = [], fail = [], dec
   const pack: CheckPack = { ...base, checks: { ...base.checks, "no-forbidden-paths": { enabled: true, forbiddenGlobs: globs, ...(onFail && { onFail }) } }, actions: { ...base.actions, pass, fail, unsure: [] } };
   const handle = createGithubPolicyRead({
     async readCheckPack() {
-      return { status: "ok", pack, source: { repo: { id: "a", version: 1 } }, automatic, ...(decide && { policyWorkflow: { decide } }) };
+      return { status: "ok", pack, source: { file: { path: ".corbits-triage.yml", sha: "a" } }, automatic, ...(decide && { policyWorkflow: { decide } }) };
     },
   });
   const res = await handle({ repo: "acme/app" }, { tenantId: "t", principalId: "p" } as Parameters<typeof handle>[1]);
@@ -62,7 +62,7 @@ test("says whether the policy file turns code review on", async () => {
   async function read(policyWorkflow?: { "code-review": { on: boolean } }): Promise<unknown> {
     const handle = createGithubPolicyRead({
       async readCheckPack() {
-        return { status: "ok", pack: base, source: { repo: { id: "a", version: 1 } }, automatic: [], ...(policyWorkflow && { policyWorkflow }) };
+        return { status: "ok", pack: base, source: { file: { path: ".corbits-triage.yml", sha: "a" } }, automatic: [], ...(policyWorkflow && { policyWorkflow }) };
       },
     });
     const res = await handle({ repo: "acme/app" }, { tenantId: "t", principalId: "p" } as Parameters<typeof handle>[1]);

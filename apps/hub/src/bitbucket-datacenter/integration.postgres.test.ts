@@ -6,8 +6,8 @@ import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { createAutomation } from "../github/automation.js";
-import { repoRecords, triageNs } from "../github/tenant-config.js";
+import { connectTriage, createAutomation } from "../github/automation.js";
+import { patchCorbitsTriage, repoRecords, triageNs } from "../github/tenant-config.js";
 import { WEBHOOK_EVENTS } from "./client.js";
 import { createBitbucketIntegration } from "./integration.js";
 import { HOOK_CREDENTIAL, TOKEN_CREDENTIAL } from "./records.js";
@@ -56,6 +56,7 @@ async function withDatabase(run: (db: ReturnType<typeof createDB>["db"], cipher:
       id: TENANT, name: "Bitbucket", slug: "bitbucket", domain: "bitbucket.test", config: { corbitsTriage: { bitbucketDatacenter: { baseUrl: BASE_URL } } },
     });
     await db.insert(schema.provider).values({ id: "prv_bitbucket", tenantId: TENANT, name: "bitbucket-datacenter", plugin: "http", apiBaseUrl: BASE_URL });
+    await db.transaction((tx) => connectTriage(tx, TENANT, [], new Date()));
     for (const name of [TOKEN_CREDENTIAL, HOOK_CREDENTIAL]) {
       const id = `crd_${name.replaceAll("-", "_")}`;
       await db.insert(schema.credential).values({
@@ -71,7 +72,7 @@ async function withDatabase(run: (db: ReturnType<typeof createDB>["db"], cipher:
   }
 }
 
-test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enabled kind the host has, and registers its webhook", async () => {
+test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enabled kind the host has, and registers its webhook; disabling it takes the grant", async () => {
   await withDatabase(async function enableGrants(db, cipher) {
     const integration = createBitbucketIntegration({
       db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
@@ -79,13 +80,30 @@ test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enable
       publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201), lookup: lookupBitbucket,
       onEnabled() {}, async onConnectionChanged() {}, onCredentialsReplaced() {}, now: () => new Date(), log() {},
     });
-    const automation = createAutomation({ db, now: () => new Date() });
+    const automation = createAutomation({ db });
 
     expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual([]);
     const res = await integration.enable(MEMBER, "TRI", "widgets");
     expect(res.status).toBe(200);
     expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual(["comment"]);
     expect(await (await integration.webhook(MEMBER, "TRI", "widgets")).json()).toEqual({ webhook: "registered", webhookId: 9 });
+    expect((await integration.disable(MEMBER, "TRI", "widgets")).status).toBe(200);
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual([]);
+    expect((await integration.enable(MEMBER, "TRI", "widgets")).status).toBe(200);
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual(["comment"]);
+  });
+}, 120_000);
+
+test("PostgreSQL: a Bitbucket repository named as a GitHub one, in any case, is refused", async () => {
+  await withDatabase(async function nameTaken(db, cipher) {
+    const integration = createBitbucketIntegration({
+      db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
+      async stockFetch() { return new Response(null, { status: 500 }); },
+      publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201), lookup: lookupBitbucket,
+      onEnabled() {}, async onConnectionChanged() {}, onCredentialsReplaced() {}, now: () => new Date(), log() {},
+    });
+    await patchCorbitsTriage(db, TENANT, (ns) => ({ ...ns, repos: [{ name: "tri/Widgets", connected: true, installationId: 1 }] }));
+    expect(await failureCode(integration.enable(MEMBER, "TRI", "widgets"))).toEqual([409, "repo_name_taken"]);
   });
 }, 120_000);
 

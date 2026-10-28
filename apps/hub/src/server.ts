@@ -32,13 +32,14 @@ import {
 } from "@corbits/cron";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
+import { policyKinds, REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest } from "./manager-state.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
+import { archiveStoredPolicies } from "./stored-policies.js";
 import { connectDockerSidecars, dockerPlaces, sweepDockerSidecarsOf } from "./sidecar/docker.js";
 import { connectE2bSidecars, tendE2bSidecarsOf, type E2bSidecarProvisioner } from "./sidecar/e2b.js";
 import { createLocalProcessSidecarProvisioner } from "./sidecar/local-provisioner.js";
@@ -87,6 +88,7 @@ import { createGithubOpenPulls, createMemberOpenPulls, createOpenPullsCache, kep
 import { createRepoReads } from "./github/repo-reads.js";
 import { createGithubPrActions } from "./github/pr-actions.js";
 import { createGithubHeldDos } from "./github/held-dos.js";
+import { createTriageAutomation } from "./github/triage-automation.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { createManagerRuns } from "./github/manager-runs.js";
 import { createSessions } from "./sessions.js";
@@ -101,9 +103,10 @@ import { createGithubPrDetails } from "./github/pr-details.js";
 import { createMergeStates } from "./github/merge-states.js";
 import { createGithubPrTriage } from "./github/pr-triage.js";
 import { createPolicyFile } from "./github/policy-file.js";
-import { createGithubPolicyRead } from "./github/policy-read.js";
+import { createGithubPolicyRead, createPolicyPreview } from "./github/policy-read.js";
 import { createBacklogStart, createGithubBacklog } from "./github/backlog-triage.js";
-import { fileRefusal, loadCheckPack, settlePolicy } from "./github/check-pack-store.js";
+import { createPolicyGrants } from "./github/policy-grants.js";
+import { fileRefusal, previewRepoPolicy, readRepoPolicy } from "./github/repo-policy.js";
 import { createAutomation, grantEnabledKinds } from "./github/automation.js";
 import { createReconcileLoop } from "./github/reconcile-loop.js";
 import { githubUsage } from "./github/github-usage.js";
@@ -113,7 +116,7 @@ import { createTenantGithub, createTenantHeadChecks, createTenantOpenHead, creat
 import { createTriageStateStore } from "./github/triage-state-store.js";
 import { markBaseMoved, type TriageJob } from "./github/triage-queue.js";
 import { createGithubManifestIntegration } from "./github/manifest.js";
-import { prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
+import { keepExistingWorkspacesAsking, prepareCorbitsTriagePatch, tenantManager } from "./github/tenant-config.js";
 import { githubRead } from "@corbits/github-tool";
 import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
 
@@ -346,7 +349,9 @@ const wakeManager = createManagerWake({
   },
 });
 const wakeOverdue = createOverdueWake({ db: composition.db, wake: wakeManager, log: logJson });
-mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede, now });
+await archiveStoredPolicies(composition.db, composition.db, logJson);
+await keepExistingWorkspacesAsking(composition.db, logJson);
+mountTenantRoutes(composition.app, { db: composition.db, requireGrant, log: logJson, wake: wakeManager, supersede });
 async function tenantDomain(tenantId: string): Promise<string> {
   const row = await composition.db.query.tenant.findFirst({
     where: eq(schema.tenant.id, tenantId),
@@ -400,7 +405,7 @@ cronTicker = createCronTicker({
   onDeliveryError: function logCronDeliveryError(error, schedule) { logJson({ level: "warn", msg: "cron_delivery_failed", scheduleId: schedule.id, tenantId: schedule.tenantId, error: String(error) }); },
 });
 cronTicker.start();
-const automation = createAutomation({ db: composition.db, now });
+const automation = createAutomation({ db: composition.db });
 const verdictRecordStore = createVerdictRecordStore(composition.db);
 const portalGrantStore = createGrantStore(composition.db);
 const trustedPortalOrigins = [new URL(env.BETTER_AUTH_BASE_URL).origin, ...portalOrigin];
@@ -486,7 +491,6 @@ const memberOpenPulls = createMemberOpenPulls({ cache: openPullsCache, ...creden
 const repoActivity = createRepoActivity(now, { quietMs: TRIAGE_RELIST_QUIET_MS, graceMs: TRIAGE_RELIST_GRACE_MS });
 const policyFile = createPolicyFile({
   ...credentialDeps,
-  settle: settleRepoPolicy,
   refusal: chosenFileRefusal,
   authorize: authorizePortal,
   tenantGithub,
@@ -495,25 +499,28 @@ const policyFile = createPolicyFile({
   changed: repoReads.changed,
   log: logJson,
   quiet: repoActivity.quiet,
+  waitingKinds: policyWaitingKinds,
 });
-const checkPackStore = { db: composition.db, artifacts: composition.db, automaticKinds: automation.automaticKinds, log: logJson };
-function readStoredCheckPack(tenantId: string, repo: string, source: RepoSource) {
-  return loadCheckPack(checkPackStore, tenantId, repo, source);
-}
-function settleRepoPolicy(tenantId: string, repo: string, source: RepoSource) {
-  return settlePolicy({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source);
-}
+const repoPolicyDeps = { policyFile: policyFile.current, automaticKinds: automation.automaticKinds };
+const policyGrants = createPolicyGrants({ db: composition.db, automaticKinds: automation.automaticKinds, preview: previewPolicy, isNewest: policyFile.isNewest, now });
 function chosenFileRefusal(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>) {
-  return fileRefusal({ ...checkPackStore, policyFile: policyFile.current }, tenantId, repo, source, policy);
+  return fileRefusal(repoPolicyDeps, tenantId, repo, source, policy);
+}
+function policyWaitingKinds(tenantId: string, repo: string, source: RepoSource, text: string) {
+  return policyGrants.waitingKinds(tenantId, repo, source, text);
 }
 async function readCheckPack(tenantId: string, repo: string, source: RepoSource) {
-  return (await settleRepoPolicy(tenantId, repo, source)).read;
+  return policyGrants.followPolicy(tenantId, repo, source, await readRepoPolicy(repoPolicyDeps, tenantId, repo, source));
 }
-/** A push that lands a file matching the saved rules retires them now, so an edit after it is not taken for a difference. */
-async function refreshPolicyFile(tenantId: string, repo: string, source: RepoSource) {
-  const state = await policyFile.onPush(tenantId, repo, source);
-  if (state) await settleRepoPolicy(tenantId, repo, source);
-  return state;
+function previewPolicy(tenantId: string, repo: string, source: RepoSource, text: string) {
+  return previewRepoPolicy(repoPolicyDeps, tenantId, repo, source, text);
+}
+async function wantedKinds(tenantId: string, repo: string, source: RepoSource): Promise<ActionKind[]> {
+  const read = await readRepoPolicy(repoPolicyDeps, tenantId, repo, source);
+  return read.status === "ok" ? policyKinds(read.pack, read.policyWorkflow?.decide ?? [], source) : [];
+}
+async function triageBeganAt(tenantId: string, repo: string): Promise<Date | undefined> {
+  return (await verdictRecordStore.earliest(tenantId, repo)) ?? undefined;
 }
 async function githubSenderPrincipal(tenantId: string): Promise<string> {
   return (await systemSenderOf(GITHUB_SENDER, tenantId)).principalId;
@@ -762,10 +769,13 @@ const bridge = createBridgeHandler({
   readCheckPack,
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
-  refreshPolicyFile,
+  refreshPolicyFile: policyFile.onPush,
   heard: repoActivity.heard,
   startBacklog: createBacklogStart({ readCheckPack, sendMail: sendBacklogMail, log: logJson }),
   repoChanged: repoReads.changed,
+  installationChanged: function installationChanged(tenantId) {
+    void renewGithubToken(tenantId);
+  },
 });
 const providerHooks = createProviderHookApp(createProviderHookHandler({
   db: credentialDeps.db,
@@ -774,7 +784,7 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   coalescer,
   readCheckPack,
   recheckOpenPulls,
-  refreshPolicyFile,
+  refreshPolicyFile: policyFile.onPush,
   heard: repoActivity.heard,
 }));
 
@@ -826,11 +836,15 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     log: logJson,
   }),
   heldDos: githubHeldDos,
+  triageAutomation: createTriageAutomation({ db: composition.db, authorize: authorizePortal, automaticKinds: automation.automaticKinds, wantedKinds, now, log: logJson }),
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),
+  policyPreview: createPolicyPreview({ preview: policyGrants.previewGranted }),
   policyFileRead: policyFile.fileRoute,
   policyFileExport: policyFile.exportRoute,
   policyFilePatch: policyFile.patchRoute,
+  policyPushAccess: policyFile.pushAccessRoute,
+  policyFilePush: policyFile.pushRoute,
   policyUpgrades: policyFile.upgradesRoute,
   backlog: createGithubBacklog({
     ...credentialDeps,
@@ -847,11 +861,11 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     outcomes: createOutcomeReader({
       ...createHostReads({
         ...credentialDeps,
-        artifacts: composition.db,
         githubApiOrigin: githubOrigin,
         tenantBitbucket,
         authorize: authorizePortal,
       }),
+      enabledAt: triageBeganAt,
       now,
       log: logJson,
     }),
@@ -871,8 +885,6 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
   }),
   audit: createAuditLog({
     db: composition.db,
-    artifacts: composition.db,
-    readCheckPack: readStoredCheckPack,
     runReader: composition.runReader,
     authorize: authorizePortal,
     workflows: APPROVAL_WORKFLOWS,
@@ -994,14 +1006,19 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
       }
       const principalId = await tenantManager({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
       if (principalId instanceof Response) return principalId;
+      let switchedOn = false;
       const prepared = await prepareCorbitsTriagePatch({
         db: composition.db,
         authorize: authorizePortal,
         grantEnabled(tx, repo) {
+          switchedOn = true;
           return grantEnabledKinds(tx, tenantId, repo, "github", now());
         },
+        now,
       }, tenantId, principalId, req);
       if (prepared instanceof Response) return prepared;
+      // The pass reads the policy of the repository switched on, which grants what it uses under `policy` automation.
+      if (switchedOn) kickTriage();
       return stock.fetch(prepared, server);
     }
   }

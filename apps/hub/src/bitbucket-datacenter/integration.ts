@@ -5,7 +5,7 @@ import { type } from "arktype";
 import { BITBUCKET_DATACENTER_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { TRIAGE_LISTENERS } from "@corbits/triage-contracts";
-import { ensureTriageRole, grantEnabledKinds } from "../github/automation.js";
+import { connectTriage, grantEnabledKinds } from "../github/automation.js";
 import { tenantConfigOf } from "../github/bridge.js";
 import { activeCredential, credentialSecret, failure, holds, type PortalCredentialDeps } from "../github/portal-credential.js";
 import { patchCorbitsTriage, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
@@ -175,6 +175,12 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
     return patched.ok ? undefined : patched;
   }
 
+  async function storedCredentialId(tenantId: string, name: string): Promise<string> {
+    const stored = await activeCredential(db, tenantId, name);
+    if (!stored) throw new Error(`The ${name} credential is not active right after it was written.`);
+    return stored.id;
+  }
+
   async function removeCredential(req: Request, tenantId: string, name: string): Promise<Response | undefined> {
     const existing = await resolveCredential(req, tenantId, name);
     if (existing === undefined || existing instanceof Response) return existing;
@@ -267,8 +273,9 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       name: HOOK_CREDENTIAL, secret: randomBytes(32).toString("hex"), metadata: HOOK_METADATA, keep: true,
     });
     if (hookFailed) return hookFailed;
+    const credentialIds = [await storedCredentialId(member.tenantId, TOKEN_CREDENTIAL), await storedCredentialId(member.tenantId, HOOK_CREDENTIAL)];
     const written = await patchCorbitsTriage(db, member.tenantId, async function setConnection(next, tx) {
-      await ensureTriageRole(tx, member.tenantId, deps.now());
+      await connectTriage(tx, member.tenantId, credentialIds, deps.now());
       return { ...next, bitbucketDatacenter: { baseUrl, user } };
     });
     if (!written) return failure(404, "not_found", "Workspace not found.");
@@ -351,8 +358,11 @@ export function createBitbucketIntegration(deps: BitbucketDeps) {
       const name = bitbucketRepoName(repo.project.key, repo.slug);
       const branch = await defaultBranch(bb, repo.project.key, repo.slug);
       if (branch === undefined) return failure(409, "repo_empty", "The repository has no default branch yet. Push one first.");
-      const stored = repoRecords(await tenantNs(member.tenantId)).find((record) => record.name === name);
-      if (stored && !isBitbucketRecord(stored)) return failure(409, "repo_name_taken", `A GitHub repository is already named ${name}.`);
+      // Grants name a repository without its host or case, so a GitHub repository of the same name in any case would share them.
+      const named = repoRecords(await tenantNs(member.tenantId)).filter((record) => record.name.toLowerCase() === name.toLowerCase());
+      const taken = named.find((record) => !isBitbucketRecord(record));
+      if (taken) return failure(409, "repo_name_taken", `A GitHub repository is already named ${taken.name}.`);
+      const stored = named.find((record) => isBitbucketRecord(record) && record.name === name);
       const webhookId = await keptOrCreatedWebhook(bb, member, repo.project.key, repo.slug, stored?.webhookId);
       if (webhookId instanceof Response) return webhookId;
       const written = await patchCorbitsTriage(db, member.tenantId, async function enableBitbucketRepo(ns, tx) {

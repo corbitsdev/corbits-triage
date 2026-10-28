@@ -49,7 +49,7 @@ function route(store: TriageStateStore, deliver: Deliver) {
     onKeyMoved: noKeyPush,
     authorize: async () => true,
     pullHead: async () => "abc123",
-    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
     listener: async () => DEPLOYMENT,
     managerRuns: noRuns,
     store,
@@ -71,7 +71,7 @@ function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver, 
     headChecks: async () => checks,
     verdicts: { latest: async () => [] },
     store,
-    readCheckPack: async () => ({ status: "ok", pack, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
+    readCheckPack: async () => ({ status: "ok", pack, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
     send: async ({ payload }) => deliver(payload),
     policy: DEFAULT_RECONCILE_POLICY,
     now: () => NOW,
@@ -165,7 +165,7 @@ test("PostgreSQL: a head waiting for CI that a check run and the reconciler rele
     });
     function webhook(event: TriageEvent, name: string, action: string): CoalescedEvent {
       const mail = { kind: "pr" as const, repo: REPO, prNumber: 8, deliveryId: event, event: name, action, headSha: "abc123", author: null, title: null, body: null, draft: null, review: null };
-      return { tenantId: TENANT, workflow: "pr-triage", record: { name: REPO, connected: true }, policy: repoPolicy({ enabled: true }), pack, automatic: [], source: { repo: { id: "art_pack", version: 1 } }, mail, number: 8, headSha: "abc123", event };
+      return { tenantId: TENANT, workflow: "pr-triage", record: { name: REPO, connected: true }, policy: repoPolicy({ enabled: true }), pack, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } }, mail, number: 8, headSha: "abc123", event };
     }
     async function flush() {
       await Promise.all(timers.splice(0).map((fire) => fire()));

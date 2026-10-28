@@ -222,9 +222,9 @@ function authorsTurn({ author, problems: { fail }, pack }: Context): Said {
   return fail.length > 0 ? named("author", `waiting on ${author} to fix: `, fail, pack) : said("author", `waiting on ${author}`);
 }
 
-/** Where Triage may not post, the verdict is not on the host, and the repository's page is where that is allowed. */
+/** Where Triage may not post on its own, the verdict is not on the host, and workspace settings say what it may do. */
 function notPostedText(item: PrItem): string[] {
-  return item.notPosted === "no_grants" ? [`not posted on ${hostName(item.source)}: allow it under Actions Triage takes on its own on the repository's page`] : [];
+  return item.notPosted === "no_grants" ? [`not posted on ${hostName(item.source)}: Triage may not post here on its own; workspace settings list what it does on its own in each repository`] : [];
 }
 
 /** The verdict as its label names it, what Triage posted on its own or could not post, then what the run left. */

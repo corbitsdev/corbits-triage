@@ -1,20 +1,23 @@
 // Keeps each workspace's `github` credential holding a live installation token,
-// minted on the hub from the App key, and pushes each new one to the running
-// deployments that hold the credential: a stock secret update alone reaches them
-// only when their sidecar reconnects.
+// and its `github-read` credential one that can only read contents, both minted on
+// the hub from the App key, and pushes each new one to the running deployments that
+// hold the credential: a stock secret update alone reaches them only when their
+// sidecar reconnects.
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
+import { generateId } from "@intx/hub-common";
 import { pushCredentialReconcile, type RunCredentialsLoader } from "@intx/hub-sessions";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import { asRecord, errorText } from "@corbits/common";
-import { json, listInstallations, type GithubInstallation } from "@corbits/github-reads";
-import { decryptSecret, GITHUB_APP_KEY_CREDENTIAL, GITHUB_CREDENTIAL, githubAppKey, lockedCredential, lockGithubCredentials, moveAppKey, renewedMetadata, TOKEN_ERROR } from "./app-key.js";
+import { json, listInstallationRepositories, listInstallations, type GithubFetch, type GithubInstallation } from "@corbits/github-reads";
+import type { Tx } from "./admin-github-grant.js";
+import { decryptSecret, GITHUB_APP_KEY_CREDENTIAL, GITHUB_CREDENTIAL, GITHUB_READ_CREDENTIAL, githubAppKey, lockedCredential, lockGithubCredentials, moveAppKey, renewedMetadata, TOKEN_ERROR } from "./app-key.js";
 import { tenantConfigOf } from "./bridge.js";
-import { createGithubAppCredentialFetch, isGithubAppJson, mintInstallationToken } from "./github-app-credential-adapter.js";
+import { createGithubAppCredentialFetch, isGithubAppJson, mintInstallationToken, type TokenScope } from "./github-app-credential-adapter.js";
 import { GithubRateLimited } from "./github-usage.js";
 import type { ReconcileOutcome } from "./triage-reconciler.js";
 import { appGithubFetch, heldCredential } from "./portal-credential.js";
-import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
+import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 
 /** Installation tokens last an hour. */
 export const GITHUB_TOKEN_RENEW_MS = 45 * 60_000;
@@ -22,8 +25,16 @@ export const GITHUB_TOKEN_RENEW_MS = 45 * 60_000;
 const RETRY_SLACK_MS = 60_000;
 
 export type InstallationToken = { token: string; expiresAt: number };
-/** What GitHub says of an App: its slug, and a token for the workspace's installation once it is installed. */
-export type IssuedApp = { slug: string; token?: InstallationToken };
+/**
+ * What GitHub says of an App: its slug and, once it is installed, a token for the workspace's installation and a read
+ * token for its repositories, why the read token was refused, which leaves the write token renewed, or that none of
+ * the workspace's repositories is left for one to read.
+ */
+export type IssuedApp = { slug: string; token?: InstallationToken; read?: InstallationToken | { error: string } | { withdrawn: true } };
+
+const READ_SCOPE = { contents: "read" } as const;
+/** GitHub refuses to narrow a token to more repositories than this. */
+const MAX_TOKEN_REPOSITORIES = 500;
 
 /** The workspace's one installation: the one its repositories came from, else the oldest. */
 export function primaryInstallation<T extends Pick<GithubInstallation, "id">>(active: readonly T[], recorded: ReadonlySet<number>): T | undefined {
@@ -31,10 +42,65 @@ export function primaryInstallation<T extends Pick<GithubInstallation, "id">>(ac
   return oldestFirst.find((installation) => recorded.has(installation.id)) ?? oldestFirst[0];
 }
 
+async function githubRecords(db: DB["db"], tenantId: string): Promise<RepoRecord[]> {
+  return repoRecords(triageNs(await tenantConfigOf({ db }, tenantId))).filter((record) => sourceOf(record) === "github");
+}
+
+function installationsOf(records: readonly RepoRecord[]): Set<number> {
+  return new Set(records.flatMap((record) => (record.installationId === undefined ? [] : [record.installationId])));
+}
+
 /** The installations the workspace's GitHub repositories were added from. */
 export async function recordedInstallations(db: DB["db"], tenantId: string): Promise<Set<number>> {
-  const records = repoRecords(triageNs(await tenantConfigOf({ db }, tenantId)));
-  return new Set(records.flatMap((record) => (sourceOf(record) === "github" && record.installationId !== undefined ? [record.installationId] : [])));
+  return installationsOf(await githubRecords(db, tenantId));
+}
+
+/**
+ * The read token covers only the workspace's repositories from the installation that GitHub still lists there, named
+ * without their owner as GitHub asks: one renamed or transferred would make GitHub refuse the whole token.
+ */
+async function readScope(gh: GithubFetch, records: readonly RepoRecord[], installationId: number): Promise<TokenScope | undefined> {
+  const recorded = records.flatMap((record) => (record.installationId === installationId ? [record.name] : []));
+  if (recorded.length === 0) return undefined;
+  const listed = new Set((await listInstallationRepositories(gh, installationId)).map((name) => name.toLowerCase()));
+  const names = recorded.filter((name) => listed.has(name.toLowerCase()));
+  if (names.length === 0) return undefined;
+  // Past GitHub's limit the token reads every repository of the installation instead, which is still read-only.
+  if (names.length > MAX_TOKEN_REPOSITORIES) return { permissions: READ_SCOPE };
+  return { permissions: READ_SCOPE, repositories: names.map((name) => name.slice(name.indexOf("/") + 1)) };
+}
+
+/**
+ * Writes the read token, or why it was refused, to `github-read` beside `github`, whose provider it shares; the caller
+ * holds the lock. A refusal keeps a token with time left and marks one past its expiry `expired`, so no code review is
+ * deployed with it; a first refusal leaves an expired row holding no token, so the portal can say why. A withdrawn
+ * token is left that way at once: what it could read is no longer the workspace's.
+ */
+export async function storeReadToken(tx: Tx, cipher: CredentialCipher, github: { tenantId: string; providerId: string }, read: NonNullable<IssuedApp["read"]>): Promise<void> {
+  const { credential } = schema;
+  const current = await lockedCredential(tx, github.tenantId, GITHUB_READ_CREDENTIAL);
+  if (!current && "withdrawn" in read) return;
+  const id = current?.id ?? generateId("credential");
+  const stamp = new Date();
+  const values = await readTokenValues(cipher, id, current, read, stamp);
+  if (current) {
+    await tx.update(credential).set({ ...values, providerId: github.providerId, updatedAt: stamp }).where(eq(credential.id, id));
+    return;
+  }
+  await tx.insert(credential).values({
+    secret: await cipher.encrypt("", credentialAad(id, "secret")), expiresAt: stamp, status: "expired", ...values,
+    id, tenantId: github.tenantId, principalId: null, providerId: github.providerId, oauthClientId: null, name: GITHUB_READ_CREDENTIAL,
+    type: "api_key", description: null, refreshSecret: null, scopes: null, createdAt: stamp, updatedAt: stamp,
+  });
+}
+
+async function readTokenValues(cipher: CredentialCipher, id: string, current: { expiresAt: Date | null; metadata: unknown } | undefined, read: NonNullable<IssuedApp["read"]>, stamp: Date) {
+  if ("withdrawn" in read) return { secret: await cipher.encrypt("", credentialAad(id, "secret")), expiresAt: stamp, status: "expired" as const, metadata: null };
+  if ("error" in read) {
+    const live = (current?.expiresAt ?? stamp) > stamp;
+    return { metadata: { ...asRecord(current?.metadata), [TOKEN_ERROR]: read.error }, ...(!live && { status: "expired" as const }) };
+  }
+  return { secret: await cipher.encrypt(read.token, credentialAad(id, "secret")), expiresAt: new Date(read.expiresAt), status: "active" as const, metadata: null };
 }
 
 export type GithubTokenDeps = {
@@ -47,6 +113,9 @@ export type GithubTokenDeps = {
   fetch?: typeof fetch;
 };
 
+/** Only the read token was refused: the write token renewed, so only `github-read` is marked failed. */
+class ReadTokenRefused extends Error {}
+
 export function createGithubTokenRenewal(deps: GithubTokenDeps) {
   const transport = { apiOrigin: deps.githubApiOrigin, ...(deps.fetch && { fetch: deps.fetch }) };
   const appFetch = createGithubAppCredentialFetch(transport);
@@ -57,9 +126,21 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     const app = await json(gh, "/app") as { slug?: unknown };
     if (typeof app.slug !== "string" || app.slug === "") throw new Error("github returned an invalid App slug");
     const active = (await listInstallations(gh)).filter((installation) => !installation.suspended);
-    const primary = primaryInstallation(active, await recordedInstallations(deps.db, tenantId));
+    const records = await githubRecords(deps.db, tenantId);
+    const primary = primaryInstallation(active, installationsOf(records));
     if (!primary) return { slug: app.slug };
-    return { slug: app.slug, token: await mintInstallationToken(transport, appJson, primary.id) };
+    const token = await mintInstallationToken(transport, appJson, primary.id);
+    return { slug: app.slug, token, read: await readToken(gh, appJson, records, primary.id) };
+  }
+
+  async function readToken(gh: GithubFetch, appJson: string, records: readonly RepoRecord[], installationId: number): Promise<NonNullable<IssuedApp["read"]>> {
+    try {
+      const scope = await readScope(gh, records, installationId);
+      if (!scope) return { withdrawn: true };
+      return await mintInstallationToken(transport, appJson, installationId, scope);
+    } catch (err) {
+      return { error: errorText(err) };
+    }
   }
 
   /** Not only the workspace's own runs: a child workspace's runs hold the parent's credential they inherit. */
@@ -80,9 +161,11 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
    * deployment holding it, expired too: a blank sent after a key moved replaces the key a sidecar was given.
    */
   async function push(tenantId: string): Promise<void> {
-    const github = await heldCredential(deps.db, tenantId, GITHUB_CREDENTIAL);
-    if (!github) return;
-    for (const address of await holders(github.id)) await pushCredentialReconcile(deps.db, deps.router, address, deps.cipher, deps.loadRunCredentials);
+    for (const name of [GITHUB_CREDENTIAL, GITHUB_READ_CREDENTIAL]) {
+      const held = await heldCredential(deps.db, tenantId, name);
+      if (!held) continue;
+      for (const address of await holders(held.id)) await pushCredentialReconcile(deps.db, deps.router, address, deps.cipher, deps.loadRunCredentials);
+    }
   }
 
   /** Stores what was issued for `appJson`, unless the App was replaced while it was minted: the replacement wrote its own. */
@@ -96,6 +179,7 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
       const token = issued.token && { secret: await deps.cipher.encrypt(issued.token.token, credentialAad(github.id, "secret")), expiresAt: new Date(issued.token.expiresAt), status: "active" as const };
       // updatedAt stays: a GitHub setup that replaces the App refuses to commit once it moved, and a renewal replaces nothing.
       await tx.update(credential).set({ metadata: renewedMetadata(github.metadata, issued.slug), ...token }).where(eq(credential.id, github.id));
+      if (issued.read) await storeReadToken(tx, deps.cipher, github, issued.read);
       return token !== undefined;
     });
   }
@@ -104,13 +188,15 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
    * Keeps why a renewal failed for the portal. A token past its expiry marks the credential `expired`, which stock
    * does not resolve for a launch, so no worker is deployed with it; one with time left stays usable meanwhile.
    */
-  async function markFailed(tenantId: string, reason: string): Promise<void> {
+  async function markFailed(tenantId: string, reason: string, names: readonly string[]): Promise<void> {
     await deps.db.transaction(async function markFailure(tx) {
       await lockGithubCredentials(tx, tenantId);
-      const github = await lockedCredential(tx, tenantId, GITHUB_CREDENTIAL);
-      if (!github || github.status === "revoked") return;
-      const expired = github.expiresAt === null || github.expiresAt.getTime() <= Date.now();
-      await tx.update(credential).set({ metadata: { ...asRecord(github.metadata), [TOKEN_ERROR]: reason }, ...(expired && { status: "expired" as const }) }).where(eq(credential.id, github.id));
+      for (const name of names) {
+        const held = await lockedCredential(tx, tenantId, name);
+        if (!held || held.status === "revoked") continue;
+        const expired = held.expiresAt === null || held.expiresAt.getTime() <= Date.now();
+        await tx.update(credential).set({ metadata: { ...asRecord(held.metadata), [TOKEN_ERROR]: reason }, ...(expired && { status: "expired" as const }) }).where(eq(credential.id, held.id));
+      }
     });
   }
 
@@ -119,13 +205,15 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     if (!(await store(tenantId, appJson, issued)) || !issued.token) return;
     await push(tenantId);
     deps.log({ level: "info", msg: "github_token_renewed", tenantId, expiresAt: new Date(issued.token.expiresAt).toISOString() });
+    // Thrown after the write token is pushed, so the workspace is retried early rather than at the next full pass.
+    if (issued.read && "error" in issued.read) throw new ReadTokenRefused(issued.read.error);
   }
 
   async function recorded(tenantId: string, attempt: () => Promise<void>): Promise<void> {
     try {
       await attempt();
     } catch (err) {
-      await markFailed(tenantId, errorText(err));
+      await markFailed(tenantId, errorText(err), err instanceof ReadTokenRefused ? [GITHUB_READ_CREDENTIAL] : [GITHUB_CREDENTIAL, GITHUB_READ_CREDENTIAL]);
       throw err;
     }
   }
@@ -152,13 +240,13 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
     });
   }
 
-  /** A key whose `github` credential was removed or revoked through the stock route goes with it. */
+  /** A key and read token whose `github` credential was removed or revoked through the stock route go with it. */
   async function dropOrphanKey(tenantId: string): Promise<void> {
     await deps.db.transaction(async function drop(tx) {
       await lockGithubCredentials(tx, tenantId);
       const github = await lockedCredential(tx, tenantId, GITHUB_CREDENTIAL);
       if (github && github.status !== "revoked") return;
-      await tx.delete(credential).where(and(eq(credential.tenantId, tenantId), eq(credential.name, GITHUB_APP_KEY_CREDENTIAL)));
+      await tx.delete(credential).where(and(eq(credential.tenantId, tenantId), inArray(credential.name, [GITHUB_APP_KEY_CREDENTIAL, GITHUB_READ_CREDENTIAL])));
       deps.log({ level: "info", msg: "github_app_key_dropped", tenantId });
     });
   }

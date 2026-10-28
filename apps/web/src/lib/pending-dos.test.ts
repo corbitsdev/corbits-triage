@@ -5,7 +5,7 @@ import { createHoldQueue, HOLD_MS } from "./held-actions.ts";
 import { approveHeldDo, projectQueue, type PrItem } from "./hub-api.ts";
 import { doWrite } from "./inbox-pane.ts";
 import { actionMode } from "./inbox-view.ts";
-import { pendingDos, withoutDecidedDos, type PendingDo } from "./pending-dos.ts";
+import { heldOffer, pendingDos, withoutDecidedDos, type PendingDo } from "./pending-dos.ts";
 
 const NOW = "2026-10-01T02:00:00.000Z";
 const pull = { repo: "acme/widgets", number: 8 };
@@ -112,10 +112,10 @@ describe("pendingDos", () => {
     }
     const write = doWrite({ ...item, number: item.number }, first, () => {
       held = new Set();
-    });
+    }, false);
     queue.hold({
       pending: write.pending,
-      send: () => write.send({ write: async () => ({ commentId: null }), replySent: () => {}, approveDo }),
+      send: () => write.send({ write: async () => ({ commentId: null }), replySent: () => {}, approveDo, automate: async () => {} }),
       undo: () => write.restore?.(),
       restore: () => write.restore?.(),
       failText: (error) => error,
@@ -124,6 +124,21 @@ describe("pendingDos", () => {
     expect(queue.undo()).toBe(true);
     expect(labels(pendingDos(withoutDecidedDos(item, NONE, held)))).toEqual(["Add label size/xl", "Comment \"Hi\""]);
     expect(sent).toEqual([]);
+  });
+});
+
+describe("heldOffer", () => {
+  test("Do it needs the Do's grant; Always also needs grant create and a kind the policy names, and never shows for a kind the verdict always holds", () => {
+    const wanted = ["request-review", "merge", "close"] as const;
+    const both = { holdsDo: true, createsGrants: true, wanted };
+    expect(heldOffer({ list: "fail", kind: "request-review" }, both)).toEqual({ doIt: true, always: true });
+    expect(heldOffer({ list: "fail", kind: "request-review" }, { ...both, createsGrants: false })).toEqual({ doIt: true, always: false });
+    expect(heldOffer({ list: "fail", kind: "request-review" }, { ...both, holdsDo: false })).toEqual({ doIt: false, always: false });
+    expect(heldOffer({ list: "fail", kind: "assign" }, both)).toEqual({ doIt: true, always: false });
+    expect(heldOffer({ list: "pass", kind: "merge" }, both)).toEqual({ doIt: true, always: true });
+    expect(heldOffer({ list: "fail", kind: "merge" }, both)).toEqual({ doIt: true, always: false });
+    expect(heldOffer({ list: "unsure", kind: "close" }, both)).toEqual({ doIt: true, always: false });
+    expect(heldOffer({ list: "fail", kind: "close" }, both)).toEqual({ doIt: true, always: true });
   });
 });
 

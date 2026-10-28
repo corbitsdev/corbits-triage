@@ -9,7 +9,6 @@ import { hubConfigured } from "./hub-origin.ts";
 import { ApiError, createHubTransport, createLeavingHubTransport } from "./hub-transport.ts";
 import {
   configureGithubHook,
-  createGrant,
   ensureWorkspace,
   loadPortal,
   legacyHookCredentials,
@@ -28,15 +27,12 @@ import {
   type PrGithubWriteInput,
   type PrGithubWriteResult,
   type PortalSnapshot,
-  type RepoRecord,
   type WorkspaceOption,
 } from "./hub-api.ts";
 import { readChosenWorkspace, writeChosenWorkspace } from "./chosen-workspace.ts";
-import type { CreateGrantInput } from "./grant-actions.ts";
 import { reconcileModelCatalog, removeModelKey, saveInference } from "./model-catalog.ts";
-import { CHECK_PACK_INDEX_QUERY_KEY, checkPackIndexQuery } from "./check-packs.ts";
 import { syncGithubInstallations, type SyncResult } from "./github-manifest.ts";
-import { ANTHROPIC_PROVIDER, checkPackName, INFERENCE_PROVIDER } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, INFERENCE_PROVIDER } from "@corbits/triage-contracts";
 
 /** `now` confirms the write with a toast; `held` writes were announced by the inbox's Undo toast; `leaving` ones are held writes sent as the page goes away, so they must outlive it. */
 type GithubDelivery = "now" | "held" | "leaving";
@@ -66,7 +62,6 @@ interface PortalContextValue {
   decide: (approvalId: string, decision: "once" | "always" | "deny") => Promise<void>;
   replaceSecret: (credentialId: string, secret: string) => Promise<void>;
   revoke: (credentialId: string) => Promise<void>;
-  addGrant: (input: CreateGrantInput) => Promise<void>;
   saveInferenceSecret: (input: { endpoint: string; model: string; secret: string }) => Promise<void>;
   saveAnthropic: (secret: string) => Promise<void>;
   removeAnthropic: (credentialId: string) => Promise<void>;
@@ -95,18 +90,19 @@ export const TRIAGE_VERDICTS_QUERY_KEY = "triage-verdicts";
 export const APPROVALS_QUERY_KEY = "approvals";
 export const PRINCIPALS_QUERY_KEY = "principals";
 export const ROLES_QUERY_KEY = "roles";
+export const GRANTS_QUERY_KEY = "grants";
 export const DEPLOYED_VERSIONS_QUERY_KEY = "deployed-versions";
 export const ALLOWED_QUERY_KEY = "allowed";
 export const INVITATIONS_QUERY_KEY = "invitations";
 export const BITBUCKET_DATACENTER_QUERY_KEY = "bitbucket-datacenter";
 export const INVITE_PATH = "/invite/";
 const REFRESH_QUERY_KEYS = [
-  [CHECK_PACK_INDEX_QUERY_KEY],
   PORTAL_QUERY_KEY,
   [TRIAGE_VERDICTS_QUERY_KEY],
   [APPROVALS_QUERY_KEY],
   [PRINCIPALS_QUERY_KEY],
   [ROLES_QUERY_KEY],
+  [GRANTS_QUERY_KEY],
   [DEPLOYED_VERSIONS_QUERY_KEY],
   [ALLOWED_QUERY_KEY],
   [INVITATIONS_QUERY_KEY],
@@ -163,15 +159,12 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       if (access.kind === "invited") return access;
       const tenantId = access.workspace.tenantId;
       opened.current = { userId, tenantId };
-      async function hasPack(record: RepoRecord) {
-        return (await queryClient.fetchQuery(checkPackIndexQuery(tenantId))).has(checkPackName(record.name, record.source));
-      }
-      return await loadPortal(transport, access, hasPack);
+      return await loadPortal(transport, access);
     } catch (cause: unknown) {
       signOutWhenRejected(cause);
       throw cause;
     }
-  }, [queryClient, signOutWhenRejected, userId]);
+  }, [signOutWhenRejected, userId]);
 
   const refresh = useCallback(function refresh() {
     void invalidateChangeable(queryClient, REFRESH_QUERY_KEYS);
@@ -326,16 +319,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     [notify, refresh, requireSnapshot],
   );
 
-  const addGrant = useCallback(
-    async function addGrant(input: CreateGrantInput) {
-      const current = requireSnapshot();
-      await createGrant(createHubTransport(), current.workspace.tenantId, input);
-      notify("Access rule added.");
-      refresh();
-    },
-    [notify, refresh, requireSnapshot],
-  );
-
   /** So returning from GitHub never waits on a webhook. */
   const syncFromGithub = useCallback(async function syncFromGithub() {
     const current = requireSnapshot();
@@ -414,7 +397,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
         decide,
         replaceSecret,
         revoke,
-        addGrant,
         saveInferenceSecret,
         saveAnthropic,
         removeAnthropic,
@@ -443,7 +425,6 @@ export function PortalProvider({ children }: { children: ReactNode }) {
       decide,
       replaceSecret,
       revoke,
-      addGrant,
       saveInferenceSecret,
       saveAnthropic,
       removeAnthropic,

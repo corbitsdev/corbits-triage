@@ -10,7 +10,7 @@ import { mailPayload, unreadablePayload, waitingPayload, type PolicyUnreadable }
 import type { TriageJob } from "./triage-queue.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { deliveryFailure, failHead } from "./triage-queue.js";
-import type { PolicyReader, StoredPack } from "./check-pack-store.js";
+import type { PolicyReader, ResolvedPack } from "./repo-policy.js";
 import { inFlight, planTenant, requeue, runKey, type OpenPr, type QueuedPr, type ReconcilePolicy, type RepoPlan } from "./reconcile-plan.js";
 import { summarizeChecks, type CiState } from "@corbits/github-reads";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
@@ -53,7 +53,7 @@ export type TriageReconcilerDeps = {
 
 type EnabledRepo = { record: RepoRecord; policy: RepoPolicy };
 type TenantPass = { tenantId: string; openHeads: OpenHeadsReader };
-type LoadedRepo = EnabledRepo & (StoredPack | PolicyUnreadable) & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
+type LoadedRepo = EnabledRepo & (ResolvedPack | PolicyUnreadable) & { prs: OpenPr[]; stored: LoadedTriageState; ci: Map<string, CiState> };
 
 /**
  * `retry` asks for another pass soon: a repository's or a tenant's pass failed.
@@ -216,7 +216,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       return { ...repo, pack: read.pack, automatic: read.automatic, source: read.source, ...(read.policyWorkflow && { policyWorkflow: read.policyWorkflow }), ...(read.pauseLabel && { pauseLabel: read.pauseLabel }), prs, stored, ci };
     }
     // A policy triage can't read is mailed in place of a pack, so every open head is marked failed.
-    if (read.status === "invalid" || read.status === "corrupt") {
+    if (read.status === "invalid") {
       skippedRepos.delete(key);
       return { ...repo, policyUnreadable: read.reason, automatic: read.automatic, prs, stored: await deps.store.load(pass.tenantId, triageStateKey(repo.record)), ci: new Map<string, CiState>() };
     }

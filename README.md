@@ -62,8 +62,9 @@ Or by hand:
 4. **Turn on triage** for the repository under Repositories. Once a decision
    model is saved, its open pull requests appear on Triage with a verdict,
    a score and the reasons. Triage posts its comment and verdict
-   label on GitHub; every other action waits for a click on Triage until
-   you let Triage take it on its own.
+   label on GitHub and takes the other actions the policy file names on its
+   own; turn that off in Settings → Triage to have them wait for a click on
+   Triage instead.
 
 ## Other setup paths
 

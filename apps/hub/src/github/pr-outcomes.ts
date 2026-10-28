@@ -1,16 +1,14 @@
 // How pull requests fared, read live from the repository's host for the stats route: time to merge or close, to the
 // first response and approval from someone other than the author, the longest wait between people's touches, and the
-// wait from Triage's verdict to a reviewer. The baseline is the same over pull requests closed before the repository's
-// policy was first saved, when triage began.
+// wait from Triage's verdict to a reviewer. The baseline is the same over pull requests closed before Triage's first
+// verdict in the repository, when triage began.
 import { eq } from "drizzle-orm";
 import { schema } from "@intx/db";
-import type { ArtifactDb } from "@corbits/artifacts";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { getPrTimes, listPrTimeline, searchClosedPrsBefore, type PrTimes, type TimelineEvent } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
 import type { OutcomeMedians, OutcomeTimes, RepoSource, TriageOutcomes } from "@corbits/triage-contracts";
 import { bitbucketConnection } from "../bitbucket-datacenter/records.js";
-import { repoPolicyRow } from "./check-pack-store.js";
 import { sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
@@ -39,7 +37,7 @@ type HostRead = { host: Host; source: RepoSource } | { state: "no_credential" } 
 export type OutcomeReaderDeps = {
   /** `source` undefined reads the first connected repository of that name. */
   host: (tenantId: string, principalId: string, repo: string, source: RepoSource | undefined) => Promise<HostRead>;
-  /** When the repository's policy was first saved; undefined without one. */
+  /** When Triage first gave a verdict in the repository; undefined before it has. */
   enabledAt: (tenantId: string, repo: string, source: RepoSource) => Promise<Date | undefined>;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
@@ -241,10 +239,8 @@ export function createOutcomeReader(deps: OutcomeReaderDeps): OutcomeReader {
   return { refusal, read: outcomes };
 }
 
-type HostReadsDeps = SourceFetchDeps & { artifacts: ArtifactDb };
-
 /** The repository's host read as the tenant's GitHub App or Bitbucket Data Center token, as the PR view reads it. */
-export function createHostReads(deps: HostReadsDeps): Pick<OutcomeReaderDeps, "host" | "enabledAt"> {
+export function createHostReads(deps: SourceFetchDeps): Pick<OutcomeReaderDeps, "host"> {
   const sourceFetch = createSourceFetch(deps);
 
   async function host(tenantId: string, principalId: string, repo: string, asked: RepoSource | undefined): Promise<HostRead> {
@@ -281,9 +277,5 @@ export function createHostReads(deps: HostReadsDeps): Pick<OutcomeReaderDeps, "h
     };
   }
 
-  async function enabledAt(tenantId: string, repo: string, source: RepoSource): Promise<Date | undefined> {
-    return (await repoPolicyRow(deps, tenantId, repo, source))?.createdAt;
-  }
-
-  return { host, enabledAt };
+  return { host };
 }

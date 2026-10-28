@@ -18,7 +18,16 @@ const Installation = type({
 const InstallationToken = type({
   token: "string > 0",
   expires_at: "string > 0",
+  "permissions?": "Record<string, string>",
+  "repository_selection?": "'all' | 'selected'",
+  "repositories?": type({ name: "string", full_name: "string" }).array(),
 });
+
+/**
+ * What a token is narrowed to: GitHub grants no more than the installation holds, and refuses a request for more.
+ * `repositories` are named without their owner; without them the token covers every repository of the installation.
+ */
+export type TokenScope = { permissions: Record<string, "read">; repositories?: readonly string[] };
 
 // Bun's Request constructor does not accept a string | URL | Request union.
 export function toRequest(input: string | URL | Request, init?: RequestInit): Request {
@@ -106,10 +115,26 @@ function installationPath(url: URL): string {
   throw new Error("GitHub App credential requires a repository or organization target");
 }
 
+/**
+ * What GitHub granted beyond `scope`: a scoped token goes to code that runs a model over untrusted code, so one that
+ * could write, or reach a repository it was not asked for, is never kept. Every installation token reads metadata.
+ */
+function grantedBeyond(scope: TokenScope, granted: typeof InstallationToken.infer): string | undefined {
+  if (granted.permissions === undefined) return "no permissions listed";
+  const allowed: Record<string, string> = { metadata: "read", ...scope.permissions };
+  const extra = Object.entries(granted.permissions).find(([name, level]) => allowed[name] !== level);
+  if (extra) return `${extra[0]} ${extra[1]}`;
+  if (scope.repositories === undefined) return undefined;
+  if (granted.repository_selection === "all") return "every repository";
+  const asked = new Set(scope.repositories.map((name) => name.toLowerCase()));
+  return granted.repositories?.find((repository) => !asked.has(repository.name.toLowerCase()))?.full_name;
+}
+
 async function requestInstallationToken(
   { apiOrigin, fetch: fetchImpl = globalThis.fetch, now = Date.now }: GithubAppCredentialFetchOptions,
   credential: AppCredential,
   installationId: number,
+  scope?: TokenScope,
 ): Promise<CachedToken> {
   const response = await fetchImpl(
     `${apiOrigin}/app/installations/${encodeURIComponent(String(installationId))}/access_tokens`,
@@ -119,7 +144,9 @@ async function requestInstallationToken(
         accept: "application/vnd.github+json",
         authorization: `Bearer ${appJwt(credential, now())}`,
         "x-github-api-version": "2022-11-28",
+        ...(scope && { "content-type": "application/json" }),
       },
+      ...(scope && { body: JSON.stringify({ permissions: scope.permissions, ...(scope.repositories && { repositories: scope.repositories }) }) }),
       redirect: "manual",
     },
   );
@@ -134,12 +161,14 @@ async function requestInstallationToken(
   if (!Number.isFinite(expiresAt) || expiresAt <= now()) {
     throw new Error("GitHub installation token response has an invalid expiry");
   }
+  const beyond = scope && grantedBeyond(scope, body);
+  if (beyond) throw new Error(`GitHub issued a token beyond the requested read access: ${beyond}`);
   return { token: body.token, expiresAt };
 }
 
-/** A new installation token for the App in `appJson`; `expiresAt` is in epoch milliseconds. */
-export function mintInstallationToken(options: GithubAppCredentialFetchOptions, appJson: string, installationId: number): Promise<CachedToken> {
-  return requestInstallationToken(options, parseAppCredential(appJson), installationId);
+/** A new installation token for the App in `appJson`, narrowed to `scope` when given; `expiresAt` is in epoch milliseconds. */
+export function mintInstallationToken(options: GithubAppCredentialFetchOptions, appJson: string, installationId: number, scope?: TokenScope): Promise<CachedToken> {
+  return requestInstallationToken(options, parseAppCredential(appJson), installationId, scope);
 }
 
 /**

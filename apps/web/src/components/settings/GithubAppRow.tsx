@@ -10,6 +10,8 @@ import { usePortal } from "../../lib/portal.tsx";
 
 type GithubAppRowProps = {
   credential: HubCredential;
+  /** The token code review reads with, renewed beside the App's own; absent until the App is installed on a repository Triage has. */
+  readToken: HubCredential | undefined;
   name: string;
   tenantId: string;
   /** Only those who may manage the GitHub App replace its key. */
@@ -30,7 +32,7 @@ async function readKey(file: File): Promise<string> {
 }
 
 /** The GitHub App: a new key is sent alone, so the hub checks it with GitHub as the stored App's before saving it. */
-export function GithubAppRow({ credential, name, tenantId, replaceable, remove }: GithubAppRowProps) {
+export function GithubAppRow({ credential, readToken, name, tenantId, replaceable, remove }: GithubAppRowProps) {
   const { readOnly, notify } = usePortal();
   const fileId = useId();
   const [editing, setEditing] = useState(false);
@@ -57,6 +59,7 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
   });
   const disabled = readOnly || replace.isPending || removal.isPending;
   const tokenError = tokenErrorOf(credential);
+  const readTokenError = readToken && tokenErrorOf(readToken);
 
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -94,6 +97,7 @@ export function GithubAppRow({ credential, name, tenantId, replaceable, remove }
       <div className="rmain">
         <div className="rline"><span className="w">{name} secret</span><span className="model">{isActiveCredential(credential) ? "stored" : credential.status.toLowerCase()}</span></div>
         {tokenError && <p role="alert" className="field-error">Triage could not renew its access to GitHub: {tokenError}. Check that the App is still installed on GitHub and that its key is current; if not, replace the key.</p>}
+        {!tokenError && readTokenError && <p role="alert" className="field-error">Code review cannot run: Triage could not get read-only access to your repositories: {readTokenError}. Check that the App may read repository contents on GitHub.</p>}
         {editing && (
           <ol className="field-help">
             <li>In your GitHub App's settings on GitHub, generate a new private key.</li>

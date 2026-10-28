@@ -41,7 +41,7 @@ import {
   type InstallationFields,
   type RepoRecord,
 } from "./tenant-config.js";
-import type { PolicyReader, StoredPack } from "./check-pack-store.js";
+import type { PolicyReader, ResolvedPack } from "./repo-policy.js";
 import type { Accepted, Coalescer } from "./coalescer.js";
 import type { OpenHeadReader } from "./tenant-open-heads.js";
 import type { RepoReads } from "./repo-reads.js";
@@ -79,6 +79,8 @@ export interface BridgeDeps {
   heard: (tenantId: string, source: RepoSource, repo: string) => void;
   /** Every verified delivery about a repository, so the GitHub reads kept for it are read again. */
   repoChanged: RepoReads["changed"];
+  /** The workspace's GitHub repositories changed, so the read token, which names them, is minted again. */
+  installationChanged: (tenantId: string) => void;
 }
 
 /** Mirrors @corbits/webhooks parseWebhookMeta (not exported upstream). */
@@ -165,10 +167,10 @@ async function openHead(d: BridgeDeps, tenantId: string, record: RepoRecord, num
 
 /**
  * The deployment reads `pack`; one built before steps reads `checkPack` and never sees `pack`, so both go until every
- * live deployment reads `pack`. `policy.source` names the policy artifact versions `pack` was resolved from, so the
+ * live deployment reads `pack`. `policy.source` names the policy file versions `pack` was resolved from, so the
  * run records what it used.
  */
-export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { pack, automatic, source, policyWorkflow, pauseLabel }: StoredPack, extra: Record<string, unknown>) {
+export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { pack, automatic, source, policyWorkflow, pauseLabel }: ResolvedPack, extra: Record<string, unknown>) {
   const repo = record.name;
   const repoSource = sourceOf(record);
   return {
@@ -187,7 +189,7 @@ export function mailPayload(record: Pick<RepoRecord, "name" | "source">, policy:
 }
 
 /** The mail for a head held for its CI: triage marks it waiting where it writes the verdict, and triages nothing. `noCi` names a head with no checks yet. */
-export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, pack: StoredPack, head: { number: number; headSha: string }, noCi: boolean) {
+export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, pack: ResolvedPack, head: { number: number; headSha: string }, noCi: boolean) {
   return { ...mailPayload(record, policy, pack, { prNumber: head.number, headSha: head.headSha, ...(noCi && { noCi }) }), kind: WAITING_KIND };
 }
 
@@ -195,7 +197,7 @@ export function waitingPayload(record: Pick<RepoRecord, "name" | "source">, poli
 export type PolicyUnreadable = { policyUnreadable: string; automatic: ActionKind[] };
 
 /** What the coalescer is handed for a read policy: its pack, or why it can't be read. Undefined when there is no policy. */
-export async function triagePolicy(readCheckPack: PolicyReader, tenantId: string, repo: string, source: RepoSource): Promise<StoredPack | PolicyUnreadable | undefined> {
+export async function triagePolicy(readCheckPack: PolicyReader, tenantId: string, repo: string, source: RepoSource): Promise<ResolvedPack | PolicyUnreadable | undefined> {
   const read = await readCheckPack(tenantId, repo, source);
   if (read.status === "missing") return undefined;
   if (read.status !== "ok") return { policyUnreadable: read.reason, automatic: read.automatic };
@@ -206,7 +208,7 @@ export async function triagePolicy(readCheckPack: PolicyReader, tenantId: string
 /** A push that leaves the policy unreadable has every open head marked again, since none of them would be otherwise. */
 async function recheckIfUnreadable(d: Pick<BridgeDeps, "readCheckPack" | "recheckOpenPulls">, tenantId: string, record: RepoRecord): Promise<void> {
   const read = await d.readCheckPack(tenantId, record.name, sourceOf(record));
-  if (read.status === "invalid" || read.status === "corrupt") await d.recheckOpenPulls(tenantId, triageStateKey(record), null);
+  if (read.status === "invalid") await d.recheckOpenPulls(tenantId, triageStateKey(record), null);
 }
 
 export function unreadablePayload(record: Pick<RepoRecord, "name" | "source">, policy: RepoPolicy, { policyUnreadable, automatic }: PolicyUnreadable, extra: Record<string, unknown>) {
@@ -369,6 +371,7 @@ async function handleInstallEvent(
     });
   }
 
+  d.installationChanged(loaded.tenantId);
   log({ level: "info", msg: "accepted", delivery, event, action, hook: loaded.credentialId, reason: "recorded_only" });
   return json(202, { status: "accepted" });
 }

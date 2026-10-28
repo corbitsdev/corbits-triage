@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError, type Transport } from "@intx/hub-client";
 import {
-  createGrant,
   ensureWorkspace,
   ensureHookCredential,
   GITHUB_HOOK_CREDENTIAL_NAME,
-  loadRepoPolicy,
   portalConnected,
   projectQueue,
   reposFromConfig,
@@ -368,37 +366,6 @@ describe("patchAppConfig CAS", () => {
   });
 });
 
-describe("access grant transport", () => {
-  test("createGrant posts an allow grant with origin role, never system", async () => {
-    const posted: unknown[] = [];
-    const transport: Transport = {
-      fetch: async (method, path, body) => {
-        posted.push({ method, path, body });
-        return { id: "grn_2" } as never;
-      },
-      subscribe: () => () => {},
-    };
-    await createGrant(transport, "tenant", {
-      roleId: "rol_owner",
-      resource: "grant:*",
-      action: "manage",
-    });
-    expect(posted).toEqual([
-      {
-        method: "POST",
-        path: "/api/tenants/tenant/grants",
-        body: {
-          roleId: "rol_owner",
-          resource: "grant:*",
-          action: "manage",
-          effect: "allow",
-          origin: "role",
-        },
-      },
-    ]);
-  });
-});
-
 describe("repository policy config", () => {
   test("reposFromConfig defaults missing policy fields to the defaults", () => {
     expect(reposFromConfig({
@@ -441,7 +408,7 @@ describe("repository policy config", () => {
 
     await saveRepoSettings(transport, "tenant", "acme/one", "github", {
       enabled: false,
-    }, null);
+    });
 
     expect(config.other).toBe(1);
     const ns = config.corbitsTriage as { confidenceFloor: number; repos: Array<Record<string, unknown>> };
@@ -456,7 +423,7 @@ describe("repository policy config", () => {
     expect(ns.repos[1]).toEqual({ name: "acme/two", connected: true, installationId: 3 });
   });
 
-  test("a repository with the same name on both hosts is read and saved on its own host only", async () => {
+  test("a repository with the same name on both hosts is saved on its own host only", async () => {
     const github = { name: "acme/api", connected: true, enabled: false, installationId: 9 };
     const bitbucket = { name: "acme/api", connected: true, enabled: true, source: "bitbucket-datacenter" };
     let config: Record<string, unknown> = { corbitsTriage: { repos: [github, bitbucket] } };
@@ -473,14 +440,11 @@ describe("repository policy config", () => {
       return (config.corbitsTriage as { repos: unknown[] }).repos;
     }
 
-    expect((await loadRepoPolicy(transport, "tenant", "acme/api", "github")).enabled).toBe(false);
-    expect((await loadRepoPolicy(transport, "tenant", "acme/api", "bitbucket-datacenter")).enabled).toBe(true);
+    await saveRepoSettings(transport, "tenant", "acme/api", "github", { enabled: true });
+    expect(repos()).toEqual([{ ...github, enabled: true }, bitbucket]);
 
-    await saveRepoSettings(transport, "tenant", "acme/api", "github", { enabled: true }, "pack_1");
-    expect(repos()).toEqual([{ ...github, enabled: true, checkPack: { name: "check-pack/acme/api", id: "pack_1" } }, bitbucket]);
-
-    await saveRepoSettings(transport, "tenant", "acme/api", "bitbucket-datacenter", { enabled: false }, null);
-    expect(repos()).toEqual([{ ...github, enabled: true, checkPack: { name: "check-pack/acme/api", id: "pack_1" } }, { ...bitbucket, enabled: false }]);
+    await saveRepoSettings(transport, "tenant", "acme/api", "bitbucket-datacenter", { enabled: false });
+    expect(repos()).toEqual([{ ...github, enabled: true }, { ...bitbucket, enabled: false }]);
   });
 });
 

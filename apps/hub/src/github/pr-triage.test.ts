@@ -71,7 +71,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
       return true;
     },
     pullHead: async (_tenantId, _record, number) => (number === 8 ? "abc123" : undefined),
-    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { repo: { id: "art_pack", version: 1 } } }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
     listener: async () => LISTENER,
     managerRuns: observed([]),
     store: stored([], s.saved),
@@ -142,10 +142,10 @@ describe("createGithubPrTriage", () => {
     expect(s.delivered).toEqual([]);
   });
 
-  test("refuses a repository whose check pack is missing or unreadable, each by name", async () => {
+  test("refuses a repository with no policy file or one triage refuses, each by name", async () => {
     const s = stub();
     await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "missing" }) })(request(), MEMBER), 409, "needs_setup");
-    await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "corrupt", reason: "repo must be owner/name.", repo: { id: "art_pack", version: 1 }, automatic: [] }) })(request(), MEMBER), 409, "check_pack_unreadable", { reason: "repo must be owner/name." });
+    await refused(await handler(ENABLED, s, { readCheckPack: async () => ({ status: "invalid", reason: "Line 1: max-size is not a check.", path: ".corbits-triage.yml", automatic: [] }) })(request(), MEMBER), 409, "policy_file_invalid", { reason: "Line 1: max-size is not a check." });
     expect(s.delivered).toEqual([]);
   });
 

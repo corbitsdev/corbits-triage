@@ -63,7 +63,8 @@ function stubDb(rows: Row[], config: unknown = CONNECTED_HELLO, opts: { missingT
   }
   const tx = {
     select() {
-      return { from() { return { where() { return { async for() { return tenantRows(); } }; } }; } };
+      // Unlocked, it is the pr-triage role lookup, and the workspace has none.
+      return { from() { return { where() { return Object.assign([], { async for() { return tenantRows(); } }); } }; } };
     },
     update() {
       return {
@@ -114,7 +115,7 @@ function packsFor(repos: string[], pack = rulePack): BridgeDeps["readCheckPack"]
   const packs = new Map(repos.map((repo) => [repo, pack(repo)]));
   return async function readCheckPack(_tenant, repo) {
     const pack = packs.get(repo);
-    return pack ? { status: "ok", pack, automatic: [], source: { repo: { id: "art_pack", version: 1 } } } : { status: "missing" };
+    return pack ? { status: "ok", pack, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } } : { status: "missing" };
   };
 }
 
@@ -174,6 +175,7 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
     },
     heard() {},
     repoChanged() {},
+    installationChanged() {},
     ...overrides,
   });
 }
@@ -519,7 +521,7 @@ describe("bridge handler", () => {
     expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_skipped_no_rules", repo: "octocat/hello" }));
   });
 
-  test("a repo without a check pack is needs-setup and does not mail", async () => {
+  test("a repo without a policy file is needs-setup and does not mail", async () => {
     const sent: Sent[] = [];
     const res = await bridge({ sent, readCheckPack: packsFor([]) })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "needs-setup" });
@@ -529,7 +531,7 @@ describe("bridge handler", () => {
   test("a policy triage can't read is queued with its reason and no pack, so the run marks the head failed", async () => {
     const sent: Sent[] = [];
     async function readCheckPack() {
-      return { status: "corrupt" as const, reason: "The policy has unknown checks: max-size.", repo: { id: "art_pack", version: 1 }, automatic: ["labels" as const] };
+      return { status: "invalid" as const, reason: "The policy has unknown checks: max-size.", path: ".corbits-triage.yml", automatic: ["labels" as const] };
     }
     const res = await bridge({ sent, readCheckPack })(githubRequest(prPayload), TARGET);
     expect(await res.json()).toEqual({ status: "queued" });
@@ -738,7 +740,7 @@ test("mailPayload mails the pack whole as `pack`, as `checkPack` only the steps 
     custom: [score],
     actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, when: { author: ["FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"] } }, { do: "labels", target: { from: "rules" } }] },
   };
-  const source = { repo: { id: "art_pack", version: 3 } };
+  const source = { file: { path: ".corbits-triage.yml", sha: "art_pack-3" } };
   const mail = mailPayload({ name: "octocat/hello" }, repoPolicy({ enabled: true }), { pack, automatic: [], source }, {});
   expect(mail.policy.source).toEqual(source);
   expect(mail.pack).toBe(pack);

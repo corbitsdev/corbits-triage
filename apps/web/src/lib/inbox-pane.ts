@@ -1,6 +1,6 @@
 import { errorText } from "@corbits/common";
 import type { Outcome } from "./held-actions.ts";
-import type { GithubPullDetail, HeldBlock, HeldDoRef, MergeBlock, MergeState, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
+import type { AutomationInput, GithubPullDetail, HeldBlock, HeldDoRef, MergeBlock, MergeState, PrGithubWriteInput, PrGithubWriteResult, PrItem } from "./hub-api.ts";
 import type { PendingDo } from "./pending-dos.ts";
 import { inboxAction, hasDraftComment, hasUncheckedCommits, primaryAction, primaryLabel, type HandledKind, type PrimaryAction } from "./inbox-view.ts";
 
@@ -148,8 +148,11 @@ export function isComposerKind(kind: PaneKind): kind is ComposerKind {
 
 type GithubWrite = (input: PrGithubWriteInput) => Promise<PrGithubWriteResult>;
 
-/** `replySent` records a reply the hub confirmed it wrote, so the row shows it posted until a new verdict; `approveDo` approves a held pack Do by reference. */
-type PaneIo = { write: GithubWrite; replySent: (item: PrItem) => void; approveDo: (ref: HeldDoRef) => Promise<void> };
+/**
+ * `replySent` records a reply the hub confirmed it wrote, so the row shows it posted until a new verdict; `approveDo`
+ * approves a held pack Do by reference; `automate` lets Triage do a kind on its own in a repository from now on.
+ */
+type PaneIo = { write: GithubWrite; replySent: (item: PrItem) => void; approveDo: (ref: HeldDoRef) => Promise<void>; automate: (input: AutomationInput) => Promise<void> };
 
 export type NumberedItem = PrItem & { number: number };
 
@@ -291,16 +294,27 @@ export function paneWrite(kind: WriteKind, item: NumberedItem, body: string): Pa
   }
 }
 
-/** A held Do is approved by reference, so pr-triage runs what the verdict recorded. Its close settles the pull request like the pane's own close. */
-export function doWrite(item: NumberedItem, pending: PendingDo, restore: () => void): PaneWrite {
+/**
+ * A held Do is approved by reference, so pr-triage runs what the verdict recorded. Its close settles the pull request
+ * like the pane's own close. `always` also lets Triage do its kind on its own in the repository once it is approved;
+ * failing that leaves the approval sent and says Triage still asks.
+ */
+export function doWrite(item: NumberedItem, pending: PendingDo, restore: () => void, always: boolean): PaneWrite {
   const closes = pending.kind === "close";
   return {
     settles: closes ? "close" : null,
     restore,
     pending: `Approving ${pending.label} on #${item.number}…`,
-    async send({ approveDo }) {
+    async send({ approveDo, automate }) {
       await approveDo(pending.ref);
-      return sent(`Approved ${pending.label} on #${item.number}; Triage will run it.`);
+      const approved = `Approved ${pending.label} on #${item.number}; Triage will run it.`;
+      if (!always) return sent(approved);
+      try {
+        await automate({ repo: item.repo, source: item.source, kind: pending.kind, list: pending.list });
+      } catch (cause) {
+        return { message: `${approved} Triage still asks before doing this in ${item.repo}. ${errorText(cause)}`, complete: false, kept: true };
+      }
+      return sent(`${approved} From now on it does this on its own in ${item.repo}.`);
     },
   };
 }

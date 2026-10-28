@@ -86,7 +86,7 @@ function routeDeps(db: Db, { log = ignore, wake = waker(), supersede = unsuperse
 
 function buildHub(db: Db, deps: RouteOptions = {}) {
   const app = buildStock(db);
-  mountTenantRoutes(app, { ...routeDeps(db, deps), now: () => new Date() });
+  mountTenantRoutes(app, routeDeps(db, deps));
   return app;
 }
 

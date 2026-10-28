@@ -6,7 +6,7 @@ import { errorText } from "@corbits/common";
 import { triageStopped } from "@corbits/triage-contracts";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { mailPayload } from "./bridge.js";
-import type { PolicyReader } from "./check-pack-store.js";
+import type { PolicyReader } from "./repo-policy.js";
 import { DeploymentNotReadyError, NoLiveDeploymentError } from "./deployment.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
 import { grantedTriageRecord, triageInputs } from "./pr-triage.js";

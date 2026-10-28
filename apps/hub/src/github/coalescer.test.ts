@@ -80,7 +80,7 @@ function delivery(event: TriageEvent, headSha: string): CoalescedEvent {
   if (derived !== event) throw new Error(`delivery ${event} reads as ${derived}`);
   return {
     tenantId: TENANT_ID, workflow: "pr-triage", record: { name: REPO, connected: true }, policy: repoPolicy({ enabled: true }),
-    pack: emptyPack(REPO), automatic: [], source: { repo: { id: "art_pack", version: 1 } }, mail, number: 8, headSha, event,
+    pack: emptyPack(REPO), automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } }, mail, number: 8, headSha, event,
   };
 }
 

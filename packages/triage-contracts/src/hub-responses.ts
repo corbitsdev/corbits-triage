@@ -146,7 +146,7 @@ export type OutcomeTimes = typeof OutcomeTimes.infer;
 export const OutcomeMedians = OutcomeTimes.merge({ prs: "number", closed: "number", p75: OutcomeTimes });
 export type OutcomeMedians = typeof OutcomeMedians.infer;
 
-/** Why the baseline is missing: no saved policy marks when triage began, or the host did not answer. */
+/** Why the baseline is missing: no verdict yet marks when triage began, or the host did not answer. */
 export const BaselineState = type("'measured' | 'no_policy' | 'source_failed'");
 export type BaselineState = typeof BaselineState.infer;
 
@@ -247,15 +247,13 @@ export type AuditEntry = typeof AuditEntry.infer;
 export const AuditLog = type({ entries: AuditEntry.array() });
 export type AuditLog = typeof AuditLog.infer;
 
-const ArtifactRefShape = type({ id: "string", version: "number" });
-
-/** The repository's policy file on its default branch; `problem` is why triage does not run on it. */
-export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "problem?": "string" });
+/** The repository's policy file on its default branch; `text` is absent when it is too large to read, `problem` is why triage does not run on it. */
+export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string" });
 export type PolicyFileStatus = typeof PolicyFileStatus.infer;
 
 const FileRefShape = type({ path: "string", sha: "string" });
 
-export const PolicySourceShape = type({ "repo?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) });
+export const PolicySourceShape = type({ "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) });
 
 const ActionKinds = type.enumerated(...ACTION_KINDS).array();
 
@@ -264,14 +262,17 @@ export const MERGE_RISKS = ["first-timers", "ci-config"] as const;
 export type MergeRisk = (typeof MERGE_RISKS)[number];
 
 /**
- * `automatic` is what Triage may do on its own in the repository; `decide` the action kinds the policy file's own
- * `decide` names; `mergeRisks` what Triage's automatic approve or merge can let in; `codeReview` whether the policy file
- * turns code review on. `invalid` is a policy file triage refuses, so nothing runs until it is fixed.
+ * `automatic` is what Triage may do on its own in the repository; `wanted` every action kind the policy has
+ * Triage do unattended on the host, which is what the role is granted under `policy` automation; `mergeRisks` what Triage's automatic approve or
+ * merge can let in; `codeReview` whether the policy file turns code review on. `invalid` is a policy file triage
+ * refuses, so nothing runs until it is fixed.
  */
-export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, decide: ActionKinds, mergeRisks: type.enumerated(...MERGE_RISKS).array(), codeReview: "boolean" })
+export const PolicyRead = type({ status: "'ok'", pack: "Record<string, unknown>", source: PolicySourceShape, automatic: ActionKinds, wanted: ActionKinds, mergeRisks: type.enumerated(...MERGE_RISKS).array(), codeReview: "boolean" })
   .or({ status: "'missing'" })
-  .or({ status: "'corrupt'", reason: "string", repo: ArtifactRefShape })
   .or({ status: "'invalid'", reason: "string", path: "string" });
+
+/** What Triage does on its own in the repository once a kind is allowed there. */
+export const TriageAutomated = type({ automatic: ActionKinds });
 
 /** Read apart from the policy because it asks GitHub, which the repositories table must not do for every repository. */
 export const PolicyFileRead = type({ file: PolicyFileStatus.or("null") });
@@ -295,27 +296,19 @@ export type PolicyPatchPreview = typeof PolicyPatchPreview.infer;
 export const PolicyPatchResponse = PolicyPatchPreview.or(PolicyExported);
 export type PolicyPatchResponse = typeof PolicyPatchResponse.infer;
 
-/**
- * One way the file's policy runs differently from the saved one: the rule or step list, its values in each (empty is
- * off or nothing), and in plain words what changes if the file is used instead.
- */
-export const PolicyDifference = type({ rule: "string", saved: "string[]", file: "string[]", instead: "string" });
-export type PolicyDifference = typeof PolicyDifference.infer;
-
-/**
- * How a repository's saved rules stand against its policy file. `start`: neither. `upgrade`: saved rules and no file.
- * `differs`: both, and they run differently, or triage refuses the file at `path` for `problem`; the saved rules apply
- * until the file matches them or the saved artifact is archived; `fixable` is false when writing the saved rules to the
- * file would change nothing it does, because the rest is what a file cannot hold. `unexpressed` lists what the saved
- * rules hold that a policy file cannot.
- */
-export const PolicyUpgrade = type({ state: "'ok'" })
-  .or({ state: "'start'" })
-  .or({ state: "'upgrade'", saved: ArtifactRefShape, unexpressed: "string[]" })
-  .or({ state: "'differs'", path: "string", saved: ArtifactRefShape, differences: PolicyDifference.array(), "problem?": "string", fixable: "boolean", unexpressed: "string[]" });
+/** `start`: the repository has no policy file, so triage runs nothing in it; `ok`: it has one. */
+export const PolicyUpgrade = type({ state: "'ok'" }).or({ state: "'start'" });
 export type PolicyUpgrade = typeof PolicyUpgrade.infer;
 
-/** Each enabled repository the member may read; `pull` is the open pull request writing the saved rules to the file, `error` why the repository could not be read. */
+/** Whether the hub may push the policy file straight to `branch`, the default branch; `reason` says why not. */
+export const PolicyPushAccess = type({ branch: "string", allowed: "true" }).or({ branch: "string", allowed: "false", reason: "string" });
+export type PolicyPushAccess = typeof PolicyPushAccess.infer;
+
+/** The pushed file's `sha`, as the next read of it answers, and the commit that wrote it. */
+export const PolicyPushed = type({ status: "'pushed'", path: "string", sha: "string", commit: "string" });
+export type PolicyPushed = typeof PolicyPushed.infer;
+
+/** Each enabled repository the member may read; `pull` is the open pull request adding its policy file, `error` why the repository could not be read. */
 export const PolicyUpgrades = type({ repos: type({ repo: "string", source: type.enumerated(...REPO_SOURCES), "upgrade?": PolicyUpgrade, "pull?": PolicyPull, "error?": "string" }).array() });
 export type PolicyUpgrades = typeof PolicyUpgrades.infer;
 

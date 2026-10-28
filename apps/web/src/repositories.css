@@ -39,7 +39,7 @@
 .repos .rp .saved.saving::before { background: transparent; border: 1px solid var(--rule-strong); box-sizing: border-box; }
 .repos .rp .saved.not-saved::before { background: var(--orange); }
 
-/* Triage switch: the one prominent block; everything under it is gated */
+/* Triage switch: the one prominent block */
 .repos .switch-card { display: flex; align-items: center; gap: 16px; margin-top: 10px; padding: 14px 16px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); }
 .repos .sc-t { flex: 1; display: grid; gap: 2px; justify-items: start; }
 .repos .sc-t label { font-size: 15px; font-weight: 700; cursor: pointer; }
@@ -51,7 +51,6 @@
 .repos .sw.lg::after { content: ""; position: absolute; inset: -9px -6px; }
 .repos .sw.lg > span { width: 20px; height: 20px; }
 .repos .sw.lg[aria-checked="true"] > span { translate: 18px 0; }
-.repos .gated { opacity: 0.35; pointer-events: none; user-select: none; transition: opacity 0.15s; }
 
 .repos .gcard > .sentences:first-child { border-top: 0; }
 .repos .outcomes-card .gcard { margin-top: 8px; }
@@ -77,7 +76,7 @@
 .repos .moved { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; font-size: 14px; }
 .repos .moved .mk .ic { width: 11px; height: 11px; stroke-width: 2.4; }
 
-/* Moving saved rules into the policy file: one card with its steps */
+/* Starting or editing the policy file: one card with its steps */
 .repos .move { container: move / inline-size; margin-top: 8px; padding: 14px 16px 16px; border: 1px solid var(--rule-strong); border-radius: var(--r-md); font-size: 14px; }
 /* The rules a move adds sit flat in its card, not as a card inside it. */
 .repos .move .gcard { padding: 0; border: 0; border-top: 1px solid var(--rule); border-radius: 0; }
@@ -103,14 +102,7 @@
 .repos .move .sentences { margin-top: 8px; }
 .repos .move .sentence:last-child { border-bottom: 0; }
 .repos .move .lead { margin: 10px 0 0; }
-.repos .vs { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 4px 8px; align-items: center; margin-top: 4px; font-size: 12px; }
-.repos .vs > span { color: var(--ink-mute); }
-.repos .vs .tokens { gap: 4px; }
-.repos .glob.ro { padding: 1px 8px; }
-.repos .glob.words { font-family: var(--font); }
-.repos .glob.ch { background: var(--heat-wash); border-color: var(--orange); font-weight: 700; }
-.repos .glob.none { border-style: dashed; color: var(--ink-mute); font-family: var(--font); }
-.repos .sentence.out { min-height: 34px; color: var(--ink-mute); font-size: 13px; }
+.repos .move .policy-text { display: block; width: 100%; min-height: 320px; margin-top: 12px; font: 400 13px/1.5 var(--mono); white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 .repos .move .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
 .repos .confirm { margin-top: 14px; padding: 10px 0 0 12px; box-shadow: inset 3px 0 0 var(--orange); }
 .repos .confirm p { margin: 0; }

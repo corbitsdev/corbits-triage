@@ -9,7 +9,7 @@ import { hasEnabledRules, repoPolicy, triageStopped, type PrTriageRow, type Repo
 import { errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./triage-queue.js";
-import type { PolicyReader } from "./check-pack-store.js";
+import type { PolicyReader } from "./repo-policy.js";
 import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
@@ -57,9 +57,8 @@ export async function triageInputs(deps: { readCheckPack: PolicyReader }, tenant
   const policy = repoPolicy(record);
   if (!policy.enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
   const pack = await deps.readCheckPack(tenantId, record.name, sourceOf(record));
-  if (pack.status === "corrupt") return failure(409, "check_pack_unreadable", "This repository's policy is unreadable. Replace it on the repository page.", { reason: pack.reason });
   if (pack.status === "invalid") return failure(409, "policy_file_invalid", `Triage does not run until ${pack.path} is fixed.`, { reason: pack.reason });
-  if (pack.status !== "ok") return failure(409, "needs_setup", "This repository still needs a policy.");
+  if (pack.status !== "ok") return failure(409, "needs_setup", "This repository has no policy file yet.");
   if (!hasEnabledRules(pack.pack)) return failure(409, "no_rules", "Switch on a rule first; with every rule off there is nothing to triage.");
   return { policy, pack };
 }

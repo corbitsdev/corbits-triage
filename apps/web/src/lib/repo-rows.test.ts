@@ -26,12 +26,14 @@ const repos = [
   repoRecord("acme/web"),
 ];
 
+const NO_KINDS = { automatic: [], wanted: [], mergeRisks: [] };
+
 function read(found: PackState["found"]): PackState {
   return { found, pending: false, error: null };
 }
 
 function policyFile(repo: string): PackState {
-  return read({ kind: "file", path: ".corbits-triage.yml", pack: recommendedPack(repo), codeReview: false });
+  return read({ kind: "file", path: ".corbits-triage.yml", pack: recommendedPack(repo), codeReview: false, ...NO_KINDS });
 }
 
 function twoHosts(github: number[], bitbucket: number[]): OpenPulls {
@@ -89,10 +91,10 @@ describe("repository rows", () => {
     expect(failed[0]?.health.label).toBe("Catching up");
   });
 
-  test("a repository whose policy file reads with a rule on is set up, with or without saved rules", () => {
+  test("a repository whose policy file reads with a rule on is set up", () => {
     const states = new Map([
       ["acme/file", policyFile("acme/file")],
-      ["acme/off", read({ kind: "file", path: ".corbits-triage.yml", pack: emptyPack("acme/off"), codeReview: false })],
+      ["acme/off", read({ kind: "file", path: ".corbits-triage.yml", pack: emptyPack("acme/off"), codeReview: false, ...NO_KINDS })],
       ["acme/refused", read({ kind: "invalid", path: ".corbits-triage.yml", reason: "bad yaml" })],
       ["acme/none", read(null)],
       ["acme/loading", { found: null, pending: true, error: null }],
@@ -126,7 +128,7 @@ describe("repository rows", () => {
 
 describe("merged repositories", () => {
   test("a stored record wins over the Bitbucket Data Center listing, which only adds what is not recorded", () => {
-    const stored = [{ name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: true, checkPack: { name: "check-pack/TRI/widgets" } }];
+    const stored = [{ name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: true }];
     const listed = [
       { name: "TRI/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
       { name: "TRI/gadgets", connected: true, source: "bitbucket-datacenter" as const, enabled: false },

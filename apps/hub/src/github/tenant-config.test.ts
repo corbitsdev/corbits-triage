@@ -84,7 +84,7 @@ describe("tenant PATCH guard", () => {
   });
 
   test("a body over the cap is refused 413 before the database is read", async () => {
-    const res = await prepareCorbitsTriagePatch({ db: untouchable, authorize: allowAll, grantEnabled: noGrant }, TENANT_ID, "prn_admin", new Request("https://hub.example/api/tenants/tnt_test", { method: "PATCH", body: "x".repeat(MAX_BODY_BYTES + 1) }));
+    const res = await prepareCorbitsTriagePatch({ db: untouchable, authorize: allowAll, grantEnabled: noGrant, now: () => new Date() }, TENANT_ID, "prn_admin", new Request("https://hub.example/api/tenants/tnt_test", { method: "PATCH", body: "x".repeat(MAX_BODY_BYTES + 1) }));
     expect(res instanceof Response && res.status).toBe(413);
   });
 });

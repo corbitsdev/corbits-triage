@@ -40,9 +40,9 @@ A policy sets which rules run on a repository's pull requests and what happens a
 }
 ```
 
-Store the policy as a text artifact through the tenant artifact routes the hub mounts from `@corbits/artifacts`: `POST /api/tenants/{tenantId}/artifacts` with `{ "mode": "text", "title": "check-pack/<owner>/<name>", "content": "<policy JSON>" }` creates it (`check-pack/bitbucket-datacenter/<owner>/<name>` for a Bitbucket Data Center repository, as `checkPackName(repo, source)` names it), and `POST /api/tenants/{tenantId}/artifacts/{id}/versions` with `title`, `content` and `expectedVersion` replaces it. The repository's record pins the artifact as `checkPack: { name, id }`, which the portal writes on save; until then the hub reads a GitHub repository's newest artifact with that title. The trigger mail names the title for the repository's host as `policy.checkPack.name`.
+The hub reads a repository's policy only from its policy file on the default branch; the trigger mail still names `policy.checkPack.name` (`checkPackName(repo, source)`) for deployments that read it.
 
-A policy file may set `extends` to another repository (`owner/name`, or Bitbucket `PROJECT/slug`) and then holds only what it overrides; a stored policy can't extend. `extendedFilePack` resolves it over that repository's file, which must not extend another: `resolvePolicy` merges built-in rules field by field, custom rules by id, and `when`, each verdict's steps and each verdict's label by what the repository sets. The hub mails the resolved pack and names what it came from as `policy.source: { repo?: { id, version }, file?: { path, sha }, sharedFile?: { repo, path, sha } }`.
+A policy file may set `extends` to another repository (`owner/name`, or Bitbucket `PROJECT/slug`) and then holds only what it overrides. `extendedFilePack` resolves it over that repository's file, which must not extend another: `resolvePolicy` merges built-in rules field by field, custom rules by id, and `when`, each verdict's steps and each verdict's label by what the repository sets. The hub mails the resolved pack and names what it came from as `policy.source: { file?: { path, sha }, sharedFile?: { repo, path, sha } }`; `repo?: { id, version }` is read only from mails and comments written while policies were stored.
 
 ## Test
 

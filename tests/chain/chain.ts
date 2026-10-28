@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
 import { listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents } from "@intx/hub-client";
+import { saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
 import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
@@ -21,9 +22,11 @@ export const JUDGED = `${OWNER}/judged`;
 export const WAITING = `${OWNER}/waiting`;
 export const PUSHED = `${OWNER}/pushed`;
 export const HELD = `${OWNER}/held`;
+export const ALWAYS = `${OWNER}/always`;
 export const WOKEN = `${OWNER}/woken`;
 export const UNWOKEN = `${OWNER}/unwoken`;
 export const DISCONNECTED = `${OWNER}/disconnected`;
+export const UNSET = `${OWNER}/unset`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -32,12 +35,13 @@ export function isLiveDeployment(status: string): boolean {
   return LIVE_DEPLOYMENT_STATUSES.has(status);
 }
 
-const MAX_FILES = "  - check: max-files-changed\n    text: Flag pull requests over 30 files changed.\n    max: 30\n";
+export const MAX_FILES = "  - check: max-files-changed\n    text: Flag pull requests over 30 files changed.\n    max: 30\n";
 const FOCUSED = "  - check: focused\n    text: Check the change is focused on one thing.\n";
 const CI_GREEN = "  - check: ci-green\n    text: CI must pass before merge.\n";
 const ASSIGN_ON_PASS = "actions:\n  pass:\n    - do: assign\n      target:\n        to: users\n        users:\n          - octocat\n";
+const REVIEW_ON_PASS = "actions:\n  pass:\n    - do: request-review\n      target:\n        to: users\n        users:\n          - hubot\n";
 
-function policy(rules: string[], extra = ""): string {
+export function policy(rules: string[], extra = ""): string {
   return `rules:\n${rules.map((rule) => `${rule}    reason: The maintainers set it.\n    evidence:\n      - maintainer-stated\n`).join("")}${extra}`;
 }
 
@@ -78,13 +82,17 @@ export function chainStack() {
     github.addRepo(WAITING, policy([CI_GREEN]));
     github.addRepo(PUSHED, policy([MAX_FILES]));
     github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
+    github.addRepo(ALWAYS, policy([MAX_FILES], REVIEW_ON_PASS));
     github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
     github.addRepo(UNWOKEN, policy([MAX_FILES]));
     github.addRepo(DISCONNECTED, policy([MAX_FILES]));
+    github.addRepo(UNSET, null);
     const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
     database = created;
     hub = await startHub(database, github, portalDir);
     workspace = await signUp(hub, database);
+    // Until a scenario switches it to policy, only posting runs on its own, so a Do in a policy is held.
+    await saveAutomationMode(workspace.transport, workspace.tenantId, "ask");
     await setUpWorkspace(workspace, github, model.origin);
     await listenerStarted(workspace);
   });

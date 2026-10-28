@@ -1,5 +1,5 @@
-import { alwaysHeld, CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, onFailText, people, VERDICT_NAMES, VERDICTS, type CatalogId, type ActionKind, type CheckPack, type CustomCheck, type RepoSource, type Step, type VerdictWord } from "@corbits/triage-contracts";
-import { doName, FOR_NAMES, forChoice, postingKinds, stepFor } from "../../lib/policy-view.ts";
+import { alwaysHeld, CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, onFailText, people, postingKinds, VERDICT_NAMES, VERDICTS, type CatalogId, type ActionKind, type CheckPack, type CustomCheck, type RepoSource, type Step, type VerdictWord } from "@corbits/triage-contracts";
+import { doName, FOR_NAMES, forChoice, stepFor } from "../../lib/policy-view.ts";
 
 function doText(step: Step): string {
   switch (step.do) {
@@ -50,7 +50,7 @@ function postText(pack: CheckPack, source: RepoSource, verdict: VerdictWord, kin
   if (kind === "labels") {
     const label = `Label “${pack.labels[verdict]}”`;
     if (allowed("labels")) return label;
-    return allowed("comment") ? `${label} (not added until you allow labels)` : `${label}${WAITS}`;
+    return allowed("comment") ? `${label} (not added: Triage may not add labels here)` : `${label}${WAITS}`;
   }
   return allowed("comment") ? `${doName(source, "comment")} with the verdict` : `Comment with the verdict${WAITS}`;
 }

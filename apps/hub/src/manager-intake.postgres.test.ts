@@ -16,7 +16,7 @@ const TENANT = "tnt_intake";
 const LISTENER = "run_listener@intake.test";
 const RECORD = { name: "acme/widgets", connected: true, enabled: true };
 const POLICY = repoPolicy(RECORD);
-const STORED = { pack: emptyPack(RECORD.name), automatic: [], source: { repo: { id: "art_pack", version: 1 } } };
+const STORED = { pack: emptyPack(RECORD.name), automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } };
 const PULL: PullRequestToReview = { headSha: "h1", open: true, draft: false, title: "Add the flag", description: "Adds it.", labels: [], diff: "diff --git a/f b/f\n+x" };
 
 type Db = ReturnType<typeof createDB>["db"];

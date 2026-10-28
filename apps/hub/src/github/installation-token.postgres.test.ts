@@ -6,6 +6,7 @@ import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { buildCredentialDelivery, createDB, dropSchema, runMigrations, schema, type DB } from "@intx/db";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { CredentialDelivery } from "@intx/types/credential-delivery";
+import { credentialBindingsFor as reviewBindingsFor } from "@corbits/pr-code-review/agents";
 import { credentialBindingsFor } from "@corbits/triage-workflows/agents";
 import { createGithubAppConnection } from "./app-connection.js";
 import { withAppLogin } from "./bridge.js";
@@ -24,10 +25,15 @@ function app(appId: string, installations: number[]): App {
   return { appId, json: JSON.stringify({ appId, privateKey: privateKey.trim() }), publicKey, installations };
 }
 
-/** GitHub as the hub sees it: each App's slug, installations and installation tokens, named `ghs_<appId>_<n>`. */
+/**
+ * GitHub as the hub sees it: each App's slug, installations, the repositories `listed` in them, and installation
+ * tokens, named `ghs_<appId>_<n>`, or `ghr_<appId>_<n>` for one asked to be narrowed, which grants what was asked
+ * unless `widen` names more permissions or `widenTo` another repository.
+ */
 function fakeGithub(apps: App[]) {
   let minted = 0;
-  const hooks = { down: false, async onMint(): Promise<void> {} };
+  const scoped: unknown[] = [];
+  const hooks = { down: false, listed: [] as string[], widen: undefined as Record<string, string> | undefined, widenTo: undefined as string | undefined, async onMint(): Promise<void> {} };
   function signer(authorization: string | null): App | undefined {
     const [header, payload, signature] = (authorization ?? "").replace(/^Bearer /, "").split(".");
     if (!payload || !signature) return undefined;
@@ -38,6 +44,9 @@ function fakeGithub(apps: App[]) {
   async function github(req: Request): Promise<Response> {
     const { pathname } = new URL(req.url);
     if (hooks.down) return new Response(null, { status: 503 });
+    if (pathname === "/installation/repositories" && req.headers.get("authorization")?.startsWith("Bearer ghs_")) {
+      return Response.json({ total_count: hooks.listed.length, repositories: hooks.listed.map((full_name) => ({ full_name })) });
+    }
     const signed = signer(req.headers.get("authorization"));
     if (!signed) return new Response(null, { status: 401 });
     if (pathname === "/app") return Response.json({ slug: `app-${signed.appId}` });
@@ -48,11 +57,20 @@ function fakeGithub(apps: App[]) {
     if (req.method === "POST" && mint && signed.installations.includes(Number(mint[1]))) {
       await hooks.onMint();
       minted += 1;
-      return Response.json({ token: `ghs_${signed.appId}_${mint[1]}_${minted}`, expires_at: new Date(Date.now() + 3_600_000).toISOString() });
+      const expires_at = new Date(Date.now() + 3_600_000).toISOString();
+      const text = await req.text();
+      if (text === "") return Response.json({ token: `ghs_${signed.appId}_${mint[1]}_${minted}`, expires_at });
+      const asked = JSON.parse(text) as { permissions: Record<string, string>; repositories: string[] };
+      scoped.push(asked);
+      const repositories = [...asked.repositories.map((name) => `acct-${mint[1]}/${name}`), ...(hooks.widenTo ? [hooks.widenTo] : [])];
+      return Response.json({
+        token: `ghr_${signed.appId}_${mint[1]}_${minted}`, expires_at, permissions: { metadata: "read", ...asked.permissions, ...hooks.widen },
+        repository_selection: "selected", repositories: repositories.map((full_name) => ({ name: full_name.slice(full_name.indexOf("/") + 1), full_name })),
+      });
     }
     return new Response(null, { status: 404 });
   }
-  return { server: Bun.serve({ port: 0, fetch: github }), hooks, minted: () => minted };
+  return { server: Bun.serve({ port: 0, fetch: github }), hooks, scoped, minted: () => minted };
 }
 
 function noLog(): void {}
@@ -359,5 +377,57 @@ test("PostgreSQL: a provider write cannot rename the App key's provider or give 
     expect((await appKeyProviderWriteRefusal(db, TENANT, "prv_app_key", patch({ name: "x" })))?.status).toBe(400);
     expect((await appKeyProviderWriteRefusal(db, TENANT, "prv_app_key", patch({ apiBaseUrl: "https://evil.test" })))?.status).toBe(400);
     expect(await appKeyProviderWriteRefusal(db, TENANT, "prv_github", patch({ apiBaseUrl: "https://api.github.com" }))).toBeUndefined();
+  });
+}, 120_000);
+
+test("PostgreSQL: code review is launched with a token that can only read the workspace's repositories GitHub still lists, one GitHub widened is never kept, and none left takes it away", async () => {
+  const theApp = app("1", [7]);
+  await withWorkspace([theApp], async function readToken({ db, cipher, origin, github }) {
+    // `acct-7/old` was renamed or transferred: naming it would make GitHub refuse the whole token.
+    const repos = ["acct-7/app", "acct-7/old"].map((name) => ({ name, connected: true, enabled: true, installationId: 7 }));
+    await db.update(schema.tenant).set({ config: { corbitsTriage: { repos } } }).where(eq(schema.tenant.id, TENANT));
+    github.hooks.listed = ["acct-7/app", "acct-7/other"];
+    const { router } = deliveries();
+    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
+    const connect = createGithubAppConnection({ db, cipher, authorize: allowAll, githubApiOrigin: origin, renewal, onConnected() {} });
+    await connect({ appId: "1", privateKey: JSON.parse(theApp.json).privateKey }, { tenantId: TENANT, principalId: "prn_admin" });
+    expect(github.scoped).toEqual([{ permissions: { contents: "read" }, repositories: ["app"] }]);
+
+    function launched(bindings: Parameters<typeof buildCredentialDelivery>[0]["bindings"]) {
+      return buildCredentialDelivery({ db, tenantId: TENANT, bindings, creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher });
+    }
+    async function secretsOf(bindings: Parameters<typeof launched>[0]) {
+      const launch = await launched(bindings);
+      return launch.ok ? [...new Set(launch.delivery?.materials.map((material) => material.secret))] : launch.reason.code;
+    }
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toEqual(["ghr_1_7_3"]);
+    expect(await secretsOf(credentialBindingsFor(["github"]))).toEqual(["ghs_1_7_1"]);
+
+    // A read token GitHub let write is refused, failing the renewal so it is retried early; the write token still
+    // renews without a failure, and code review waits for a good read token.
+    github.hooks.widen = { pull_requests: "write" };
+    await db.update(schema.credential).set({ expiresAt: new Date(Date.now() - 1000) }).where(and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github-read")));
+    await expect(renewal.renew(TENANT)).rejects.toThrow("pull_requests write");
+    expect(await secretsOf(credentialBindingsFor(["github"]))).toEqual(["ghs_1_7_4"]);
+    const write = await db.query.credential.findFirst({ where: and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github")) });
+    expect(write?.metadata).not.toHaveProperty("tokenError");
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toBe("unresolved");
+    const read = await db.query.credential.findFirst({ where: and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github-read")) });
+    expect(read).toMatchObject({ status: "expired", metadata: { tokenError: expect.stringContaining("pull_requests write") } });
+
+    github.hooks.widen = undefined;
+    github.hooks.widenTo = "acct-7/other";
+    await expect(renewal.renew(TENANT)).rejects.toThrow("acct-7/other");
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toBe("unresolved");
+
+    github.hooks.widenTo = undefined;
+    await renewal.renew(TENANT);
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toEqual(["ghr_1_7_9"]);
+
+    github.hooks.listed = [];
+    await renewal.renew(TENANT);
+    expect(await secretsOf(reviewBindingsFor(["github"]))).toBe("unresolved");
+    expect(await db.query.credential.findFirst({ where: and(eq(schema.credential.tenantId, TENANT), eq(schema.credential.name, "github-read")) })).toMatchObject({ status: "expired" });
+    expect(await secrets(db, cipher)("github-read")).toBe("");
   });
 }, 120_000);

@@ -9,6 +9,8 @@ import type { Tx } from "./admin-github-grant.js";
 import { isGithubAppJson } from "./github-app-credential-adapter.js";
 
 export const GITHUB_CREDENTIAL = "github";
+/** A token that can only read contents, minted with the `github` one: code review, which runs a model over untrusted code, binds only this. */
+export const GITHUB_READ_CREDENTIAL = "github-read";
 export const GITHUB_APP_KEY_CREDENTIAL = "github-app";
 /** The key's provider has no API origin, so stock refuses to deliver the key to any sidecar (`no_origin`). */
 const GITHUB_APP_KEY_PROVIDER = "github-app";

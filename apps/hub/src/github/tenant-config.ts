@@ -2,10 +2,11 @@ import { type } from "arktype";
 import { eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { UpdateTenant } from "@intx/types";
-import { REPO_SOURCES, repoPolicy, repoSourceOf, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { AUTOMATION_MODES, REPO_SOURCES, repoPolicy, repoSourceOf, type AutomationMode, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, isRecord } from "@corbits/common";
 import { readCappedBody } from "../read-json.js";
 import type { Tx } from "./admin-github-grant.js";
+import { grantWanted, revokeRepoKinds } from "./automation.js";
 import { failure, memberPrincipal, sourceCredentialGrant, type GrantDeps } from "./portal-credential.js";
 
 const CONFIG_KEY = "corbitsTriage";
@@ -24,7 +25,6 @@ export type RepoRecord = {
   selection?: "all" | "selected";
   enabled?: boolean;
   checks?: RepoPolicy["checks"];
-  checkPack?: RepoPolicy["checkPack"];
 };
 
 export type InstallationFields = {
@@ -68,14 +68,34 @@ export function triageNs(config: unknown): CorbitsTriageNs {
   return asRecord(ns) ?? {};
 }
 
+/** Absent means `policy`; the namespace is config a manager may write, so anything but `ask` is too. */
+export function automationMode(ns: CorbitsTriageNs): AutomationMode {
+  return ns["automation"] === "ask" ? "ask" : "policy";
+}
+
 function nsRev(ns: CorbitsTriageNs): number {
   return typeof ns.rev === "number" ? ns.rev : 0;
+}
+
+/**
+ * Repositories the patch switches off or removes. Grants name a repository alone, so one whose name another host's
+ * record keeps on is left out.
+ */
+function switchedOff(before: CorbitsTriageNs, after: CorbitsTriageNs): string[] {
+  const kept = new Set(repoRecords(after).map(triageStateKey));
+  const on = new Set(repoRecords(after).filter((row) => row.enabled === true).map((row) => row.name.toLowerCase()));
+  return repoRecords(before)
+    .filter((row) => (row.enabled === true || !kept.has(triageStateKey(row))) && !on.has(row.name.toLowerCase()))
+    .map((row) => row.name);
 }
 
 /**
  * Rewrites `tenant.config.corbitsTriage` under a row lock; undefined when the
  * tenant is missing. Bumps `rev` so a concurrent portal PATCH can 409 instead
  * of clobbering install writes. A patch returning undefined writes nothing.
+ * Every writer of the namespace comes through here, so a repository switched
+ * off or removed loses what triage may do on it on its own in the same write.
+ * The namespace's first write is a new workspace's, which starts under `policy`.
  */
 export async function patchCorbitsTriage(
   db: DB["db"],
@@ -89,7 +109,9 @@ export async function patchCorbitsTriage(
     const current = triageNs(existing);
     const patched = await patch(current, tx);
     if (patched === undefined) return current;
-    const nextNs = { ...patched, rev: nsRev(current) + 1 };
+    for (const repo of switchedOff(current, patched)) await revokeRepoKinds(tx, tenantId, repo);
+    const fresh = !(CONFIG_KEY in existing) && patched["automation"] === undefined;
+    const nextNs = { ...patched, ...(fresh && { automation: "policy" }), rev: nsRev(current) + 1 };
     await tx.update(schema.tenant)
       .set({ config: { ...existing, [CONFIG_KEY]: nextNs }, updatedAt: new Date() })
       .where(eq(schema.tenant.id, tenantId));
@@ -112,6 +134,26 @@ function renameLegacyFlag(row: LegacyRepoRecord): RepoRecord {
 
 function renameLegacyFlags(ns: CorbitsTriageNs): CorbitsTriageNs {
   return Array.isArray(ns.repos) ? { ...ns, repos: ns.repos.map(renameLegacyFlag) } : ns;
+}
+
+/**
+ * Workspaces set up before `automation` existed had every action but posting wait for a person unless allowed by hand,
+ * so they keep that under `ask`, grants included, until an owner switches. A namespace written since carries its mode,
+ * so after the first boot this finds none; a tenant with no namespace never connected a host and starts under `policy`.
+ */
+export async function keepExistingWorkspacesAsking(db: DB["db"], log: (entry: Record<string, unknown>) => void): Promise<void> {
+  const tenants = await db.select({ id: schema.tenant.id, config: schema.tenant.config }).from(schema.tenant);
+  let asking = 0;
+  for (const tenant of tenants) {
+    const ns = asRecord(tenant.config)?.[CONFIG_KEY];
+    if (!isRecord(ns) || ns["automation"] !== undefined) continue;
+    await patchCorbitsTriage(db, tenant.id, function keepAsking(current) {
+      if (current["automation"] !== undefined) return undefined;
+      asking += 1;
+      return { ...current, automation: "ask" };
+    });
+  }
+  if (asking > 0) log({ level: "info", msg: "existing_workspaces_kept_asking", workspaces: asking });
 }
 
 /** One-time rewrite of repo rows stored before `classificationAuthorized` was renamed to `enabled`. */
@@ -147,12 +189,12 @@ export async function tenantManager(
 const TriagePatch = type({
   "+": "delete",
   "rev?": "number",
+  "automation?": type.enumerated(...AUTOMATION_MODES),
   "repos?": type({
     "+": "delete",
     name: "string > 0",
     "source?": type.enumerated(...REPO_SOURCES),
     "enabled?": "boolean",
-    "checkPack?": { "+": "delete", name: "string", "id?": "string" },
   }).array(),
 });
 
@@ -175,7 +217,7 @@ function patchedRepos(stored: RepoRecord[], patch: NonNullable<TriagePatch["repo
   });
 }
 
-type PatchDeps = GrantDeps & { grantEnabled: (tx: Tx, repo: string) => Promise<void> };
+type PatchDeps = GrantDeps & { grantEnabled: (tx: Tx, repo: string) => Promise<void>; now: () => Date };
 
 /** Each change needs the grant its own route needs: switching off or removing an enabled Bitbucket repository also removes the webhook, so it is refused here, as is switching one on. */
 async function changeRefusal(d: PatchDeps, tenantId: string, principalId: string, { before, after }: RepoChange): Promise<Response | undefined> {
@@ -184,18 +226,7 @@ async function changeRefusal(d: PatchDeps, tenantId: string, principalId: string
   if (wasOn !== isOn && sourceOf(before) !== "github") {
     return failure(409, "use_bitbucket_route", "Turn Bitbucket Data Center repositories on or off with their own switch.");
   }
-  if (isOn && !wasOn) {
-    const refused = await sourceCredentialGrant(d, principalId, tenantId, before, "use");
-    if (refused) return refused;
-  }
-  const pinned = before.checkPack?.id;
-  const pin = after?.checkPack?.id;
-  if (after === undefined || pin === pinned) return undefined;
-  for (const id of [pinned, pin]) {
-    if (id !== undefined && !(await d.authorize(principalId, tenantId, `artifact:${id}`, "write"))) {
-      return failure(403, "forbidden", "You do not have permission to write that policy.");
-    }
-  }
+  if (isOn && !wasOn) return sourceCredentialGrant(d, principalId, tenantId, before, "use");
   return undefined;
 }
 
@@ -257,7 +288,14 @@ export async function prepareCorbitsTriagePatch(
     for (const { before, after } of changes) {
       if (after?.enabled === true && before.enabled !== true) await d.grantEnabled(tx, after.name);
     }
-    return patch.repos === undefined ? current : { ...current, repos: changes.flatMap((change) => change.after ?? []) };
+    const repos = patch.repos === undefined ? {} : { repos: changes.flatMap((change) => change.after ?? []) };
+    const next = { ...current, ...repos, ...(patch.automation && { automation: patch.automation }) };
+    // Switching to `ask` takes back every kind a policy granted but posting; switching to `policy` writes no grant
+    // here, the next policy read of each enabled repository does.
+    if (automationMode(current) === "policy" && automationMode(next) === "ask") {
+      for (const record of repoRecords(next).filter((each) => each.enabled === true)) await grantWanted(tx, tenantId, record.name, sourceOf(record), [], d.now());
+    }
+    return next;
   });
   if (conflicted) return conflict();
   return cloneWithBody(req, JSON.stringify(forwarded));

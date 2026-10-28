@@ -1,21 +1,9 @@
 import { useCallback } from "react";
 import { queryOptions, skipToken, useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { CATALOG_IDS, catalogCheckEnabled, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
-import { listCheckPacks } from "./check-pack.ts";
+import { CATALOG_IDS, catalogCheckEnabled, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { createHubTransport } from "./hub-transport.ts";
 import { loadRepoCheckPack, type CheckPackArtifact } from "./hub-api.ts";
 import { usePortal } from "./portal.tsx";
-
-export const CHECK_PACK_INDEX_QUERY_KEY = "check-pack-index";
-
-/** At most once per minute plus after refresh(). */
-export function checkPackIndexQuery(tenantId: string) {
-  return queryOptions({
-    queryKey: [CHECK_PACK_INDEX_QUERY_KEY, tenantId],
-    queryFn: () => listCheckPacks(createHubTransport(), tenantId),
-    staleTime: 60_000,
-  });
-}
 
 export function checkPackQuery(tenantId: string | undefined, repo: string, source: RepoSource) {
   return queryOptions({
@@ -39,6 +27,13 @@ export function useCodeReviewOn(repo: string, source: RepoSource): boolean {
   const { snapshot } = usePortal();
   const found = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, source)).data;
   return found?.kind === "file" && found.codeReview;
+}
+
+/** The kinds the repository's policy file has Triage take on its own; none while it has no file Triage runs. */
+export function useRepoWanted(repo: string, source: RepoSource): ActionKind[] {
+  const { snapshot } = usePortal();
+  const found = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, source)).data;
+  return found?.kind === "file" ? found.wanted : [];
 }
 
 export function packOf(found: CheckPackArtifact | null | undefined): CheckPack | null {

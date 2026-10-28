@@ -2,9 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type Ke
 import { Button } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useQueries } from "@tanstack/react-query";
 import type { AuthorKind, CheckPack } from "@corbits/triage-contracts";
-import type { GithubPullDetail, PortalSnapshot, PrItem } from "../lib/hub-api.ts";
+import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { useMediaQuery } from "../lib/media-query.ts";
@@ -75,11 +74,8 @@ import { packsPending, repoHref, reposNeedingSetup, triageEnabledRepos, triageRe
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
-import { findTriageRole } from "../lib/automation-grid.ts";
-import { useRoles } from "../lib/tenant-entities.ts";
-import { checkPackQuery, packOf, useCheckPacks, useRepoPack, type PackState } from "../lib/check-packs.ts";
+import { packOf, useCheckPacks, useRepoPack, useRepoWanted, type PackState } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
-import { GrantsCard, missesGrants, readGrants } from "../components/repo-panel/PolicyGrants.tsx";
 import { ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import PullToRefresh from "../components/PullToRefresh.tsx";
 import { pullUrl, viewOnHost } from "../lib/pull-link.ts";
@@ -295,6 +291,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   const { triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const pack = useRepoPack(item.repo);
+  const wanted = useRepoWanted(item.repo, item.source);
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
   const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
   const [composer, setComposer] = useState<Composer | null>(restored === null ? null : restored.composer);
@@ -352,13 +349,13 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
     }
   }
 
-  function approveDo(pending: PendingDo) {
+  function approveDo(pending: PendingDo, always: boolean) {
     if (!hasNumber(item) || doBlocked) return;
     heldDoKeys.hold(pending.sentKey);
     function release() {
       heldDoKeys.release(pending.sentKey);
     }
-    onHold(item, doWrite(item, pending, release), { reply, composer });
+    onHold(item, doWrite(item, pending, release, always), { reply, composer });
   }
 
   function run(kind: PaneKind) {
@@ -377,11 +374,11 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   function choose(entry: BarEntry) {
     if (entry.blocker !== null) return;
     if (entry.held === null) run(entry.kind);
-    else approveDo(entry.held);
+    else approveDo(entry.held, false);
   }
 
-  function chooseHeld({ pending, entry }: HeldChoice) {
-    if (entry === null) approveDo(pending);
+  function chooseHeld({ pending, entry }: HeldChoice, always: boolean) {
+    if (always || entry === null) approveDo(pending, always);
     else choose(entry);
   }
 
@@ -430,7 +427,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
             <Byline item={item} author={facts.author} detail={pull.data} />
           </header>
           <StatusLine status={status} />
-          {ended ? null : <HeldActions held={heldChoices(bar)} doBlocked={doBlocked} onApprove={chooseHeld} onHide={dos.length === 0 ? null : hideDos} />}
+          {ended ? null : <HeldActions held={heldChoices(bar)} wanted={wanted} doBlocked={doBlocked} onApprove={chooseHeld} onHide={dos.length === 0 ? null : hideDos} />}
           <Problems problems={paneProblems(item.checks, pack)} pack={pack} item={item} authorsTurn={status.tone === "author"} />
           {hasNumber(item) ? <CodeReviewThreads item={item} /> : null}
           <Description pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} />
@@ -494,16 +491,16 @@ function StoppedNotes({ items }: { items: readonly PrItem[] }) {
 }
 
 /**
- * Each repository whose saved rules still need moving into its policy file, its panel walking through it; those with
+ * Each repository whose policy file pull request is waiting for merge, its panel walking through it; the others with
  * no policy file yet are counted, however many there are.
  */
 function PolicyUpgradeNotice() {
   const rows = usePolicyUpgrades();
-  const moving = rows.filter((row) => row.upgrade?.state !== "start");
-  const starting = rows.length - moving.length;
+  const waiting = rows.filter((row) => row.pull !== undefined);
+  const starting = rows.length - waiting.length;
   return (
     <>
-      {moving.length ? <p role="status" className="note">{moving.map((row, at) => <Fragment key={`${row.source}:${row.repo}`}>{at > 0 ? " · " : null}<Link to={repoHref({ name: row.repo, source: row.source })}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
+      {waiting.length ? <p role="status" className="note">{waiting.map((row, at) => <Fragment key={`${row.source}:${row.repo}`}>{at > 0 ? " · " : null}<Link to={repoHref({ name: row.repo, source: row.source })}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
       {starting ? <p role="status" className="note"><Link to="/repositories">{repositoriesText(starting)}</Link> {starting === 1 ? "has" : "have"} no policy file yet, so Triage runs nothing there.</p> : null}
     </>
   );
@@ -564,30 +561,6 @@ function ConnectModel() {
           </div>
         </div>
       </section>
-    </div>
-  );
-}
-
-function GrantsStrip() {
-  const { snapshot, readOnly } = usePortal();
-  if (!snapshot) return null;
-  return <MissingGrants snapshot={snapshot} disabled={readOnly || snapshot.denied.repos} />;
-}
-
-/** Without a readable Triage role nothing can be allowed, so policies are only read once the roles name one, under the key the repository page uses. */
-function MissingGrants({ snapshot, disabled }: { snapshot: PortalSnapshot; disabled: boolean }) {
-  const roles = useRoles();
-  const allowable = !roles.loading && !roles.denied && !roles.unavailable && findTriageRole(roles.rows) !== undefined;
-  const enabled = triageEnabledRepos(snapshot.repos);
-  const repos = allowable ? snapshot.repos.filter((repo) => enabled.has(repo.name)) : [];
-  const policies = useQueries({ queries: repos.map((repo) => checkPackQuery(snapshot.workspace.tenantId, repo.name, repo.source)) });
-  const shown = repos
-    .map((repo, i) => ({ repo, reading: readGrants(policies[i]!, roles, repo.source) }))
-    .filter((card) => missesGrants(card.reading));
-  if (shown.length === 0) return null;
-  return (
-    <div className="grants">
-      {shown.map(({ repo, reading }, i) => <GrantsCard key={`${repo.source}:${repo.name}`} repo={repo.name} source={repo.source} disabled={disabled} reading={reading} listIndex={i} />)}
     </div>
   );
 }
@@ -777,7 +750,6 @@ export default function Inbox() {
     <div className={`inbox${selected ? " has-selection" : ""}`} ref={paneRef} tabIndex={-1}>
       <section className="panel list" aria-label="Pull requests">
         <ConnectModel />
-        <GrantsStrip />
         <div className="lh">
           <div className="lh-top">
             <h1>Triage</h1>

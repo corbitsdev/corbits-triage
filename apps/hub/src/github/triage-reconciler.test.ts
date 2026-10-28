@@ -145,7 +145,7 @@ function harness(runs: Runs | (() => Runs), prs: OpenPr[] | Record<string, OpenP
     readCheckPack: async function readCheckPack(_tenantId, repo) {
       if (options.noPack) return { status: "missing" };
       if (options.unreadable) return { status: "invalid", reason: options.unreadable, path: ".corbits-triage.yml", automatic: options.automatic ?? [] };
-      return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: options.automatic ?? [], source: { repo: { id: "art_pack", version: 1 } } };
+      return { status: "ok", pack: options.pack ?? { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } }, automatic: options.automatic ?? [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } };
     },
     send: async function send({ number, payload }) {
       const refused = options.sendErrors?.[number];
