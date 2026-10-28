@@ -67,6 +67,9 @@ jobs:
             platform:
               - 'apps/hub/**'
               - 'apps/sidecar/**'
+              - 'apps/web/scripts/**'
+              - 'apps/web/src/lib/**'
+              - 'tooling/**'
               - 'packages/**'
               - 'tests/chain/**'
               - 'vendor/**'
