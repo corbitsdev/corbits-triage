@@ -1,21 +1,10 @@
 /* Setup screens, scoped to their root. */
 .setup-flow {
-  --white: #ffffff;
-  --ink: #000000;
-  --green: #7b9974;
-  --rule: rgba(92, 85, 85, 0.18);
-  --rule-strong: rgba(92, 85, 85, 0.45);
-  --fill: rgba(92, 85, 85, 0.06);
-  --fill-hover: rgba(92, 85, 85, 0.1);
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 16px;
-  --focus: 0 0 0 3px rgba(233, 132, 40, 0.35);
   min-height: 0;
   height: 100%;
   overflow: auto;
-  background: var(--white);
-  color: var(--ink);
+  background: var(--background);
+  color: var(--foreground);
   font-size: 15px;
   line-height: 1.5;
 }
@@ -37,14 +26,14 @@ body:has(.setup-flow),
   width: 100%;
   min-height: 40px;
   padding: 0 12px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--rule-strong);
-  background: var(--white);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-strong);
+  background: var(--background);
   font-size: 14px;
 }
 .setup-flow textarea { padding: 10px 12px; min-height: 96px; }
 .setup-flow input:focus,
-.setup-flow textarea:focus { outline: none; border-color: var(--heat); box-shadow: var(--focus); }
+.setup-flow textarea:focus { outline: none; border-color: var(--primary); box-shadow: var(--focus); }
 
 .signin {
   min-height: 100svh;
@@ -54,7 +43,7 @@ body:has(.setup-flow),
   justify-content: center;
   gap: 24px;
   padding: 48px 16px;
-  background: var(--paper);
+  background: var(--card);
 }
 /* From 721px the page cannot scroll (index.css), so the sign-in page scrolls itself. */
 @media (min-width: 721px) {
@@ -74,18 +63,18 @@ body:has(.setup-flow),
   width: 100%;
   max-width: 400px;
   padding: 32px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
-  background: var(--sheet);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
 }
 .signin-panel h1 { font-size: 1.75rem; font-weight: 650; line-height: 1.1; letter-spacing: -0.03em; }
-.signin-head p { margin-top: 8px; color: var(--ink-mute); }
+.signin-head p { margin-top: 8px; color: var(--muted-foreground); }
 .signin-form { display: grid; gap: 16px; }
 .signin-field { display: grid; gap: 6px; font-size: 0.875rem; font-weight: 500; }
 .signin-error, .signin-notice { padding: 8px 12px; border: 1px solid; border-radius: var(--radius-sm); }
-.signin-error { border-color: var(--bad); color: var(--bad); }
-.signin-notice { border-color: var(--rule); color: var(--ink-soft); }
-.signin-footer { color: var(--ink-mute); text-align: center; }
+.signin-error { border-color: var(--destructive); color: var(--destructive); }
+.signin-notice { border-color: var(--border); color: var(--foreground); }
+.signin-footer { color: var(--muted-foreground); text-align: center; }
 @media (max-width: 720px) {
   .signin { align-items: stretch; justify-content: flex-start; padding-top: 32px; }
   .signin-footer { text-align: start; }
@@ -107,8 +96,8 @@ body:has(.setup-flow),
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }
 .setup-step {
   display: grid;
@@ -116,28 +105,28 @@ body:has(.setup-flow),
   gap: 14px;
   padding: 18px 20px;
 }
-.setup-step + .setup-step { border-top: 1px solid var(--rule); }
+.setup-step + .setup-step { border-top: 1px solid var(--border); }
 .setup-step-no {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  border: 1.5px solid var(--rule-strong);
+  border: 1.5px solid var(--border-strong);
   display: grid;
   place-items: center;
-  font: 700 12px var(--mono);
+  font: 700 12px var(--font-mono);
 }
 .setup-step-no svg { width: 15px; height: 15px; }
-.setup-step.is-done .setup-step-no { background: var(--green); border-color: var(--green); }
-.setup-step.is-active .setup-step-no { border: 2px solid var(--ink); }
+.setup-step.is-done .setup-step-no { background: var(--ok); border-color: var(--ok); }
+.setup-step.is-active .setup-step-no { border: 2px solid var(--foreground); }
 .setup-step h2 { margin: 3px 0 2px; font-size: 15px; font-weight: 700; }
 .setup-step p { font-size: 13px; }
 .setup-step-body { display: grid; gap: 14px; min-width: 0; }
 .setup-flow .task-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
 .setup-flow .setup-help {
-  border: 1px solid var(--rule);
-  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
   padding: 12px 14px;
-  background: var(--white);
+  background: var(--background);
 }
 .setup-flow .setup-help > summary { font-size: 14px; }
 .setup-flow details.setup-help[open] { gap: 14px; }
@@ -155,10 +144,10 @@ body:has(.setup-flow),
 .setup-flow .file-picker,
 .setup-flow .file-loaded,
 .setup-flow .setup-waiting,
-.setup-flow .success-callout { border-radius: var(--r-md); background: var(--white); border-color: var(--rule-strong); }
+.setup-flow .success-callout { border-radius: var(--radius-xl); background: var(--background); border-color: var(--border-strong); }
 .setup-flow .success-callout svg,
-.setup-flow .file-loaded svg { color: var(--green); }
-.setup-flow .repository-list { border: 1px solid var(--rule); border-radius: var(--r-md); }
+.setup-flow .file-loaded svg { color: var(--ok); }
+.setup-flow .repository-list { border: 1px solid var(--border); border-radius: var(--radius-xl); }
 .setup-flow .install-row {
   display: flex;
   justify-content: space-between;
@@ -167,7 +156,7 @@ body:has(.setup-flow),
   padding: 9px 12px;
   font-size: 13px;
 }
-.setup-flow .install-row + .install-row { border-top: 1px solid var(--rule); }
+.setup-flow .install-row + .install-row { border-top: 1px solid var(--border); }
 .setup-flow .catching-up { display: inline-flex; align-items: center; gap: 8px; }
 
 /* Decision model presets as radio cards. */
@@ -189,9 +178,9 @@ body:has(.setup-flow),
   height: 16px;
   flex: none;
   border-radius: 50%;
-  border: 1.5px solid var(--rule-strong);
+  border: 1.5px solid var(--border-strong);
 }
-:is(.setup-flow, .settings) .segmented[role="radiogroup"] button[aria-checked="true"]::before { border: 5px solid var(--ink); }
+:is(.setup-flow, .settings) .segmented[role="radiogroup"] button[aria-checked="true"]::before { border: 5px solid var(--foreground); }
 
 @media (max-width: 720px) {
   .setup-flow { padding: 20px 16px 40px; }

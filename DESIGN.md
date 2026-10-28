@@ -3,32 +3,24 @@ version: alpha
 name: Corbits Triage
 description: Night instrument. A graphite rail wrapping a light working pane, one heat signal for attention.
 colors:
-  primary: "#d44510"
-  paper: "#e5e7ed"
-  pane: "#f6f7f9"
-  sheet: "#fdfdfe"
-  inset: "#d4d7e0"
-  ink: "#12141a"
-  ink-soft: "#2e323c"
-  ink-mute: "#575d68"
-  rule: "#c3c7d1"
-  rule-strong: "#959ba8"
-  heat: "#d44510"
-  heat-hover: "#b83a0c"
-  heat-press: "#9c300a"
-  heat-ink: "#1c0b06"
-  heat-wash: "#ead0c4"
+  background: "#ffffff"
+  foreground: "#2b2627"
+  card: "#f2f4f5"
+  muted: "#eceff1"
+  muted-foreground: "#5c5555"
+  border: "#dfe3e6"
+  border-strong: "#c3ccd2"
+  primary: "#e98428"
+  primary-active: "#d4791f"
+  primary-foreground: "#2b2627"
+  secondary: "#c5d2de"
+  success: "#c1d1be"
+  ok: "#2f7c40"
+  destructive: "#9e2b25"
+  ring: "#9a5416"
+  heat-wash: "#fbe1c9"
   rail: "#0a0c11"
-  rail-text: "#e8eaf0"
   rail-mute: "#8b909c"
-  rail-line: "#16181e"
-  rail-current: "#2a1511"
-  ok: "#1d6b42"
-  bad: "#b1352c"
-  ring: "#b83a0c"
-  night-field: "#141821"
-  night-line: "#2a2f3a"
-  night-bad: "#f07a6a"
 typography:
   page-title:
     fontFamily: Red Hat Display
@@ -80,85 +72,85 @@ spacing:
   topbar: 52px
 components:
   button:
-    backgroundColor: "{colors.sheet}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.background}"
+    textColor: "{colors.foreground}"
     rounded: "{rounded.sm}"
     height: 40px
     padding: 0 14px
   button-hover:
-    backgroundColor: "{colors.inset}"
+    backgroundColor: "{colors.muted}"
   button-primary:
-    backgroundColor: "{colors.heat}"
-    textColor: "{colors.heat-ink}"
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.primary-foreground}"
     rounded: "{rounded.sm}"
     height: 40px
   button-primary-hover:
-    backgroundColor: "{colors.heat-hover}"
+    backgroundColor: "{colors.primary-active}"
   button-primary-active:
-    backgroundColor: "{colors.heat-press}"
+    backgroundColor: "{colors.primary-active}"
   button-disabled:
-    backgroundColor: "{colors.inset}"
-    textColor: "{colors.ink-mute}"
+    backgroundColor: "{colors.muted}"
+    textColor: "{colors.muted-foreground}"
   field:
-    backgroundColor: "{colors.sheet}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.background}"
+    textColor: "{colors.foreground}"
     rounded: "{rounded.sm}"
     height: 40px
   rail:
     backgroundColor: "{colors.rail}"
-    textColor: "{colors.rail-text}"
+    textColor: "{colors.background}"
     width: 212px
   rail-item-current:
-    backgroundColor: "{colors.rail-current}"
-    textColor: "{colors.heat}"
+    backgroundColor: "{colors.primary-foreground}"
+    textColor: "{colors.primary}"
   rail-meta:
     backgroundColor: "{colors.rail}"
     textColor: "{colors.rail-mute}"
   rail-edge:
-    backgroundColor: "{colors.rail-line}"
+    backgroundColor: "{colors.border}"
   room:
-    backgroundColor: "{colors.paper}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.card}"
+    textColor: "{colors.foreground}"
   secondary-text:
-    backgroundColor: "{colors.pane}"
-    textColor: "{colors.ink-soft}"
+    backgroundColor: "{colors.card}"
+    textColor: "{colors.foreground}"
   divider:
-    backgroundColor: "{colors.rule}"
+    backgroundColor: "{colors.border}"
   field-border:
-    backgroundColor: "{colors.rule-strong}"
+    backgroundColor: "{colors.border-strong}"
   focus-ring:
     backgroundColor: "{colors.ring}"
   status-ok:
-    backgroundColor: "{colors.pane}"
+    backgroundColor: "{colors.card}"
     textColor: "{colors.ok}"
   status-bad:
-    backgroundColor: "{colors.pane}"
-    textColor: "{colors.bad}"
+    backgroundColor: "{colors.card}"
+    textColor: "{colors.destructive}"
   login-field-border:
-    backgroundColor: "{colors.night-line}"
+    backgroundColor: "{colors.border-strong}"
   login-error:
     backgroundColor: "{colors.rail}"
-    textColor: "{colors.night-bad}"
+    textColor: "{colors.destructive}"
   pane:
-    backgroundColor: "{colors.pane}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.card}"
+    textColor: "{colors.foreground}"
     rounded: "{rounded.md}"
   topbar:
-    backgroundColor: "{colors.pane}"
+    backgroundColor: "{colors.card}"
     height: 52px
   priority-p0:
-    backgroundColor: "{colors.heat}"
-    textColor: "{colors.heat-ink}"
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.primary-foreground}"
   priority-p1:
     backgroundColor: "{colors.heat-wash}"
-    textColor: "{colors.heat-ink}"
+    textColor: "{colors.primary-foreground}"
   toast:
     backgroundColor: "{colors.rail}"
-    textColor: "{colors.rail-text}"
+    textColor: "{colors.background}"
     rounded: "{rounded.md}"
   login-field:
-    backgroundColor: "{colors.night-field}"
-    textColor: "{colors.rail-text}"
+    backgroundColor: "{colors.rail}"
+    textColor: "{colors.background}"
     rounded: "{rounded.sm}"
     height: 40px
 ---
@@ -171,18 +163,13 @@ The operator sits in a queue for hours. The room is quiet, dense, and technical.
 
 ## Colors
 
-Materials, not decoration:
+The palette is the `@corbits/react-ui` theme. Portal CSS reads the library's tokens (`background`, `foreground`, `card`, `muted`, `muted-foreground`, `border`, `border-strong`, `primary`, `primary-active`, `primary-foreground`, `secondary`, `success`, `ok`, `destructive`, `ring`) and defines only what the theme lacks:
 
-- **Rail (#0a0c11):** Graphite tool body. The sidebar, toasts, mobile nav, and the login room. It wraps the working pane with an 8px gutter.
-- **Pane (#f6f7f9):** The working surface inside the rail. Inside the pane, the `paper` token resolves to `pane`.
-- **Paper (#e5e7ed):** The room outside the pane, such as the Connect task.
-- **Sheet (#fdfdfe):** Controls and briefing cells lifted off the pane.
-- **Inset (#d4d7e0):** Grouped fields, hover and pressed states, code wash.
-- **Ink (#12141a):** Primary text, never pure black. `ink-mute` (#575d68) meets 4.5:1 on paper for supporting copy.
-- **Rule (#c3c7d1) and rule-strong (#959ba8):** Hairline structure and control borders.
-- **Heat (#d44510):** Attention only: the primary action, the current nav item, P0, and the human-gate mark. Text on heat uses `heat-ink`, not white.
-- **Ok (#1d6b42) and bad (#b1352c):** Status, always paired with a readable label. Never "reject".
-- **Night tokens:** Fields and errors on the graphite login room (`night-field`, `night-line`, `night-bad`).
+- **Heat wash (#fbe1c9):** the soft primary fill behind a human-gated mark or a P1 priority.
+- **Rail (#0a0c11) and rail mute (#8b909c):** the graphite mobile nav and its labels.
+- **Blue (#607c9a):** the author dot in the inbox.
+
+Primary is attention only: the primary action, the current nav item, P0, and the human-gate mark. Text on primary uses `primary-foreground`, not white. Ok and destructive are status, always paired with a readable label.
 
 ## Typography
 
