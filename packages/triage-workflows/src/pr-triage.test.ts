@@ -410,6 +410,16 @@ describe("pr-triage body", () => {
     expect((await triage(labelOnly, { files: [migration] })).verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", target: { labels: ["risk: high"] } }] });
   });
 
+  test("a size rule's label comes off once the pull request is back under the limit, and a person's labels stay", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "max-lines-changed-per-file": { enabled: true, onFail: "label", maxFileLines: 1 } } };
+    const over = await triage(pack, { files: [{ ...FLAG, additions: 2 }], labels: ["needs-design"] });
+    expect(over.verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", target: { labels: ["size: large"], unlabel: [] } }] });
+    const under = await triage(pack, { files: [FLAG], labels: ["needs-design", "Size: Large"] });
+    expect(under.verdict).toMatchObject({ verdict: "pass", actions: [{ kind: "labels", target: { labels: [], unlabel: ["Size: Large"] } }] });
+    expect(under.requests).toContainEqual({ method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Size%3A%20Large` });
+    expect((await triage(pack, { files: [FLAG], labels: ["needs-design"] })).verdict).toMatchObject({ actions: [] });
+  });
+
   test("a labelling judged rule is asked but never asks the verdict question or decides the verdict", async () => {
     const { path, judged, verdict } = await triage({ ...emptyPack(REPO), checks: { "ci-green": { enabled: true }, docs: { enabled: true, onFail: "label" } } });
     expect(path).toEqual(VERDICT_PATH);

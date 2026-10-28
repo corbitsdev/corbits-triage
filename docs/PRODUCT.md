@@ -331,9 +331,10 @@ maintainer instead of the author, and `label` makes the rule label the pull
 request instead of deciding its verdict. A top-level `onFail` is the default
 for the file's rules. With `label`, when the rule fails or stays unsure, the
 verdict is unchanged, the comment notes it, and an Add labels action adds its label (`size: large`,
-`docs: check`, `<id>: check`, or the rule's own `label`), which stays until a
-person removes it, except the level labels of sensitive paths and risk, which
-Triage takes back when the level changes. A label starting `Triage:` or `rule: `, or a verdict label,
+`docs: check`, `<id>: check`, or the rule's own `label`). The label follows
+the rule: the same action takes it back once the rule passes, and takes back
+a level label of sensitive paths or risk when the level changes. A label a
+person added that the policy does not name for a rule is never taken back. A label starting `Triage:` or `rule: `, or a verdict label,
 is refused. On Bitbucket Data Center it is only noted.
 
 ```yaml
