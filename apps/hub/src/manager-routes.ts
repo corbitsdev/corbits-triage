@@ -45,7 +45,7 @@ const Report = type({
 const DoneBody = PullRequest.and({ reviewers: ReviewerState.array(), "wait?": "boolean", "report?": Report, "approvals?": { results: "Record<string, unknown>[]" } });
 const ReviewerResultBody = PullRequest.and(StageResult);
 
-const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array(), "waitingSince?": "string" } as const;
+const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array(), "waitingSince?": "string", "headSince?": "string" } as const;
 const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean", ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 const Recorded = type({ recorded: "boolean" });
@@ -117,7 +117,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede }: 
     TAKE_PATH,
     describeRoute({
       summary: "Take the pull request's pending events as its manager",
-      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded, \`request\`, the newest pull request mail the hub recorded, and \`waitingSince\`, when the passes on the head began waiting for its CI while the last of them still does. ${NOT_MANAGER}`,
+      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded, \`request\`, the newest pull request mail the hub recorded, \`waitingSince\`, when the passes on the head began waiting for its CI while the last of them still does, and \`headSince\`, when the head's first closed pass was taken. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("The pass to work on, or idle", Taken), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),

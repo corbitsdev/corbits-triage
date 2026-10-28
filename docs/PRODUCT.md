@@ -244,7 +244,8 @@ Triage checks a new head at once. When the only rules it cannot confirm yet
 are the host's own (CI still running, mergeability not computed yet), the head
 gets no verdict yet: Triage shows **Waiting for CI**, posts nothing, runs no
 action, and decides once they are done, as soon as a check fails, or after an
-hour at most. A head with no checks is taken as having no CI. Triage again,
+hour at most. When CI green is on, a head with no checks within 2 minutes of
+Triage first seeing it is taken as having no CI. Triage again,
 and a head's last retry, decide at once. On GitHub a
 pull request labelled `Triage: Not Ready` or `Triage: Needs Human Review`
 keeps it, so a push that leaves the verdict as it was changes no label; any

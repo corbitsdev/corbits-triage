@@ -83,6 +83,8 @@ interface Stamp {
   source?: PolicySource;
   repoSource: RepoSource;
   noWait: boolean;
+  /** The head is new enough that its CI may not have started, so no checks yet reads as checks pending. */
+  ciStarting: boolean;
   /** The mail names blocks, so the comment lists no Dos and approve and merge wait in Needs you. */
   blocksOn: boolean;
   /** The head the mail names for each pull request. */
@@ -361,7 +363,9 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     }, { repo, policy, pack, events, docs, templates, source: stamp.repoSource });
     if ("error" in item) return degraded(n, item.error);
     const openPullsRead = openPulls?.get(n);
-    const facts = openPullsRead ? { ...item.facts, openPulls: openPullsRead } : item.facts;
+    // Only where CI green holds the verdict: the head waits as pending and its manager reads it again once the grace ends.
+    const started = stamp.ciStarting && item.facts.checks === "none" && catalogCheckEnabled(pack, "ci-green") ? { ...item.facts, checks: "pending" as const } : item.facts;
+    const facts = openPullsRead ? { ...started, openPulls: openPullsRead } : started;
     return { ...item, facts, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
   }
 
@@ -439,7 +443,7 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
   const appLogin = trusted && typeof request?.appLogin === "string" ? { appLogin: request.appLogin } : {};
   if (request?.kind === "history") {
     const limit = request.limit ?? HISTORY_LIMIT;
-    const stamp: Stamp = { automatic: [], repoSource: "github", noWait: false, blocksOn: false, heads: new Map(), ...appLogin };
+    const stamp: Stamp = { automatic: [], repoSource: "github", noWait: false, ciStarting: false, blocksOn: false, heads: new Map(), ...appLogin };
     if (typeof repo !== "string") return fail("facts: input has no repo", stamp.automatic);
     if (!Number.isSafeInteger(limit) || (limit as number) < 1) return fail("facts: history limit must be a positive integer", stamp.automatic);
     return fetchHistory({ host: hostFor("github"), stamp }, repo, limit as number);
@@ -462,7 +466,7 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
   const repoSource = repoSourceOf(request.repoSource);
   const source = policySource(request);
   const items = request.kind === "pr" && Array.isArray(request.items) ? request.items : undefined;
-  const read = { host: hostFor(repoSource), stamp: { automatic: granted, repoSource, noWait: request.noWait === true, blocksOn: Array.isArray(request.blocks) && request.blocks.length > 0, heads: mailHeads(request), ...(source && { source }), ...appLogin } };
+  const read = { host: hostFor(repoSource), stamp: { automatic: granted, repoSource, noWait: request.noWait === true, ciStarting: request.ciStarting === true, blocksOn: Array.isArray(request.blocks) && request.blocks.length > 0, heads: mailHeads(request), ...(source && { source }), ...appLogin } };
   if (request.kind === "backlog") return fetchListed(read, repo, undefined, true, policy, pack, ["catch-up"]);
   if (request.kind !== "pr") return fail("facts: input is neither pr nor backlog", granted);
   // A catch-up mail names several heads as `items`; each is triaged like a single mail and evaluated in this order.

@@ -9,7 +9,7 @@ export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "s
 export type Reviewer = typeof Reviewer.infer;
 
 const TakenEvent = type({ key: "string", event: { type: "string", head: "string", payload: "Record<string, unknown>" } });
-const Latest = { "request?": "Record<string, unknown>", reviewers: Reviewer.array(), "waitingSince?": "string" } as const;
+const Latest = { "request?": "Record<string, unknown>", reviewers: Reviewer.array(), "waitingSince?": "string", "headSince?": "string" } as const;
 const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 
@@ -19,19 +19,23 @@ const CI_WAIT_MS = 60 * 60_000;
 /** How often a manager reads its waiting head's CI again itself, for a host whose builds send no event when they finish. */
 const RECHECK_MS = 5 * 60_000;
 
+/** How long a head with no checks yet waits for its CI to start before it is taken as having none. */
+const CI_START_MS = 2 * 60_000;
+
 /** Polls come about 30 seconds apart, so a window of a minute holds each recheck boundary at least once. */
 const RECHECK_WINDOW_MS = 60_000;
 
-/** Whether the head, waiting for CI `elapsed` milliseconds, crossed a recheck boundary since about the last poll. */
+/** Whether the head, waiting for CI `elapsed` milliseconds, reached its CI start grace or a recheck since about the last poll. */
 function rechecks(elapsed: number): boolean {
-  return Math.floor(elapsed / RECHECK_MS) > Math.floor(Math.max(0, elapsed - RECHECK_WINDOW_MS) / RECHECK_MS);
+  const before = Math.max(0, elapsed - RECHECK_WINDOW_MS);
+  return Math.floor(elapsed / RECHECK_MS) > Math.floor(before / RECHECK_MS) || (before < CI_START_MS && elapsed >= CI_START_MS);
 }
 
 /**
  * What a pass works on. `run` when there is anything to do: a pass, a reviewer the manager waits for is past its
  * deadline, or its head waited out its CI. `approvals` are the held Dos approved since, each run as pr-triage runs one.
  * `triage` when the head is triaged: `taken` is the newest pull request mail the hub recorded, deciding without the
- * host's checks once the head waited out its CI. `review` or `reviewFailed`, and `judge` or `judgeFailed`, is what one
+ * host's checks once the head waited out its CI, and as `ciStarting` while a head with no checks yet may still get some. `review` or `reviewFailed`, and `judge` or `judgeFailed`, is what one
  * of its own reviewers reported on `head` on this pass; `verdict` is the judge's verdict on `head`, reported on this
  * pass or an earlier one. `waitingSince` is when the head started waiting for its CI, while it still does.
  */
@@ -117,7 +121,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const answer = await asManager(ctx, mail, "take", mail.pullRequest, Taken);
   const nothing = { run: false, approvals: [], triage: false, overdue: false };
   if (answer === undefined) return { ...nothing, refused: true, reviewers: [] };
-  const { request, reviewers, waitingSince } = answer;
+  const { request, reviewers, waitingSince, headSince } = answer;
   const head = answer.outcome === "pass" ? answer.pass.head : request?.["headSha"];
   if (typeof head !== "string") return { ...nothing, reviewers };
   const events = answer.outcome === "pass" ? answer.events : [];
@@ -131,7 +135,8 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const recheck = waited !== undefined && !waitedOut && rechecks(waited);
   // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage.
   const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue || waitedOut || recheck);
-  const taken = request && (waitedOut ? { ...request, noWait: true } : request);
+  const starting = headSince === undefined || Date.now() - Date.parse(headSince) < CI_START_MS;
+  const taken = request && { ...request, ...(waitedOut && { noWait: true }), ...(!waitedOut && starting && { ciStarting: true }) };
   const verdict = report.judge ?? storedVerdict(reviewers, head);
   const waiting = waitingSince !== undefined && !waitedOut;
   return { run: answer.outcome === "pass" || overdue || waitedOut || recheck, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }) };

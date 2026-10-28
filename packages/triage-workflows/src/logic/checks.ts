@@ -166,6 +166,8 @@ const CI_RULE: Record<PrFacts["checks"], CiRule> = {
   none: { status: "none", reason: "no checks configured", failed: false, names: () => [] },
 };
 
+const CI_NOT_STARTED = "checks have not started yet";
+
 const STATE_RANK: Record<WorkflowState, number> = {
   "ready-monitoring": 0,
   "awaiting-review": 1,
@@ -470,11 +472,12 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
     result(NOT_A_DRAFT, facts.draft, facts.draft ? "pull request is a draft" : "pull request is not a draft", [], { kind: "values", values: { isDraft: facts.draft } });
     if (on("ci-green")) {
       const ci = CI_RULE[facts.checks];
-      if (ci.failed === true) add("ci-green", "blocked", ci.reason);
-      if (ci.failed === null) add("ci-green", "awaiting-review", ci.reason);
+      const reason = facts.checks === "pending" && facts.pendingChecks.length === 0 ? CI_NOT_STARTED : ci.reason;
+      if (ci.failed === true) add("ci-green", "blocked", reason);
+      if (ci.failed === null) add("ci-green", "awaiting-review", reason);
       // Cancelled checks are settled until re-run, so only running ones could not be checked yet.
-      const output: CheckOutput = facts.checks === "pending" ? { kind: "could-not-check", reason: ci.reason } : { kind: "values", values: { status: ci.status } };
-      result("ci-green", ci.failed, ci.reason, ci.names(facts), output);
+      const output: CheckOutput = facts.checks === "pending" ? { kind: "could-not-check", reason } : { kind: "values", values: { status: ci.status } };
+      result("ci-green", ci.failed, reason, ci.names(facts), output);
     }
     if (on("no-merge-conflicts") && facts.mergeable === false) add("no-merge-conflicts", "blocked", "merge conflicts with base");
     const requested = facts.changesRequested;

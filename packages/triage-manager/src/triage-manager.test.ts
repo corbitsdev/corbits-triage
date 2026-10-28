@@ -61,9 +61,9 @@ function mailEvent(head: string, payload: Record<string, unknown>, key = "evt_1"
 }
 
 const REQUEST = hubRequest(RULES);
-const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, request: REQUEST, reviewers: [] };
+const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z" };
 const RESUMED = { ...PASS, pass: { ...PASS.pass, takes: 2 }, resumed: true };
-const IDLE = { outcome: "idle", request: REQUEST, reviewers: [] };
+const IDLE = { outcome: "idle", request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z" };
 const ENDED = { outcome: "ended" };
 const MORE = { outcome: "more", wait: false };
 const REFUSED = 409;
@@ -266,6 +266,19 @@ describe("triage-manager", () => {
     expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, true]);
     expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
     expect(writes.filter((write) => write.path.endsWith("/comments"))).toEqual([]);
+  });
+
+  test("a new head with no checks yet waits two minutes for its CI to start, then is read again and decided as having none", async () => {
+    const { writes, host } = githubHost();
+    const fresh = { ...PASS, headSince: undefined };
+    const first = fakeHub({ takes: [fresh], dones: [ENDED] });
+    await runMail(github, wake(), host, first.hub);
+    expect(doneBody(first.calls)).toMatchObject({ wait: true, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true, reason: expect.stringContaining("checks have not started yet") }) } });
+    expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
+    const since = new Date(Date.now() - 2 * 60_000 - 10_000).toISOString();
+    const later = fakeHub({ takes: [{ ...IDLE, waitingSince: since, headSince: since }], dones: [ENDED] });
+    await runMail(github, wake(), host, later.hub);
+    expect(doneBody(later.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "pass" }) } });
   });
 
   test("a head waiting for CI is read again every five minutes without an event, so CI no host event reports still settles it", async () => {

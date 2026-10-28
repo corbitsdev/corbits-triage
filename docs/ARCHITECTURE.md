@@ -371,7 +371,11 @@ any other tenant or an unknown sender.
   hub, which mails the live manager, and a new head's pass starts over. A
   pull request with nothing outstanding has no manager. The hub keeps, on
   the claim, whether each closed pass waited for CI, and answers take with
-  `waitingSince`, when the head's unbroken run of waiting passes began. Every
+  `waitingSince`, when the head's unbroken run of waiting passes began, and
+  `headSince`, when the head's first closed pass was taken. Until 2 minutes
+  after that, a pass sends `ciStarting`, and where CI green is on facts read a
+  head with no checks as checks pending ("checks have not started yet"), so
+  it waits for its CI to start; the pass at 2 minutes reads it again. Every
   5 minutes of that wait a pass triages the head again with no event, which
   settles a Bitbucket head, whose builds send no webhook, and a GitHub head
   whose `check_run` never arrived. A pass whose head has waited 60 minutes is

@@ -53,7 +53,7 @@ const NewEvent = EventState.omit("receivedAt", "consumedBy", "consumedAt");
 export type PullRequestRef = { source: RepoSource; repo: string; number: number };
 type TakenEvent = { key: string; event: ManagerEvent };
 
-type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[]; waitingSince?: string };
+type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[]; waitingSince?: string; headSince?: string };
 type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean } & Latest);
 type ClosedPass = Claim["history"][number];
 /** What a pass reports as done closes it: the head it worked on, whether its verdict waits for the host's checks, or the mirror request of the verdict it posted. */
@@ -390,12 +390,16 @@ function waitingSince(history: Claim["history"], head: string): string | undefin
   return since;
 }
 
-/** The newest pull request mail, the claim's reviewers, and since when `head`, the pass's or else that mail's, has waited for its CI. */
+/**
+ * The newest pull request mail, the claim's reviewers, and for `head`, the pass's or else that mail's, since when it
+ * has waited for its CI and when its first closed pass was taken.
+ */
 async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head?: string): Promise<Latest> {
   const request = await newestRequest(tx, tenantId, pr);
   const named = head ?? request?.["headSha"];
   const since = typeof named === "string" ? waitingSince(claim.history, named) : undefined;
-  return { ...(request && { request }), reviewers: claim.reviewers, ...(since !== undefined && { waitingSince: since }) };
+  const first = claim.history.find((pass) => pass.head === named)?.takenAt;
+  return { ...(request && { request }), reviewers: claim.reviewers, ...(since !== undefined && { waitingSince: since }), ...(first !== undefined && { headSince: first }) };
 }
 
 /** The newest pull request mail recorded for the pull request, or for its `head`, which triage runs on. */
