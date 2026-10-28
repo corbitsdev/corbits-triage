@@ -7,7 +7,7 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, AWAITED_STAGES, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, MANAGER_READY_MS, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
 import { triageSchema } from "./triage-db.js";
@@ -594,12 +594,18 @@ async function endedWaiting(tx: Tx, tenantId: string, pr: PullRequestRef, histor
   return since === undefined || last === undefined ? undefined : { runId: last.runId, head, since };
 }
 
+/**
+ * How long an ask holds off the next: the listener's wake of the manager it deployed and of the one it deploys in its
+ * place when that wake fails, each waiting `MANAGER_READY_MS`, and stock's 30-second cancel grace between them.
+ */
+const DEPLOY_ASK_HOLD_MS = 2 * MANAGER_READY_MS + 30_000;
+
 /** Whether a manager the hub asked the listener for has not taken the claim yet and may still be starting. */
 function deploying(claim: Claim, now: Date): boolean {
   if (claim.deployAskedAt === undefined) return false;
   const asked = Date.parse(claim.deployAskedAt);
   const taken = claim.starts > 0 && Date.parse(claim.claimedAt) >= asked;
-  return !taken && now.getTime() - asked < MANAGER_START_GRACE_MS;
+  return !taken && now.getTime() - asked < DEPLOY_ASK_HOLD_MS;
 }
 
 /**

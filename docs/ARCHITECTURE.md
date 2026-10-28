@@ -247,8 +247,9 @@ any other tenant or an unknown sender.
   output names each run it cancelled and why the mail failed. Its `retry`
   step then deploys one more manager for each of those pull requests and
   wakes it the same way, and `unwokenAgain` cancels that one too if its mail
-  fails, with no third. After a double failure the claim's 2-minute start
-  grace (`deployAskedAt`) lapses, so the pull request's next mail asks the
+  fails, with no third. The claim's hold on a new ask (`deployAskedAt`)
+  covers both wakes, each waiting two minutes, plus 30 seconds, so it lapses
+  only after a double failure and the pull request's next mail asks the
   listener again. A run stock
   no longer lets execute, as one whose cancellation is requested or whose
   deadline has passed, is mailed nothing and its own take is refused; one
@@ -435,7 +436,8 @@ any other tenant or an unknown sender.
   which mails the live manager or has the listener deploy one, and a new
   head's pass starts over. The listener is asked once per manager start: the
   claim keeps when it was asked (`deployAskedAt`), and until a manager takes
-  the claim, or for the 2-minute start grace at most, a further mail is only
+  the claim, or for four and a half minutes at most (both of the listener's
+  wakes, below), a further mail is only
   recorded for that manager to take; a mail that failed to reach the listener
   withdraws its ask. A pull request with nothing outstanding has no
   manager. The hub keeps, on the claim, whether each closed pass waited for

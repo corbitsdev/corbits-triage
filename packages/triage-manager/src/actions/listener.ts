@@ -1,12 +1,9 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { isFromTriageSender, repoSourceOf, TRIAGE_LISTENERS } from "@corbits/triage-contracts";
+import { isFromTriageSender, MANAGER_READY_MS, repoSourceOf, TRIAGE_LISTENERS } from "@corbits/triage-contracts";
 import { Mailed, MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
 import { deploy, endRun, mailOf, managedBy, manageMail } from "./hub.js";
-
-/** How long a just-deployed manager has to reach a sidecar before its first mail fails. */
-const MANAGER_READY_MS = 2 * 60_000;
 
 /** The hub's mail to a listener: the repository and, as a reconciler's mail does, the heads it names as `items`. */
 const ListenerMail = type({
