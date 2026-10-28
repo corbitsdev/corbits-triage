@@ -128,11 +128,13 @@ describe("pendingDos", () => {
 });
 
 describe("heldOffer", () => {
-  test("Do it needs the Do's grant; Always also needs grant create, and never shows for a kind the verdict always holds", () => {
-    const both = { holdsDo: true, createsGrants: true };
+  test("Do it needs the Do's grant; Always also needs grant create and a kind the policy names, and never shows for a kind the verdict always holds", () => {
+    const wanted = ["request-review", "merge", "close"] as const;
+    const both = { holdsDo: true, createsGrants: true, wanted };
     expect(heldOffer({ list: "fail", kind: "request-review" }, both)).toEqual({ doIt: true, always: true });
-    expect(heldOffer({ list: "fail", kind: "request-review" }, { holdsDo: true, createsGrants: false })).toEqual({ doIt: true, always: false });
-    expect(heldOffer({ list: "fail", kind: "request-review" }, { holdsDo: false, createsGrants: true })).toEqual({ doIt: false, always: false });
+    expect(heldOffer({ list: "fail", kind: "request-review" }, { ...both, createsGrants: false })).toEqual({ doIt: true, always: false });
+    expect(heldOffer({ list: "fail", kind: "request-review" }, { ...both, holdsDo: false })).toEqual({ doIt: false, always: false });
+    expect(heldOffer({ list: "fail", kind: "assign" }, both)).toEqual({ doIt: true, always: false });
     expect(heldOffer({ list: "pass", kind: "merge" }, both)).toEqual({ doIt: true, always: true });
     expect(heldOffer({ list: "fail", kind: "merge" }, both)).toEqual({ doIt: true, always: false });
     expect(heldOffer({ list: "unsure", kind: "close" }, both)).toEqual({ doIt: true, always: false });

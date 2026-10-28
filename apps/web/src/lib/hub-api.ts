@@ -337,7 +337,7 @@ function repoRecords(repos: unknown[]): RepoRecord[] {
  * `automatic` is what Triage may do on its own in the repository; `mergeRisks` what its automatic approve or merge
  * can let in.
  */
-type PolicyKinds = { automatic: ActionKind[]; mergeRisks: MergeRisk[] };
+type PolicyKinds = { automatic: ActionKind[]; wanted: ActionKind[]; mergeRisks: MergeRisk[] };
 /** Read from the repository's policy file; `path` is absent for text not yet in the file, `codeReview` is whether it turns code review on. */
 type FileCheckPack = { kind: "file"; path?: string; pack: CheckPack; codeReview: boolean } & PolicyKinds;
 /** The repository's policy file is refused, so triage runs nothing until it is fixed. */
@@ -348,7 +348,7 @@ function checkPackOf(raw: unknown, repo: string): CheckPackArtifact | null {
   const read = PolicyRead.assert(raw);
   if (read.status === "missing") return null;
   if (read.status === "invalid") return { kind: "invalid", path: read.path, reason: read.reason };
-  const kinds = { automatic: read.automatic, mergeRisks: read.mergeRisks };
+  const kinds = { automatic: read.automatic, wanted: read.wanted, mergeRisks: read.mergeRisks };
   return { kind: "file", ...(read.source.file && { path: read.source.file.path }), pack: readCheckPack(read.pack, repo), codeReview: read.codeReview, ...kinds };
 }
 
@@ -1080,7 +1080,8 @@ export async function deleteGrant(transport: Transport, tenantId: string, grantI
   await transport.fetch("DELETE", `/api/tenants/${tid}/grants/${enc(requireId(grantId, "Grant id"))}`);
 }
 
-export type AutomationInput = { repo: string; source: RepoSource; kind: ActionKind };
+/** `list` is the verdict of the held action the person chose "Always" on. */
+export type AutomationInput = { repo: string; source: RepoSource; kind: ActionKind; list: VerdictWord };
 
 /** The hub names the grant, so the portal sends only which action in which repository; it answers what Triage now does there on its own. */
 export async function allowTriageAutomation(transport: Transport, tenantId: string, input: AutomationInput): Promise<ActionKind[]> {

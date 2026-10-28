@@ -74,7 +74,7 @@ import { packsPending, repoHref, reposNeedingSetup, triageEnabledRepos, triageRe
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
-import { packOf, useCheckPacks, useRepoPack, type PackState } from "../lib/check-packs.ts";
+import { packOf, useCheckPacks, useRepoPack, useRepoWanted, type PackState } from "../lib/check-packs.ts";
 import { FilterMenu, FilterPills } from "../components/InboxFilter.tsx";
 import { ExternalIcon, SearchIcon } from "../components/inbox-icons.tsx";
 import PullToRefresh from "../components/PullToRefresh.tsx";
@@ -291,6 +291,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   const { triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
   const pack = useRepoPack(item.repo);
+  const wanted = useRepoWanted(item.repo, item.source);
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
   const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
   const [composer, setComposer] = useState<Composer | null>(restored === null ? null : restored.composer);
@@ -426,7 +427,7 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
             <Byline item={item} author={facts.author} detail={pull.data} />
           </header>
           <StatusLine status={status} />
-          {ended ? null : <HeldActions held={heldChoices(bar)} doBlocked={doBlocked} onApprove={chooseHeld} onHide={dos.length === 0 ? null : hideDos} />}
+          {ended ? null : <HeldActions held={heldChoices(bar)} wanted={wanted} doBlocked={doBlocked} onApprove={chooseHeld} onHide={dos.length === 0 ? null : hideDos} />}
           <Problems problems={paneProblems(item.checks, pack)} pack={pack} item={item} authorsTurn={status.tone === "author"} />
           {hasNumber(item) ? <CodeReviewThreads item={item} /> : null}
           <Description pull={{ data: pull.data, loading: pull.isLoading, error: pull.error }} />

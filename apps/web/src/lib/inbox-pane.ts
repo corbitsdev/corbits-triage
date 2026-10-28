@@ -310,7 +310,7 @@ export function doWrite(item: NumberedItem, pending: PendingDo, restore: () => v
       const approved = `Approved ${pending.label} on #${item.number}; Triage will run it.`;
       if (!always) return sent(approved);
       try {
-        await automate({ repo: item.repo, source: item.source, kind: pending.kind });
+        await automate({ repo: item.repo, source: item.source, kind: pending.kind, list: pending.list });
       } catch (cause) {
         return { message: `${approved} Triage still asks before doing this in ${item.repo}. ${errorText(cause)}`, complete: false, kept: true };
       }

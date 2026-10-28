@@ -3,7 +3,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
-import { ACTION_KINDS, DO_GRANT_ACTION, doResource, hostKinds, REPO_SOURCES, repoPolicy, TRIAGE_ROLE, type ActionKind } from "@corbits/triage-contracts";
+import { ACTION_KINDS, alwaysHeld, DO_GRANT_ACTION, doResource, hostKinds, REPO_SOURCES, repoPolicy, TRIAGE_ROLE, VERDICTS, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { allowRole } from "./admin-github-grant.js";
 import { triageRoleId } from "./automation.js";
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
@@ -12,11 +12,14 @@ import type { Member } from "../integrations/app.js";
 
 export const TRIAGE_AUTOMATION_PATH = "/api/integrations/triage-automation";
 
-export const AutomationBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, source: type.enumerated(...REPO_SOURCES), kind: type.enumerated(...ACTION_KINDS) });
+/** `list` is the verdict of the held action the person chose this from. */
+export const AutomationBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, source: type.enumerated(...REPO_SOURCES), kind: type.enumerated(...ACTION_KINDS), list: type.enumerated(...VERDICTS) });
 
 export type TriageAutomationDeps = Pick<PortalCredentialDeps, "authorize"> & {
   db: DB["db"];
   automaticKinds: (tenantId: string, repo: string) => Promise<ActionKind[]>;
+  /** The kinds the repository's policy file has Triage take on its own on the host; none without a file Triage runs. */
+  wantedKinds: (tenantId: string, repo: string, source: RepoSource) => Promise<ActionKind[]>;
   now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
@@ -24,9 +27,11 @@ export type TriageAutomationDeps = Pick<PortalCredentialDeps, "authorize"> & {
 type Refusal = { status: number; code: string; message: string };
 
 export function createTriageAutomation(deps: TriageAutomationDeps) {
-  return async function allowAutomation({ repo, source, kind }: typeof AutomationBody.infer, { tenantId, principalId }: Member): Promise<Response> {
+  return async function allowAutomation({ repo, source, kind, list }: typeof AutomationBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     if (!(await deps.authorize(principalId, tenantId, "grant:*", "create"))) return failure(403, "forbidden", "You may not change what Triage does on its own.");
     if (!hostKinds(source).includes(kind)) return failure(422, "kind_not_on_host", `The repository's host has no ${kind}.`);
+    if (alwaysHeld(list, kind)) return failure(422, "always_held", `A ${kind} on a ${list} verdict always waits for a person.`);
+    if (!(await deps.wantedKinds(tenantId, repo, source)).includes(kind)) return failure(422, "kind_not_wanted", `The repository's policy file does not name ${kind}. Add it to the file first.`);
     // The tenant row is read under a share lock, so a repository switched off in the meantime loses this grant with the others.
     const refused = await deps.db.transaction(async function allowLocked(tx): Promise<Refusal | undefined> {
       const [tenant] = await tx.select({ config: schema.tenant.config }).from(schema.tenant).where(eq(schema.tenant.id, tenantId)).for("share");

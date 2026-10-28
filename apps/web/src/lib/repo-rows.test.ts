@@ -26,7 +26,7 @@ const repos = [
   repoRecord("acme/web"),
 ];
 
-const NO_KINDS = { automatic: [], mergeRisks: [] };
+const NO_KINDS = { automatic: [], wanted: [], mergeRisks: [] };
 
 function read(found: PackState["found"]): PackState {
   return { found, pending: false, error: null };

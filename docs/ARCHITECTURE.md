@@ -654,9 +654,11 @@ verdict that held it.
 
 "Always, in this repository" on a held action approves it as above, then calls
 `POST /api/integrations/triage-automation/:tenantId` with `{ repo, source,
-kind }` (`apps/hub/src/github/triage-automation.ts`). The route checks the
-caller's stock `create` on `grant:*`, refuses a kind the host cannot write
-(`hostKinds`), and, reading the tenant row under a share lock so a repository
+kind, list }` (`apps/hub/src/github/triage-automation.ts`), `list` being the
+held action's verdict. The route checks the caller's stock `create` on
+`grant:*`, refuses a kind the host cannot write (`hostKinds`), one
+`alwaysHeld` on `list`, and one the repository's policy file does not want
+(`policyKinds` of its current read, the policy read's `wanted`), and, reading the tenant row under a share lock so a repository
 switched off meanwhile loses the grant with its others, requires an enabled
 record of that source. It builds `triage-do:<kind>:<repo>` itself and gives it
 to the `pr-triage` role with `allowRole`, so the portal never names a role or a

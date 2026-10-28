@@ -32,7 +32,7 @@ import {
 } from "@corbits/cron";
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
-import { REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
+import { policyKinds, REPO_SOURCES, repoSourceOf, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
@@ -515,6 +515,10 @@ async function readCheckPack(tenantId: string, repo: string, source: RepoSource)
 function previewPolicy(tenantId: string, repo: string, source: RepoSource, text: string) {
   return previewRepoPolicy(repoPolicyDeps, tenantId, repo, source, text);
 }
+async function wantedKinds(tenantId: string, repo: string, source: RepoSource): Promise<ActionKind[]> {
+  const read = await readRepoPolicy(repoPolicyDeps, tenantId, repo, source);
+  return read.status === "ok" ? policyKinds(read.pack, read.policyWorkflow?.decide ?? [], source) : [];
+}
 async function triageBeganAt(tenantId: string, repo: string): Promise<Date | undefined> {
   return (await verdictRecordStore.earliest(tenantId, repo)) ?? undefined;
 }
@@ -832,7 +836,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     log: logJson,
   }),
   heldDos: githubHeldDos,
-  triageAutomation: createTriageAutomation({ db: composition.db, authorize: authorizePortal, automaticKinds: automation.automaticKinds, now, log: logJson }),
+  triageAutomation: createTriageAutomation({ db: composition.db, authorize: authorizePortal, automaticKinds: automation.automaticKinds, wantedKinds, now, log: logJson }),
   prTriage: githubPrTriage,
   policyRead: createGithubPolicyRead({ readCheckPack }),
   policyPreview: createPolicyPreview({ preview: policyGrants.previewGranted }),

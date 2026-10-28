@@ -13,7 +13,7 @@ const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "po
 const TENANT = "tnt_triage_automation";
 const REPO = "acme/api";
 
-test("PostgreSQL: allowing a kind needs grant create, an enabled repository of the source and a kind the host writes, and gives the pr-triage role one grant however often it is asked", async () => {
+test("PostgreSQL: allowing a kind needs grant create, an enabled repository of the source and a kind the host writes that the policy names and its verdict does not always hold, and gives the pr-triage role one grant however often it is asked", async () => {
   const database = `corbits_triage_automation_${randomBytes(6).toString("hex")}`;
   const admin = createDB(TEST_DB);
   await admin.db.execute(sql.raw(`create database ${database}`));
@@ -46,6 +46,9 @@ test("PostgreSQL: allowing a kind needs grant create, an enabled repository of t
         return (await authorize(grants, principalId, tenantId, resource, action, { conditions: HUB_CONDITION_REGISTRY })).effect === "allow";
       },
       automaticKinds: createAutomation({ db }).automaticKinds,
+      async wantedKinds() {
+        return ["comment", "labels", "request-review", "merge"];
+      },
       now: () => new Date(),
       log() {},
     });
@@ -58,13 +61,15 @@ test("PostgreSQL: allowing a kind needs grant create, an enabled repository of t
       return db.select({ resource: schema.grant.resource, action: schema.grant.action }).from(schema.grant).where(eq(schema.grant.roleId, triage!.id));
     }
 
-    expect(await allow("prn_member", { repo: REPO, source: "github", kind: "request-review" })).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
-    expect(await allow("prn_admin", { repo: "acme/off", source: "github", kind: "request-review" })).toMatchObject({ status: 409, body: { error: { code: "repo_not_enabled" } } });
-    expect(await allow("prn_admin", { repo: REPO, source: "bitbucket-datacenter", kind: "request-review" })).toMatchObject({ status: 409, body: { error: { code: "repo_not_enabled" } } });
-    expect(await allow("prn_admin", { repo: "PROJ/web", source: "bitbucket-datacenter", kind: "labels" })).toMatchObject({ status: 422, body: { error: { code: "kind_not_on_host" } } });
+    expect(await allow("prn_member", { repo: REPO, source: "github", kind: "request-review", list: "pass" })).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
+    expect(await allow("prn_admin", { repo: "acme/off", source: "github", kind: "request-review", list: "pass" })).toMatchObject({ status: 409, body: { error: { code: "repo_not_enabled" } } });
+    expect(await allow("prn_admin", { repo: REPO, source: "bitbucket-datacenter", kind: "request-review", list: "pass" })).toMatchObject({ status: 409, body: { error: { code: "repo_not_enabled" } } });
+    expect(await allow("prn_admin", { repo: "PROJ/web", source: "bitbucket-datacenter", kind: "labels", list: "pass" })).toMatchObject({ status: 422, body: { error: { code: "kind_not_on_host" } } });
+    expect(await allow("prn_admin", { repo: REPO, source: "github", kind: "merge", list: "fail" })).toMatchObject({ status: 422, body: { error: { code: "always_held" } } });
+    expect(await allow("prn_admin", { repo: REPO, source: "github", kind: "close", list: "fail" })).toMatchObject({ status: 422, body: { error: { code: "kind_not_wanted" } } });
     expect(await triageGrants()).toEqual([]);
 
-    const answers = await Promise.all([1, 2, 3].map(() => allow("prn_admin", { repo: REPO, source: "github", kind: "request-review" })));
+    const answers = await Promise.all([1, 2, 3].map(() => allow("prn_admin", { repo: REPO, source: "github", kind: "request-review", list: "pass" })));
     expect(answers).toEqual([1, 2, 3].map(() => ({ status: 200, body: { automatic: ["request-review"] } })));
     expect(await triageGrants()).toEqual([{ resource: doResource("request-review", REPO), action: "invoke" }]);
     expect(await db.select().from(schema.grant).where(eq(schema.grant.principalId, "prn_admin"))).toEqual([]);

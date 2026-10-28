@@ -20,7 +20,7 @@ const alwaysAllowed = once(async function alwaysAllowed() {
   const [held] = await verdictsOf(ALWAYS, 1);
   const [step] = held!["dos"] as { effectId: string }[];
   await approveHeldDo(transport, tenantId, { runId: String(held!["run_id"]), repo: ALWAYS, number: 1, effectId: step!.effectId, kind: "request-review" });
-  const automatic = await allowTriageAutomation(transport, tenantId, { repo: ALWAYS, source: "github", kind: "request-review" });
+  const automatic = await allowTriageAutomation(transport, tenantId, { repo: ALWAYS, source: "github", kind: "request-review", list: "pass" });
   await until("the approved review request", () => reviewRequests(github.writesTo(ALWAYS, 1))[0]);
   await settled(ALWAYS, 1, 2);
   await pushed(ALWAYS, pullOf(2, sha("always-2")));

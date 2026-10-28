@@ -391,14 +391,14 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${TRIAGE_AUTOMATION_PATH}/:tenantId`,
     describeRoute({
       summary: "Let Triage do one kind of action on its own in a repository",
-      description: "Needs stock `create` on `grant:*`, and the repository enabled on `source`. Gives the workspace's pr-triage role `invoke` on `triage-do:<kind>:<owner/name>`, at most once however often it is asked, and answers what Triage now does on its own there. Held Dos already recorded stay held until the next triage pass on their pull request, which finds the kind automatic and runs it. The kinds a host cannot write are refused: Bitbucket Data Center has no `labels` or `assign`.",
+      description: "Needs stock `create` on `grant:*`, and the repository enabled on `source`. `kind` must be one the repository's policy file has Triage take on its own (the policy read's `wanted`), and `list` the verdict of the held action it was chosen from, on which `kind` must not always wait for a person (close on `unsure`, merge on anything but `pass`). Gives the workspace's pr-triage role `invoke` on `triage-do:<kind>:<owner/name>`, at most once however often it is asked, and answers what Triage now does on its own there. Held Dos already recorded stay held until the next triage pass on their pull request, which finds the kind automatic and runs it. The kinds a host cannot write are refused: Bitbucket Data Center has no `labels` or `assign`.",
       tags: TAGS,
       responses: {
         200: json("What Triage does on its own in the repository", TriageAutomated),
         ...invalid,
         ...failures,
         409: json("`repo_not_enabled`: the repository is not an enabled one of `source`", Failure),
-        422: json("`kind_not_on_host`: the repository's host has no such action", Failure),
+        422: json("`kind_not_on_host`: the repository's host has no such action. `always_held`: `kind` always waits for a person on `list`. `kind_not_wanted`: the repository's policy file does not have Triage take `kind` on its own", Failure),
       },
     }),
     member,

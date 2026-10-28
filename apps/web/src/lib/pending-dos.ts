@@ -134,10 +134,11 @@ export function pendingDos(item: PrItem): PendingDo[] {
 
 /**
  * What a person is offered on a held Do: "Do it" runs it once as them, which needs the Do's grant; "Always" also lets
- * Triage do its kind on its own in the repository, which needs grant create, and never for a kind this verdict always holds.
+ * Triage do its kind on its own in the repository, which needs grant create and a kind the policy file names
+ * (`wanted`), and never for a kind this verdict always holds.
  */
-export function heldOffer(pending: Pick<PendingDo, "list" | "kind">, access: { holdsDo: boolean; createsGrants: boolean }): { doIt: boolean; always: boolean } {
-  return { doIt: access.holdsDo, always: access.holdsDo && access.createsGrants && !alwaysHeld(pending.list, pending.kind) };
+export function heldOffer(pending: Pick<PendingDo, "list" | "kind">, access: { holdsDo: boolean; createsGrants: boolean; wanted: readonly ActionKind[] }): { doIt: boolean; always: boolean } {
+  return { doIt: access.holdsDo, always: access.holdsDo && access.createsGrants && access.wanted.includes(pending.kind) && !alwaysHeld(pending.list, pending.kind) };
 }
 
 /** The pack's close stands in for the plain one, so only one Close is offered. */

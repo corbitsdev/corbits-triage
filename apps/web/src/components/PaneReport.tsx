@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
 import { Button, Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
-import { BUILT_IN_CHECK_NAMES, DO_GRANT_ACTION, doResource, isCatalogId, type CheckPack } from "@corbits/triage-contracts";
+import { BUILT_IN_CHECK_NAMES, DO_GRANT_ACTION, doResource, isCatalogId, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
 import { errorText } from "@corbits/common";
@@ -50,14 +50,14 @@ export function StatusLine({ status }: { status: PaneStatus }) {
   );
 }
 
-type HeldRowProps = { choice: HeldChoice; disabled: boolean; onApprove: (choice: HeldChoice, always: boolean) => void };
+type HeldRowProps = { choice: HeldChoice; wanted: readonly ActionKind[]; disabled: boolean; onApprove: (choice: HeldChoice, always: boolean) => void };
 
 /** One held action, run once as the person or, by one who may manage grants, left to Triage in this repository from now on. */
-function HeldRow({ choice, disabled, onApprove }: HeldRowProps) {
+function HeldRow({ choice, wanted, disabled, onApprove }: HeldRowProps) {
   const { pending } = choice;
   const holdsDo = useAllowed(doResource(pending.kind, pending.ref.repo), DO_GRANT_ACTION);
   const createsGrants = useAllowed("grant:*", "create");
-  const offer = heldOffer(pending, { holdsDo, createsGrants });
+  const offer = heldOffer(pending, { holdsDo, createsGrants, wanted });
   return (
     <li>
       <span className="held-what">
@@ -70,16 +70,16 @@ function HeldRow({ choice, disabled, onApprove }: HeldRowProps) {
   );
 }
 
-type HeldActionsProps = { held: HeldChoice[]; doBlocked: boolean; onApprove: (choice: HeldChoice, always: boolean) => void; onHide: (() => void) | null };
+type HeldActionsProps = { held: HeldChoice[]; wanted: readonly ActionKind[]; doBlocked: boolean; onApprove: (choice: HeldChoice, always: boolean) => void; onHide: (() => void) | null };
 
 /** Each held action under the status line, with why it is held and how it may run; Hide for me hides them in this browser. */
-export function HeldActions({ held, doBlocked, onApprove, onHide }: HeldActionsProps) {
+export function HeldActions({ held, wanted, doBlocked, onApprove, onHide }: HeldActionsProps) {
   if (held.length === 0) return null;
   return (
     <div className="held">
       <ul aria-label="Held actions">
         {held.map((choice) => (
-          <HeldRow key={choice.pending.key} choice={choice} disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onApprove={onApprove} />
+          <HeldRow key={choice.pending.key} choice={choice} wanted={wanted} disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onApprove={onApprove} />
         ))}
       </ul>
       {onHide === null ? null : <Button type="button" variant="ghost" size="sm" onClick={onHide}>Hide for me</Button>}
