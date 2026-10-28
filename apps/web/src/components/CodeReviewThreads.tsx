@@ -4,7 +4,7 @@ import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-re
 import { useCodeReviewOn } from "../lib/check-packs.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { relativeTime } from "../lib/duration.ts";
-import type { CodeReviewComment, CodeReviewRun, PrItem } from "../lib/hub-api.ts";
+import type { CodeReviewComment, CodeReviewRun, FindingThread, PrItem } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { Markdown } from "./Markdown.tsx";
@@ -25,6 +25,15 @@ function hint(review: CodeReviewRun, completed: CodeReviewRun | null): string {
 
 function location({ path, start, end }: CodeReviewComment): string {
   return end > start ? `${path}:${start}–${end}` : `${path}:${start}`;
+}
+
+const THREAD_TEXT: Partial<Record<FindingThread["state"], string>> = { resolved: "Resolved", outdated: "Outdated: its lines changed", replied: "Replied to" };
+
+/** What became of the finding's comment on the host, once anything did. */
+function ThreadState({ thread }: { thread: FindingThread }) {
+  const text = THREAD_TEXT[thread.state];
+  if (text === undefined) return null;
+  return <span>{thread.at === undefined ? text : `${text} ${relativeTime(thread.at)}`}</span>;
 }
 
 function QuotedCode({ comment }: { comment: CodeReviewComment }) {
@@ -55,6 +64,7 @@ function Thread({ comment, review }: { comment: CodeReviewComment; review: CodeR
             <b>P{comment.priority}</b>
             <span className="mono">{location(comment)}</span>
             {comment.unverified ? <span>{UNVERIFIED_FINDING}</span> : null}
+            <ThreadState thread={comment.thread} />
           </p>
           <QuotedCode comment={comment} />
         </div>

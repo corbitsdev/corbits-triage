@@ -4,7 +4,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
-import { CodeReviewComment, REPO_SOURCES, repoSourceOf, StageResult, type RepoSource } from "@corbits/triage-contracts";
+import { CodeReviewComment, REPO_SOURCES, repoSourceOf, StageResult, THREAD_STATES, type FindingThread, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { diffHash } from "@corbits/common/diff-hash";
 import type { PullRequestToReview } from "./pull-request-reader.js";
@@ -22,12 +22,19 @@ const Source = type.enumerated(...REPO_SOURCES);
 /** `head` is the pull request's head as the asker last read it, which the newest finished review may stand for. */
 export const CodeReviewQuery = type({ repo: "string > 0", "source?": Source, number: "string.integer.parse", "head?": "string > 0" });
 
+/**
+ * What became of a finding's thread as last read: `not-tracked` for one held in the review's summary or posted before
+ * Triage kept its comment, `untouched` for one nobody acted on, including one not read since it was posted; `at` is when it changed, when the host says.
+ */
+const Thread = type({ state: type.enumerated(...THREAD_STATES, "not-tracked"), "at?": "string" });
+const ShownFinding = CodeReviewComment.omit("thread").and({ thread: Thread });
+
 const CompletedRun = type({
   status: "'completed'",
   headSha: "string",
   startedAt: "string",
   summary: "string",
-  comments: CodeReviewComment.array(),
+  comments: ShownFinding.array(),
   budgetExhausted: "boolean",
   "complete?": "boolean",
   "diffHash?": "string",
@@ -57,6 +64,11 @@ function withPriorities(payload: Record<string, unknown>): Record<string, unknow
   return { ...payload, result: { ...result, comments: prioritised(result["comments"]), ...(result["dropped"] !== undefined && { dropped: prioritised(result["dropped"]) }) } };
 }
 
+function threadOf(thread: FindingThread | undefined): typeof Thread.infer {
+  if (!thread) return { state: "not-tracked" };
+  return { state: thread.state, ...(thread.at !== undefined && { at: thread.at }) };
+}
+
 /** A code review as the portal shows it. */
 function reviewOf(record: CodeReviewRecord): Review {
   const base = { headSha: record.head, startedAt: record.at };
@@ -66,7 +78,7 @@ function reviewOf(record: CodeReviewRecord): Review {
   if ("failed" in reported) return { ...base, status: "failed" };
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
   const { summary, budgetExhausted, complete } = reported.result;
-  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
+  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified, thread }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }), thread: threadOf(thread) }));
   return { ...base, status: "completed", summary, comments, budgetExhausted, ...(complete !== undefined && { complete }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 

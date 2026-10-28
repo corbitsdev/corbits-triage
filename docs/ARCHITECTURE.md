@@ -1016,6 +1016,26 @@ and posts it as one `COMMENT` review pinned to its head. The review's marker
 and `commit_id` are its effect id, so the App's marked review of that head is
 found before anything is written.
 
+The manager also records what became of each finding it posted inline. Its
+send returns, per finding, the host comment that holds it (on GitHub read back
+from that review's comments and matched by path and the exact text written for
+the finding; on Bitbucket Data Center the id each inline post returns), and done
+keeps that id as `thread` on the finding in its reviewer-result row; ids that do
+not line up with the review's findings are logged and left out. The first pass
+on a newer head gets those ids from take, reads them in one `findingThreads`
+step through the host read tool (`finding_thread_states`: GitHub's GraphQL
+`reviewThreads`, Data Center's comment by id), and done writes each state on its
+finding: resolved, outdated, replied (by someone other than Triage) or
+untouched, with `at` only when the host names the time of the change (a reply's
+time on both hosts, a resolve's on Data Center). A read the host refuses is
+logged as `finding_threads_unread` and leaves the findings as they were. On Data
+Center the fields read (`threadResolved`, `threadResolvedDate`, `anchor.orphaned`,
+nested `comments`) follow its REST reference and have not been checked against a
+running instance. The portal shows it
+from `GET …/code-review`; a finding held in the summary, one a person sent from
+the portal, or one posted before Triage kept its comment is `not-tracked`. A
+closed or merged pull request is not read again.
+
 The steps, the provider profile and how to add a provider are in
 [packages/pr-code-review/README.md](../packages/pr-code-review/README.md); the
 eval and its numbers in

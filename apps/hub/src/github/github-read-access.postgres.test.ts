@@ -44,8 +44,8 @@ const FINISHED = {
   summary: "Fixes the widget.",
   budgetExhausted: true,
   comments: [
-    { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1 },
-    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it.", priority: 3 },
+    { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1, thread: { state: "not-tracked" as const } },
+    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it.", priority: 3, thread: { state: "not-tracked" as const } },
   ],
 };
 let completed: CompletedReview | null = FINISHED;
@@ -85,6 +85,7 @@ async function github(req: Request): Promise<Response> {
   if (req.method === "GET" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
     return Response.json(sentReviews.map((review, index) => ({ id: 100 + index, user: { login: "triage[bot]" }, state: "COMMENTED", commit_id: review.commit_id, body: review.body })));
   }
+  if (req.method === "GET" && /^\/repos\/[^/]+\/[^/]+\/pulls\/8\/reviews\/\d+\/comments$/.test(pathname)) return Response.json([]);
   if (req.method === "POST" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
     const posted = await req.json() as SentReview;
     if (posted.event === "COMMENT") sentReviews.push(posted);

@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, JudgeVerdict, StageResult, VerdictFacts } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, JudgeVerdict, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { hostAwaited, type Awaits } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
@@ -12,7 +12,7 @@ export type Reviewer = typeof Reviewer.infer;
 
 const TakenEvent = type({ key: "string", event: { type: "string", head: "string", payload: "Record<string, unknown>" } });
 const Latest = { "request?": "Record<string, unknown>", reviewers: Reviewer.array(), "waitingSince?": "string", "headSince?": "string", claimedAt: "string" } as const;
-const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), ...Latest });
+const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), threads: "number[]", ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 
 /**
@@ -27,9 +27,10 @@ export const LIFETIME_MS = 3 * 60 * 60_000;
  * deadline, or its head waited out its CI. `approvals` are the held Dos approved since, each run as pr-triage runs one.
  * `triage` when the head is triaged: `taken` is the newest pull request mail the hub recorded, deciding without the
  * host's checks once the head waited out its CI, and as `ciStarting` while a head with no checks yet may still get some. `review` or `reviewFailed`, and `judge` or `judgeFailed`, is what one
- * of its own reviewers reported on `head` on this pass; `verdict` is the judge's verdict on `head`, reported on this
- * pass or an earlier one. `waitingSince` is when the head started waiting for its CI, while it still does. `stopped`
- * names what the head still waited for once the manager's lifetime ran out: the pass decides without it.
+ * of its own reviewers reported on `head` on this pass, `reviewRun` the run that reported `review`; `verdict` is the
+ * judge's verdict on `head`, reported on this pass or an earlier one. `waitingSince` is when the head started waiting
+ * for its CI, while it still does. `stopped` names what the head still waited for once the manager's lifetime ran out:
+ * the pass decides without it. `threads` are the comments of findings posted on earlier heads, whose threads the pass reads.
  */
 export const TakeOutput = type({
   run: "boolean",
@@ -39,6 +40,7 @@ export const TakeOutput = type({
   "taken?": "Record<string, unknown>",
   "head?": "string",
   "review?": CodeReviewOutput,
+  "reviewRun?": "string",
   "reviewFailed?": "string",
   "judge?": JudgeVerdict,
   "judgeFailed?": "string",
@@ -47,6 +49,7 @@ export const TakeOutput = type({
   reviewers: Reviewer.array(),
   "waitingSince?": "string",
   "stopped?": type.enumerated("ci", "judge", "code-review").array(),
+  "threads?": "number[]",
 });
 export type TakeOutput = typeof TakeOutput.infer;
 
@@ -61,31 +64,39 @@ function isOwn(reviewer: Reviewer, kind: string, head: string): boolean {
   return reviewer.kind === kind && reviewer.head === head;
 }
 
-/** The newest review a code review of `head` reported on an earlier pass, stored on its reviewer: after a Review again, its own. */
-export function storedReview(reviewers: readonly Reviewer[], head: string): CodeReviewOutput | undefined {
-  let newest: { review: CodeReviewOutput; deadline: number } | undefined;
+/** The newest review a code review of `head` reported on an earlier pass, stored on its reviewer, and that reviewer's run: after a Review again, its own. */
+export function storedReviewer(reviewers: readonly Reviewer[], head: string): { review: CodeReviewOutput; runId: string } | undefined {
+  let newest: { review: CodeReviewOutput; runId: string; deadline: number } | undefined;
   for (const reviewer of reviewers) {
     if (!isOwn(reviewer, "code-review", head)) continue;
     const review = CodeReviewOutput(reviewer.result);
     const deadline = Date.parse(reviewer.deadline);
-    if (!(review instanceof type.errors) && (newest === undefined || deadline >= newest.deadline)) newest = { review, deadline };
+    if (!(review instanceof type.errors) && (newest === undefined || deadline >= newest.deadline)) newest = { review, runId: reviewer.runId, deadline };
   }
-  return newest?.review;
+  return newest && { review: newest.review, runId: newest.runId };
+}
+
+export function storedReview(reviewers: readonly Reviewer[], head: string): CodeReviewOutput | undefined {
+  return storedReviewer(reviewers, head)?.review;
 }
 
 /** A judge whose evaluate could not read the pull request reports a verdict that names no head, which decides nothing. */
 const NO_HEAD = "the judge's verdict names no head";
 
 /** What one of the manager's own reviewers reported on `head`. */
-function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: readonly Reviewer[]): Pick<TakeOutput, "review" | "reviewFailed" | "judge" | "judgeFailed"> {
-  const reported: Pick<TakeOutput, "review" | "reviewFailed" | "judge" | "judgeFailed"> = {};
+function reportOf(events: (typeof TakenEvent.infer)[], head: string, reviewers: readonly Reviewer[]): Pick<TakeOutput, "review" | "reviewRun" | "reviewFailed" | "judge" | "judgeFailed"> {
+  const reported: Pick<TakeOutput, "review" | "reviewRun" | "reviewFailed" | "judge" | "judgeFailed"> = {};
   for (const { key, event } of events) {
     const result = StageResult({ ...event.payload, head: event.head });
     if (result instanceof type.errors) continue;
-    if (!reviewers.some((reviewer) => isOwn(reviewer, result.kind, head) && key.endsWith(`:${reviewer.runId}`))) continue;
+    const own = reviewers.find((reviewer) => isOwn(reviewer, result.kind, head) && key.endsWith(`:${reviewer.runId}`));
+    if (!own) continue;
     if (result.kind === "code-review") {
       if ("failed" in result) reported.reviewFailed = result.failed;
-      else reported.review = result.result;
+      else {
+        reported.review = result.result;
+        reported.reviewRun = own.runId;
+      }
     } else if ("failed" in result) reported.judgeFailed = result.failed;
     else if (result.result.headSha === null) reported.judgeFailed = NO_HEAD;
     else reported.judge = result.result;
@@ -132,6 +143,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const head = answer.outcome === "pass" ? answer.pass.head : request?.["headSha"];
   if (typeof head !== "string") return { ...nothing, reviewers: answer.reviewers };
   const events = answer.outcome === "pass" ? answer.events : [];
+  const threads = answer.outcome === "pass" ? answer.threads : [];
   const mails = events.filter(({ event }) => event.type === "webhook").map(({ event }) => event);
   const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
@@ -150,7 +162,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const taken = request && { ...request, ...(waitedOut && { noWait: true }), ...(!waitedOut && starting && { ciStarting: true }) };
   const verdict = report.judge ?? storedVerdict(reviewers, head);
   const waiting = waitingSince !== undefined && !waitedOut;
-  return { run: answer.outcome === "pass" || overdue || waitedOut, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }), ...(stopped && { stopped: outstanding }) };
+  return { run: answer.outcome === "pass" || overdue || waitedOut, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }), ...(stopped && { stopped: outstanding }), ...(threads.length > 0 && { threads }) };
 }
 
 const Output = { output: "Record<string, unknown>" } as const;
@@ -167,6 +179,8 @@ const DoneInput = type({
   "reviewMailed?": { output: { "reviewer?": Reviewer } },
   "earlyReviewMailed?": { output: { "reviewer?": Reviewer } },
   "judgeMailed?": { output: { "reviewer?": Reviewer } },
+  "postReview?": { output: { "threads?": { runId: "string", ids: "(number | null)[]" } } },
+  "findingThreads?": { output: { reads: ThreadRead.array(), "unread?": "string" } },
 });
 
 type DoneInput = typeof DoneInput.infer;
@@ -270,7 +284,10 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const report = doneReport(parsed);
   const reviewers = reviewersAfter(parsed.take.output, mailed);
   const wait = awaiting(parsed.take.output, reviewers);
-  const body = { ...mail.pullRequest, reviewers, wait, ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }) };
+  const posted = parsed.postReview?.output.threads;
+  const reads = parsed.findingThreads?.output.reads;
+  const unread = parsed.findingThreads?.output.unread;
+  const body = { ...mail.pullRequest, reviewers, wait, ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }), ...(posted && { threadIds: posted }), ...(reads !== undefined && reads.length > 0 && { threads: reads }), ...(unread !== undefined && { threadsUnread: unread }) };
   const answer = await asManager(ctx, mail, "done", body, Done);
   if (answer === undefined) return { outcome: "refused" };
   for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);

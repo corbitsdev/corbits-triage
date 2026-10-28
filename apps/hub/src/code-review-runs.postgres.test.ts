@@ -87,7 +87,7 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
     await recordEvent(db, TENANT, GITHUB, "run_stray", { type: "reviewer-result", head: "sha9", payload: { kind: "code-review", result: OUTPUT } });
     await recordEvent(db, TENANT, GITHUB, "run_new", { type: "reviewer-result", head: "sha2", payload: { kind: "code-review", failed: "the review did not finish" } });
     await claim([reviewer("run_new", "sha2")], [eventKey("run_old")]);
-    const finished = { status: "completed" as const, headSha: "sha1", startedAt: expect.any(String), ...REVIEW };
+    const finished = { status: "completed" as const, headSha: "sha1", startedAt: expect.any(String), ...REVIEW, comments: REVIEW.comments.map((comment) => ({ ...comment, thread: { state: "not-tracked" as const } })) };
     expect(await reviewsOf(GITHUB)).toEqual({ review: { status: "failed", headSha: "sha2", startedAt: expect.any(String) }, completed: finished, carriedTo: null });
     expect(await reviewsOf(BITBUCKET)).toEqual({ review: null, completed: null, carriedTo: null });
 

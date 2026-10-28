@@ -16,7 +16,7 @@ import {
   upsertTriageComment,
 } from "@corbits/github-tool/github";
 import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
-import { ownedLabels, TRIAGE_LABELS, type ActionKind, type SendCodeReviewInput } from "@corbits/triage-contracts";
+import { ownedLabels, TRIAGE_LABELS, type ActionKind, type SendCodeReviewInput, type SentThreads } from "@corbits/triage-contracts";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import type { CodeReviewRuns, CompletedReview } from "../code-review-runs.js";
 import type { PolicyReader } from "./repo-policy.js";
@@ -59,7 +59,7 @@ type SendBody = Extract<typeof ActionBody.infer, { action: "code-review" }>;
 type CodeReviewSendBody = { repo: string; number: number; headSha: string };
 
 /** A host's send of a code review; `skipped` means the pull request moved past the head, so nothing was written. */
-export type CodeReviewSender = (input: SendCodeReviewInput) => Promise<{ sent: boolean } | { skipped: string }>;
+export type CodeReviewSender = (input: SendCodeReviewInput) => Promise<({ sent: boolean } & SentThreads) | { skipped: string }>;
 
 /**
  * Sends the pull request's newest finished code review at the head the person saw, only when the review is of that head,
@@ -71,9 +71,11 @@ export async function sendReview(send: CodeReviewSender, body: CodeReviewSendBod
   if (completed.headSha !== headSha && carriedTo !== headSha) return failure(409, "code_review_outdated", "A newer code review replaced this one. Reload, then send it.");
   const summary = codeReviewSummary(completed);
   if (!summary && completed.comments.length === 0) return failure(409, "code_review_empty", "This code review has nothing to post.");
-  const sent = await send({ repo, number, sha: headSha, reviewed: completed.headSha, summary, comments: completed.comments });
+  const comments = completed.comments.map(({ thread: _thread, ...finding }) => finding);
+  const sent = await send({ repo, number, sha: headSha, reviewed: completed.headSha, summary, comments });
   if ("skipped" in sent) return failure(409, "head_moved", "The pull request has new commits since this review. Review again, then send it.");
-  return sent;
+  const { threads: _threads, ...answer } = sent;
+  return answer;
 }
 
 /** `owned` is the labels a close takes back: triage's own and the policy's verdict labels. */

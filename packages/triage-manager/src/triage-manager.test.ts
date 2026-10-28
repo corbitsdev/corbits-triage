@@ -64,7 +64,7 @@ function mailEvent(head: string, payload: Record<string, unknown>, key = "evt_1"
 const REQUEST = hubRequest(RULES);
 /** The run claimed its pull request as the tests start, well inside its lifetime. */
 const CLAIMED = new Date().toISOString();
-const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z", claimedAt: CLAIMED };
+const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, threads: [], request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z", claimedAt: CLAIMED };
 const RESUMED = { ...PASS, pass: { ...PASS.pass, takes: 2 }, resumed: true };
 /** The one in-progress comment, posted or edited in place, naming what the head waits for. */
 function inProgress(awaits: string) {
@@ -176,6 +176,7 @@ function githubHost(head = HEAD, { pr = PR, pull = {}, checkRuns }: { pr?: Snaps
   const fixture = fixtureGithub(pr, {});
   async function read(url: URL): Promise<Response> {
     if (checkRuns && url.pathname.endsWith("/check-runs")) return Response.json({ check_runs: checkRuns });
+    if (/\/reviews\/\d+\/comments$/.test(url.pathname)) return Response.json([]);
     const response = await fixture(url);
     if (url.pathname !== `/repos/${PR.repo}/pulls/${PR.number}`) return response;
     const read = await response.json();
@@ -191,7 +192,7 @@ const DONE = { method: "POST", path: `${TENANT_PATH}/manager/done`, body: expect
 function doneBody(calls: readonly HubCall[]): Record<string, unknown> {
   return calls.find((call) => call.path === DONE.path)?.body as Record<string, unknown>;
 }
-const STAGE_1 = ["approvals", "cleared", "donePosted", "evaluateRules", "executeRules", "facts", "markUnready", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "take", "triaged", "unready"];
+const STAGE_1 = ["approvals", "cleared", "donePosted", "evaluateRules", "executeRules", "facts", "findingThreads", "markUnready", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "take", "triaged", "unready"];
 
 /** A Bitbucket Data Center pull request at head `abc`, recording the build statuses posted on it. */
 function bitbucketHost() {
@@ -251,7 +252,7 @@ describe("triage-manager", () => {
   test("with an event pending after done, the manager runs its next pass at once, and a refused newcomer is harmless", async () => {
     const { writes, host } = githubHost();
     const newcomer = fakeHub({ takes: [REFUSED] });
-    expect(await runMail(github, wake(), host, newcomer.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: 1, ran: ["approvals", "done", "paused", "ran", "take"] });
+    expect(await runMail(github, wake(), host, newcomer.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: 1, ran: ["approvals", "done", "findingThreads", "paused", "ran", "take"] });
     expect(newcomer.calls).toEqual([TAKE, END]);
     expect(writes).toEqual([]);
 
@@ -372,7 +373,7 @@ describe("triage-manager", () => {
   test("an old review's reply finds nothing for its head, runs no stage 1 and leaves the superseded review for the hub to stop", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [{ ...reviewer(), head: "older" }] }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["approvals", "done", "paused", "ran", "take"]);
+    expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["approvals", "done", "findingThreads", "paused", "ran", "take"]);
     expect(writes).toEqual([]);
     expect(hub.calls).toEqual([TAKE, DONE, END]);
     expect(doneBody(hub.calls)["wait"]).toBe(false);
@@ -383,7 +384,7 @@ describe("triage-manager", () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, approval, "evt_approval")], request: undefined }], dones: [ENDED] });
     const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).toEqual(["approvals", "done", "paused", "ran", "take", "triaged"]);
+    expect(ran).toEqual(["approvals", "done", "findingThreads", "paused", "ran", "take", "triaged"]);
     expect(outputs["approvals"]).toEqual({ results: [{ dos: [expect.objectContaining({ effectId, status: "done" })] }] });
     expect(doneBody(hub.calls)["approvals"]).toEqual(outputs["approvals"]);
     expect(writes).toEqual([expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringMatching(/\nhi$/) } })]);
@@ -415,7 +416,7 @@ describe("triage-manager", () => {
   });
 
   test("on Bitbucket Data Center it reaches the host through that host's bindings only", async () => {
-    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter", "postReview:bitbucket-datacenter", "progress:bitbucket-datacenter"]);
+    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter", "postReview:bitbucket-datacenter", "progress:bitbucket-datacenter", "findingThreads:bitbucket-datacenter"]);
     const { builds, host } = bitbucketHost();
     const request = { kind: "pr", repo: BB_REPO, repoSource: "bitbucket-datacenter", prNumber: 8, headSha: "abc", policy: { enabled: true }, policyUnreadable: "The policy file has unknown checks: max-size.", automatic: ACTION_KINDS, tenantId: TENANT };
     const bbPull = { source: "bitbucket-datacenter", repo: BB_REPO, number: 8 };
@@ -460,6 +461,59 @@ describe("triage-manager with code review", () => {
     expect(writes).toContainEqual(POSTED_REVIEW);
     expect(second.calls).toEqual([TAKE, { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] }) }, END]);
     expect(mailed).toHaveLength(1);
+  });
+
+  /** GitHub answering the review's inline comments and its review threads as GraphQL gives them. */
+  function threadedHost(threads?: object[]) {
+    const { writes, host } = githubHost();
+    async function threaded(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (/\/reviews\/\d+\/comments$/.test(url.pathname)) return Response.json([{ id: 501, path: "src/flag.ts", body: "**Always true**\n\nThe flag can never be off." }]);
+      if (url.pathname === "/graphql" && threads === undefined) return Response.json({ message: "Bad credentials" }, { status: 401 });
+      if (url.pathname === "/graphql") return Response.json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: threads } } } } });
+      return host(input, init);
+    }
+    return { writes, host: threaded };
+  }
+
+  function thread(ids: number[], { isResolved = false, isOutdated = false, by = ids.map(() => "corbits") }: { isResolved?: boolean; isOutdated?: boolean; by?: string[] } = {}) {
+    const comments = ids.map((databaseId, index) => ({ databaseId, createdAt: `2026-10-2${index}T00:00:00Z`, author: { login: by[index]! } }));
+    return { isResolved, isOutdated, comments: { nodes: comments } };
+  }
+
+  test("posting a review tells the hub each finding's inline comment, under the run that reported it", async () => {
+    const { writes, host } = threadedHost([]);
+    const hub = fakeHub({ takes: [reported({ result: REVIEW }, ON)], dones: [ENDED] });
+    await runMail(reviewed, wake(), host, hub.hub);
+    expect(writes).toContainEqual(POSTED_REVIEW);
+    expect(doneBody(hub.calls)["threadIds"]).toEqual({ runId: DEPLOYED, ids: [501] });
+  });
+
+  test("the first pass on a newer head reads the threads take names and tells the hub what became of each", async () => {
+    const threads = [
+      thread([501], { isResolved: true }),
+      thread([502], { isOutdated: true }),
+      thread([503, 600], { by: ["corbits", "octocat"] }),
+      thread([504, 601], { by: ["corbits", "corbits"] }),
+      thread([900], { isResolved: true }),
+    ];
+    const { host } = threadedHost(threads);
+    const hub = fakeHub({ takes: [{ ...PASS, threads: [501, 502, 503, 504] }], dones: [ENDED] });
+    await runMail(reviewed, wake(), host, hub.hub);
+    expect(doneBody(hub.calls)["threads"]).toEqual([
+      { id: 501, state: "resolved" },
+      { id: 502, state: "outdated" },
+      { id: 503, state: "replied", at: "2026-10-21T00:00:00Z" },
+      { id: 504, state: "untouched" },
+    ]);
+  });
+
+  test("a thread read the host refuses tells the hub why, and records no state", async () => {
+    const { host } = threadedHost();
+    const hub = fakeHub({ takes: [{ ...PASS, threads: [501] }], dones: [ENDED] });
+    await runMail(reviewed, wake(), host, hub.hub);
+    expect(doneBody(hub.calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
+    expect(doneBody(hub.calls)["threads"]).toBeUndefined();
   });
 
   test("a later event on the same head deploys no second review and posts the stored review with the verdict", async () => {

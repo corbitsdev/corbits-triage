@@ -28,6 +28,7 @@ import {
   createIssueComment,
   createReview,
   dismissDoApprovals,
+  findingThreadStates,
   dismissDoChangeRequests,
   mergePr,
   mirror,
@@ -133,6 +134,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_author_teams",
     description: "Say which of the given teams (@org/slug or slug) the author is an active member of. Teams past the first 20, outside the repository owner's organization, or not confirmable either way are unknown.",
     inputSchema: obj({ repo, author: str, teams: { type: "array", items: str } }),
+  },
+  {
+    name: "github_finding_thread_states",
+    description: "Say, for each review thread one of the comments ids opened, whether it is resolved, outdated, replied to by someone other than the comment's author (with the reply's time), or untouched.",
+    inputSchema: obj({ repo, number: { type: "integer" }, ids: { type: "array", items: { type: "integer" } } }),
   },
   {
     name: "github_read_file",
@@ -304,6 +310,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
       return codeownersForPr(gh, a.repo, a.number);
     case "github_author_teams":
       return authorTeams(gh, { repo: a.repo, author: a.author, teams: a.teams });
+    case "github_finding_thread_states":
+      return { threads: await findingThreadStates(gh, a.repo, a.number, a.ids) };
     case "github_read_file":
       return readWindow(fileAt, a);
     case "github_mirror":

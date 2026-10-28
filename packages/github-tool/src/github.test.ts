@@ -344,16 +344,22 @@ describe("sendCodeReview", () => {
   function pull(head: string) {
     return recorder(function respond(path, init) {
       if (path.includes("/reviews?per_page")) return [];
+      if (path.includes("/reviews/9/comments?per_page")) {
+        return [
+          { id: 32, path: "src/a.ts", body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._" },
+          { id: 31, path: "src/a.ts", body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9." },
+        ];
+      }
       if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: PATCH }];
       if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: head }, base: { repo: { id: 1 } } };
       return { id: 9 };
     });
   }
 
-  test("anchors a range to the first hunk that shows it, names the lines past it, and keeps lines between hunks in the body, and marks unverified findings", async () => {
+  test("anchors a range to the first hunk that shows it, names the lines past it, keeps lines between hunks in the body, marks unverified findings, and names each inline finding's comment", async () => {
     const { gh, requests } = pull("abc123");
-    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true });
-    expect(requests.at(-1)?.body).toEqual({
+    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true, threads: [31, null, 32] });
+    expect(requests.find((request) => request.method === "POST")?.body).toEqual({
       commit_id: "abc123",
       event: "COMMENT",
       body: "**Between hunks** · `src/a.ts:20–30`\n\nC.\n\n_Not checked against the file._\n\n<!-- corbits-code-review -->",
@@ -368,10 +374,29 @@ describe("sendCodeReview", () => {
     const { gh, requests } = pull("abc123");
     const long = Array.from({ length: 5 }, (_, index) => ({ path: "src/b.ts", start: index + 1, end: index + 1, title: `T${index}`, body: "x".repeat(20_000) }));
     await sendCodeReview(gh, { ...review, comments: long }, login);
-    const body = (requests.at(-1)?.body as { body: string }).body;
+    const body = (requests.find((request) => request.method === "POST")?.body as { body: string }).body;
     expect(body.length).toBeLessThanOrEqual(65_536);
     expect(body.match(/\*\*T\d\*\*/g)).toEqual(["**T0**", "**T1**", "**T2**"]);
     expect(body.endsWith("2 more in the portal.\n\n<!-- corbits-code-review -->")).toBe(true);
+  });
+
+  test("a review sent again writes nothing and names the same comment for each finding", async () => {
+    const reviews: Array<{ id: number; user: typeof APP; commit_id: string; body: string; comments: Array<{ path: string; body: string }> }> = [];
+    const { gh, requests } = recorder(function respond(path, init) {
+      if (path.includes("/reviews?per_page")) return reviews;
+      if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: PATCH }];
+      if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: "abc123" }, base: { repo: { id: 1 } } };
+      const listed = /\/reviews\/(\d+)\/comments\?per_page/.exec(path);
+      if (listed) return reviews.find((review) => review.id === Number(listed[1]))!.comments.map((comment, index) => ({ id: 40 + index, ...comment })).reverse();
+      const posted = JSON.parse(String(init?.body));
+      reviews.push({ id: 9, user: APP, commit_id: posted.commit_id, body: posted.body, comments: posted.comments });
+      return { id: 9 };
+    });
+    const first = await sendCodeReview(gh, review, login);
+    const again = await sendCodeReview(gh, review, login);
+    expect(first).toEqual({ reviewId: 9, sent: true, threads: [40, null, 41] });
+    expect(again).toEqual({ reviewId: 9, sent: false, threads: first.threads });
+    expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
   });
 
   test("writes nothing once the pull request has moved past the reviewed head", async () => {
