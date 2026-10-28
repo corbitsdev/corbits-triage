@@ -180,12 +180,13 @@ export function createInvitations(deps: InvitationDeps) {
     if (!row) return failure(404, "not_found", "No open invite for this person.");
     const deleted = await deps.stockFetch(asCaller(req, "DELETE", `/api/tenants/${encodeURIComponent(tenantId)}/principals/${encodeURIComponent(invitedId)}`));
     if (!deleted.ok) return deleted;
-    await db.delete(schema.user).where(and(
+    const [unheld] = await db.select({ id: schema.user.id }).from(schema.user).where(and(
       eq(schema.user.id, row.userId),
       eq(schema.user.emailVerified, false),
       notExists(db.select({ id: schema.principal.id }).from(schema.principal).where(eq(schema.principal.refId, row.userId))),
       notExists(db.select({ id: schema.account.id }).from(schema.account).where(eq(schema.account.userId, row.userId))),
     ));
+    if (unheld) await (await deps.auth.$context).internalAdapter.deleteUser(unheld.id);
     return new Response(null, { status: 204 });
   }
 
@@ -218,7 +219,7 @@ export function createInvitations(deps: InvitationDeps) {
     if (!await callerIsHubOwner(principalId)) return failure(403, "forbidden", "Only whoever runs this Triage may verify an address.");
     const [row] = await unverifiedPeople(tenantId, targetId);
     if (!row) return failure(404, "not_found", "No one in this workspace with an unverified address has this id.");
-    await db.update(schema.user).set({ emailVerified: true, updatedAt: deps.now() }).where(eq(schema.user.id, row.userId));
+    await (await deps.auth.$context).internalAdapter.updateUser(row.userId, { emailVerified: true });
     deps.log({ level: "info", msg: "email_marked_verified", tenantId, byPrincipalId: principalId, principalId: targetId, userId: row.userId });
     return new Response(null, { status: 204 });
   }

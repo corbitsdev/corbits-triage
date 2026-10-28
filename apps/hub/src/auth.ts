@@ -9,7 +9,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { makeSignature } from "better-auth/crypto";
 import { bearer, deviceAuthorization, magicLink } from "better-auth/plugins";
-import { and, eq, lt, ne } from "drizzle-orm";
+import { lt } from "drizzle-orm";
 import { integer, text, timestamp } from "drizzle-orm/pg-core";
 import type { SignInSettings } from "./env.js";
 import type { SendAuthEmail } from "./invitations/invite-email.js";
@@ -136,7 +136,7 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
     return ctx.json({ ...body, access_token: `${body.access_token}.${await makeSignature(body.access_token, config.secret)}` });
   }
 
-  return betterAuth({
+  const auth = betterAuth({
     baseURL: config.baseURL,
     secret: config.secret,
     trustedOrigins: config.trustedOrigins,
@@ -152,8 +152,11 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
         // The reset link proves the mailbox, like a magic link: verify the address and drop provider links nobody proved.
         async onPasswordReset({ user }: { user: { id: string; emailVerified: boolean } }) {
           if (user.emailVerified) return;
-          await db.delete(schema.account).where(and(eq(schema.account.userId, user.id), ne(schema.account.providerId, "credential")));
-          await db.update(schema.user).set({ emailVerified: true, updatedAt: new Date() }).where(eq(schema.user.id, user.id));
+          const { internalAdapter } = await auth.$context;
+          for (const account of await internalAdapter.findAccounts(user.id)) {
+            if (account.providerId !== "credential") await internalAdapter.deleteAccount(account.id);
+          }
+          await internalAdapter.updateUser(user.id, { emailVerified: true });
         },
       }),
     },
@@ -197,4 +200,5 @@ export function createHubAuth(db: DB["db"], config: HubAuthConfig) {
       },
     },
   });
+  return auth;
 }

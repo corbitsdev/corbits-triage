@@ -776,7 +776,7 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
   const noEmailOutput: string[] = [];
   const noEmail = await startHub({ PORTAL_ORIGIN: portal }, temporaryDirectory(), noEmailOutput);
   const emailOf = (name: string) => `${name}-${crypto.randomUUID().slice(0, 8)}@example.com`;
-  const [boss, ann, bob, cat, dee, eve, fay, gil, bounce] = ["boss", "ann", "bob", "cat", "dee", "eve", "fay", "gil", "bounce"].map(emailOf) as [string, string, string, string, string, string, string, string, string];
+  const [boss, ann, bob, cat, dee, eve, fay, gil, hal, bounce] = ["boss", "ann", "bob", "cat", "dee", "eve", "fay", "gil", "hal", "bounce"].map(emailOf) as [string, string, string, string, string, string, string, string, string, string];
   const owner = await signedIn(origin, boss);
   const tenantId = await createTenant(origin, owner);
   const otherTenantId = await createTenant(origin, owner);
@@ -879,7 +879,10 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
 
     // A reset proves the mailbox too, so an invitee who sets a password before following the link can accept, and keeps it.
     expect(await invite(origin, gil)).toMatchObject({ status: 201 });
+    const [gilUser] = await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, gil));
+    await db.insert(schema.account).values({ id: crypto.randomUUID(), userId: gilUser!.id, providerId: "google", accountId: "squatted" });
     await resetPassword(gil, "password-777777", "198.51.100.212");
+    expect(await db.select({ providerId: schema.account.providerId }).from(schema.account).where(eq(schema.account.userId, gilUser!.id))).toEqual([{ providerId: "credential" }]);
     const gilSignIn = await fetch(`${origin}/api/auth/sign-in/email`, { method: "POST", headers: { "content-type": "application/json", origin, "x-forwarded-for": "198.51.100.213" }, body: JSON.stringify({ email: gil, password: "password-777777" }) });
     const gilHeaders = { "content-type": "application/json", origin, cookie: gilSignIn.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ") };
     expect(await accept(gilHeaders)).toEqual({ status: 200, body: { tenantId } });
@@ -908,6 +911,11 @@ test("an invite joins only its verified invitee, by an emailed magic link or a c
     expect(await statusOf(eve)).toBeUndefined();
     expect(await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, eve))).toEqual([]);
     await signedIn(origin, eve);
+    // An address another workspace's invite still holds is kept.
+    const elsewhereInvite = await fetch(`${origin}/api/integrations/invitations/${otherTenantId}`, { method: "POST", headers: { ...owner, origin }, body: JSON.stringify({ email: hal, roleId: await memberRole(otherTenantId) }) });
+    expect(elsewhereInvite.status).toBe(201);
+    expect(await withdraw(Sent.assert((await invite(origin, hal)).body).principalId)).toBe(204);
+    expect(await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, hal))).toHaveLength(1);
 
     // Withdrawing does not reset what an address was sent, so inviting and withdrawing in a loop stops.
     for (let sent = 0; sent < 5; sent++) expect(await withdraw(Sent.assert((await invite(origin, fay)).body).principalId)).toBe(204);
