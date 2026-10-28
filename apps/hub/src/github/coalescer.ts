@@ -57,6 +57,8 @@ export type Accepted = "queued" | "coalesced";
 export type CoalescerDeps = {
   store: TriageStateStore;
   sendMail: (job: TriageJob) => Promise<unknown>;
+  /** Asks the reconciler for a pass soon, after a head's mail reached no listener. */
+  retry: () => void;
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   window: CoalesceWindow;
   setTimer: SetTimer;
@@ -165,7 +167,7 @@ export function createCoalescer(deps: CoalescerDeps): Coalescer {
     } catch (err) {
       if (err instanceof GithubRateLimited) return drop(open, entry, "github_rate_limited");
       deps.log({ level: "error", msg: "forward_failed", ...entry, error: String(err) });
-      await failDelivery(deps.store, head, err, deps.now());
+      if (await failDelivery(deps.store, head, err, deps.now())) deps.retry();
       return;
     }
     deps.log({ level: "info", msg: "forwarded", ...entry, workflow: latest.workflow });

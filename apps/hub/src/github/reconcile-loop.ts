@@ -2,7 +2,7 @@ import type { ReconcileOutcome } from "./triage-reconciler.js";
 
 export type ReconcileLoopOptions = {
   intervalMs: number;
-  /** First retry after a pass that could not deliver; doubles up to `retryMaxMs`. */
+  /** First retry after a pass that could not deliver; doubles up to `retryMaxMs`. A pass that left a head unrouted is repeated this soon, every time. */
   retryMs: number;
   retryMaxMs: number;
   schedule?: (run: () => void, ms: number) => unknown;
@@ -44,9 +44,10 @@ export function createReconcileLoop(
     entry.scheduled = schedule(retryKick, ms);
   }
 
-  /** The sooner of the backoff, while a pass could not deliver, and the lift of a GitHub rate limit it ran into. */
+  /** The soonest of the backoff, while a pass could not deliver, a pass left a head unrouted, and the lift of a GitHub rate limit it ran into. */
   function delayOf(outcome: ReconcileOutcome): number | undefined {
     const delays: number[] = [];
+    if (outcome.unrouted) delays.push(options.retryMs);
     if (outcome.retry) {
       delays.push(retryIn);
       retryIn = Math.min(retryIn * 2, options.retryMaxMs);

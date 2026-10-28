@@ -120,14 +120,16 @@ async function replaceQueued(store: TriageStateStore, head: QueuedHead, next: (r
 
 /**
  * Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; it keeps when its
- * mail first did not. Mail that reached no run leaves the head unrouted, so it goes out again as soon as a listener is up.
+ * mail first did not. Mail that reached no run leaves the head unrouted, so it goes out again as soon as a listener is
+ * up; true when it did.
  */
-export function failDelivery(store: TriageStateStore, head: QueuedHead, err: unknown, now: Date): Promise<void> {
+export async function failDelivery(store: TriageStateStore, head: QueuedHead, err: unknown, now: Date): Promise<boolean> {
   const unrouted = reachedNoRun(err);
-  return replaceQueued(store, head, function failed(row) {
+  await replaceQueued(store, head, function failed(row) {
     const at = now.toISOString();
     return { ...row, status: "failed", error: deliveryFailure(err), undeliveredSince: row.undeliveredSince ?? row.queuedAt ?? at, ...(unrouted && { unrouted: true }), updatedAt: at };
   });
+  return unrouted;
 }
 
 /** Marks a still queued head failed after its mail did not go out, so the reconciler queues it again; it keeps when its mail first did not. */

@@ -579,6 +579,9 @@ const workflowRollout = createWorkflowRollout({
   status(tenantId, runId) {
     return composition.workflowLifecycleService.getStatus(tenantId, runId);
   },
+  live() {
+    triageLoop?.kick();
+  },
   lock: createWorkspaceLock(composition.db.$client),
   sleep: Bun.sleep,
   now,
@@ -680,8 +683,10 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
   const outcomes: ReconcileOutcome[] = [];
   for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);
+  const unrouted = outcomes.some((outcome) => outcome.unrouted);
   const limits = outcomes.flatMap((outcome) => outcome.retryAt ?? []);
-  return limits.length === 0 ? { retry } : { retry, retryAt: Math.min(...limits) };
+  const outcome: ReconcileOutcome = { retry, ...(unrouted && { unrouted: true }) };
+  return limits.length === 0 ? outcome : { ...outcome, retryAt: Math.min(...limits) };
 }
 triageLoop = createReconcileLoop(reconcileAll, { intervalMs: triageReconcileIntervalMs(env), retryMs: TRIAGE_RETRY_MS, retryMaxMs: TRIAGE_RETRY_MAX_MS }, logJson);
 const githubPrTriage = createGithubPrTriage({
@@ -755,6 +760,7 @@ function setTimer(fire: () => Promise<void>, ms: number): () => void {
 coalescer = createCoalescer({
   store: triageStateStore,
   sendMail: sendTriageMail,
+  retry: kickTriage,
   openHeadFor: tenantOpenHead,
   window: triageCoalesceWindow(env, reconcilePolicy),
   setTimer,

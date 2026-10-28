@@ -58,8 +58,9 @@ type LoadedRepo = EnabledRepo & (ResolvedPack | PolicyUnreadable) & { prs: OpenP
 /**
  * `retry` asks for another pass soon: a repository's or a tenant's pass failed.
  * `retryAt` is when a GitHub rate limit the pass ran into lifts; no sooner pass could read anything.
+ * `unrouted` asks for another pass shortly: a head's mail reached no listener, which a replacement may soon be.
  */
-export type ReconcileOutcome = { retry: boolean; retryAt?: number };
+export type ReconcileOutcome = { retry: boolean; retryAt?: number; unrouted?: true };
 
 function enabledRepos(config: unknown, source: RepoSource): EnabledRepo[] {
   return repoRecords(triageNs(config)).flatMap(function enabled(record) {
@@ -111,6 +112,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   let limitedUntil: number | undefined;
   /** The limit last logged, so one limit is logged once rather than per repository per pass. */
   let loggedLimit: number | undefined;
+  /** Whether this pass left a head unrouted. */
+  let unrouted = false;
 
   /** False for a GitHub rate limit, which is noted for the pass's outcome rather than logged and retried. */
   function reconcileFailed(entry: Record<string, unknown>, err: unknown): boolean {
@@ -252,11 +255,13 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       } catch (err) {
         if (err instanceof GithubRateLimited) throw err;
         deps.log({ level: "error", msg: "forward_failed", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, error: String(err) });
-        await failDelivery(deps.store, { tenantId: pass.tenantId, repo: key, number: queued.number, headSha }, err, deps.now());
+        if (await failDelivery(deps.store, { tenantId: pass.tenantId, repo: key, number: queued.number, headSha }, err, deps.now())) unrouted = true;
         continue;
       }
       deps.log({ level: "info", msg: "triage_requeued", tenantId: pass.tenantId, repo: repo.record.name, pr: queued.number, headSha, reason: queued.reason });
     }
+    // An unrouted head the in-flight limit kept back this pass.
+    if (claimed.rows.some((row) => row.unrouted)) unrouted = true;
   }
 
   /** True when the pass is worth repeating soon: a repository's pass failed. */
@@ -313,6 +318,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
   return async function reconcileTriage(): Promise<ReconcileOutcome> {
     let retry = false;
     limitedUntil = undefined;
+    unrouted = false;
     for (const tenant of await deps.tenants()) {
       try {
         if (await reconcileTenant(tenant)) retry = true;
@@ -320,9 +326,10 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         if (reconcileFailed({ tenantId: tenant.id }, err)) retry = true;
       }
     }
-    if (limitedUntil === undefined) return { retry };
+    const outcome: ReconcileOutcome = unrouted ? { retry, unrouted: true } : { retry };
+    if (limitedUntil === undefined) return outcome;
     if (limitedUntil !== loggedLimit) deps.log({ level: "warn", msg: "triage_github_rate_limited", resetAt: new Date(limitedUntil).toISOString() });
     loggedLimit = limitedUntil;
-    return { retry, retryAt: limitedUntil };
+    return { ...outcome, retryAt: limitedUntil };
   };
 }

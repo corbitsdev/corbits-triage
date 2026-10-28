@@ -97,6 +97,7 @@ function harness(rows: PrTriageRow[] = [], overrides: Partial<CoalescerDeps> = {
     async sendMail(job) {
       mails.push(job.payload as Record<string, unknown>);
     },
+    retry() {},
     async openHeadFor() {
       return async function openHead() {
         return { headSha: "sha1", draft: false };
