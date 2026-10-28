@@ -34,13 +34,13 @@ function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryCli
     return { rows, settled: [...(before?.settled ?? []), ...settled] };
   };
   // A merge on the host changes a repository's standing without the portal knowing, so each load reads it again, and
-  // while a pull request is open it is read again until it merges.
+  // while the pull request adding its policy file is open it is read again until it merges.
   return queryOptions({
     queryKey,
     queryFn,
     staleTime: 60_000,
     refetchOnMount: "always",
-    refetchInterval: (query) => (query.state.data?.rows.some((row) => row.pull) ? PULL_POLL_MS : false),
+    refetchInterval: (query) => (query.state.data?.rows.some((row) => starting(row) && row.pull) ? PULL_POLL_MS : false),
   });
 }
 
