@@ -1,6 +1,6 @@
 # Railway Sandboxes provisioner
 
-`packages/provisioner-railway` runs each sidecar in a [Railway sandbox](https://docs.railway.com/sandboxes) of its own, a virtual machine Railway starts in an environment you name, and declares `isolation:workload`. The hub registers it after [Docker](docker.md) and [E2B](e2b.md), so it hosts workflows that require `isolation:workload`, such as code review, and every workflow probe, on a hub with neither. In Settings → Code review → **Where it runs** it is **Railway Sandboxes**; code review uses the first ready place in the order shown there, so Railway is used only when no Docker or E2B place is ready, and a review waits on Railway when Railway is full.
+`packages/provisioner-railway` runs each sidecar in a [Railway sandbox](https://docs.railway.com/sandboxes) of its own, a virtual machine Railway starts in an environment you name, and declares `isolation:workload`. The hub registers it after [Docker](docker.md) and [E2B](e2b.md), so it hosts workflows that require `isolation:workload`, such as code review, and every workflow probe, on a hub with neither. In the Code review page's **Where it runs** it is **Railway Sandboxes**; code review uses the first ready place in the order shown there, so Railway is used only when no Docker or E2B place is ready, and a review waits on Railway when Railway is full.
 
 For each sidecar the provisioner creates one sandbox from the sidecar template, then starts the stock sidecar in it as a background command. The sidecar dials the hub's public `wss://` address; the sandbox has outbound internet and no access to the environment's private network.
 
@@ -30,7 +30,7 @@ Create a workspace token for the workspace that holds the environment (Account s
 
 ### 3. Variables
 
-Set on the hub, then restart it (Settings → Code review shows the first two lines, with Copy):
+Set on the hub, then restart it (the Code review page shows the first two lines, with Copy):
 
 | Variable | Value |
 | --- | --- |
@@ -54,7 +54,7 @@ Railway's standard image cannot be pinned by digest: in Railway's public GraphQL
 
 ### 5. Check
 
-Open Settings → Code review. **Railway Sandboxes** says **Ready**, or **In use** when no Docker or E2B place comes before it. If it says **Failing**, the reason under it, shown to admins, says what to fix; the hub also logs it as `railway_sidecars_off`. Shortly after boot, `railway_sidecars_swept` says how many of this hub's leftover sandboxes it destroyed; the sweep runs in the background and never holds up the hub.
+Open the Code review page. **Railway Sandboxes** says **Ready**, or **In use** when no Docker or E2B place comes before it. If it says **Failing**, the reason under it, shown to admins, says what to fix; the hub also logs it as `railway_sidecars_off`. Shortly after boot, `railway_sidecars_swept` says how many of this hub's leftover sandboxes it destroyed; the sweep runs in the background and never holds up the hub.
 
 Press **Review again** on a pull request on Triage. Its sidecar's sandbox shows up in the environment:
 
