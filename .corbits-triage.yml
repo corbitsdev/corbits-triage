@@ -3,15 +3,15 @@ rules:
   - check: max-files-changed
     text: Flag pull requests over 30 files changed.
     max: 30
-    onFail: ask
-    reason: Set in the portal before the policy file.
+    onFail: label
+    reason: A large change is a risk signal to weigh, not by itself a reason to hold the pull request.
     evidence:
       - maintainer-stated
   - check: max-lines-changed
     text: Flag pull requests over 5,000 lines changed.
     max: 5000
-    onFail: ask
-    reason: Set in the portal before the policy file.
+    onFail: label
+    reason: A large change is a risk signal to weigh, not by itself a reason to hold the pull request.
     evidence:
       - maintainer-stated
   - check: focused
