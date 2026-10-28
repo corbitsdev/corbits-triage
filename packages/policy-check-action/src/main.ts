@@ -3,11 +3,11 @@ import { join } from "node:path";
 import { checkPolicyFile, notAFileReason, POLICY_FILE_PATHS, policyFileReason, type PolicyFileProblem } from "@corbits/triage-contracts";
 import { escapeData, escapeProperty, runChecks, workflowCommand, type Skipped } from "./checks.js";
 
-function annotation(path: string, problem: PolicyFileProblem): string {
+function annotation(path: string, problem: PolicyFileProblem, level: "error" | "warning" = "error"): string {
   const where = [`file=${escapeProperty(path)}`];
   if (problem.line !== undefined) where.push(`line=${problem.line}`);
   if (problem.column !== undefined) where.push(`col=${problem.column}`);
-  return `::error ${where.join(",")}::${escapeData(problem.message)}`;
+  return `::${level} ${where.join(",")}::${escapeData(problem.message)}`;
 }
 
 function lint(root: string, repo: string): void {
@@ -29,6 +29,7 @@ function check(root: string, path: string, isFile: boolean, repo: string): void 
   }
   const checked = checkPolicyFile(readFileSync(join(root, path), "utf8"), repo);
   if (checked.ok) {
+    if (checked.pending) for (const problem of checked.pending) console.log(annotation(path, problem, "warning"));
     console.log(`${path} is valid.`);
     return;
   }

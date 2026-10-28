@@ -6,6 +6,7 @@ import { asRecord } from "@corbits/common";
 import { CATALOG_IDS, emptyPack, isSizeRule, readCheckPack, type CatalogId } from "./check-pack.js";
 import { checkPolicyFile, policyFileReason } from "./policy-file.js";
 import { policyRuleSchema } from "./policy-rules.js";
+import { withoutReserved } from "./policy-workflow.js";
 import { catalogSentence } from "./rule-prose.js";
 
 const RuleId = "string > 0";
@@ -14,7 +15,8 @@ export const PolicyPatchChange = type({ kind: "'rule'", id: RuleId, enabled: "bo
   .or({ kind: "'rule-options'", id: RuleId, options: "Record<string, unknown>" })
   .or({ kind: "'add-rule'", rule: policyRuleSchema })
   .or({ kind: "'remove-rule'", id: RuleId })
-  .or({ kind: "'code-review'", on: "boolean" });
+  .or({ kind: "'code-review'", on: "boolean" })
+  .or({ kind: "'strip-reserved'" });
 export type PolicyPatchChange = typeof PolicyPatchChange.infer;
 
 export const PolicyPatchChanges = PolicyPatchChange.array().atLeastLength(1).atMostLength(40);
@@ -67,7 +69,7 @@ function ruleIdAt(item: unknown): string | undefined {
   return scalarText(item.get("id", true));
 }
 
-/** `parsedPolicy` refuses a file without a rules list, and no change removes it. */
+/** `parsedPolicy` refuses a file without a rules list unless the batch only strips reserved blocks, and no change removes it. */
 function rulesOf(doc: Document): YAMLSeq {
   const rules = doc.get("rules", true);
   if (!isSeq(rules)) throw new Error("the policy file lost its rules list");
@@ -178,6 +180,15 @@ function applyCodeReview(doc: Document, on: boolean): string | undefined {
   return undefined;
 }
 
+/**
+ * Takes out what Triage reads the file without (`withoutReserved`). A block's path is its key and a rule's starts
+ * `decide` and its index; the last go first so the rules before them keep their places.
+ */
+function applyStripReserved(doc: Document): void {
+  const paths = withoutReserved(asRecord(doc.toJS()) ?? {}).pending.map(({ path }) => path.slice(0, 2));
+  for (const path of paths.reverse()) doc.deleteIn(path);
+}
+
 function applyChange(doc: Document, repo: string, touched: Touched, change: PolicyPatchChange): string | undefined {
   switch (change.kind) {
     case "rule":
@@ -190,15 +201,19 @@ function applyChange(doc: Document, repo: string, touched: Touched, change: Poli
       return applyRemove(doc, change.id);
     case "code-review":
       return applyCodeReview(doc, change.on);
+    case "strip-reserved":
+      applyStripReserved(doc);
+      return undefined;
   }
 }
 
-function parsedPolicy(text: string): Document | string {
+/** `rules` is needed by every change but `strip-reserved`, which a file that extends another or has the older shape takes too. */
+function parsedPolicy(text: string, needsRules: boolean): Document | string {
   const doc = parseDocument(text, { schema: "core", prettyErrors: false });
   const error = doc.errors[0] ?? doc.warnings[0];
   if (error) return `The policy file is not YAML: ${error.message.replace(/\.$/, "")}.`;
   if (!isMap(doc.contents)) return "The policy file must be a mapping.";
-  if (!isSeq(doc.get("rules", true))) return MIGRATION;
+  if (needsRules && !isSeq(doc.get("rules", true))) return MIGRATION;
   return doc;
 }
 
@@ -239,12 +254,13 @@ function checkedText(doc: Document, repo: string): { text: string; policy: Recor
   const text = doc.toString(WRITTEN);
   const checked = checkPolicyFile(text, repo);
   if (!checked.ok) return policyFileReason(checked.problems);
+  if (checked.pending) return policyFileReason(checked.pending);
   return { text, policy: checked.policy };
 }
 
 /** The file after `changes`, or why the batch cannot be applied. The result passes `checkPolicyFile`. */
 export function patchPolicyFile(text: string, repo: string, changes: readonly PolicyPatchChange[]): PolicyPatchOutcome {
-  const parsed = parsedPolicy(text);
+  const parsed = parsedPolicy(text, changes.some((change) => change.kind !== "strip-reserved"));
   if (typeof parsed === "string") return refused(parsed);
   const original = JSON.stringify(parsed.toJS());
   const touched: Touched = { rules: new Set(), resentence: new Set(), ownText: new Set() };
@@ -252,7 +268,7 @@ export function patchPolicyFile(text: string, repo: string, changes: readonly Po
     const problem = applyChange(parsed, repo, touched, change);
     if (problem !== undefined) return refused(problem);
   }
-  const required = missingRequired(parsed, touched.rules);
+  const required = touched.rules.size === 0 ? undefined : missingRequired(parsed, touched.rules);
   if (required !== undefined) return refused(required);
   const patched = checkedText(parsed, repo);
   if (typeof patched === "string") return refused(patched);

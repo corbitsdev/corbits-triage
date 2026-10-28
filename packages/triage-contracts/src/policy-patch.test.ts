@@ -235,3 +235,29 @@ test("a built-in rule added whole keeps its own text", () => {
   expect(patched.text).toContain("text: Keep pull requests short.");
   expect(patched.text).toContain("max: 200");
 });
+
+test("strip-reserved takes out the security and deslop blocks and the rules conditioned on them, and other changes wait for it", () => {
+  const held = `${FILE}security: { on: true }
+deslop: { on: false }
+decide:
+  - if: { triage: pass, deslop: clean }
+    do: merge
+  # kept
+  - if:
+      triage: fail
+    do: request-changes
+`;
+  expect(patchPolicyFile(held, REPO, [{ kind: "rule", id: "focused", enabled: false }])).toMatchObject({ ok: false, message: expect.stringContaining("`security`: security and deslop reviews are not available yet") });
+  const patched = patchPolicyFile(held, REPO, [{ kind: "strip-reserved" }]);
+  expect(patched).toEqual({ ok: true, changed: true, text: `${FILE}decide:\n  # kept\n  - if:\n      triage: fail\n    do: request-changes\n` });
+  if (!patched.ok) return;
+  const checked = checkPolicyFile(patched.text, REPO);
+  expect(checked).toMatchObject({ ok: true });
+  expect(checked.ok && checked.pending).toBeUndefined();
+  expect(patchPolicyFile(patched.text, REPO, [{ kind: "strip-reserved" }])).toMatchObject({ ok: true, changed: false });
+});
+
+test("strip-reserved also takes the blocks out of a file that extends another", () => {
+  const held = "# shared rules\nextends: acme/shared\nchecks:\n  ci-green: { enabled: true }\ndeslop: { on: false }\n";
+  expect(patchPolicyFile(held, REPO, [{ kind: "strip-reserved" }])).toEqual({ ok: true, changed: true, text: "# shared rules\nextends: acme/shared\nchecks:\n  ci-green: {enabled: true}\n" });
+});

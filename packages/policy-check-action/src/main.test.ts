@@ -26,6 +26,11 @@ test("an invalid policy file fails with an annotation on each offending line, or
   expect(check(null)).toEqual({ exitCode: 1, stdout: "::error file=.corbits-triage.yml::.corbits-triage.yml is not a file.\n" });
 }, 15_000);
 
+test("a security or deslop block passes with a warning on its line, since Triage skips it", () => {
+  const rules = "rules:\n  - check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [maintainer-stated]\n";
+  expect(check(`${rules}deslop: { on: false }\n`)).toEqual({ exitCode: 0, stdout: "::warning file=.corbits-triage.yml,line=6::`deslop`: security and deslop reviews are not available yet, so Triage skips this block; remove it.\n.corbits-triage.yml is valid.\n" });
+}, 15_000);
+
 test("a v4 file passes, and a mistake in a block is marked on its line", () => {
   const rules = "rules:\n  - check: ci-green\n    text: CI passes.\n    reason: Required.\n    evidence: [maintainer-stated]\n";
   expect(check(`${rules}code-review: { on: true, provider: anthropic }\ndecide:\n  - { if: { all: clean }, do: approve }\n`)).toEqual({ exitCode: 0, stdout: ".corbits-triage.yml is valid.\n" });

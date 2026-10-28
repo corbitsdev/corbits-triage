@@ -7,7 +7,7 @@ import { asRecord } from "@corbits/common";
 import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, policyOverrideSchema, readCheckPack, refusalNames, readPolicyOverride, withAuthorKinds, type PolicyOverride } from "./check-pack.js";
 import { fileProblems } from "./policy-file-problems.js";
 import { isPolicyRulesFile, PolicyFileError, policyRulesSchema, readRulesFile } from "./policy-rules.js";
-import { BLOCK_KINDS, decideOf, type PolicyWorkflow } from "./policy-workflow.js";
+import { BLOCK_KINDS, decideOf, withoutReserved, type PolicyWorkflow } from "./policy-workflow.js";
 
 export const POLICY_FILE_PATH = ".corbits-triage.yml";
 /** Read in this order on the default branch; the first one found is the policy. */
@@ -19,9 +19,10 @@ export type PolicyFileProblem = { message: string; line?: number; column?: numbe
 
 /**
  * `workflow` is what the file says beyond the stored policy: its v4 keys, and `decide`, from its schema 3 `actions` when
- * it sets no `decide`. A file that extends another holds no v4 key, so its `workflow` is empty.
+ * it sets no `decide`. A file that extends another holds no v4 key, so its `workflow` is empty. `pending` is what the
+ * file holds that Triage skips until it is removed.
  */
-export type PolicyFileCheck = { ok: true; policy: Record<string, unknown>; workflow: PolicyWorkflow } | { ok: false; problems: PolicyFileProblem[] };
+export type PolicyFileCheck = { ok: true; policy: Record<string, unknown>; workflow: PolicyWorkflow; pending?: PolicyFileProblem[] } | { ok: false; problems: PolicyFileProblem[] };
 
 const PACK_KEYS = ["checks", "custom", "actions", "labels"];
 const OVERRIDE_KEYS = ["extends", ...PACK_KEYS];
@@ -157,6 +158,15 @@ export function checkPolicyFile(text: string, repo: string): PolicyFileCheck {
   }
   const file = asRecord(parsed.root);
   if (!file) return { ok: false, problems: [{ message: "The policy file must be a mapping." }] };
+  const { file: kept, pending } = withoutReserved(file);
+  if (pending.length === 0) return checkedOf(parsed, file, repo);
+  const checked = checkedOf(parsed, kept, repo);
+  // A rule left out moves the ones after it, so a refusal is said of the file as written.
+  if (!checked.ok) return checkedOf(parsed, file, repo);
+  return { ...checked, pending: pending.map((problem) => located(parsed, problem)) };
+}
+
+function checkedOf(parsed: Parsed, file: Record<string, unknown>, repo: string): PolicyFileCheck {
   try {
     return { ok: true, ...policyOf(file, repo) };
   } catch (error) {

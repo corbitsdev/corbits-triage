@@ -1,6 +1,6 @@
 # .corbits-triage.yml reference
 
-The file holds `rules` (required), and optionally `onFail`, `actions` or `decide`, `labels`, `extends`, `groups`, the block `code-review`, `pace` and `pauseLabel`. Any other key is refused, with the key it was likely meant to be. Every refusal names its line and what the value must be. YAML only, at most 64 KB; YAML aliases (`*name`) and the keys `__proto__`, `constructor` and `prototype` are refused.
+The file holds `rules` (required), and optionally `onFail`, `actions` or `decide`, `labels`, `extends`, `groups`, the block `code-review`, `pace` and `pauseLabel`. Any other key is refused, with the key it was likely meant to be. Never write `security` or `deslop`: those reviews are not available. In a file already on the default branch, Triage skips either block and any `decide` rule with a condition on one, runs the rest, and offers a pull request removing them; Triage refuses a file written with them. Every refusal names its line and what the value must be. YAML only, at most 64 KB; YAML aliases (`*name`) and the keys `__proto__`, `constructor` and `prototype` are refused.
 
 ## Rules
 

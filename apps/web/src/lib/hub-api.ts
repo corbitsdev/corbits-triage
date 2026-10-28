@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageAutomated, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPatchResponse, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageAutomated, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type PolicyPatchChange, type RepoCheckFlags, type RepoPolicy, type RepoSource, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 
 const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
@@ -761,6 +761,11 @@ export async function loadPolicyFile(transport: Transport, tenantId: string, rep
 export async function exportPolicyFile(transport: Transport, tenantId: string, repo: string, source: RepoSource, edit?: { text: string; sha: string }): Promise<PolicyExported> {
   const clean = validateRepo(repo);
   return PolicyExported.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/export`, { repo: clean, source, ...edit }));
+}
+
+export async function patchPolicyFile(transport: Transport, tenantId: string, repo: string, source: RepoSource, changes: PolicyPatchChange[]): Promise<PolicyPatchResponse> {
+  const clean = validateRepo(repo);
+  return PolicyPatchResponse.assert(await transport.fetch<unknown>("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}/policy/patch`, { repo: clean, source, changes }));
 }
 
 export async function loadPolicyPushAccess(transport: Transport, tenantId: string, repo: string, source: RepoSource): Promise<PolicyPushAccess> {

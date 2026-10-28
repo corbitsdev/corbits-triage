@@ -10,6 +10,7 @@ import { usePortal } from "../../lib/portal.tsx";
 import { usePolicyUpgrade, useSettled } from "../../lib/policy-upgrades.ts";
 import { CheckIcon, ExternalIcon } from "../inbox-icons.tsx";
 import PolicyEditor from "./PolicyEditor.tsx";
+import PolicyPending from "./PolicyPending.tsx";
 import PolicyRules from "./PolicyRules.tsx";
 import PolicyStart, { HOST_NAME } from "./PolicyStart.tsx";
 
@@ -57,6 +58,7 @@ export default function PolicySection({ repo, source, pack, disabled }: PolicySe
     return (
       <>
         {settled ? <p className="moved"><span className="mk ok"><CheckIcon /></span><span>Done. Your rules now come from <code>{file.path}</code>.</span></p> : null}
+        {file.pending ? <PolicyPending repo={repo} source={source} pending={file.pending} disabled={disabled} /> : null}
         {rules()}
       </>
     );
