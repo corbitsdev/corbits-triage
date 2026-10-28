@@ -599,7 +599,10 @@ label off that head, so it never stands on a head not yet triaged.
    pass label off. The portal reads the wait from the head's triage-state
    row, not the label.
 8. **execute**: runs the actions whose kind the `pr-triage` role holds on the
-   repository. Every other action is held in the verdict (`held: true`).
+   repository. Every other action is held in the verdict (`held: true`). One
+   held only because CI is still running on the head also carries
+   `heldUntil: "ci-finishes"`, which the portal reads as running on its own once
+   CI finishes; any other hold waits for a person.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
 `triage-do:<kind>:<owner>/<name>`) and mails them with each trigger; the run

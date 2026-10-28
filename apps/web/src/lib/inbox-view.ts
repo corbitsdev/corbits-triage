@@ -1,7 +1,6 @@
 import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, triageStopped, type AuthorKind, type AwaitedStage } from "@corbits/triage-contracts";
 import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
 import { holdsActionForYou, mergesOnItsOwn, pendingDos, triageActed } from "./pending-dos.ts";
-import { hostName } from "./pull-link.ts";
 import { priorityRank } from "./triage-view.ts";
 
 export type InboxAction = "decide" | "review" | "unblock" | "merge" | "failed";
@@ -60,7 +59,13 @@ export function stoppedNotes(items: readonly PrItem[]): string[] {
   return [...new Set(items.flatMap((item) => (triageStoppedOn(item) && item.untriaged !== undefined ? [item.untriaged] : [])))];
 }
 
+/** The latest run, on commits newer than the verdict's, ended without one. */
+export function failedOnNewCommits(item: PrItem): boolean {
+  return item.failure !== null && hasUncheckedCommits(item);
+}
+
 export function inboxAction(item: PrItem): InboxAction | null {
+  if (failedOnNewCommits(item)) return "failed";
   switch (item.state) {
     case "needs-decision":
     case "stale":
@@ -121,28 +126,24 @@ function awaitsYourDecision(item: PrItem): boolean {
 
 const STAGE_TEXT: Record<AwaitedStage, string> = { judge: "the judgement rules", "code-review": "code review" };
 
-/**
- * What Triage is doing or waiting on, in the order it comes, read from the hub's state of the run; null once it has
- * nothing under way. A draft is its author's until marked ready, so only a run already going counts for one.
- */
+/** What the hub says Triage is doing or waiting on, in the order it comes; null when it has no run going or awaited. */
 export function progressText(item: PrItem): string | null {
   if (item.running) return "checking this pull request";
   if (item.waitingForCi) return "waiting on CI";
   if (item.awaiting.length > 0) return `waiting on ${item.awaiting.map((stage) => STAGE_TEXT[stage]).join(", then ")}`;
-  if (item.draft === true) return null;
-  if (hasUncheckedCommits(item)) return "checking new commits";
-  if (item.state === "stale") return "rechecking";
-  return inboxAction(item) === null && !triageStoppedOn(item) ? "not triaged yet" : null;
+  return null;
 }
 
 /**
- * Only a pull request with a decision for you: none while Triage is still at work on it, and a draft or one on its
- * author's turn only while something waits on your approval.
+ * Only a pull request with a decision for you: none while Triage is still at work on it. A failed run is yours to try
+ * again, a draft included. A draft, one on its author's turn, or one whose verdict Triage could not settle is yours only
+ * while something waits on your approval.
  */
 export function inNeedsYou(item: PrItem): boolean {
   if (progressText(item) !== null) return false;
-  if (awaitsYourDecision(item)) return true;
-  return item.draft !== true && inboxAction(item) !== null && !waitsOnAuthor(item);
+  const action = inboxAction(item);
+  if (action === "failed" || awaitsYourDecision(item)) return true;
+  return item.draft !== true && item.state !== "stale" && action !== null && !waitsOnAuthor(item);
 }
 
 /** A comment only counts as a draft when it holds non-empty text; a degraded verdict's empty feedback is nothing to post. */
@@ -196,7 +197,8 @@ export function waitsOn(item: PrItem, entry: HandledMark | null): WaitsOn {
   if ((entry === null && inNeedsYou(item)) || awaitsYourDecision(item)) return "maintainer";
   if (item.draft === true || item.state === "needs-author-update" || (entry !== null && AUTHOR_TURN.has(entry.kind))) return "author";
   if (item.ci === "pending") return "ci";
-  return triageStoppedOn(item) ? "triage" : "nobody";
+  if (inboxAction(item) === null || item.state === "stale" || hasUncheckedCommits(item)) return "triage";
+  return "nobody";
 }
 
 /** `did` is what Triage did on its own and `reason` why; `person` also leaves the next step to you. */
@@ -229,19 +231,6 @@ export function actionMode(item: PrItem): ActionMode | null {
 export function waitsOnIn(entry: OpenItem, needsSetup: ReadonlySet<string>): WaitsOn {
   const waits = waitsOn(entry.item, entry.handled);
   return waits === "triage" && needsSetup.has(entry.item.repo) ? "setup" : waits;
-}
-
-const NOT_POSTED: Record<string, string> = {
-  stale: "Triage could not reach a verdict and will check again.",
-  waiting: "Triage is waiting for the checks to finish.",
-  no_request: "There was nothing to post.",
-  no_grants: "Triage may not post here. Allow it under Actions Triage takes on its own on the repository's page.",
-};
-
-/** Why the verdict is not on the pull request's host, when the run said. */
-export function notPostedText(item: Pick<PrItem, "notPosted" | "source">): string | null {
-  const why = item.notPosted === undefined ? undefined : NOT_POSTED[item.notPosted];
-  return why === undefined ? null : `Not posted on ${hostName(item.source)}: ${why}`;
 }
 
 export function primaryLabel(action: PrimaryAction): string {

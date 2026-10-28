@@ -646,7 +646,6 @@ export default function Inbox() {
   const selectedMark = entries.find((entry) => entry.item.key === selected?.key)?.handled ?? null;
   // All open keeps an acted-on pull request selected; a fresh pane closes the sent composer, and Undo brings its draft back.
   const paneKey = `${selected?.key}:${selectedMark?.kind ?? ""}`;
-  const paneMark = listsRest ? selectedMark : null;
   const groupings = groupingsOf(view, listsRest);
   const grouping = currentGrouping();
   const byRepo = view !== "ready" && grouping === "repo";
@@ -822,7 +821,7 @@ export default function Inbox() {
         <Pane
           key={paneKey}
           item={selected}
-          handled={paneMark}
+          handled={selectedMark}
           listTitle={listTitle}
           restored={paneDraft}
           sectionRef={sectionRef}

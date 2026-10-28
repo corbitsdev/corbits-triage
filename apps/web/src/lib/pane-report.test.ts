@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { emptyPack, type CheckPack } from "@corbits/triage-contracts";
+import { emptyPack, triageStopped, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem, SuggestedAction } from "./hub-api.ts";
 import { mergeBlockOf, paneFacts } from "./inbox-pane.ts";
 import type { HandledMark } from "./inbox-view.ts";
@@ -118,15 +118,17 @@ describe("the one line", () => {
     ["running", { running: true }, "In progress: Checking this pull request"],
     ["waiting for CI", { waitingForCi: true, checks: [FAIL] }, "In progress: Waiting on CI"],
     ["waiting on the manager's reviewers, in order", { awaiting: ["judge", "code-review"] }, "In progress: Waiting on the judgement rules, then code review"],
-    ["a failed run that is also a draft", { state: "new", runId: null, failure: "stuck", draft: true, checks: [FAIL] }, "Done: Couldn't triage: the run stopped responding · use Triage again in More"],
-    ["a failed run", { state: "new", runId: null, failure: "stuck" }, "Needs you: Couldn't triage: the run stopped responding"],
-    ["a draft that is rechecking", { state: "stale", draft: true }, "Done: Draft · waiting on @ada"],
-    ["rechecking with commits Triage has not checked", { state: "stale", headSha: "head-2" }, "In progress: Checking new commits"],
-    ["a draft with a failed rule", { state: "awaiting-review", draft: true, checks: [FAIL] }, "Done: Draft · waiting on @ada"],
-    ["stale", { state: "stale", checks: [FAIL], comment: feedback }, "In progress: Rechecking"],
-    ["new", { state: "new", runId: null }, "In progress: Not triaged yet"],
-    ["why Triage could not check it", { state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }, "Needs you: Couldn't triage: the run never started"],
-    ["commits Triage has not checked", { state: "blocked", checks: [FAIL], headSha: "head-2" }, "In progress: Checking new commits"],
+    ["a failed run that is also a draft", { state: "new", runId: null, verdict: null, failure: "stuck", draft: true, checks: [FAIL] }, "Needs you: Couldn't triage: the run stopped responding · use Triage again in More"],
+    ["a failed run", { state: "new", runId: null, verdict: null, failure: "stuck" }, "Needs you: Couldn't triage: the run stopped responding · Triage again"],
+    ["a failed run on commits newer than the verdict", { state: "ready", verdict: "pass", headSha: "head-2", failure: "failed" }, "Needs you: Triage could not check the new commits · Triage again"],
+    ["a draft with no verdict", { state: "new", runId: null, verdict: null, draft: true }, "Waiting: draft"],
+    ["a draft with a verdict", { state: "awaiting-review", draft: true, checks: [FAIL] }, "Done: Needs human review · draft · waiting on @ada"],
+    ["no verdict, no note and no run", { state: "new", runId: null, verdict: null }, "Done: Not triaged yet · Triage again"],
+    ["a pull request on a host where Triage is stopped says nothing about it", { state: "new", runId: null, verdict: null, untriaged: triageStopped("github") }, "Done: Not triaged yet · Triage again"],
+    ["why Triage could not check it", { state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }, "Needs you: Couldn't triage: the run never started · Triage again"],
+    ["a verdict Triage could not settle", { state: "stale", checks: [FAIL], comment: feedback }, "Done: Needs human review · Triage could not settle it · Triage again"],
+    ["newer commits under a verdict that asks you", { state: "blocked", verdict: "fail", checks: [FAIL], headSha: "head-2" }, "Needs you: Request changes from @ada: Docs · newer commits not yet checked"],
+    ["newer commits under a verdict that leaves it to the author", { state: "needs-author-update", verdict: "fail", posted: true, checks: [FAIL], headSha: "head-2" }, "Done: Not ready · waiting on @ada to fix: Docs · newer commits not yet checked · Triage again"],
     ["a re-review with a rule to decide", { state: "awaiting-review", reviewAnswered: true, checks: [requested, UNSURE] }, "Needs you: Re-review: @ada updated it · still to decide: Focused"],
     ["a re-review with nothing open", { state: "awaiting-review", reviewAnswered: true, checks: [requested] }, "Needs you: Re-review: @ada updated it · all rules met"],
     ["a rule Triage wasn't sure of, before the button", { checks: [FAIL, UNSURE], comment: feedback }, "Needs you: Decide: Focused (Triage wasn't sure)"],
@@ -154,12 +156,14 @@ describe("the one line", () => {
     ["your approval with a rule failing", { state: "blocked", checks: [FAIL, failed("ci-green"), requested] }, "Needs you: You approved · still not met: Docs +1 more", undefined, { kind: "approve" }],
     ["your approval on the author's turn", { state: "needs-author-update", posted: true }, "Done: You approved · waiting on @ada", undefined, { kind: "approve" }],
     ["your approval with the host holding the merge", { state: "ready", verdict: "pass", mergeBlock: "behind" }, "Needs you: You approved · can't merge yet: behind its base branch", undefined, { kind: "approve" }],
-    ["changes you requested", { state: "blocked", checks: [FAIL] }, "Done: Waiting on @ada to fix: Docs", undefined, { kind: "changes" }],
+    ["changes you requested", { state: "blocked", verdict: "fail", checks: [FAIL] }, "Done: Not ready · waiting on @ada to fix: Docs", undefined, { kind: "changes" }],
     ["what you did, recorded without its kind", { state: "awaiting-review" }, "Needs you: Review and approve", undefined, { kind: null }],
     ["the author's turn, with the verdict as its label says it", { state: "needs-author-update", verdict: "fail", posted: true, checks: [FAIL, failed("ci-green")] }, "Done: Not ready · waiting on @ada to fix: Docs +1 more"],
     ["the author's turn leaves a rule to decide below", { state: "needs-author-update", verdict: "fail", posted: true, checks: [FAIL, UNSURE] }, "Done: Not ready · waiting on @ada to fix: Docs"],
     ["the author's turn with what Triage posted", { state: "needs-author-update", verdict: "fail", posted: true, automatic: ["labels"], actions: [{ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "", target: { labels: ["risk: medium"] }, held: false, status: "done" }] }, "Done: Not ready · added label risk: medium · waiting on @ada"],
     ["the author's turn with an action held for you", { state: "needs-author-update", verdict: "fail", posted: true, actions: [{ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "", target: { labels: ["bug"] }, held: true }] }, "Needs you: Approve or hide the held action: Add label bug"],
+    ["the author's turn with an action the hub holds without saying CI", { state: "needs-author-update", verdict: "fail", posted: true, automatic: ["labels"], actions: [{ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "", target: { labels: ["bug"] }, held: true }] }, "Needs you: Approve or hide the held action: Add label bug"],
+    ["the author's turn with Triage not allowed to post", { state: "needs-author-update", verdict: "fail", posted: false, notPosted: "no_grants", checks: [requested] }, "Done: Not ready · not posted on GitHub: allow it under Actions Triage takes on its own on the repository's page · waiting on @ada to fix: Requested changes"],
     ["a custom rule from the pack", { state: "blocked", checks: [RELEASE_NOTES] }, "Needs you: Request changes from @ada: Release notes describe the user-facing change", PACK],
   ];
 
@@ -167,13 +171,13 @@ describe("the one line", () => {
     expect(lineText(statusOf(overrides, { pack: pack ?? null, handled: handled ?? null }))).toBe(line);
   });
 
-  test("an action Triage may take on its own, held only for CI, will run then; one the policy holds waits on you", () => {
-    const labels = (held: boolean): SuggestedAction => ({ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "CI has not finished on this head.", target: { labels: ["risk: medium"] }, held });
-    const [pending] = pendingDos(item({ ci: "pending", automatic: ["labels"], actions: [labels(true)] }));
+  test("an action Triage may take on its own will run when CI finishes only where the hub says CI holds it", () => {
+    const labels: SuggestedAction = { list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "CI has not finished on this head.", target: { labels: ["risk: medium"] }, held: true, heldUntil: "ci-finishes" };
+    const [pending] = pendingDos(item({ automatic: ["labels"], actions: [labels] }));
     expect(pending === undefined ? null : heldText(pending)).toBe("Will run when CI finishes: add label risk: medium");
-    expect(statusOf({ state: "needs-author-update", verdict: "fail", posted: true, ci: "pending", automatic: ["labels"], actions: [labels(true)] }).form).toBe("done");
-    const [asked] = pendingDos(item({ actions: [labels(true)] }));
-    expect(asked === undefined ? null : heldText(asked)).toBe("Held for you: Add label risk: medium");
+    expect(statusOf({ state: "needs-author-update", verdict: "fail", posted: true, automatic: ["labels"], actions: [labels] }).form).toBe("done");
+    const [asked] = pendingDos(item({ actions: [labels] }));
+    expect(asked === undefined ? null : heldText(asked)).toBe("Held: Add label risk: medium");
   });
 
   test("only the host's own read changes the pane: what holds the merge, and what holds a pull request with nothing to fix", () => {
@@ -186,7 +190,7 @@ describe("the one line", () => {
 
   test("what you did says where that leaves it", () => {
     expect(statusOf({ state: "ready", verdict: "pass" }, { handled: { kind: "approve" } })).toMatchObject({ tone: "ready", text: "You approved · ready to merge" });
-    expect(statusOf({ state: "blocked", checks: [FAIL] }, { handled: { kind: "changes" } })).toMatchObject({ tone: "author", text: "Waiting on @ada to fix: Docs" });
+    expect(statusOf({ state: "blocked", verdict: "fail", checks: [FAIL] }, { handled: { kind: "changes" } })).toMatchObject({ tone: "author", text: "Not ready · waiting on @ada to fix: Docs" });
     expect(statusOf({ checks: [FAIL] }, { detail: detail({ merged: true, state: "closed" }) }).text).toBe("Merged");
     expect(statusOf({}, { handled: { kind: "merge" } }).text).toBe("Merged");
   });

@@ -1,7 +1,7 @@
 import { askRules, citationOf, NO_CHANGES_REQUESTED, type CheckPack, type VerdictWord } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, HeldBlock, PrItem, RunFailure } from "./hub-api.ts";
 import { paneActions, paneFacts, type ActionBlocker, type MenuEntry, type PaneFacts, type PaneGate, type PaneKind } from "./inbox-pane.ts";
-import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, primaryLabel, progressText, triageStoppedOn, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
+import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, failedOnNewCommits, hasUncheckedCommits, primaryLabel, progressText, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
 import { checkLabel } from "./pack-prose.ts";
 import { pendingDos, postedActions, type PendingDo } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
@@ -47,9 +47,10 @@ export function passedChecks(checks: CheckResult[]): CheckResult[] {
 type StatusTone = "ready" | "you" | "author" | "quiet";
 
 /** The run read as one: what Triage is at, what it needs from you, or what it ended with. */
-export type LineForm = "progress" | "you" | "done";
+/** A draft with no verdict has nothing done yet and nothing for you, so it is only waiting. */
+type LineForm = "progress" | "you" | "done" | "waiting";
 
-const FORM_LABEL: Record<LineForm, string> = { progress: "In progress", you: "Needs you", done: "Done" };
+const FORM_LABEL: Record<LineForm, string> = { progress: "In progress", you: "Needs you", done: "Done", waiting: "Waiting" };
 
 export type PaneStatus = { form: LineForm; tone: StatusTone; text: string; live: boolean };
 
@@ -222,10 +223,15 @@ function authorsTurn({ author, problems: { fail }, pack }: Context): Said {
   return fail.length > 0 ? named("author", `waiting on ${author} to fix: `, fail, pack) : said("author", `waiting on ${author}`);
 }
 
-/** The verdict as its label names it, what Triage posted on its own, then what the run left to the author. */
+/** Where Triage may not post, the verdict is not on the host, and the repository's page is where that is allowed. */
+function notPostedText(item: PrItem): string[] {
+  return item.notPosted === "no_grants" ? [`not posted on ${hostName(item.source)}: allow it under Actions Triage takes on its own on the repository's page`] : [];
+}
+
+/** The verdict as its label names it, what Triage posted on its own or could not post, then what the run left. */
 function doneText(item: PrItem, rest: string): string {
   const verdict = item.verdict === null ? [] : [VERDICT_TEXT[item.verdict]];
-  return upperFirst([...verdict, ...postedActions(item), rest].join(" · "));
+  return upperFirst([...verdict, ...postedActions(item), ...notPostedText(item), rest].join(" · "));
 }
 
 /** A held action waiting on you is the decision even where the rules leave the turn to the author. */
@@ -243,33 +249,56 @@ function settled(item: PrItem, line: Said): PaneStatus {
   return { form: "done", ...line, live: false };
 }
 
+function failedText(item: PrItem): string {
+  if (failedOnNewCommits(item)) return "Triage could not check the new commits";
+  if (item.untriaged !== undefined) return item.untriaged;
+  return item.failure === null ? "Couldn't triage" : `Couldn't triage: ${FAILURE_TEXT[item.failure]}`;
+}
+
+/** The line the verdict alone gives: what is left for you, or whose turn it is. */
+function verdictLine(context: Context, handled: HandledMark | null): PaneStatus {
+  const { item } = context;
+  const authors = said("author", doneText(item, authorsTurn(context).text));
+  if (handled === null) return settled(item, waitsOnAuthor(item) ? authors : ruledLine(context));
+  if (handled.kind === "approve") return settled(item, approvedLine(context));
+  return settled(item, waitsOn(item, handled) === "author" ? authors : ruledLine(context));
+}
+
+/** Why the verdict may no longer stand: Triage could not settle it, or there are commits it has not checked. */
+function unsettledText(item: PrItem): string | null {
+  if (item.state === "stale") return "Triage could not settle it";
+  return hasUncheckedCommits(item) ? "newer commits not yet checked" : null;
+}
+
 /**
- * The one line for where the pull request stands, read in one order: ended, what Triage is at (as the hub has the run),
- * a failed run, a draft, why Triage could not check it, then what is left for you or the author. The row's main button is
- * read from the list, the pane's from the host's detail once it has loaded; that is the only way the two can differ.
+ * The one line for where the pull request stands, read in one order: ended, what the hub says Triage is at, a failed run,
+ * no verdict yet, a draft, then what the verdict leaves for you or the author, and whether it still stands. The row's
+ * main button is read from the list, the pane's from the host's detail once it has loaded; that is the only way the two
+ * can differ.
  */
 export function paneStatus({ item, detail, handled, pack }: StatusInput): PaneStatus {
   const ended = endedText(item, detail, handled);
   if (ended !== null) return { form: "done", tone: "quiet", text: ended, live: false };
   const progress = progressText(item);
   if (progress !== null) return { form: "progress", tone: "quiet", text: upperFirst(progress), live: item.running };
-  if (inboxAction(item) === "failed") {
-    // A draft has no main button, so Triage again waits in More.
-    const why = item.untriaged ?? (item.failure === null ? "Couldn't triage" : `Couldn't triage: ${FAILURE_TEXT[item.failure]}`);
-    return settled(item, item.draft === true ? said("quiet", `${why} · use Triage again in More`) : said("you", why));
+  // A draft has no main button, so Triage again waits in More.
+  if (inboxAction(item) === "failed") return { form: "you", tone: "you", text: `${failedText(item)} · ${item.draft === true ? "use Triage again in More" : "Triage again"}`, live: false };
+  if (item.verdict === null) {
+    if (item.draft === true) return { form: "waiting", tone: "author", text: "draft", live: false };
+    return settled(item, said("quiet", "Not triaged yet · Triage again"));
   }
-  if (triageStoppedOn(item) && item.untriaged !== undefined) return settled(item, said("quiet", item.untriaged));
   const facts = paneFacts(item, detail);
   const author = facts.author === null ? "the author" : `@${facts.author}`;
-  if (item.draft === true) return settled(item, said("author", `Draft · waiting on ${author}`));
   const context: Context = { item, author, problems: bySeverity(item, pack), pack, facts, detail };
-  if (handled === null) {
-    if (waitsOnAuthor(item)) return settled(item, said("author", doneText(item, authorsTurn(context).text)));
-    return settled(item, ruledLine(context));
-  }
-  if (handled.kind === "approve") return settled(item, approvedLine(context));
-  if (waitsOn(item, handled) === "author") return settled(item, said("author", upperFirst(authorsTurn(context).text)));
-  return settled(item, ruledLine(context));
+  if (item.draft === true) return settled(item, said("author", doneText(item, `draft · waiting on ${author}`)));
+  const line = verdictLine(context, handled);
+  const unsettled = unsettledText(item);
+  if (unsettled === null) return line;
+  const held = heldForYouText(item);
+  if (item.state === "stale" && held !== null) return { form: "you", tone: "you", text: `${upperFirst(held)} · ${unsettled}`, live: false };
+  if (item.state !== "stale" && line.form === "you") return { ...line, text: `${line.text} · ${unsettled}` };
+  if (item.state !== "stale") return { ...line, form: "done", text: `${line.text} · ${unsettled} · Triage again` };
+  return { form: "done", tone: "quiet", text: doneText(item, `${unsettled} · Triage again`), live: false };
 }
 
 /** `held` is Triage's held action with the same kind and label, which the button completes instead of writing a second one. */
@@ -323,6 +352,6 @@ export function heldChoices(bar: PaneBar): HeldChoice[] {
 
 /** A held action as the line under the status says it: when it will run on its own, or that it waits on you. */
 export function heldText({ label, until }: Pick<PendingDo, "label" | "until">): string {
-  if (until === null) return `Held for you: ${label}`;
+  if (until === null) return `Held: ${label}`;
   return `Will run when ${until}: ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
 }

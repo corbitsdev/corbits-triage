@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { triageStopped } from "@corbits/triage-contracts";
 import type { CheckResult, PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
-import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, notPostedText, primaryAction, readyToMerge, stoppedNotes, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
+import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, primaryAction, readyToMerge, stoppedNotes, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
 
 const READY = new Set(["acme/widgets"]);
 
@@ -101,6 +101,14 @@ describe("groupInbox", () => {
     expect(stoppedNotes(items)).toEqual([stopped]);
   });
 
+  test("Needs you holds a failed run, a draft's included, and leaves out what only Triage again could change", () => {
+    expect(inNeedsYou(item({ state: "ready", verdict: "pass", verdictSha: "h1", headSha: "h2", failure: "failed" }))).toBe(true);
+    expect(inNeedsYou(item({ state: "new", runId: null, verdict: null, draft: true, failure: "stuck" }))).toBe(true);
+    expect(inNeedsYou(item({ state: "stale" }))).toBe(false);
+    expect(inNeedsYou(item({ state: "new", runId: null, verdict: null }))).toBe(false);
+    expect(inNeedsYou(item({ state: "blocked", verdictSha: "h1", headSha: "h2" }))).toBe(true);
+  });
+
   test("a pull request Triage is at work on leaves Needs you until it has something for you", () => {
     const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true }), item({ key: "reviewing", awaiting: ["code-review"] })], READY);
     expect(view.groups).toEqual([]);
@@ -195,12 +203,6 @@ describe("requested changes", () => {
   });
 });
 
-describe("notPostedText", () => {
-  test("says why the verdict is not on the host and where to turn posting on", () => {
-    expect(notPostedText(item({ notPosted: "no_grants", source: "github" }))).toBe("Not posted on GitHub: Triage may not post here. Allow it under Actions Triage takes on its own on the repository's page.");
-    expect(notPostedText(item({}))).toBeNull();
-  });
-});
 
 describe("groupOpen", () => {
   const open: OpenItem[] = [

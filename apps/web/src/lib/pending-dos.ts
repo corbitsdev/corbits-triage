@@ -99,14 +99,13 @@ function offered(item: PrItem, action: SuggestedAction): boolean {
   return awaitsApproval(action) && !(item.byTriage && REVIEWS.has(action.kind));
 }
 
-/** Triage may take it on its own, so only CI holds it, and the next run takes it once CI allows. */
+/** Triage may take it on its own and the hub says only running CI holds it, so the run after CI finishes takes it. */
 function heldForCi(item: PrItem, action: SuggestedAction): boolean {
-  return action.held && action.status === undefined && item.automatic.includes(action.kind) && !alwaysHeld(action.list, action.kind);
+  return action.held && action.heldUntil === "ci-finishes" && action.status === undefined && item.automatic.includes(action.kind) && !alwaysHeld(action.list, action.kind);
 }
 
 function untilText(item: PrItem, action: SuggestedAction): string | null {
-  if (!heldForCi(item, action)) return null;
-  return item.ci === "pending" ? "CI finishes" : "CI passes";
+  return heldForCi(item, action) ? "CI finishes" : null;
 }
 
 function sentKeyOf(action: SuggestedAction): string {
