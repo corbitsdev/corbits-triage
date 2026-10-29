@@ -1228,15 +1228,17 @@ is refused. It is an `agent` principal, so its address never resolves as a
 mail sender. A transaction declares every write it will make up front, as
 what stock's own route checks (`manage` on `tenant:<id>` for the ceiling,
 `manage` on `role:*` to assign a role, and for the `Deployer` role `create`
-on `role:*`, `create` on `grant:*` and `manage` on `grant:*` for the grants it
-deletes), and the layer runs stock's `authorize` for each,
-throwing `SystemWriteDenied` unless it allows, so taking `admin` from
-`triage-hub` stops those writes in that workspace; a write the transaction
-did not declare throws. The checks run before the transaction opens, since
-stock's grant store reads only through the top-level database; the
-transaction then holds `triage-hub`'s `admin` row, so admin taken away in
-between still stops the writes. A role is assigned only to a principal of the
-same workspace, and only a role of that workspace.
+on `role:*` and `create` on `grant:*`), and the layer runs stock's
+`authorize` for each, throwing `SystemWriteDenied` unless it allows, so taking
+`admin` from `triage-hub` stops those writes in that workspace; a write the
+transaction did not declare throws. The `Deployer` role also checks `manage`
+on each `grant:<id>` it deletes, as stock's route does, once the transaction
+has found them. Every check runs inside the transaction, through stock's grant
+store bound to it, after the transaction holds `triage-hub`'s `admin` row, so
+admin taken away before the writes, or a grant taken away before the checks,
+still stops them. Concurrent first writes to a workspace share one mint of
+`triage-hub`. A role is assigned only to a principal of the same workspace,
+and only a role of that workspace.
 
 Where triage mirrors and its policy approves, a settled head that may not be
 approved dismisses the approvals the approve action made; one dismissed on a

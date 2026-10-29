@@ -1,7 +1,7 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createPrincipalKeyStore, runMigrations, schema } from "@intx/db";
 import { DEPLOYER_GRANTS } from "@corbits/triage-contracts";
@@ -41,12 +41,13 @@ test("PostgreSQL: the Deployer role holds exactly its grants, and only the works
     expect(await writes.transaction(TENANT, SETS_ROLE_GRANTS, (w) => ensureDeployerRole(w, new Date()))).toBe(roleId);
     const held = await db.select({ resource: schema.grant.resource, action: schema.grant.action }).from(schema.grant).where(eq(schema.grant.roleId, roleId));
     expect(held.sort(byGrant)).toEqual(DEPLOYER_GRANTS.map(({ resource, action }) => ({ resource, action })).sort(byGrant));
-    await db.insert(schema.principalRole).values(["prn_admin", "prn_member", "prn_publisher"].map((principalId) => ({ principalId, roleId })));
+    const people = ["prn_admin", "prn_member", "prn_publisher"];
+    await db.insert(schema.principalRole).values(people.map((principalId) => ({ principalId, roleId })));
 
     const logged: Array<Record<string, unknown>> = [];
     await revokeHumanDeployers(db, TENANT, (entry) => logged.push(entry));
 
-    expect(await db.select({ principalId: schema.principalRole.principalId }).from(schema.principalRole).where(eq(schema.principalRole.roleId, roleId))).toEqual([{ principalId: "prn_publisher" }]);
+    expect(await db.select({ principalId: schema.principalRole.principalId }).from(schema.principalRole).where(inArray(schema.principalRole.principalId, people))).toEqual([{ principalId: "prn_publisher" }]);
     expect(logged).toEqual([{ level: "info", msg: "deployer_role_revoked", tenantId: TENANT, people: 2 }]);
   } finally {
     await handle?.close();

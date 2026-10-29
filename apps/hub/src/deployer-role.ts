@@ -5,8 +5,8 @@ import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { DEPLOYER_GRANTS, DEPLOYER_ROLE, TRIAGE_ROLE } from "@corbits/triage-contracts";
 import { allowRole } from "./github/admin-github-grant.js";
-import { SETS_ROLE_GRANTS } from "./system-writes/tenant.js";
-import { check, type WriteTx } from "./system-writes/writer.js";
+import { managesGrant, SETS_ROLE_GRANTS } from "./system-writes/tenant.js";
+import { authorizeWrite, check, type WriteTx } from "./system-writes/writer.js";
 
 /** The tenant's Deployer role holding exactly its grants, created when missing; grants it held before are dropped. */
 export async function ensureDeployerRole(w: WriteTx, stamp: Date): Promise<string> {
@@ -17,9 +17,11 @@ export async function ensureDeployerRole(w: WriteTx, stamp: Date): Promise<strin
   const [found] = await tx.select({ id: role.id }).from(role).where(and(eq(role.tenantId, tenantId), eq(role.name, DEPLOYER_ROLE), eq(role.isSystem, true)));
   const id = found?.id ?? generateId("role");
   if (!found) await tx.insert(role).values({ id, tenantId, name: DEPLOYER_ROLE, description: "Publishes and deploys Triage's workflows", isSystem: true, createdAt: stamp, updatedAt: stamp });
-  for (const { resource, action } of DEPLOYER_GRANTS) await allowRole(tx, tenantId, id, resource, action, stamp);
   const held = await tx.select({ id: grant.id, resource: grant.resource, action: grant.action, effect: grant.effect }).from(grant).where(and(eq(grant.tenantId, tenantId), eq(grant.roleId, id)));
   const extra = held.filter((row) => row.effect !== "allow" || !DEPLOYER_GRANTS.some((wanted) => wanted.resource === row.resource && wanted.action === row.action));
+  // Stock checks `manage` on each grant it deletes, and the ids are known only inside the transaction.
+  for (const { id: grantId } of extra) await authorizeWrite(w, managesGrant(grantId));
+  for (const { resource, action } of DEPLOYER_GRANTS) await allowRole(tx, tenantId, id, resource, action, stamp);
   if (extra.length > 0) await tx.delete(grant).where(inArray(grant.id, extra.map((row) => row.id)));
   return id;
 }
