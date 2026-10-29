@@ -141,6 +141,58 @@ test("PostgreSQL: take answers the pass's newest pull request mail, and on a pas
   });
 }, 120_000);
 
+function prMail(head: string, events?: string[]) {
+  return { type: "webhook" as const, head, payload: { kind: "pr", headSha: head, ...(events && { events }) } };
+}
+
+test("PostgreSQL: a mail that names no event, taken while the head waits, wakes as catch-up beside the events the waiting pass took", async () => {
+  await withDatabase(async function carried(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
+    await startManager(db, GITHUB, "run_a");
+    await take(db, TENANT, GITHUB, "run_a");
+    await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", waiting: true } });
+    await recordEvent(db, TENANT, GITHUB, "d2", prMail("h1"));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", request: { events: ["opened", "catch-up"] } });
+  });
+}, 120_000);
+
+test("PostgreSQL: a push while a pass on the older head is open carries none of that head's events into the push's mail", async () => {
+  await withDatabase(async function pushed(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
+    await startManager(db, GITHUB, "run_a");
+    await take(db, TENANT, GITHUB, "run_a");
+    await recordEvent(db, TENANT, GITHUB, "d2", prMail("h2", ["updated"]));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", resumed: true, request: { headSha: "h2", events: ["updated"] } });
+  });
+}, 120_000);
+
+test.each([
+  ["held an action for CI", { heldForCi: true } as const, ["opened", "checks"]],
+  ["held nothing", {}, ["checks"]],
+] as const)("PostgreSQL: after a verdict that %s, the next mail on the head wakes the events its pass took only then", async (_held, hold, events) => {
+  await withDatabase(async function heldForCi(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
+    await startManager(db, GITHUB, "run_a");
+    await take(db, TENANT, GITHUB, "run_a");
+    await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", request: { comment: "Triage: Pass" }, ...hold } });
+    await recordEvent(db, TENANT, GITHUB, "d2", prMail("h1", ["checks"]));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", request: { events } });
+  });
+}, 120_000);
+
+test("PostgreSQL: a pass whose verdict a later one of its run replaced still acted, so its events are not woken again", async () => {
+  await withDatabase(async function replaced(db) {
+    await startManager(db, GITHUB, "run_a");
+    for (const [id, events, hold] of [["d1", ["opened"], {}], ["d2", ["updated"], { heldForCi: true }]] as const) {
+      await recordEvent(db, TENANT, GITHUB, id, prMail("h1", [...events]));
+      await take(db, TENANT, GITHUB, "run_a");
+      await done(db, TENANT, GITHUB, "run_a", [], { wait: true, report: { head: "h1", request: { comment: `Triage: ${id}` }, ...hold } });
+    }
+    await recordEvent(db, TENANT, GITHUB, "d3", prMail("h1", ["checks"]));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", request: { events: ["updated", "checks"] } });
+  });
+}, 120_000);
+
 test.each([["after"], ["before"]])("PostgreSQL: an approval for an older head recorded %s a push leaves the pass on the push's head and is taken with it", async (order) => {
   await withDatabase(async function approvals(db) {
     const push = { type: "webhook" as const, head: "h2", payload: { kind: "pr", headSha: "h2" } };
@@ -151,7 +203,7 @@ test.each([["after"], ["before"]])("PostgreSQL: an approval for an older head re
     if (taken.outcome !== "pass") throw new Error(`expected a pass, got ${taken.outcome}`);
     expect(taken.pass.head).toBe("h2");
     expect(taken.events.map((row) => row.key).toSorted()).toEqual(["evt:github:acme/widgets#7:a1", "evt:github:acme/widgets#7:d1"]);
-    expect(taken.request).toEqual({ kind: "pr", headSha: "h2" });
+    expect(taken.request).toEqual({ kind: "pr", headSha: "h2", events: ["catch-up"] });
   });
 }, 120_000);
 

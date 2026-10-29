@@ -105,12 +105,18 @@ function postedOf(report: Reported | undefined): Record<string, unknown> | undef
   return report?.verdict && withResults(report.verdict, doResultsOf(report.executed));
 }
 
-/** What done keeps on the closed pass: whether its verdict waits for the host's checks, or the mirror request of its verdict. */
+/** Whether the verdict held an action until CI on its head finishes, which the pass after CI decides again. */
+function heldForCi(posted: Record<string, unknown> | undefined): boolean {
+  const actions = posted?.["actions"];
+  return Array.isArray(actions) && actions.map(asRecord).some((action) => action?.["held"] === true && action["ci"] === "pending");
+}
+
+/** What done keeps on the closed pass: whether its verdict waits for the host's checks, or the mirror request of its verdict and whether it held an action for CI. */
 function passReport(report: Reported | undefined, posted: Record<string, unknown> | undefined): PassReport | undefined {
   if (!report) return undefined;
   if (posted?.["waiting"] === true || report.waiting === true) return { head: report.head, waiting: true };
   const request = asRecord(posted?.["request"]);
-  return { head: report.head, ...(request && { request }) };
+  return { head: report.head, ...(request && { request }), ...(heldForCi(posted) && { heldForCi: true }) };
 }
 
 export function createManagerRoutes({ db, requireGrant, log, wake, supersede, taken }: ManagerRoutesDeps) {
@@ -149,7 +155,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
     TAKE_PATH,
     describeRoute({
       summary: "Take the pull request's pending events as its manager",
-      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded, \`request\`, the newest pull request mail the hub recorded, \`waitingSince\`, when the passes on the head began waiting for its CI while the last of them still does, \`headSince\`, when the head's first closed pass was taken, and \`claimedAt\`, when the calling run claimed the pull request. A pass names in \`threads\` the host comments of code review findings posted on other heads at most 100, the newest of those not yet resolved first and then the newest resolved ones, which can be reopened, when it is the first pass on its head, so the manager reads what became of them. ${NOT_MANAGER}`,
+      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded, \`request\`, the newest pull request mail the hub recorded, whose \`events\` name every event on its head no pass has acted on yet (a pass that waited for CI or a reviewer, or whose verdict held an action for CI, acted on none), \`waitingSince\`, when the passes on the head began waiting for its CI while the last of them still does, \`headSince\`, when the head's first closed pass was taken, and \`claimedAt\`, when the calling run claimed the pull request. A pass names in \`threads\` the host comments of code review findings posted on other heads at most 100, the newest of those not yet resolved first and then the newest resolved ones, which can be reopened, when it is the first pass on its head, so the manager reads what became of them. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("The pass to work on, or idle", Taken), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),

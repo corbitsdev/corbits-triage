@@ -3,7 +3,7 @@
 import { afterAll, expect, mock, setDefaultTimeout, test } from "bun:test";
 import { errorText } from "@corbits/common";
 import { emptyPack } from "@corbits/triage-contracts";
-import { OWNER } from "../chain/github.ts";
+import { labelled, OWNER } from "../chain/github.ts";
 import { LETTERS, open, play, settle, walk, type Letter } from "./events.ts";
 import { broken, verdictKept } from "./rules.ts";
 import { MANAGER_RELEASE, modelStack, REVIEW_RELEASE } from "./stack.ts";
@@ -25,11 +25,16 @@ const PACK = { ...emptyPack(REPO), checks: { "max-files-changed": { enabled: tru
 const stack = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"] });
 const neverReady = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"], review: "fails-before-ready" });
 const diesAfterMail = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"], review: "dies-after-mail" });
+const LABELLING: typeof PACK = { ...PACK, actions: { ...PACK.actions, when: ["opened"], pass: [{ do: "labels", target: { from: "list", labels: ["shipit"] } }] } };
+const labelling = await modelStack(`${OWNER}/labelling`, { pack: LABELLING, automatic: ["labels", "comment"] });
+const labellingReviewed = await modelStack(`${OWNER}/labelling-reviewed`, { pack: LABELLING, automatic: ["labels", "comment"], review: "dies-after-mail" });
 setDefaultTimeout(5 * 60_000);
 afterAll(async () => {
   await stack.stop();
   await neverReady.stop();
   await diesAfterMail.stop();
+  await labelling.stop();
+  await labellingReviewed.stop();
 });
 
 let pulls = 0;
@@ -106,4 +111,28 @@ test(`${WALKS} seeded walks of ${WALK_LENGTH} events keep the rules`, async () =
     found.push(...breaks.map((rule) => `seed ${seed}, ${replayOf(played)}: ${rule}`));
   }
   expect(found).toEqual([]);
+});
+
+function shipits(model: typeof stack, number: number): string[] {
+  return labelled(model.writes(number)).filter((label) => label === "shipit");
+}
+
+test("an action on opened runs once when CI finishes after the open waited for it", async () => {
+  const pull = await open(labelling, ++pulls);
+  await labelling.drain();
+  await play(labelling, pull, "ci-success");
+  await labelling.drain();
+  await play(labelling, pull, "ci-success");
+  await labelling.drain();
+  expect(shipits(labelling, pull.number)).toEqual(["shipit"]);
+});
+
+test("with code review on, an action on opened runs once when the pass after CI finishes still waits for the review", async () => {
+  const pull = await open(labellingReviewed, ++pulls);
+  await labellingReviewed.drain();
+  await play(labellingReviewed, pull, "ci-success");
+  await labellingReviewed.drain();
+  await play(labellingReviewed, pull, "ci-success");
+  await labellingReviewed.drain();
+  expect(shipits(labellingReviewed, pull.number)).toEqual(["shipit"]);
 });
