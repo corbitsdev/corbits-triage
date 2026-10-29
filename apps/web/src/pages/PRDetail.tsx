@@ -14,7 +14,7 @@ import type { RepoSource } from "@corbits/triage-contracts";
 import { approvedHead, canRun, checkedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { actionMode, hasUncheckedCommits, type ActionMode } from "../lib/inbox-view.ts";
 import { heldReason, isHeldBlock, lineText, paneStatus } from "../lib/pane-report.ts";
-import { offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
+import { heldOffer, offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import { VerdictChip } from "../components/VerdictChip.tsx";
@@ -332,7 +332,7 @@ export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
   const holdsMerge = useHoldsDo("merge", item.repo);
   if (mode === null) return null;
   const dos = closed || mode.mode !== "waiting" ? [] : pendingDos(item);
-  const heldMerge = holdsMerge && dos.some((pending) => pending.kind === "merge" && pending.until === null);
+  const heldMerge = dos.some((pending) => pending.kind === "merge" && heldOffer(pending, { holdsDo: holdsMerge, createsGrants: false, wanted: [] }).doIt);
   return (
     <PrActionCard mode={mode} dos={dos} disabled={closed || !item.number || item.running || locked} canMerge={canMerge} onApprove={onApproveDo} onSkip={onSkipDo}>
       <PostingControls {...controls} heldMerge={heldMerge} />
