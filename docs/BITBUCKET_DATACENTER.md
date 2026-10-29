@@ -35,6 +35,25 @@ listener, and every mail carries `repoSource: "bitbucket-datacenter"`.
 Triage with every rule switched off starts no run and writes nothing to the
 pull request (`triage_skipped_no_rules` in the hub log), on either host.
 
+## Run it locally
+
+A local instance needs Docker running. The Atlassian image sets itself up from `SETUP_*` variables, so there is no setup wizard. The licence is Atlassian's published three-hour Bitbucket Data Center test key from [Timebomb licenses for testing](https://developer.atlassian.com/platform/marketplace/timebomb-licenses-for-testing-server-apps/); save it to a file first, here `bitbucket-license.txt`. When it lapses the instance goes read-only, and restarting the container with a fresh key brings it back.
+
+```sh
+docker run -d --name bitbucket-dev -p 7990:7990 -p 7999:7999 \
+  -v bitbucket-dev:/var/atlassian/application-data/bitbucket \
+  -e SERVER_PROXY_NAME=localhost -e SERVER_PROXY_PORT=7990 -e SERVER_SCHEME=http \
+  -e SETUP_BASEURL=http://localhost:7990 -e SETUP_DISPLAYNAME=Bitbucket \
+  -e SETUP_SYSADMIN_USERNAME=admin -e SETUP_SYSADMIN_PASSWORD=<password> \
+  -e SETUP_SYSADMIN_DISPLAYNAME=Admin -e SETUP_SYSADMIN_EMAILADDRESS=admin@example.com \
+  -e "SETUP_LICENSE=$(cat bitbucket-license.txt)" \
+  atlassian/bitbucket:latest
+```
+
+It takes about two minutes to start. `curl http://localhost:7990/status` answers `{"state":"RUNNING"}` when it is ready, and `curl http://localhost:7990/rest/api/1.0/application-properties` then names the version. Stop and remove it with `docker rm -f bitbucket-dev && docker volume rm bitbucket-dev`.
+
+The hub refuses a loopback instance unless it is listed, so start the hub with `BITBUCKET_EGRESS_ALLOWLIST=localhost` (`BITBUCKET_EGRESS_ALLOWLIST=localhost bun run dev`). Then connect `http://localhost:7990` with an HTTP access token as under Token.
+
 ## Token
 
 An HTTP access token, sent as `Authorization: Bearer`. A fresh Data Center 10.5 instance turns off password Basic auth for the REST API, so a token is the only way in. It needs:

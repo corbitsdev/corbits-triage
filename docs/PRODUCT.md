@@ -47,6 +47,8 @@ How to use the portal, screen by screen, is in the
   runs when the server has no place for it (the policy file turns code review
   on), the actions Triage takes on its own, and outcomes before and after
   Triage.
+- **Audit**: who changed what in the workspace and what Triage did on pull
+  requests, newest first.
 - **Settings**: Triage (sources, policy files, the decision model key, and
   whether Triage takes the actions each policy file names on its own), Code review (the
   provider's key and where reviews run), people and invitations, the account,
@@ -201,6 +203,11 @@ step names an action and, optionally, `when` conditions.
   - `ci`: any of `passing`, `failing`, `pending` or `none`.
   - `files` and `lines`: `{ over: N }`, `{ atMost: N }` or both; lines are
     additions plus deletions.
+  - `findings`: with code review on, the open findings the head's review may
+    have for the step to run. `{ above: P2 }` allows only findings less severe
+    than P2 (P0 is the most severe), `{ any: false }` none and `{ any: true }`
+    any. Without it, approve and merge wait until the review has nothing open;
+    other actions run whatever it found.
 
   A step whose conditions do not hold, or whose author the host cannot place,
   is skipped, and the verdict records why. An empty `when` is refused rather
@@ -244,7 +251,11 @@ after the held action's kind) lets Triage take that kind of action there on its 
 Approve runs only on a Pass with CI green. A merge waits until CI passes on
 the head (or runs without CI only when the policy switches CI green off), and
 refuses while anyone has requested changes; Triage's own request for changes
-is taken back first. Branch protection stays the
+is taken back first. A merge also waits while a person's review thread on the
+pull request is unresolved, and while Triage cannot read the threads. Threads
+on Triage's own code review findings do not count; code review's own rule
+covers them. Resolving the last thread lets the merge go ahead and releases
+no other action. Branch protection stays the
 backstop. Request changes lists the failed rules, once per head, and is
 dismissed once none still fails.
 
@@ -291,8 +302,8 @@ Their names are stable:
 | `rule: <rule id>` | A rule that failed on the head, such as `rule: docs`, from a `{ do: labels, target: { from: rules } }` step. |
 
 A head carries one verdict label at a time, and Triage takes back the ones
-that no longer apply, including the older `Triage: Needs changes`, `Triage:
-Needs review`, `Triage: Ready to merge` and `triage:…` labels. A policy may rename any verdict's label (up to 50
+that no longer apply, such as `Triage: Needs changes`, `Triage: Needs review`,
+`Triage: Ready to merge` and `triage:…` labels. A policy may rename any verdict's label (up to 50
 characters) under `labels`, for example `labels: { pass: Ready to ship }`.
 Bitbucket Data Center has no labels; the `Corbits Triage` build status carries
 the verdict there.
@@ -308,12 +319,12 @@ the key it was likely meant to be. A step's `when.author` may name a group.
 On GitHub, a pull request carrying `pauseLabel` starts no run, and while the
 pull request cannot be read it is not triaged but retried, never run unpaused;
 through a long GitHub outage it waits out a bounded number of retries and is
-triaged on its next event. Code review always runs on Anthropic with the workspace's Anthropic key; `provider` has no effect. `pace` is accepted and runs nothing. `decide`
-is not carried out; `actions` are. With `code-review` on, an action runs once the
-head's review meets its step's `when.findings`, and approve and merge without one
-run only when the review has no findings open. `decide` replaces `actions`,
-so a file holds one or the other, and a file that uses `extends` holds none of
-these keys.
+triaged on its next event. Code review always runs on Anthropic with the workspace's Anthropic key; `provider` has no effect. `pace` and `decide` are read and
+checked, and nothing acts on them. A file holds `decide` or `actions`, never
+both, so a file that sets `decide` takes no actions. With `code-review` on, an
+action runs once the head's review meets its step's `when.findings`, and
+approve and merge without one run only when the review has no findings open. A
+file that uses `extends` holds none of these keys.
 
 Each rule is one sentence (`text`), how it is checked (`check`: a built-in
 rule's id, `model` for a yes/no question about the whole pull request, or
@@ -395,8 +406,8 @@ rules that need no model, except ci-green, against each one.
 A push to the default branch that changes the file is read before the next
 verdict. A file Triage refuses stops triage on the repository until it is
 fixed; the portal shows each problem with its line. Score and choose rules and
-file or hunk scope are written in the older shape, which a file without
-`rules` is read in; see
+file or hunk scope are written in the stored-policy shape (`custom`), which a
+file without `rules` or a v4 key is read in; see
 [@corbits/triage-contracts](../packages/triage-contracts/README.md).
 
 The file is the only policy: a repository without it runs no triage and offers
@@ -407,8 +418,7 @@ pull request, or pushes it straight to the default branch where the branch's
 rules let Triage push, cautioning first when the edit lets Triage approve or
 merge risky changes on its own;
 [the manual](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#editing-the-file)
-walks through it. Rules saved in the portal by earlier builds are archived,
-not carried over.
+walks through it.
 
 ### Shared policies
 
@@ -436,7 +446,10 @@ the rules that fail a pull request without the decision model have passed, or
 whatever they say with `when: { rules: any }`; drafts are not reviewed.
 **Review again** reviews the current commit once more, whatever the file says.
 The review reads the whole diff, however large; a review that could not is
-marked incomplete and holds approve and merge.
+marked incomplete and holds approve and merge. A review sandbox that never
+connects is replaced, up to three in all. If the review still cannot start, or
+its run dies, Triage gives the verdict without it, says the review failed, and
+holds approve and merge.
 
 Each review checks out the pull request's code, so it runs in an isolated
 place of its own; while the server has none, the repository page links

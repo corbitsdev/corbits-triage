@@ -29,7 +29,7 @@ with the `intx-src` export condition, so every hub command runs with
 | `src/workflow-versions.ts` | Lists what is deployed, the versions it runs and the hub's last roll of each host. |
 | `src/workflow-release/` | Publishes the portal build's workflows as each workspace's `triage-publisher` system principal and rolls each connected host's listener onto them (`rollout.ts`, `publish.ts`, `publisher.ts`, `reads.ts`): at start for every workspace, and in the background after a host connects or a credential or catalog write. |
 | `src/code-review.ts`, `src/pull-request-reader.ts`, `src/code-review-runs.ts` | `…/place`, the selected provisioner and each place probed at boot (`dockerPlaces`); `…/run`; reading a pull request and building its review request; the latest review, read from the manager's state, and whether a head takes it over. |
-| `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`) and Docker registration (`docker.ts`). |
+| `src/sidecar/` | Local-process `SidecarProvisioner` (lifecycle, spawn env, encrypted manifests, boot restore, `host-capacity.ts`), Docker registration (`docker.ts`) and the replacement of a sandbox that never connects (`unstarted-run.ts`). |
 | `src/sidecar-config.ts` | Sidecar adapter manifest (System One model provider). |
 | `src/bitbucket-datacenter/` | Bitbucket Data Center connection, repository and webhook routes, payload normalizing. |
 | `src/github/bridge.ts` | GitHub webhook verification and routing; `logJson`, the hub's one JSON-line logger, passed down as `log`. |
@@ -111,7 +111,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `bun run dev` | Database migrations, then hub and portal with prefixed logs (`tooling/dev.ts`). |
 | `bun run db:migrate` | Apply every database migration the hub needs to `DATABASE_URL`; run before the hub starts. |
 | `bun run hub` | Hub only; does not migrate. |
-| `bun run check` | Typecheck tooling, portal, extension, hub, packages, `e2e/`, `tests/chain/` and `tests/model/`, and bundle the hub. |
+| `bun run check` | Typecheck tooling, portal, extension, hub, packages, `e2e/`, `tests/chain/`, `tests/policy-corpus/` and `tests/model/`, check that dependencies are exact versions, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run test:unit`, `test:postgres`, `test:dom` | The three parts of `bun run test`: tests that need no Postgres, the `*.postgres.test.ts` tests, and the portal's DOM tests. CI runs unit and Postgres tests in three shards each (`--shard=1/3`). |
 | `bun run test:chain` | The live triage chain from webhook to pull request on one machine, against a fake GitHub and a stub decision model; needs Postgres and reaches the npm registry for native modules. |
@@ -119,6 +119,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `bun e2e/provisioners/<name>.ts` | Live checks against real services, by hand only; see [e2e/README.md](../e2e/README.md). |
 | `bun run eval` in `packages/triage-workflows` | Decision-model eval; see [DECISION_MODEL.md](DECISION_MODEL.md#measured-accuracy). |
 | `bun run eval:scan` in `packages/triage-workflows` | Repository scan eval; see `packages/triage-workflows/evals/SCAN.md`. |
+| `bun run eval:risk`, `eval:hidden-content`, `eval:duplicates` in `packages/triage-workflows` | Risk, hidden-content and duplicates evals; see `packages/triage-workflows/evals/RISK.md`. |
 | `bun run eval:review` | Code review eval; see `packages/pr-code-review-anthropic/evals/README.md`. |
 | `bun run holdback`, `report` | Holdback replay, cost and latency report. |
 | `bun run vendor:health`, `sh tooling/vendor-diff-check.sh` | Vendored Interchange health and drift gate. |

@@ -124,12 +124,12 @@ When the file already exists, edit it in place rather than rewriting it:
 - Keep every rule whose id still fits, with its id, `text` and `evidence`, so its history and labels carry on. Remove one that no longer fits, such as `no-forbidden-paths` for a folder that is gone, and name it with the reason in the pull request.
 - Add a picked rule only when the file has no rule with its id or `check`.
 - A measured size limit is a suggestion like any other; when it changes the file's limit, the pull request names the old and new number.
-- A file with `decide` keeps it and gets no `actions`. An existing `actions` block is kept, and the pull request names any step you change.
+- A file with `decide` keeps it and gets no `actions`; nothing acts on `decide`, so it takes no actions. An existing `actions` block is kept, and the pull request names any step you change.
 - The file holds at most 8 rules of its own, counting the ones it has. When the picked rules would take it past that, keep every existing rule and drop new ones in this order until it fits: `model` rules, `no-any`, `invented-fallbacks`, `conventions`, `no-ai-attribution`, then other `text` rules. Name each dropped rule in the pull request.
 
 ## 5. Validate and fix
 
-Run the same check the hub runs. It needs Bun 1.4 or later (`bun --version`; install from https://bun.sh).
+Run the same check the hub runs. It needs Bun 1.4.4 or later (`bun --version`; install from https://bun.sh).
 
 Find a Corbits Triage checkout: if this skill sits at `<checkout>/skills/corbits-triage-setup/SKILL.md` and `<checkout>/packages/policy-check-action` exists, use that `<checkout>`. Otherwise clone one into a new empty folder, and use the path it prints as `<checkout>`:
 
