@@ -839,7 +839,7 @@ export function degradedVerdict(reason: string): RenderOutput {
 }
 
 /** The mirror tool's arguments for a marker: the label on GitHub, the build status on Bitbucket Data Center. */
-export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; status?: VerdictStatus; statusHead?: string; comment?: string; appLogin?: string };
+export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; status?: VerdictStatus; statusHead?: string; comment?: string; keepVerdict?: boolean; appLogin?: string };
 
 /** What a head's verdict still waits for. */
 export type Awaits = "ci" | "judge" | "code-review";

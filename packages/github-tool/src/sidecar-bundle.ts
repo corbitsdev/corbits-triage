@@ -173,6 +173,7 @@ const MIRROR_FIELDS = {
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
+  keepVerdict: { type: "boolean", description: "Keep a comment that already holds a verdict for onHead rather than writing comment over it" },
 };
 const MIRROR_REQUIRED = ["repo", "number", "labels"];
 const MIRROR_INPUT = obj({ ...MIRROR_FIELDS, appLogin: APP_LOGIN }, [...MIRROR_REQUIRED, "appLogin"]);
@@ -334,6 +335,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
         comment: a.comment,
         header: a.header,
         onHead: a.onHead,
+        keepVerdict: a.keepVerdict,
         close: false,
       }, login);
       if ("skipped" in mirrored) return mirrored;

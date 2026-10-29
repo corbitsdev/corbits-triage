@@ -97,6 +97,16 @@ describe("mirror", () => {
     expect(fake.comments.find((c) => c.id === 2)!.text).toBe("[corbits-triage]: #copied\nNot ours");
   });
 
+  test("progress with keepVerdict keeps a verdict on the head, and writes over one without it", async () => {
+    const fake = fakeBitbucket();
+    await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    const progress = { ...REQUEST, comment: "In progress", onHead: "abc" };
+    expect(await mirror(fake.bb, { ...progress, keepVerdict: true }, user)).toMatchObject({ commentId: 10, updated: false, kept: "verdict" });
+    expect(fake.comments[0]!.text).toEndWith("\nPass");
+    expect(await mirror(fake.bb, progress, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(fake.comments[0]!.text).toEndWith("\nIn progress");
+  });
+
   test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun", async () => {
     const fake = fakeBitbucket();
     await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);

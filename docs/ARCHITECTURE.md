@@ -602,7 +602,11 @@ any other tenant or an unknown sender.
   checks could still change, a degraded one or one over 256 KiB still goes up
   on the pass that collects it, and a failure or a missed deadline leaves the
   machine verdict to go up alone; none of them is kept, so the next event
-  deploys the judge again. A judge the release does not publish posts nothing.
+  deploys the judge again. The in-progress comment for the judge or code
+  review is written with `keepVerdict`, so the host's mirror leaves a comment
+  whose marker already holds a verdict for that head as it is and reports
+  `kept: "verdict"`; only CI running again on the head, or a Review again,
+  shows progress over a verdict. A judge the release does not publish posts nothing.
   When the policy turns code review on, the verdict's rules let it past, the
   hub read the head's review request and the release publishes a code review,
   a pass deploys it the same way (without one it declares no code-review

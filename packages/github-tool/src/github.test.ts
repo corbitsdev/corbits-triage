@@ -105,6 +105,16 @@ describe("triage comment", () => {
     expect(comments).toEqual([other, { id: 100, user: APP, body: "<!-- corbits-triage -->\nOurs" }]);
   });
 
+  test("progress with keepVerdict keeps a verdict on the head, and writes over one without it", async () => {
+    const verdict = `<!-- corbits-triage ${JSON.stringify({ head: "abc123", policy: null, verdict: "pass" })} -->\n**Triage: Pass**`;
+    const progress = { ...MIRROR, comment: "**Triage: In progress**", onHead: "abc123", close: false };
+    const { gh, comments } = fakeGithub([{ id: 42, user: APP, body: verdict }]);
+    expect(await mirror(gh, { ...progress, keepVerdict: true }, login)).toMatchObject({ commentId: 42, updated: false, kept: "verdict" });
+    expect(comments[0]!.body).toBe(verdict);
+    expect(await mirror(gh, progress, login)).toMatchObject({ commentId: 42, updated: true });
+    expect(comments[0]!.body).toEndWith("\n**Triage: In progress**");
+  });
+
   test("a refused edit of its own comment throws and posts nothing", async () => {
     const ours = { id: 42, user: APP, body: "<!-- corbits-triage -->\nOld" };
     const { gh, requests } = recorder(function respond(path, init) {

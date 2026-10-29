@@ -1,5 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
+import { asRecord } from "@corbits/common";
 import { repoSourceOf } from "@corbits/triage-contracts";
 import { progressMark } from "@corbits/triage-workflows/actions/waiting";
 import { writeMark, type MirrorOutcome } from "@corbits/triage-workflows/actions/mirror";
@@ -9,7 +10,7 @@ import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
 
 const Mailed = { output: { "reviewer?": Reviewer } } as const;
 const ProgressInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, "judgeMailed?": Mailed, "earlyReviewMailed?": Mailed, "reviewMailed?": Mailed });
-const Granted = type({ automatic: "string[]", "appLogin?": "string" });
+const Granted = type({ automatic: "string[]", "appLogin?": "string", "codeReview?": "unknown" });
 
 /**
  * Shows the in-progress comment while the pass's head waits for its judge or code review, naming what it waits for,
@@ -30,5 +31,7 @@ export async function progress(input: unknown, ctx: EffectContext, _signal: Abor
   if (awaits.length === 0) return { skipped: true };
   const { pullRequest } = managerMailOf(parsed.payload);
   const pull = { repo: pullRequest.repo, number: pullRequest.number, onHead: head };
-  return writeMark(progressMark(repoSourceOf(pullRequest.source), pull, awaits, granted.appLogin), ctx);
+  // Only CI running again on the head, or a Review again, shows progress over a verdict already posted on it.
+  const keepVerdict = !awaits.includes("ci") && asRecord(granted.codeReview)?.["again"] === undefined;
+  return writeMark(progressMark(repoSourceOf(pullRequest.source), pull, awaits, granted.appLogin, keepVerdict), ctx);
 }

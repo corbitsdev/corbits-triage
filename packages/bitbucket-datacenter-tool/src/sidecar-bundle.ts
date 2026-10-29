@@ -101,6 +101,7 @@ const MIRROR_INPUT = obj({
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
+  keepVerdict: { type: "boolean", description: "Keep a comment that already holds a verdict for onHead rather than writing comment over it" },
 }, ["repo", "number", "labels"]);
 
 const MIRROR_DESCRIPTION =
@@ -187,7 +188,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return readWindow(bb, reads, a);
     case "bitbucket_datacenter_mirror":
     case "bitbucket_datacenter_mirror_auto":
-      return mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, status: a.status, statusHead: a.statusHead, onHead: a.onHead, notReadyHead: a.notReadyHead, fixedHead: a.fixedHead }, user);
+      return mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, status: a.status, statusHead: a.statusHead, onHead: a.onHead, keepVerdict: a.keepVerdict, notReadyHead: a.notReadyHead, fixedHead: a.fixedHead }, user);
     case "bitbucket_datacenter_execute_action_auto":
       return runAction(bb, a, user);
     case "bitbucket_datacenter_send_code_review":
