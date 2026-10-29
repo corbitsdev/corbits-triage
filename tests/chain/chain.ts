@@ -12,7 +12,7 @@ import { parseTriageState, triageStateName, type PrTriageRow } from "@corbits/tr
 import { saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, cleanup, createDatabase, deliver, dropDatabase, failOnCleanupErrors, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 const MANAGER = "triage-manager-github";
 // The deadline on a manager settling: every deployment starts a sidecar process of its own, and a judged pull request
@@ -90,16 +90,17 @@ export function chainStack(env: Record<string, string> = {}) {
     // Until a scenario switches it to policy, only posting runs on its own, so a Do in a policy is held.
     await saveAutomationMode(workspace.transport, workspace.tenantId, "ask");
     await setUpWorkspace(workspace, github, model.origin);
-    await listenerStarted(workspace);
+    await listenerStarted(hub, workspace);
   });
 
   afterAll(async () => {
-    await hub?.stop();
-    await handle?.close();
-    if (database) await dropDatabase(database);
-    github.stop();
-    model.stop();
-    rmSync(portalDir, { recursive: true, force: true });
+    await cleanup("stop the hub", () => hub?.stop());
+    await cleanup("close the database handle", () => handle?.close());
+    await cleanup("drop the database", () => database && dropDatabase(database));
+    await cleanup("stop the fake GitHub", () => github.stop());
+    await cleanup("stop the stub model", () => model.stop());
+    await cleanup("remove the portal build", () => rmSync(portalDir, { recursive: true, force: true }));
+    failOnCleanupErrors();
   });
 
   /** GitHub's webhook for a pull request opened or pushed to, after the fake shows that head; the hub's answer to it. */
@@ -152,7 +153,7 @@ export function chainStack(env: Record<string, string> = {}) {
       if (value !== undefined) return value;
       await Bun.sleep(POLL_MS);
     }
-    throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}\nHub:\n${hub.logs.slice(-80).join("\n")}`);
+    throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}\n${hubLogTail(hub)}`);
   }
 
   async function rows(query: string): Promise<Record<string, unknown>[]> {

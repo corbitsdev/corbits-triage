@@ -118,6 +118,12 @@ jobs:
         uses: ./.github/actions/setup
       - if: env.RUN == 'true'
         run: bun --conditions=intx-src test --parallel=2 ${{ matrix.files }}
+      - if: failure() && env.RUN == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chain-hub-logs-${{ strategy.job-index }}
+          overwrite: true
+          path: tmp/chain-logs
 
   policy:
     if: github.event_name == 'pull_request'

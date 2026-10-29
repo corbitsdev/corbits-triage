@@ -9,7 +9,7 @@ import { createDB } from "@intx/db";
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { stubModel } from "./model.ts";
 import { once } from "./chain.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, cleanup, createDatabase, deliver, dropDatabase, failOnCleanupErrors, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 setDefaultTimeout(10 * 60_000);
 
@@ -34,15 +34,16 @@ beforeAll(async () => {
   hub = await startHub(database, github, portalDir);
   workspace = await signUp(hub, database);
   await setUpWorkspace(workspace, github, model.origin);
-  await listenerStarted(workspace);
+  await listenerStarted(hub, workspace);
 });
 
 afterAll(async () => {
-  await hub?.stop();
-  if (database) await dropDatabase(database);
-  github.stop();
-  model.stop();
-  rmSync(portalDir, { recursive: true, force: true });
+  await cleanup("stop the hub", () => hub?.stop());
+  await cleanup("drop the database", () => database && dropDatabase(database));
+  await cleanup("stop the fake GitHub", () => github.stop());
+  await cleanup("stop the stub model", () => model.stop());
+  await cleanup("remove the portal build", () => rmSync(portalDir, { recursive: true, force: true }));
+  failOnCleanupErrors();
 });
 
 function sha(seed: string): string {
@@ -82,7 +83,7 @@ async function until<T>(what: string, read: () => Promise<T | undefined>, ms = 1
     if (value !== undefined) return value;
     await Bun.sleep(POLL_MS);
   }
-  throw new Error(`Timed out waiting for ${what}.\n${hub.logs.slice(-80).join("\n")}`);
+  throw new Error(`Timed out waiting for ${what}.\n${hubLogTail(hub)}`);
 }
 
 function manifests(): string[] {

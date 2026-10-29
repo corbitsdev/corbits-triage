@@ -1,9 +1,9 @@
 // The live chain on one machine: a migrated database of its own, the hub process with its local sidecars serving a
 // portal build, and a workspace set up through the same routes and portal code a person's browser uses.
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { ApiError, type Transport } from "@intx/hub-client";
@@ -15,6 +15,8 @@ import { connectGithubApp } from "../../apps/web/src/lib/github-manifest.ts";
 import type { FakeGithub } from "./github.ts";
 
 const ROOT = resolve(import.meta.dir, "../..");
+/** The logs of every chain file, kept after the run for CI to upload; `tmp/` is gitignored. */
+const LOG_ROOT = join(ROOT, "tmp", "chain-logs");
 const ADMIN_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 // The hub and its sidecars shell out to bun, which needs it on PATH and a HOME for its cache.
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
@@ -84,17 +86,29 @@ function freePort(): number {
   return port;
 }
 
-async function collect(stream: ReadableStream<Uint8Array>, lines: string[]): Promise<void> {
+async function collect(stream: ReadableStream<Uint8Array>, lines: string[], file: string): Promise<void> {
   const decoder = new TextDecoder();
   let partial = "";
+  let writable = true;
+  function keep(kept: string[]): void {
+    lines.push(...kept);
+    if (!writable || kept.length === 0) return;
+    try {
+      appendFileSync(file, `${kept.join("\n")}\n`);
+    } catch (err) {
+      writable = false;
+      console.error(`Could not write the hub log ${file}: ${String(err)}`);
+    }
+  }
   for await (const chunk of stream) {
     const parts = (partial + decoder.decode(chunk, { stream: true })).split("\n");
     partial = parts.pop()!;
-    lines.push(...parts);
+    keep(parts);
   }
+  keep(partial === "" ? [] : [partial]);
 }
 
-export type Hub = { origin: string; dataDir: string; logs: string[]; stop: () => Promise<void> };
+export type Hub = { origin: string; dataDir: string; logs: string[]; logFile: string; stop: () => Promise<void> };
 
 /** The hub as the image starts it, serving the portal build in `portalDir`, with its sidecar a local process under its data directory. */
 export async function startHub(database: Database, github: FakeGithub, portalDir: string, env: Record<string, string> = {}): Promise<Hub> {
@@ -102,6 +116,11 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const origin = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "corbits-chain-"));
   const logs: string[] = [];
+  const logDir = join(LOG_ROOT, basename(Bun.main, ".test.ts"));
+  mkdirSync(logDir, { recursive: true });
+  const logFile = join(logDir, "hub.log");
+  writeFileSync(logFile, "");
+  console.log(`Hub log: ${logFile}`);
   const child = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
     cwd: ROOT,
     env: {
@@ -124,8 +143,8 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
     stdout: "pipe",
     stderr: "pipe",
   });
-  void collect(child.stdout, logs);
-  void collect(child.stderr, logs);
+  void collect(child.stdout, logs, logFile);
+  void collect(child.stderr, logs, logFile);
   async function stop(): Promise<void> {
     child.kill("SIGTERM");
     await Promise.race([child.exited, Bun.sleep(STOP_MS)]);
@@ -135,14 +154,44 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const deadline = Date.now() + READY_MS;
   while (Date.now() < deadline && child.exitCode === null) {
     try {
-      if ((await fetch(`${origin}/api/me`)).status === 401) return { origin, dataDir, logs, stop };
+      if ((await fetch(`${origin}/api/me`)).status === 401) return { origin, dataDir, logs, logFile, stop };
     } catch {
       // Still binding its socket.
     }
     await Bun.sleep(POLL_MS);
   }
   await stop();
-  throw new Error(`The hub did not start:\n${logs.join("\n")}`);
+  throw new Error(`The hub did not start.\n${hubLogTail({ logs, logFile })}`);
+}
+
+/**
+ * Where the logs are and the hub's last lines, for a failure message. The hub's log holds its sidecars' and their
+ * workflow processes' output too, which they inherit.
+ */
+export function hubLogTail({ logs, logFile }: Pick<Hub, "logs" | "logFile">): string {
+  return `Logs: ${dirname(logFile)}\nHub log: ${logFile}\n${logs.slice(-80).join("\n")}`;
+}
+
+const cleanupFailures: string[] = [];
+
+/**
+ * Runs a cleanup step from a `finally` or `afterAll`. Its failure is logged and kept rather than thrown, so it cannot
+ * replace the error the scenario is already throwing; `failOnCleanupErrors` raises what was kept.
+ */
+export async function cleanup(what: string, step: () => unknown): Promise<void> {
+  try {
+    await step();
+  } catch (err) {
+    const failure = `Could not ${what}: ${String(err)}`;
+    console.error(failure);
+    cleanupFailures.push(failure);
+  }
+}
+
+/** The last line of a file's `afterAll`, so a cleanup that failed fails the file even when every scenario passed. */
+export function failOnCleanupErrors(): void {
+  const failed = cleanupFailures.splice(0);
+  if (failed.length > 0) throw new Error(failed.join("\n"));
 }
 
 /** The portal's transport, signed in as one person by their session cookie. */
@@ -233,7 +282,7 @@ export async function buildPortal(dir: string): Promise<void> {
 }
 
 /** Waits for the hub to roll the workspace onto the build's release and its GitHub listener to be up. */
-export async function listenerStarted(workspace: Workspace): Promise<void> {
+export async function listenerStarted(hub: Hub, workspace: Workspace): Promise<void> {
   const deadline = Date.now() + LISTENER_START_MS;
   while (Date.now() < deadline) {
     const versions = await readDeployedVersions(workspace.transport, workspace.tenantId);
@@ -242,7 +291,7 @@ export async function listenerStarted(workspace: Workspace): Promise<void> {
     if (currentDeployment(versions.deployments, TRIAGE_LISTENERS.github)?.live && versions.rollouts.length > 0) return;
     await Bun.sleep(POLL_MS);
   }
-  throw new Error("The hub did not start the GitHub listener.");
+  throw new Error(`The hub did not start the GitHub listener.\n${hubLogTail(hub)}`);
 }
 
 /** A webhook delivery GitHub would send, signed with the App's secret; the hub's answer names what it did with it. */

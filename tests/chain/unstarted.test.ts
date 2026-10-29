@@ -1,6 +1,6 @@
 // A manager the listener mails before its deploy is recorded, which stock holds the mail for.
 import { expect, test } from "bun:test";
-import { MAIL_HOLD_MS } from "./stack.ts";
+import { cleanup, MAIL_HOLD_MS } from "./stack.ts";
 import { chainStack, isLiveDeployment, once, SETTLE_MS, UNSTARTED, type Claim } from "./chain.ts";
 import { comments, pullOf, sha, type Write } from "./github.ts";
 
@@ -72,8 +72,8 @@ const held = once(async function held() {
     await recordKeys();
     await until("the manager's deploy to be recorded", async () => (await publicKeyOf(manager.id)) ?? undefined);
   } finally {
-    await recordKeys();
-    await dropHold();
+    await cleanup("record the manager's keys", recordKeys);
+    await cleanup("drop the mail hold", dropHold);
   }
   const claim = await settled(UNSTARTED, 1);
   return { keyWhenWoken, claim, deployed: (await managers()).slice(before), writes: github.writesTo(UNSTARTED, 1), misses: github.misses.slice(missed) };
@@ -104,7 +104,7 @@ const failed = once(async function failed() {
     await pushed(UNSTARTED, pullOf(2, second), "synchronize");
     claim = await settled(UNSTARTED, 2);
   } finally {
-    await acceptKeys();
+    await cleanup("accept keys again", acceptKeys);
   }
   return { second, whileFailed, claim, deployed: (await managers()).slice(before), writes: github.writesTo(UNSTARTED, 2), misses: github.misses.slice(missed) };
 });
@@ -135,7 +135,7 @@ const cancelled = once(async function cancelled() {
     await pushed(UNSTARTED, pullOf(3, second), "synchronize");
     claim = await settled(UNSTARTED, 3);
   } finally {
-    await acceptKeys();
+    await cleanup("accept keys again", acceptKeys);
   }
   return { first, second, claim, deployed: (await managers()).slice(before), writes: github.writesTo(UNSTARTED, 3), misses: github.misses.slice(missed) };
 });

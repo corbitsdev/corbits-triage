@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { TRIAGE_LISTENERS, VERDICT_LABELS } from "@corbits/triage-contracts";
 import { chainStack, UNROUTED, isLiveDeployment, once } from "./chain.ts";
+import { cleanup } from "./stack.ts";
 import { sha, pullOf, comments, labelled } from "./github.ts";
 
 // Longer than the scenario runs, so only the hub's short retry and its pass on a listener starting can mail the head.
@@ -50,7 +51,7 @@ const unrouted = once(async function unrouted() {
     // Stopped through stock's stop-run route, the listener's run is gone until the hub rolls the workspace again.
     await transport.fetch("DELETE", `/api/tenants/${tenantId}/workflows/runs/${listener.id}`);
   } finally {
-    process.kill(listener.pid, "SIGCONT");
+    await cleanup("resume the listener", () => process.kill(listener.pid, "SIGCONT"));
   }
   const live = await until("a replacement listener to run", function seen() {
     return logged("workflow_release_live").find((entry) => entry["deployment"] !== listener.id);
