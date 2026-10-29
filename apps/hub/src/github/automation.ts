@@ -6,7 +6,8 @@ import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { GrantRule } from "@intx/types/authz";
 import { ACTION_KINDS, DO_GRANT_ACTION, doResource, hostKinds, postingKinds, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
-import { allowRole, grantAdminHost, lockHolder, type Tx } from "./admin-github-grant.js";
+import { lockHolder } from "../system-writes/grants.js";
+import { allowRole, grantAdminHost, type Tx } from "./admin-github-grant.js";
 
 export type AutomationDeps = { db: DB["db"] };
 

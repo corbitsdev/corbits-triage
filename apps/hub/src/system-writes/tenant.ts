@@ -51,3 +51,9 @@ export async function assignRole(w: WriteTx, principalId: string, roleId: string
   if (!held || !given) throw new Error(`Principal ${principalId} and role ${roleId} must both belong to workspace ${w.tenantId}.`);
   await w.tx.insert(schema.principalRole).values({ principalId, roleId }).onConflictDoNothing();
 }
+
+export async function unassignRole(w: WriteTx, principalId: string, roleId: string): Promise<void> {
+  check(w, ASSIGNS_ROLE);
+  const { principalRole } = schema;
+  await w.tx.delete(principalRole).where(and(eq(principalRole.principalId, principalId), eq(principalRole.roleId, roleId)));
+}

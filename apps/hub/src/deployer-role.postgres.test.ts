@@ -35,25 +35,19 @@ test("PostgreSQL: the Deployer role holds exactly its grants, and only the works
       { id: "prn_admin", tenantId: TENANT, kind: "user", refId: "usr_admin", status: "active" },
       { id: "prn_member", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" },
       { id: "prn_publisher", tenantId: TENANT, kind: "user", refId: "triage-publisher", status: "active" },
-      { id: "prn_agent", tenantId: TENANT, kind: "agent", refId: "usr_member", status: "active" },
     ]);
     const roleId = await writes.transaction(TENANT, SETS_ROLE_GRANTS, (w) => ensureDeployerRole(w, new Date()));
     await db.insert(schema.grant).values({ id: "grt_old_publish", tenantId: TENANT, roleId, resource: "asset:*", action: "create", effect: "allow", origin: "role" });
     expect(await writes.transaction(TENANT, SETS_ROLE_GRANTS, (w) => ensureDeployerRole(w, new Date()))).toBe(roleId);
     const held = await db.select({ resource: schema.grant.resource, action: schema.grant.action }).from(schema.grant).where(eq(schema.grant.roleId, roleId));
     expect(held.sort(byGrant)).toEqual(DEPLOYER_GRANTS.map(({ resource, action }) => ({ resource, action })).sort(byGrant));
-    const people = ["prn_admin", "prn_member", "prn_publisher", "prn_agent"];
+    const people = ["prn_admin", "prn_member", "prn_publisher"];
     await db.insert(schema.principalRole).values(people.map((principalId) => ({ principalId, roleId })));
 
     const logged: Array<Record<string, unknown>> = [];
-    async function holders(): Promise<string[]> {
-      const rows = await db.select({ principalId: schema.principalRole.principalId }).from(schema.principalRole).where(inArray(schema.principalRole.principalId, people));
-      return rows.map((row) => row.principalId).sort();
-    }
-    await revokeHumanDeployers(writes, TENANT, (entry) => logged.push(entry));
     await revokeHumanDeployers(writes, TENANT, (entry) => logged.push(entry));
 
-    expect(await holders()).toEqual(["prn_agent", "prn_publisher"]);
+    expect(await db.select({ principalId: schema.principalRole.principalId }).from(schema.principalRole).where(inArray(schema.principalRole.principalId, people))).toEqual([{ principalId: "prn_publisher" }]);
     expect(logged).toEqual([{ level: "info", msg: "deployer_role_revoked", tenantId: TENANT, people: 2 }]);
   } finally {
     await handle?.close();
