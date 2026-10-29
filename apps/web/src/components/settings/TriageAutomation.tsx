@@ -6,7 +6,7 @@ import { findTriageRole } from "../../lib/automation-grid.ts";
 import { checkPackQuery } from "../../lib/check-packs.ts";
 import { deleteGrant, type HubGrant, type PortalSnapshot, type RepoRecord } from "../../lib/hub-api.ts";
 import { createHubTransport } from "../../lib/hub-transport.ts";
-import { doName } from "../../lib/policy-view.ts";
+import { DO_NAMES } from "../../lib/pack-prose.ts";
 import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
 import { useAllowed, useGrants, useRoles } from "../../lib/tenant-entities.ts";
 import { MergeCaution } from "../repo-panel/MergeCaution.tsx";
@@ -39,7 +39,7 @@ function AutomationRow({ tenantId, repo, grants, ask, disabled }: RowProps) {
   }
 
   function kindItem(kind: ActionKind, at: number) {
-    const name = doName(repo.source, kind);
+    const name = DO_NAMES[kind];
     const grant = ask ? grantOf(kind) : undefined;
     return (
       <span key={kind}>

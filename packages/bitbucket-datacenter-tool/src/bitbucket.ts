@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { errorText } from "@corbits/common";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type VerdictStatus, type WrittenComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
 
@@ -166,7 +166,7 @@ async function deleteTriageComments(bb: BitbucketFetch, repo: string, number: nu
   }
 }
 
-async function declinePr(bb: BitbucketFetch, input: { repo: string; number: number; version: number }) {
+export async function declinePr(bb: BitbucketFetch, input: { repo: string; number: number; version: number }) {
   await refusable(bb, `${prPath(input.repo, input.number)}/decline?version=${input.version}`, send("POST", {}));
   return { declined: true };
 }
@@ -193,15 +193,22 @@ async function builds(bb: BitbucketFetch, sha: string): Promise<Build[]> {
 }
 
 /** The verdict as a build status on the head: Data Center has no labels, and a build status is what its pull request page shows beside the head. */
-type VerdictBuild = { state: "SUCCESSFUL" | "FAILED" | "INPROGRESS"; description: string; url?: string };
+const BUILD_STATES = { success: "SUCCESSFUL", failure: "FAILED", pending: "INPROGRESS", error: "FAILED" } as const;
+const BUILD_DESCRIPTION_MAX = 255;
 
 /** Writes the verdict build status unless the head already shows it; Data Center keeps one status per key and needs a URL on it. */
-async function setVerdictBuild(bb: BitbucketFetch, sha: string, build: VerdictBuild, fallbackUrl: string): Promise<{ build: VerdictBuild["state"]; written: boolean }> {
-  const url = build.url ?? fallbackUrl;
+async function setVerdictBuild(bb: BitbucketFetch, sha: string, status: VerdictStatus, url: string) {
+  const state = BUILD_STATES[status.state];
+  const description = status.description.slice(0, BUILD_DESCRIPTION_MAX);
   const current = (await builds(bb, sha)).find((b) => b.key === TRIAGE_BUILD_KEY);
-  if (current && current.state === build.state && (current.description ?? "") === build.description && current.url === url) return { build: build.state, written: false };
-  await json(bb, `/rest/build-status/1.0/commits/${sha}`, send("POST", { state: build.state, key: TRIAGE_BUILD_KEY, name: TRIAGE_BUILD_NAME, url, description: build.description }));
-  return { build: build.state, written: true };
+  if (current && current.state === state && (current.description ?? "") === description && current.url === url) return { build: state, written: false };
+  await json(bb, `/rest/build-status/1.0/commits/${sha}`, send("POST", { state, key: TRIAGE_BUILD_KEY, name: TRIAGE_BUILD_NAME, url, description }));
+  return { build: state, written: true };
+}
+
+/** Data Center opens the pull request scrolled to a comment from its overview with the comment's id. */
+function commentUrl(pr: PullRequest, commentId: number): string {
+  return `${pr.url}/overview?commentId=${commentId}`;
 }
 
 export interface MirrorInput {
@@ -212,23 +219,71 @@ export interface MirrorInput {
   owned?: readonly string[];
   comment?: string;
   header?: TriageHeader;
-  build?: VerdictBuild;
+  /** The verdict's state, shown as the Corbits Triage build status linking to the comment, or to the pull request without one. */
+  status?: VerdictStatus;
+  /** The head the verdict was given on, which carries its status; never the head read now, which may be newer. */
+  statusHead?: string;
   /** Writes nothing once the pull request has moved past this head. */
   onHead?: string;
-  close: boolean;
+  /** While this is the head, which may not be approved, the token user's approval is taken back. */
+  notReadyHead?: string;
+  /** While this is the head, which leaves the author nothing to fix, the token user's needs-work is taken back. */
+  fixedHead?: string;
 }
 
-/** Writes the Triage comment and build status, and declines when asked. An empty comment means nothing is asked of the author, so an earlier one would be stale. */
+type MirrorWrite = "comment" | "status" | "takeBack";
+
+/** Takes back the token user's own review status when the head no longer earns it; anyone else's stays. */
+async function takeBack(bb: BitbucketFetch, i: MirrorInput, pr: PullRequest, me: TokenUser): Promise<string[]> {
+  const status = statusOf(pr, me);
+  const stale = (status === "APPROVED" && i.notReadyHead === pr.sha) || (status === "NEEDS_WORK" && i.fixedHead === pr.sha);
+  if (!stale) return [];
+  await setStatus(bb, { repo: i.repo, number: i.number, slug: me.slug, status: "UNAPPROVED" });
+  return [status];
+}
+
+/**
+ * Writes the Triage comment, the build status on the verdict's head and takes back a review status the head no longer
+ * earns. Each write stands alone: one that fails is named in `failed` and the others still run. An empty comment means
+ * nothing is asked of the author, so an earlier one would be stale.
+ */
 export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: BitbucketUser) {
-  const { repo, number } = i;
+  const { repo, number, status } = i;
+  if (status && i.statusHead === undefined) throw new Error("a status needs the head it is for");
   const pr = await readPr(bb, repo, number);
-  if (pr.state !== "OPEN") return { commentId: null, updated: false, closed: false, sha: pr.sha, skipped: NOT_OPEN };
-  if (i.onHead !== undefined && i.onHead !== pr.sha) return { commentId: null, updated: false, closed: false, sha: pr.sha, skipped: HEAD_MOVED };
-  if (i.comment === "") await deleteTriageComments(bb, repo, number, await user());
-  const posted = i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header, branch: pr.branch }, await user()) : null;
-  const build = i.build ? await setVerdictBuild(bb, pr.sha, i.build, pr.url) : undefined;
-  if (i.close) await declinePr(bb, { repo, number, version: pr.version });
-  return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }), ...(build && { build: build.build, buildWritten: build.written }) };
+  if (pr.state !== "OPEN") return { commentId: null, updated: false, sha: pr.sha, skipped: NOT_OPEN };
+  if (i.onHead !== undefined && i.onHead !== pr.sha) return { commentId: null, updated: false, sha: pr.sha, skipped: HEAD_MOVED };
+  const failed: Partial<Record<MirrorWrite, string>> = {};
+  async function attempt<T>(write: MirrorWrite, run: () => Promise<T>): Promise<T | undefined> {
+    try {
+      return await run();
+    } catch (err) {
+      failed[write] = errorText(err);
+      return undefined;
+    }
+  }
+  async function writeComment() {
+    if (i.comment === "") await deleteTriageComments(bb, repo, number, await user());
+    return i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header, branch: pr.branch }, await user()) : null;
+  }
+  async function writeStatus() {
+    return status && setVerdictBuild(bb, i.statusHead!, status, posted ? commentUrl(pr, posted.commentId) : pr.url);
+  }
+  async function writeTakeBack() {
+    return i.notReadyHead === pr.sha || i.fixedHead === pr.sha ? await takeBack(bb, i, pr, await user()) : undefined;
+  }
+  const posted = await attempt("comment", writeComment) ?? null;
+  const build = await attempt("status", writeStatus);
+  const dismissed = await attempt("takeBack", writeTakeBack);
+  return {
+    commentId: posted?.commentId ?? null,
+    updated: posted?.updated ?? false,
+    sha: pr.sha,
+    ...(posted?.unchanged && { unchanged: posted.unchanged }),
+    ...(build && { build: build.build, buildWritten: build.written }),
+    ...(dismissed && { dismissed }),
+    ...(Object.keys(failed).length > 0 && { failed }),
+  };
 }
 
 const CODE_REVIEW_MARKER = "[corbits-code-review]: #";

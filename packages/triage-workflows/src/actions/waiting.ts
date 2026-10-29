@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABEL, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABEL, WAITING_STATUS, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import { progressComment, type Awaits, type MarkArgs, type WaitingMark } from "../logic/render.js";
 
 /** `mark` is absent when there is nothing to take off, so nothing is written either. */
@@ -9,7 +9,7 @@ type Pull = { repo: string; number: number; onHead: string };
 
 /** Ready never stands on a head triage has not checked; Not Ready and Needs Human Review stay until its verdict, so a push changes no label. */
 function markArgs(source: RepoSource, pull: Pull, labels: Record<VerdictWord, string>, ci: boolean): MarkArgs {
-  if (source === "bitbucket-datacenter") return { ...pull, labels: [], owned: [], build: { state: "INPROGRESS", description: WAITING_LABEL } };
+  if (source === "bitbucket-datacenter") return { ...pull, labels: [], owned: [], status: WAITING_STATUS, statusHead: pull.onHead };
   if (!ci) return { ...pull, labels: [], owned: [labels.pass] };
   return { ...pull, labels: [WAITING_LABEL], owned: ownedLabels(labels), keep: [labels.fail, labels.unsure] };
 }

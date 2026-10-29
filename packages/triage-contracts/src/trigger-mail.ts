@@ -66,9 +66,9 @@ export function trustedRequestOf(input: unknown): { request: Record<string, unkn
 
 export const APPROVE_DO_KIND = "approve-do";
 
-/** Whether triage marks a head waiting on its CI: only where it writes the verdict, as labels on GitHub and as the build status beside its comment on Bitbucket Data Center. */
+/** Whether triage marks a head waiting on its CI: where it writes the verdict, as labels on GitHub where it holds labels, and as the build status, always written, on Bitbucket Data Center. */
 export function marksWaiting(source: RepoSource, automatic: readonly ActionKind[]): boolean {
-  return automatic.includes(source === "bitbucket-datacenter" ? "comment" : "labels");
+  return source === "bitbucket-datacenter" || automatic.includes("labels");
 }
 
 /** A Do as deployments built before steps read it; one they cannot run as the policy means is left out. */

@@ -1,5 +1,5 @@
 import { alwaysHeld, CATALOG_IDS, catalogCheckEnabled, catalogSentence, customCheckEnabled, customSentence, onFailText, people, postingKinds, VERDICT_NAMES, VERDICTS, type CatalogId, type ActionKind, type CheckPack, type CustomCheck, type RepoSource, type Step, type VerdictWord } from "@corbits/triage-contracts";
-import { doName, FOR_NAMES, forChoice, stepFor } from "../../lib/policy-view.ts";
+import { FOR_NAMES, forChoice, stepFor } from "../../lib/policy-view.ts";
 
 function doText(step: Step): string {
   switch (step.do) {
@@ -44,15 +44,15 @@ const WAITS = " (waits for you on Triage)";
 
 /**
  * One line of the verdict Triage posts before any step. Posting it from Triage writes only the comment and its
- * labels, so a label waits there only beside a waiting comment, and a build status never does.
+ * labels, so a label waits there only beside a waiting comment.
  */
-function postText(pack: CheckPack, source: RepoSource, verdict: VerdictWord, kind: ActionKind, allowed: (kind: ActionKind) => boolean): string {
+function postText(pack: CheckPack, verdict: VerdictWord, kind: ActionKind, allowed: (kind: ActionKind) => boolean): string {
   if (kind === "labels") {
     const label = `Label “${pack.labels[verdict]}”`;
     if (allowed("labels")) return label;
     return allowed("comment") ? `${label} (not added: Triage may not add labels here)` : `${label}${WAITS}`;
   }
-  return allowed("comment") ? `${doName(source, "comment")} with the verdict` : `Comment with the verdict${WAITS}`;
+  return allowed("comment") ? "Comment with the verdict" : `Comment with the verdict${WAITS}`;
 }
 
 /**
@@ -90,7 +90,7 @@ export default function PolicyRules({ pack, source, automatic }: { pack: CheckPa
           <div key={verdict} className="then">
             <b>{VERDICT_NAMES[verdict]}</b>
             <div className="steps">
-              {postingKinds(source).map((kind) => <span key={kind}>{postText(pack, source, verdict, kind, allowed)}</span>)}
+              {postingKinds(source).map((kind) => <span key={kind}>{postText(pack, verdict, kind, allowed)}</span>)}
               {pack.actions[verdict].filter((step) => step.do !== "nothing").map((step, at) => <span key={`${verdict}-${at}`}>{doText(step)}{forText(step)}{stepWaits(verdict, step) ? WAITS : ""}</span>)}
             </div>
           </div>

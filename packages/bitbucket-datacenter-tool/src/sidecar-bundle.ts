@@ -23,7 +23,7 @@ import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
 import { diffHash } from "@corbits/common/diff-hash";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
-import { BitbucketRefusal, findingThreadStates, mirror, readPr, sendCodeReview, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
+import { BitbucketRefusal, findingThreadStates, mirror, sendCodeReview, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
 
 export const CREDENTIAL_HANDLE = "bitbucket-datacenter";
 
@@ -87,17 +87,18 @@ const MIRROR_INPUT = obj({
     }),
     description: "What the comment is written for; an unchanged one is not written again",
   },
-  build: {
-    ...obj({ state: { type: "string", enum: ["SUCCESSFUL", "FAILED", "INPROGRESS"] }, description: str, url: str }, ["state", "description"]),
-    description: "The verdict as the Corbits Triage build status on the head; the pull request's own page is its URL when none is given",
+  status: {
+    ...obj({ state: { type: "string", enum: ["success", "failure", "pending", "error"] }, description: str }, ["state", "description"]),
+    description: "The verdict as the Corbits Triage build status on the head, linking to the comment, or to the pull request when no comment is given",
   },
+  statusHead: { ...str, description: "The head the verdict was given on, which carries its status; required with status" },
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
 }, ["repo", "number", "labels"]);
 
 const MIRROR_DESCRIPTION =
-  "Post (or update) the triage comment on a Bitbucket Data Center pull request when comment is given, and set the Corbits Triage build status on its head when build is given. While notReadyHead is the head, which may not be approved, takes back the token user's approval; while fixedHead is the head, which leaves the author nothing to fix, takes back its needs-work. Writes nothing to a closed pull request. Never merges.";
+  "Post (or update) the triage comment on a Bitbucket Data Center pull request when comment is given, and set the Corbits Triage build status on statusHead, the verdict's own head, when status is given. While notReadyHead is the head, which may not be approved, takes back the token user's approval; while fixedHead is the head, which leaves the author nothing to fix, takes back its needs-work. Each write runs on its own: one that fails is named in failed and the others still run. Writes nothing to a closed pull request. Never merges.";
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   { name: "bitbucket_datacenter_mirror", description: MIRROR_DESCRIPTION, inputSchema: MIRROR_INPUT },
@@ -130,15 +131,6 @@ export async function runAction(bb: BitbucketFetch, args: unknown, user: Bitbuck
     if (err instanceof ActionNotRunnableError || err instanceof BitbucketRefusal) return { status: "skipped", reason: err.message };
     throw err;
   }
-}
-
-/** Takes back the token user's own review status when the head no longer earns it; anyone else's stays. */
-async function takeBack(bb: BitbucketFetch, a: Record<string, any>, sha: string, me: TokenUser): Promise<string[]> {
-  const status = statusOf(await readPr(bb, a.repo, a.number), me);
-  const stale = (status === "APPROVED" && a.notReadyHead === sha) || (status === "NEEDS_WORK" && a.fixedHead === sha);
-  if (!stale) return [];
-  await setStatus(bb, { repo: a.repo, number: a.number, slug: me.slug, status: "UNAPPROVED" });
-  return [status];
 }
 
 /** Each file at a commit is fetched once per tool instance however many windows of it are read. */
@@ -186,12 +178,8 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
     case "bitbucket_datacenter_read_file":
       return readWindow(bb, reads, a);
     case "bitbucket_datacenter_mirror":
-    case "bitbucket_datacenter_mirror_auto": {
-      const mirrored = await mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, build: a.build, onHead: a.onHead, close: false }, user);
-      if ("skipped" in mirrored) return mirrored;
-      if (a.notReadyHead !== mirrored.sha && a.fixedHead !== mirrored.sha) return mirrored;
-      return { ...mirrored, dismissed: await takeBack(bb, a, mirrored.sha, await user()) };
-    }
+    case "bitbucket_datacenter_mirror_auto":
+      return mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, status: a.status, statusHead: a.statusHead, onHead: a.onHead, notReadyHead: a.notReadyHead, fixedHead: a.fixedHead }, user);
     case "bitbucket_datacenter_execute_action_auto":
       return runAction(bb, a, user);
     case "bitbucket_datacenter_send_code_review":

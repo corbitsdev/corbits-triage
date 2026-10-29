@@ -5,6 +5,7 @@ import { type } from "arktype";
 import {
   addReviewers,
   createComment,
+  declinePr,
   listComments,
   mergePr,
   mergeVeto,
@@ -25,7 +26,7 @@ export class HeadMovedError extends ActionNotRunnableError {}
 export type ActionStep = { effectId: string; headSha: string; kind: ActionKind; target: ResolvedTarget };
 
 /** `request` is the verdict's own mirror request: it names the pull request, and a close sends its comment as the pane's Close does. */
-export type ActionInput = { request: Omit<MirrorInput, "close">; step: ActionStep };
+export type ActionInput = { request: MirrorInput; step: ActionStep };
 
 /** `satisfied` means Bitbucket already had the state, so nothing was written. */
 export type ActionOutcome = { status: "done" | "satisfied"; result: unknown };
@@ -122,10 +123,12 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
     }
     case "close": {
       onHead(pr.sha, request, step);
-      const result = await mirror(bb, { ...request, close: true }, user);
+      const result = await mirror(bb, request, user);
       // Closed between the read above and the mirror's own.
       if ("skipped" in result) return { status: "satisfied", result: { closed: true } };
-      return { status: "done", result };
+      if (result.failed?.comment) throw new Error(result.failed.comment);
+      await declinePr(bb, { repo, number, version: pr.version });
+      return { status: "done", result: { ...result, closed: true } };
     }
     case "comment": {
       if (!("body" in target)) throw new Error("this comment action has no body");
