@@ -939,7 +939,11 @@ path and read the patches with the repository reads on their token budget
 (`budgets.repoFinder` for the repository finder, 400,000 billable tokens each by
 default). `read_file` clips each line at 500 characters, so a longer diff line
 is read only up to the clip, and counts as shown; a line cut across parts is
-a line of each part, shown once each is read. Each finder's reader reports
+a line of each part, shown once each is read. A page is at most 400 lines, and
+ends at the last whole line that keeps the result's JSON within 9,000
+characters, below the 10,000 at which Interchange cuts a tool result to plain
+text that counts as nothing shown; its `end` names the last line returned, and
+the reader reads on from the line after it. Each finder's reader reports
 the lines of each patch file `read_file` showed it, never `grep`'s matches;
 the review is `complete` only when the two finders between them were shown
 every line of every patch file and neither spent its budget. A review that is

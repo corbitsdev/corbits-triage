@@ -12,7 +12,7 @@ const path = { type: "string", description: "Path relative to the repository roo
 export const REPO_READ_DEFINITIONS: ToolDefinition[] = [
   {
     name: "read_file",
-    description: `Read lines start to end (1-based, inclusive) of a file in the repository, at most ${MAX_LINES} lines, each prefixed with its line number.`,
+    description: `Read lines start to end (1-based, inclusive) of a file in the repository, at most ${MAX_LINES} lines and fewer when long lines fill the page, each prefixed with its line number; end in the result is the last line returned.`,
     inputSchema: { type: "object", properties: { path, start: { type: "integer" }, end: { type: "integer" } }, required: ["path"] },
   },
   {

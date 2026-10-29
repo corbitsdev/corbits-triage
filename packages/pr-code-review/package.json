@@ -19,5 +19,8 @@
     "@intx/workflow": "workspace:*",
     "arktype": "catalog:",
     "ignore": "5.3.2"
+  },
+  "devDependencies": {
+    "@intx/inference": "workspace:*"
   }
 }
