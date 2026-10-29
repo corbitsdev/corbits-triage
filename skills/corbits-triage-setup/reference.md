@@ -144,6 +144,7 @@ A step may add `when`, and every condition in it must hold.
 - `linkedIssue`: `true` or `false`.
 - `ci`: list of `passing`, `failing`, `pending`, `none`.
 - `files` / `lines`: `{ over: N, atMost: M }`, either or both, `atMost` more than `over`.
+- `findings` (only with `code-review` on): the open findings the latest commit's code review may have. `{ above: P2 }` runs the step when no finding is P2 or more severe (P0 is the most severe, then P1, P2, P3), so only P3s are allowed; `{ any: false }` allows none; `{ any: true }` allows any. It needs a review that read the whole change. Without it, `approve` and `merge` need a review with no findings, and every other step runs whatever the review found. A pull request the `code-review` block leaves out runs its steps as if code review were off.
 
 Triage carries out an action on its own only where the workspace allows that action for the repository (repository page, Actions Triage takes on its own); otherwise it waits for a person on Triage. Merge on Fail or Unsure, and Close on Unsure, always wait for a person, whatever the workspace allows. An `onFail: label` rule's label is added the same way, as an Add labels action. On Bitbucket Data Center, `labels` and `assign` have no effect (an `onFail: label` rule only adds its note), `request-review` to `teams` can't be carried out (it has no team reviewers), and `codeowners` means the pull request's default reviewers.
 
@@ -171,7 +172,6 @@ code-review:
   on: true
   for: [maintainers]
   when: { paths: ["!**/*.md", "!**/*.lock", "!**/package-lock.json", "!**/pnpm-lock.yaml"] }
-  clean: { below: medium }
   provider: anthropic
 pauseLabel: "corbits: pause"
 decide:
@@ -185,7 +185,7 @@ decide:
   - `on`: `true` or `false` (required).
   - `for`: list of groups; default everyone.
   - `when`: `triage` (`pass`, `fail`, `unsure` or a list of them), `rules` and `paths` (globs; any changed file matching is enough). A glob starting with `!` leaves out the files it matches; with only `!` globs, every other file matches. When the user asks to turn on `code-review`, suggest skipping pull requests that change only Markdown docs or lockfiles (`*.lock`, which covers `bun.lock`, plus `package-lock.json` and `pnpm-lock.yaml`), as in the example. `rules`: `pass` (the default) runs the review only once every rule in the file with `onFail: fail` that needs no model has passed, CI only when `ci-green` is one of them, and Triage's built-in checks (draft, changes requested) never hold it back; a failed one skips it, and while CI is still running it waits. `any` runs it whatever those rules say.
-  - `clean`: `below` (`low`, `medium`, `high` or `critical`); findings below it don't count, and without it every finding counts. A code review with findings that count turns a Pass into Fail, and the `fail` actions run; an Unsure or Fail keeps its verdict, with the review's problems among its reasons and approve and merge held. `minConfidence` and `coverage` are refused.
+  - Findings never change the verdict. Which actions still run with findings open is each step's `when.findings`, under Actions. The old `clean` key is refused.
   - `provider`: `anthropic`, `openai`, `xai`, `google`, `opencode` or `custom`.
 - `pace`: `debounce`, `maxWait` (durations of at least 1, such as `30s`, `2m`, `24h`, `7d`), `perHead` (whole number ≥ 1), `cap: { runs, per }`, `backoff: { pushes, within, pause }`.
 - `pauseLabel`: a label of at most 50 characters.

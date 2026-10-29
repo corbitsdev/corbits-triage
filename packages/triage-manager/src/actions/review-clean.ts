@@ -1,60 +1,73 @@
 import { type } from "arktype";
-import { blockCleanSchema, CodeReviewOutput, RULE_GATES, rulesGate, SEVERITIES, VERDICTS, type ActionKind } from "@corbits/triage-contracts";
-import { verdictWithFailure } from "@corbits/triage-workflows/actions/evaluate";
-import type { CheckResult } from "@corbits/triage-workflows/logic/checks";
+import { CodeReviewOutput, PRIORITY_SEVERITIES, PRIORITIES, RULE_GATES, rulesGate, SEVERITIES, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
+import { DO_NAMES } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
 import { LIFETIME_MS, storedReview, TakeOutput } from "./manager.js";
 
-const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "clean?": blockCleanSchema });
+const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES) });
 const TakenPart = type({ codeReview: CodeReviewPart });
 
-/** Both say the pull request may land, so neither runs unattended past a code review that is not clean. */
-const HELD_KINDS: readonly ActionKind[] = ["approve", "merge"];
+/** Both say the pull request may land, so by default neither runs past a review with any finding open. */
+const CLEAN_KINDS: readonly ActionKind[] = ["approve", "merge"];
+const NO_FINDINGS: FindingsCondition = { any: false };
 
 const Scope = type({ reviewed: "boolean", "skipped?": "string" });
 type Scope = typeof Scope.infer;
 
 type Finding = CodeReviewOutput["comments"][number];
 
-/** Where a finding's priority, 0 the most severe, sits in `SEVERITIES`; a finding without one counts as the most severe. */
+/** What code review says of the verdict's head: nothing, while the policy leaves it out; why it is incomplete; or its findings. */
+type Reviewed = { incomplete: string } | { findings: Finding[] };
+
+/** A finding's severity; one without a priority counts as the most severe, and one past P3 as P3. */
 function severityAt({ priority = 0 }: Finding): number {
-  return Math.min(Math.max(SEVERITIES.length - 1 - priority, 0), SEVERITIES.length - 1);
-}
-
-type Unclean = { held: string } | { found: number };
-
-/** Why the review is not clean: none reported, or it did not read the whole change; or how many findings are at or above `below`. */
-function uncleanBy(review: CodeReviewOutput | undefined, below: (typeof SEVERITIES)[number] | undefined): Unclean | undefined {
-  if (!review) return { held: "Code review did not report on this head." };
-  if (review.budgetExhausted || review.complete !== true) return { held: "Code review did not read the whole change on this head." };
-  const floor = below === undefined ? 0 : SEVERITIES.indexOf(below);
-  const found = review.comments.filter((finding) => severityAt(finding) >= floor).length;
-  return found > 0 ? { found } : undefined;
-}
-
-/** A Do already held keeps its own reason, such as waiting for CI. */
-function hold<A extends object>(action: A, reason: string): A {
-  const { effectId, kind, held } = action as { effectId?: unknown; kind?: unknown; held?: unknown };
-  if (typeof effectId !== "string" || held === true || !HELD_KINDS.some((each) => each === kind)) return action;
-  return { ...action, held: true, reason };
+  const at = Math.min(Math.max(priority, 0), PRIORITIES.length - 1);
+  return SEVERITIES.indexOf(PRIORITY_SEVERITIES[PRIORITIES[at]!]);
 }
 
 /**
- * Why the pass's verdict is not cleared while the policy turns code review on. Code review must have run on the head and
- * be clean as its block's `clean` says; one the policy's `for` or `when` left out counts as off, and one held back by
- * failed or unsettled rules did not run. A review that failed or ran past its deadline reported nothing.
+ * The review of the verdict's head while the policy turns code review on. One the policy's `for` or `when` left out
+ * counts as off, and one held back by failed or unsettled rules did not run. A review that failed or ran past its
+ * deadline reported nothing, and one of another head says nothing of this one.
  */
-function uncleared({ taken, review, reviewers, head }: TakeOutput, checks: unknown, scope: Scope): Unclean | undefined {
+function reviewOf({ taken, review, reviewers, head }: TakeOutput, verdict: Verdict, scope: Scope): Reviewed | undefined {
   const part = TakenPart(taken);
   if (part instanceof type.errors) return undefined;
   const { codeReview } = part;
-  const leftOut = scope.skipped !== undefined && rulesGate(codeReview.rules, checks).open;
-  const reviewing = codeReview.on && !leftOut;
-  if (!reviewing) return undefined;
-  if (!scope.reviewed) return { held: "Code review did not run on this head." };
-  const reported = review ?? (head === undefined ? undefined : storedReview(reviewers, head));
-  return uncleanBy(reported, codeReview.clean?.below);
+  const leftOut = scope.skipped !== undefined && rulesGate(codeReview.rules, verdict.checks).open;
+  if (!codeReview.on || leftOut) return undefined;
+  if (!scope.reviewed) return { incomplete: "Code review did not run on this head." };
+  const reported = head === undefined || (verdict.headSha !== null && verdict.headSha !== head) ? undefined : (review ?? storedReview(reviewers, head));
+  if (!reported) return { incomplete: "Code review did not report on this head." };
+  if (reported.budgetExhausted || reported.complete !== true) return { incomplete: "Code review did not read the whole change on this head." };
+  return { findings: reported.comments };
+}
+
+/** The findings `condition` does not allow. */
+function openUnder(condition: FindingsCondition, findings: readonly Finding[]): Finding[] {
+  if ("any" in condition) return condition.any ? [] : [...findings];
+  const floor = SEVERITIES.indexOf(PRIORITY_SEVERITIES[condition.above]);
+  return findings.filter((finding) => severityAt(finding) >= floor);
+}
+
+function findingsText(condition: FindingsCondition, count: number): string {
+  const noun = count === 1 ? "finding" : "findings";
+  return "above" in condition ? `${count} ${noun} at ${condition.above} or above` : `${count} ${noun}`;
+}
+
+/** Why the review does not meet `condition`, if it does not. */
+function unmet(condition: FindingsCondition, reviewed: Reviewed): string | undefined {
+  if ("incomplete" in reviewed) return reviewed.incomplete;
+  const open = openUnder(condition, reviewed.findings).length;
+  return open > 0 ? `Code review has ${findingsText(condition, open)} open on this head.` : undefined;
+}
+
+/** What a step of the policy allows of the review: its own `when.findings`, or for approve and merge, no finding at all. */
+function conditionOf(pack: CheckPack | undefined, list: VerdictWord, index: number, kind: ActionKind): FindingsCondition | undefined {
+  const own = pack?.actions[list][index]?.when?.findings;
+  if (own !== undefined) return own;
+  return CLEAN_KINDS.includes(kind) ? NO_FINDINGS : undefined;
 }
 
 /** The verdict fields cleared reads, the rest kept as evaluate made them. */
@@ -70,47 +83,47 @@ const ClearedInput = type({
   reviewScope: { output: Scope },
 });
 
-/** A code review with findings on the head is a failed check of its own. */
-function reviewFailure(found: number): CheckResult {
-  const reason = `Code review found ${found} ${found === 1 ? "problem" : "problems"} on this head.`;
-  return { check: "code-review", kind: "machine", result: "fail", reason, evidence: [], output: { kind: "values", values: { findings: found } } };
+type Action = Verdict["actions"][number];
+
+/** `verdict` with `note` closing its comment, as said on the pull request and kept with the verdict. */
+function noted(verdict: Verdict, note: string): Verdict {
+  const feedback = verdict.feedback ? `${verdict.feedback}\n\n${note}` : note;
+  const request = verdict.request && { ...verdict.request, comment: verdict.request.comment ? `${verdict.request.comment}\n\n${note}` : note };
+  return { ...verdict, feedback, ...(request && { request }) };
 }
 
 /**
- * The verdict `found`, the review's problems, leave: evaluate's with the review among its checks and reasons, a Pass
- * turned to Fail with the policy's fail Dos, rebuilt from the rules item it was made from: the one at its head, or its
- * pull request's alone for a degraded verdict that names no head. One that cannot be made, or with no such item, such
- * as a judge's verdict on a head the rules read past, leaves the verdict as the rules made it.
- */
-function reviewed(items: Item[], verdict: Verdict, found: number): Verdict {
-  const item = items.find(({ facts }) => facts.number === verdict.number && (verdict.headSha === null || facts.headSha === verdict.headSha));
-  if (!item) return verdict;
-  try {
-    return verdictWithFailure(item, verdict, reviewFailure(found));
-  } catch {
-    // An action has no logger; the verdict's approve and merge are still held for the review's problems.
-    return verdict;
-  }
-}
-
-/** `verdict` with its approve and merge Dos held for a person, saying why, and not approvable. */
-function held(verdict: Verdict, reason: string): Verdict {
-  return { ...verdict, actions: verdict.actions.map((action) => hold(action, reason)), ...(verdict.approvable !== undefined && { approvable: false }) };
-}
-
-/**
- * The pass's verdict once the policy's checks are in. A verdict whose code review found problems on its head names
- * them, waiting, degraded or decided, and a Pass among them fails with the policy's fail Dos. A closed pull request has
- * no verdict to name them in, a take that names no head has no review of one, and a verdict on another head was not
- * reviewed, so each is only held. While a check is not clean, approve and merge are held for a person, saying why, and
- * the head is not approvable, so an approval Triage gave an earlier head is taken back.
+ * The pass's verdict once code review is in: its findings never change the verdict the rules made. Each Do whose step's
+ * `when.findings` the review does not meet, by default an approve or merge with any finding open, is held for a person,
+ * saying why, and named in the comment. A held approve leaves the head not approvable, so an approval Triage gave an
+ * earlier head is taken back. A Do already held keeps its own reason, such as waiting for CI.
  */
 export async function cleared(input: unknown): Promise<Verdict> {
   const parsed = ClearedInput(input);
   if (parsed instanceof type.errors) throw new Error(`cleared: ${parsed.summary}`);
   const { stopped } = parsed.take.output;
-  const verdict = clean(parsed);
+  const verdict = heldByReview(parsed);
   return stopped ? stoppedWaiting(verdict, stopped) : verdict;
+}
+
+function heldByReview(parsed: typeof ClearedInput.infer): Verdict {
+  const verdict = parsed.evaluateRules.output;
+  const reviewed = reviewOf(parsed.take.output, verdict, parsed.reviewScope.output);
+  if (reviewed === undefined) return verdict;
+  const pack = parsed.rules.output.items.find((item) => item.pack !== undefined)?.pack;
+  const notes: string[] = [];
+  const actions = verdict.actions.map(function held(action): Action {
+    if (!("effectId" in action) || "held" in action) return action;
+    const condition = conditionOf(pack, action.list, action.index, action.kind);
+    const reason = condition && unmet(condition, reviewed);
+    if (reason === undefined) return action;
+    const name = DO_NAMES[action.kind];
+    notes.push(`${name[0]!.toUpperCase()}${name.slice(1)} held: ${reason[0]!.toLowerCase()}${reason.slice(1)}`);
+    return { ...action, held: true, reason };
+  });
+  if (notes.length === 0) return verdict;
+  const approveHeld = actions.some((action) => action.kind === "approve" && "held" in action && !verdict.actions.includes(action));
+  return noted({ ...verdict, actions, ...(approveHeld && verdict.approvable !== undefined && { approvable: false }) }, notes.join("\n"));
 }
 
 /**
@@ -125,18 +138,5 @@ function stoppedWaiting(verdict: Verdict, stopped: NonNullable<TakeOutput["stopp
     const { ci: _ci, ...held } = action;
     return { ...held, held: true as const, reason: note };
   });
-  const feedback = verdict.feedback ? `${verdict.feedback}\n\n${note}` : note;
-  const request = verdict.request && { ...verdict.request, comment: verdict.request.comment ? `${verdict.request.comment}\n\n${note}` : note };
-  return { ...verdict, actions, feedback, reasons: [...verdict.reasons, note], ...(request && { request }), ...(verdict.approvable !== undefined && { approvable: false }) };
-}
-
-function clean(parsed: typeof ClearedInput.infer): Verdict {
-  const verdict = parsed.evaluateRules.output;
-  const { head } = parsed.take.output;
-  const unclean = uncleared(parsed.take.output, verdict.checks, parsed.reviewScope.output);
-  if (unclean === undefined) return verdict;
-  if (!("found" in unclean)) return held(verdict, unclean.held);
-  const reason = reviewFailure(unclean.found).reason;
-  if (verdict.closed || head === undefined || (verdict.headSha !== null && verdict.headSha !== head)) return held(verdict, reason);
-  return held(reviewed(parsed.rules.output.items, verdict, unclean.found), reason);
+  return { ...noted({ ...verdict, actions }, note), reasons: [...verdict.reasons, note], ...(verdict.approvable !== undefined && { approvable: false }) };
 }

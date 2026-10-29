@@ -1,5 +1,5 @@
 // The policy file's v4 keys as a pull request's mail carries them, and the gate every pull request mail passes before
-// the listener: a paused pull request starts no run, and in doubt nothing approves or merges unattended.
+// the listener: a paused pull request starts no run.
 import { isDeepStrictEqual } from "node:util";
 import { BLOCK_KINDS, decideOf, EVERYONE, repoSourceOf, VERDICTS, type CheckPack, type PolicyWorkflow } from "@corbits/triage-contracts";
 import type { PullRequestHead } from "../pull-request-reader.js";
@@ -11,7 +11,7 @@ import type { RepoRecord } from "./tenant-config.js";
  */
 export function prWorkflowKeys(workflow: PolicyWorkflow, pack: Pick<CheckPack, "actions">): PolicyWorkflow | undefined {
   const blocksOn = BLOCK_KINDS.some((kind) => workflow[kind]?.on === true);
-  return blocksOn || (workflow.decide !== undefined && !isDeepStrictEqual(workflow.decide, decideOf(pack.actions, false))) ? workflow : undefined;
+  return blocksOn || (workflow.decide !== undefined && !isDeepStrictEqual(workflow.decide, decideOf(pack.actions))) ? workflow : undefined;
 }
 
 /** The mail's part: code review's block as its scope reads it, gated on triage's rules unless it says otherwise, `decide`, and the blocks that are on. */
@@ -25,15 +25,11 @@ export function workflowPart(workflow: PolicyWorkflow | undefined) {
     triage: triage === undefined ? [...VERDICTS] : [triage].flat(),
     rules: block?.when?.rules ?? "pass",
     ...(block?.when?.paths && { paths: block.when.paths }),
-    ...(block?.clean && { clean: block.clean }),
     ...(block?.provider && { provider: block.provider }),
   };
   const blocks = BLOCK_KINDS.filter((kind) => workflow[kind]?.on === true);
   return { codeReview, blocks, ...(workflow.decide && { decide: workflow.decide }) };
 }
-
-/** Only a person approves or merges a pull request whose policy writes its own `decide`, which no running workflow carries out. */
-const HELD_UNDER_DECIDE = new Set(["approve", "merge"]);
 
 export type PauseGateDeps = {
   /** The pull request as its host shows it now, without its diff. */
@@ -57,8 +53,6 @@ export function createPauseGate(deps: PauseGateDeps) {
         return undefined;
       }
     }
-    if (request["decide"] === undefined) return request;
-    const automatic = Array.isArray(request["automatic"]) ? request["automatic"].filter((kind) => !HELD_UNDER_DECIDE.has(kind)) : [];
-    return { ...request, automatic };
+    return request;
   };
 }

@@ -35,7 +35,7 @@ export function withResults(verdict: Record<string, unknown> | undefined, result
   function withResult(action: unknown): unknown {
     const result = results.get(String(asRecord(action)?.["effectId"]));
     if (!result) return action;
-    // The PR workflow holds an approve or merge its code review did not clear; it waits as one evaluate held.
+    // The PR workflow holds a Do whose findings condition its code review did not meet; it waits as one evaluate held.
     if (result.status === "held") return { ...asRecord(action), held: true, ...(result.error !== undefined && { reason: result.error }) };
     return { ...asRecord(action), status: result.status, ...(result.error !== undefined && { error: result.error }) };
   }

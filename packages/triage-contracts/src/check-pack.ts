@@ -3,6 +3,7 @@ import { asRecord, asRepo } from "@corbits/common";
 import { AUTHOR_ASSOCIATIONS, type AuthorAssociation } from "./repo-policy.js";
 import type { RepoSource } from "./repo-source.js";
 import { compileGlob, PATTERN_LANGUAGES, PATTERN_PRESETS, type PatternRule } from "./code-patterns.js";
+import { PRIORITIES, type Priority } from "./types.js";
 
 export const CHECK_PACK_KIND = "corbits.triage.check-pack";
 /** Version 2 holds steps, model-only custom rules and verdict labels; version 1 is read only when it held no actions. */
@@ -356,11 +357,17 @@ export type CiState = (typeof CI_STATES)[number];
 export type SizeBound = { over?: number; atMost?: number };
 
 /**
- * What must all hold for a step to run, beside the verdict its list is for: the author is any of `author`, the pull
- * request does or does not link an issue, its CI is any of `ci`, and it changes more than `over` and at most `atMost`
- * files or lines.
+ * The open findings a complete code review of the head may have for a step to run: none at `above` or more severe, P0
+ * the most severe, or with `any`, any at all or none.
  */
-export type StepWhen = { author?: AuthorMatch[]; linkedIssue?: boolean; ci?: CiState[]; files?: SizeBound; lines?: SizeBound };
+export type FindingsCondition = { above: Priority } | { any: boolean };
+
+/**
+ * What must all hold for a step to run, beside the verdict its list is for: the author is any of `author`, the pull
+ * request does or does not link an issue, its CI is any of `ci`, it changes more than `over` and at most `atMost`
+ * files or lines, and, once code review reports, its findings are as `findings` allows.
+ */
+export type StepWhen = { author?: AuthorMatch[]; linkedIssue?: boolean; ci?: CiState[]; files?: SizeBound; lines?: SizeBound; findings?: FindingsCondition };
 
 export const TRIAGE_EVENTS = [
   "opened",
@@ -486,6 +493,7 @@ const stepWhenSchema = type({
   "ci?": type.enumerated(...CI_STATES).array().atLeastLength(1),
   "files?": SizeBoundSchema,
   "lines?": SizeBoundSchema,
+  "findings?": type({ "+": "reject", above: type.enumerated(...PRIORITIES) }).or({ "+": "reject", any: "boolean" }),
 });
 const STEP_BASE = { "+": "reject", "when?": stepWhenSchema } as const;
 
@@ -1048,7 +1056,18 @@ function parseBound(raw: unknown, where: string): SizeBound {
   return bound;
 }
 
-const WHEN_KEYS = ["author", "linkedIssue", "ci", "files", "lines"] as const;
+const WHEN_KEYS = ["author", "linkedIssue", "ci", "files", "lines", "findings"] as const;
+
+function parseFindings(raw: unknown, where: string): FindingsCondition {
+  const row = record(raw, where);
+  if ("above" in row) {
+    exactKeys(row, ["above"], where);
+    return { above: oneOf(row.above, PRIORITIES, `${where} above`) };
+  }
+  exactKeys(row, ["any"], where);
+  if (typeof row.any !== "boolean") throw new Error(`${where} must set above to ${PRIORITIES.join(", ")}, or any to true or false.`);
+  return { any: row.any };
+}
 
 function parseStepWhen(raw: unknown, where: string): StepWhen {
   const row = record(raw, where);
@@ -1067,6 +1086,7 @@ function parseStepWhen(raw: unknown, where: string): StepWhen {
   }
   if (row.files !== undefined) when.files = parseBound(row.files, `${where} files`);
   if (row.lines !== undefined) when.lines = parseBound(row.lines, `${where} lines`);
+  if (row.findings !== undefined) when.findings = parseFindings(row.findings, `${where} findings`);
   return when;
 }
 

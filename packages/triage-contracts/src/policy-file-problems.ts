@@ -4,6 +4,7 @@ import { asRecord } from "@corbits/common";
 import { AUTHOR_KINDS, CI_STATES, DECIDE_KINDS, GROUP_NAME_MAX, LABEL_MAX, ON_FAILS, POLICY_EVENTS, STEP_KINDS, VERDICTS } from "./check-pack.js";
 import { BLOCK_KINDS, BLOCK_OUTCOMES, closest, pathText, PROVIDERS, RESERVED_BLOCKS, SEVERITIES, type PathProblem } from "./policy-workflow.js";
 import { RULE_GATES } from "./rules-gate.js";
+import { PRIORITIES } from "./types.js";
 
 const BLOCK = Symbol("block");
 const VERDICT = Symbol("verdict");
@@ -57,8 +58,6 @@ const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact
   [[BLOCK, "when", "triage"], VERDICTS_TEXT],
   [["code-review", "when", "rules"], words(RULE_GATES)],
   [[BLOCK, "when", "paths"], "a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches"],
-  [[BLOCK, "clean"], MAPPING],
-  [[BLOCK, "clean", "below"], SEVERITY_TEXT],
   [[BLOCK, "provider"], words(PROVIDERS)],
   [["pace"], MAPPING],
   [["pace", "debounce"], DURATION_TEXT],
@@ -83,10 +82,9 @@ const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact
   [["decide", INDEX, "do"], `one of ${words(quoted(DECIDE_KINDS))}, or a list of them`, "exact"],
 ];
 
-/** Keys the policy will take once something acts on them. */
-const NOT_YET: readonly Pattern[] = [
-  [BLOCK, "clean", "minConfidence"],
-  [BLOCK, "clean", "coverage"],
+/** Keys the policy no longer takes, and what replaced each. */
+const RETIRED: ReadonlyArray<readonly [Pattern, string]> = [
+  [[BLOCK, "clean"], "say which findings each action allows with `when.findings` on it, such as `actions.pass[].when.findings: { above: P2 }`"],
 ];
 
 /** Where a block no workflow runs yet can be written, and what to remove. */
@@ -164,6 +162,7 @@ const WHEN: Record<string, string> = {
   ci: `a list of ${words(quoted(CI_STATES))}`,
   files: "`{ over: N, atMost: M }`, either or both",
   lines: "`{ over: N, atMost: M }`, either or both",
+  findings: `\`{ above: <priority> }\` with a priority of ${words(PRIORITIES)}, or \`{ any: true }\` or \`{ any: false }\``,
 };
 
 type StepAt = { root: readonly PropertyKey[]; kinds: readonly string[]; value: unknown };
@@ -226,7 +225,8 @@ function errorProblems({ path, code, problem, message }: SchemaError, file: unkn
   if (problem === "must be removed") {
     const reserved = reservedProblem(path);
     if (reserved) return [reserved];
-    if (NOT_YET.some((pattern) => matches(pattern, path))) return [{ message: `\`${pathText(path)}\` is not available yet; remove it.`, path }];
+    const retired = RETIRED.find(([pattern]) => matches(pattern, path));
+    if (retired) return [{ message: `\`${pathText(path)}\` was removed; ${retired[1]}.`, path }];
     const allowed = keysAt(path.slice(0, -1));
     if (allowed.length > 0) return [unknownKey(path, allowed)];
   }

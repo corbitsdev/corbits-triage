@@ -395,6 +395,8 @@ actions:
           - users:
               - thegreataxios
               - brianjfox
+        findings:
+          above: P2
     - do: request-review
       target:
         to: codeowners
