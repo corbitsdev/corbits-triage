@@ -98,7 +98,10 @@ test("a held approve waits on you as Approve, with Skip beside your controls", (
 });
 
 function buttons(html: string): string[] {
-  return [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map(([, attributes, name]) => (attributes.includes('disabled=""') ? `${name} (disabled)` : name));
+  return [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/g)].map(function buttonName([, attributes, inner]) {
+    const name = inner.replace(/<[^>]*>/g, "");
+    return attributes.includes('disabled=""') ? `${name} (disabled)` : name;
+  });
 }
 
 const HELD = { held: true };

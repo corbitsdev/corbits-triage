@@ -117,7 +117,7 @@ export function withoutDecidedDos(item: PrItem, hidden: ReadonlySet<string>, sen
   return { ...item, actions: item.actions.filter((action) => !hidden.has(action.effectId) && !sent.has(sentKeyOf(action))) };
 }
 
-/** A merge may be approved off a Fail or Unsure list, and what names it says so. */
+/** A merge held on a Fail or Unsure verdict says so wherever it is named. */
 export function verdictNote({ kind, list }: Pick<PendingDo, "kind" | "list">): string {
   return kind === "merge" && list !== "pass" ? ` (the verdict was ${list}, not pass)` : "";
 }

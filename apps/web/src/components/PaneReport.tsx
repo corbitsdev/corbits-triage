@@ -50,7 +50,7 @@ export function StatusLine({ status }: { status: PaneStatus }) {
   );
 }
 
-type HeldRowProps = { choice: HeldChoice; offer: { doIt: boolean; always: boolean }; disabled: boolean; onApprove: (choice: HeldChoice, always: boolean) => void };
+type HeldRowProps = { choice: HeldChoice; offer: ReturnType<typeof heldOffer>; disabled: boolean; onApprove: (choice: HeldChoice, always: boolean) => void };
 
 /** One held action, run once as the person or, by one who may manage grants, left to Triage in this repository from now on. */
 function HeldRow({ choice, offer, disabled, onApprove }: HeldRowProps) {
