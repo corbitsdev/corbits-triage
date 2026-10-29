@@ -26,7 +26,7 @@ import { WorkflowProjectionDefinition } from "@intx/types/sidecar";
 import { projectLiveToInert, runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type StepInvokeRequest, type WorkflowDefinition } from "@intx/workflow";
 import { collectHubConsumers } from "@intx/workflow-deploy";
 import { createCredentialsBackedAuthorize, createGrantEvaluator, createLocalCredentialsSnapshot, createWorkflowStepInvoker, snapshotStepGrants } from "@intx/workflow-host/local";
-import { DEFAULT_REPO_POLICY, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type CheckPack, type PolicyWorkflow, type TriageEvent } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-manager/actions/index";
 import { mailDirector } from "@corbits/triage-manager/directors";
 import * as loops from "@corbits/triage-manager/loops";
@@ -59,7 +59,7 @@ export const MANAGER_RELEASE: Release = {
   offerings: OFFERINGS,
 };
 
-/** The code review the release publishes beside the manager; its sandbox never connects, so its run fails before it is ready. */
+/** The code review the release publishes beside the manager; its run never reports, as `ReviewFault` plays. */
 export const REVIEW_RELEASE: Release = {
   workflow: { assetId: `ast_${REVIEWER}`, commitSha: "c0ffee", packageName: "@corbits/pr-code-review-reviewer-github-workflow", entry: "./pr-code-review-reviewer-github.mjs" },
   offerings: OFFERINGS,
@@ -198,10 +198,17 @@ function noteTaken(): void {}
 function log(): void {}
 
 /**
- * A repository with `pack` and `policyWorkflow` as its policy, `automatic` the kinds the pr-triage role holds on it, and
- * everything a run of it reaches; call `stop` after.
+ * How a code review run ends without reporting: its sandbox never connects, so it fails before it is ready; or it is
+ * ready and takes its mail, then its sandbox dies.
  */
-export async function modelStack(repo: string, { pack, automatic, policyWorkflow }: { pack: CheckPack; automatic: ActionKind[]; policyWorkflow?: PolicyWorkflow }) {
+export type ReviewFault = "fails-before-ready" | "dies-after-mail";
+
+/**
+ * A repository with `pack` as its policy, with code review on when `review` names how its runs fail, `automatic` the
+ * kinds the pr-triage role holds on it, and everything a run of it reaches; call `stop` after.
+ */
+export async function modelStack(repo: string, { pack, automatic, review }: { pack: CheckPack; automatic: ActionKind[]; review?: ReviewFault }) {
+  const policyWorkflow = review && { "code-review": { on: true } };
   const github = fakeGithub();
   github.addRepo(repo, null);
   const { db, drop } = await createDatabase(repo);
@@ -222,7 +229,10 @@ export async function modelStack(repo: string, { pack, automatic, policyWorkflow
   const reviews = new Map<string, number | undefined>();
   /** Code review runs read again after a read showed they had ended. */
   const waited: string[] = [];
+  /** Code review runs a read showed ended. */
   const seen = new Set<string>();
+  /** Each code review run that died after taking its mail, and how many times its manager took its pull request since. */
+  const died = new Map<string, number>();
   const directors = createWorkflowDirectorRegistry([mailDirector.factory]);
   const adapters = await loadAdapterRegistry([], { import: async function noAdapters() { return {}; } });
   const runTokens = createRunTokenStore({ db, cipher: createNoopCredentialCipher() });
@@ -319,33 +329,55 @@ export async function modelStack(repo: string, { pack, automatic, policyWorkflow
       return Response.json({ error: { code: "not_found", message: `${assetId} publishes no ${pkg.packageName}@${pkg.commitSha} ${body.entry}` } }, { status: 404 });
     }
     const id = `run_${randomBytes(6).toString("hex")}`;
-    if (!released.definition) return reviewRoute(id, serving);
+    if (!released.definition) return reviewRoute(id, runId, serving);
     await deployRun(id, released.definition);
     managed.set(id, serving.length === 1 ? serving[0] : undefined);
     deployedWhile.set(id, playing);
     return Response.json({ id }, { status: 201 });
   }
 
-  /** Code review's deploy: stock records the run, whose sandbox never connects, so the run fails before it is ready. */
-  async function reviewRoute(id: string, serving: readonly number[]): Promise<Response> {
+  /**
+   * Code review's deploy: stock records the run, failed at once when its sandbox never connects, or else ready, and
+   * grants its deployer `manage` on it.
+   */
+  async function reviewRoute(id: string, deployer: string, serving: readonly number[]): Promise<Response> {
     const principalId = `prn_${id}`;
+    const state = review === "fails-before-ready" ? { status: "failed" as const } : { status: "running" as const, publicKey: "model-key" };
     await db.insert(schema.principal).values({ id: principalId, tenantId: TENANT, kind: "workflow", refId: id, status: "active" });
-    await db.insert(schema.workflowRun).values({ id, anchorRunId: id, definitionId: `wfd_${REVIEWER}`, tenantId: TENANT, principalId, address: `${id}@${DOMAIN}`, status: "failed" });
+    await db.insert(schema.workflowRun).values({ id, anchorRunId: id, definitionId: `wfd_${REVIEWER}`, tenantId: TENANT, principalId, address: `${id}@${DOMAIN}`, ...state });
+    await db.insert(schema.grant).values({ id: randomUUID(), tenantId: TENANT, principalId: `prn_${deployer}`, resource: `workflow-run:${id}`, action: "manage", effect: "allow", origin: "creator" });
     reviews.set(id, serving.length === 1 ? serving[0] : undefined);
     return Response.json({ id }, { status: 201 });
   }
 
   /**
-   * Stock's run read. A code review run, which has ended before it is first read, read again is recorded and refused,
-   * so a manager that keeps waiting on it fails its mail at once rather than after the review's deadline.
+   * Stock's run read. A code review run read again after a read showed it ended is recorded and refused, so a manager
+   * that keeps waiting on it fails its mail at once rather than after the review's deadline.
    */
   async function readRoute(target: string, url: URL, init?: RequestInit): Promise<Response> {
-    if (!reviews.has(target)) return app.request(url, init);
+    if (!reviews.has(target) || (await live(target))) return app.request(url, init);
     if (seen.has(target)) {
       waited.push(target);
       return Response.json({ error: { code: "model_waited_on_ended_run" } }, { status: 500 });
     }
     seen.add(target);
+    return app.request(url, init);
+  }
+
+  /**
+   * The hub's take. A manager that takes its pull request a second time after its code review run died, with no read
+   * showing the run ended, is waiting for a report that cannot come: it is recorded and refused, so the manager ends
+   * rather than polling until the review's deadline.
+   */
+  async function takeRoute(serving: readonly number[], url: URL, init?: RequestInit): Promise<Response> {
+    for (const [id, takes] of died) {
+      const pull = reviews.get(id);
+      if (seen.has(id) || pull === undefined || !serving.includes(pull)) continue;
+      died.set(id, takes + 1);
+      if (takes === 0) continue;
+      waited.push(id);
+      return Response.json({ error: { code: "model_waited_on_ended_run" } }, { status: 409 });
+    }
     return app.request(url, init);
   }
 
@@ -367,6 +399,7 @@ export async function modelStack(repo: string, { pack, automatic, policyWorkflow
     if (method === "POST" && url.pathname === `/api/tenants/${TENANT}/workflows/deployments`) return deployRoute(runId, serving, init);
     if (method === "DELETE" && runPath) return stopRoute(runId, decodeURIComponent(runPath[1]!));
     if (method === "GET" && runPath) return readRoute(decodeURIComponent(runPath[1]!), url, init);
+    if (url.pathname === `/api/tenants/${TENANT}/manager/take`) return takeRoute(serving, url, init);
     return app.request(url, init);
   }
 
@@ -411,12 +444,21 @@ export async function modelStack(repo: string, { pack, automatic, policyWorkflow
     const address = `${runId}@${DOMAIN}`;
     const root = mkdtempSync(join(tmpdir(), "corbits-model-"));
 
-    /** Stock's transport: mail to a run that is not live is refused, and lost to the run that sent it. */
+    /**
+     * Stock's transport: mail to a run that is not live is refused, and lost to the run that sent it. A code review run
+     * takes its mail and dies, as stock records a run whose sandbox was lost.
+     */
     async function send(message: { to: string; content: string }) {
+      const to = message.to.slice(0, message.to.indexOf("@"));
       const sent = { id: randomUUID(), to: message.to, payload: stockMail(address, message.to, message.content) };
-      if (!(await live(message.to.slice(0, message.to.indexOf("@"))))) {
+      if (!(await live(to))) {
         dropped.push(sent);
         throw new Error(`${message.to} is not a live run`);
+      }
+      if (reviews.has(to)) {
+        await db.update(schema.workflowRun).set({ status: "failed" }).where(eq(schema.workflowRun.id, to));
+        died.set(to, 0);
+        return { messageId: randomUUID(), status: "queued" };
       }
       queue.push(sent);
       return { messageId: randomUUID(), status: "queued" };
@@ -472,6 +514,7 @@ export async function modelStack(repo: string, { pack, automatic, policyWorkflow
         actionCredentials: createActionCredentialsFactory({ materialCell: cell, resolveStepGrants: actionGrants, providers }),
         loopFns: resolveLoop,
         triggerPayload: mail.payload,
+        clock: timersAtOnce,
       }).complete;
       if (terminalStatus !== "completed") failed.push({ mail, status: terminalStatus });
     } finally {
@@ -535,7 +578,7 @@ export async function modelStack(repo: string, { pack, automatic, policyWorkflow
       const unattributed = running.filter((id) => managed.get(id) === undefined && deployedWhile.get(id) === number);
       return { live: running.filter((id) => managed.get(id) === number), unattributed, lost, failed: failures, waited: waited.filter((id) => reviews.get(id) === number) };
     },
-    /** The code review runs a manager read, so a check of them can tell it played some. */
+    /** The code review runs a manager read as ended, so a check of them can tell it played some. */
     reviewsRead(): string[] {
       return [...seen];
     },
@@ -550,6 +593,19 @@ export async function modelStack(repo: string, { pack, automatic, policyWorkflow
       await drop();
     },
   };
+}
+
+/** An hour, longer than any timer a run sets. */
+const TIMER_SKIP_MS = 60 * 60_000;
+let clockReads = 0;
+
+/**
+ * Stock's clock for a local run, an hour further ahead on each read, so every timer a run sets, as the manager's poll,
+ * is already due when it is scheduled. Actions read the real clock.
+ */
+function timersAtOnce(): Date {
+  clockReads += 1;
+  return new Date(Date.now() + clockReads * TIMER_SKIP_MS);
 }
 
 function noFloor() {

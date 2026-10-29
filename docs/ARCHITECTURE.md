@@ -617,7 +617,10 @@ any other tenant or an unknown sender.
   verdict to go up alone and is deployed again on the next event. Each
   reviewer keeps its head and deadline on the claim, so whichever manager
   takes the next pass on that head sees a deadline that passed with no
-  report; it posts the verdict without that reviewer, which for a judge is
+  report. Take also reads, through the stock run read, the run of each
+  reviewer still out with no report on the pass, and takes one whose run
+  ended as past its deadline. Either way the manager posts the verdict
+  without that reviewer, which for a judge is
   Needs Human Review and for code review holds approve and merge for a person,
   and done logs `reviewer_overdue`. The triage reconcile pass, every 5
   minutes, wakes a manager through `createManagerWake` for each pull request

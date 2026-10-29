@@ -88,7 +88,7 @@ const allow: WorkflowAuthorizeFn = async function allow() {
 type HubCall = { method: string; path: string; body?: unknown };
 type HubAnswer = Record<string, unknown> | typeof REFUSED;
 
-/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route. */
+/** The hub's manager routes, answering each take and done in turn, its deploy route, its stop-run route and its run read of a live run. */
 function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[] }) {
   const calls: HubCall[] = [];
   function answer(next: HubAnswer | undefined): Response {
@@ -101,6 +101,7 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
     if (url.pathname === `${TENANT_PATH}/manager/take`) return answer(takes.shift());
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
     if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
+    if (method === "GET" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return Response.json({ status: "running" });
     if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: DEPLOYED }, { status: 201 });
     if (method === NOTE.method && url.pathname === NOTE.path) return Response.json({ noted: true });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });

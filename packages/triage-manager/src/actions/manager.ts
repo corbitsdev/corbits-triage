@@ -4,7 +4,7 @@ import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, JudgeVerdic
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { hostAwaited, type Awaits } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
-import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
+import { answered, callHub, endRun, managerMailOf, runEnded, tenantPath, type ManagerMail } from "./hub.js";
 
 /** `again` names the Review again a code review was deployed for. */
 export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "again?": "string > 0", "result?": "unknown" });
@@ -133,6 +133,20 @@ function stillAwaited(reviewers: readonly Reviewer[], head: string, waitingSince
   return [...(waitingSince !== undefined ? ["ci" as const] : []), ...(["judge", "code-review"] as const).filter(out)];
 }
 
+/**
+ * The reviewers with each of `head` still out, with no report on this pass, whose run the hub shows ended taken as past
+ * its deadline, so the pass decides without it rather than waiting out the deadline for a report that cannot come.
+ */
+async function withEnded(ctx: EffectContext, tenantId: string, reviewers: readonly Reviewer[], head: string, events: readonly (typeof TakenEvent.infer)[]): Promise<Reviewer[]> {
+  const now = new Date().toISOString();
+  async function checked(reviewer: Reviewer): Promise<Reviewer> {
+    if (reviewer.head !== head || reviewer.result !== undefined || Date.parse(reviewer.deadline) <= Date.now()) return reviewer;
+    if (events.some(({ key }) => key.endsWith(`:${reviewer.runId}`))) return reviewer;
+    return (await runEnded(ctx, `ended:${reviewer.runId}`, tenantId, reviewer.runId)) ? { ...reviewer, deadline: now } : reviewer;
+  }
+  return Promise.all(reviewers.map(checked));
+}
+
 /** Claims the pull request and takes its pending events, or its open pass again; see `TakeOutput`. */
 export async function take(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<TakeOutput> {
   const mail = managerMailOf(input);
@@ -151,7 +165,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const stopped = outstanding.length > 0;
   // A manager out of time takes every reviewer it still waits for as past its deadline, so the pass decides without it.
   const now = new Date().toISOString();
-  const reviewers = stopped ? answer.reviewers.map((reviewer) => (reviewer.head === head && reviewer.result === undefined ? { ...reviewer, deadline: now } : reviewer)) : answer.reviewers;
+  const reviewers = stopped ? answer.reviewers.map((reviewer) => (reviewer.head === head && reviewer.result === undefined ? { ...reviewer, deadline: now } : reviewer)) : await withEnded(ctx, mail.tenantId, answer.reviewers, head, events);
   const report = reportOf(events, head, reviewers);
   const overdue = late(reviewers, head, "code-review", report.review !== undefined || report.reviewFailed !== undefined) || late(reviewers, head, "judge", report.judge !== undefined || report.judgeFailed !== undefined);
   const waited = waitingSince === undefined ? undefined : Date.now() - Date.parse(waitingSince);
