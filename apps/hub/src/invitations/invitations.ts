@@ -11,6 +11,7 @@ import type { SessionUser } from "@intx/hub-api";
 import { failure, type PortalCredentialDeps } from "../github/portal-credential.js";
 import type { IsHubOwner } from "../hub-owner.js";
 import type { Member } from "../integrations/app.js";
+import { findUserPrincipal } from "../principal-lookup.js";
 import { asCaller } from "../stock-caller.js";
 import type { SendInviteEmail } from "./invite-email.js";
 
@@ -248,10 +249,7 @@ export function createInvitations(deps: InvitationDeps) {
     if (!user.emailVerified) {
       return failure(403, "unverified_email", "Your address is not verified. Open the link in the invite email, or use Reset password on the sign-in page.");
     }
-    const [row] = await db
-      .select({ id: schema.principal.id, status: schema.principal.status })
-      .from(schema.principal)
-      .where(and(eq(schema.principal.tenantId, body.tenantId), eq(schema.principal.kind, "user"), eq(schema.principal.refId, user.id)));
+    const row = await findUserPrincipal(db, { tenantId: body.tenantId, userId: user.id });
     if (!row) return failure(404, "not_found", "You have no invite to this workspace. Ask for a new one.");
     if (row.status === "invited") {
       await db.update(schema.principal).set({ status: "active", updatedAt: deps.now() }).where(eq(schema.principal.id, row.id));

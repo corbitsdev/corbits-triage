@@ -5,7 +5,7 @@ import { failure } from "./github/portal-credential.js";
 /** The hub's error envelope. */
 export const Failure = type({ error: { code: "string", message: "string" } });
 
-/** An OpenAPI JSON response described by an arktype schema. */
+// Mirrors stock's jsonResponse (@intx/hub-api openapi), which its package index does not export.
 export function json(description: string, schema: Parameters<typeof resolver>[0]) {
   return { description, content: { "application/json": { schema: resolver(schema) } } };
 }

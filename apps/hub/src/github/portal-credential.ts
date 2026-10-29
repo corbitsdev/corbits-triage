@@ -5,6 +5,7 @@ import { credentialAad, type CredentialCipher } from "@intx/types";
 import type { GithubFetch } from "@corbits/github-reads";
 import { DO_GRANT_ACTION, doResource, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
+import { findUserPrincipal } from "../principal-lookup.js";
 import { GITHUB_CREDENTIAL, githubAppKey, githubAppLogin, type AppKeyDeps } from "./app-key.js";
 import { triageRoleId } from "./automation.js";
 import { githubUsage } from "./github-usage.js";
@@ -19,15 +20,8 @@ export function failure(status: number, code: string, message: string, details?:
 }
 
 export async function memberPrincipal(db: DB["db"], tenantId: string, userId: string): Promise<string | undefined> {
-  const member = await db.query.principal.findFirst({
-    where: and(
-      eq(schema.principal.tenantId, tenantId),
-      eq(schema.principal.kind, "user"),
-      eq(schema.principal.refId, userId),
-      eq(schema.principal.status, "active"),
-    ),
-  });
-  return member?.id;
+  const member = await findUserPrincipal(db, { tenantId, userId });
+  return member?.status === "active" ? member.id : undefined;
 }
 
 export type GrantDeps = Pick<PortalCredentialDeps, "db" | "authorize">;

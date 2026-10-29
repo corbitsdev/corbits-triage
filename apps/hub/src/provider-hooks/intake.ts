@@ -6,7 +6,7 @@ import { hasEnabledRules, repoPolicy, triageEventOf, type RepoSource } from "@co
 import { errorText, isRecord } from "@corbits/common";
 import type { HookHeaders } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
-import { loadBridgeHook, logJson, tenantConfigOf, triagePolicy, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
+import { json, loadBridgeHook, logJson, tenantConfigOf, triagePolicy, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
 import type { Accepted } from "../github/coalescer.js";
 import type { BaseMove, PolicyPush, PrMail } from "../github/normalize.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
@@ -31,10 +31,6 @@ export type ProviderHook = {
 export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "log" | "readCheckPack" | "recheckOpenPulls" | "refreshPolicyFile" | "heard">;
 
 type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord; ns: CorbitsTriageNs };
-
-function json(status: number, body: unknown): Response {
-  return Response.json(body, { status });
-}
 
 function repoOf(intake: HookIntake): string {
   if (intake.kind === "pr") return intake.mail.repo;

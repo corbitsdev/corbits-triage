@@ -9,8 +9,9 @@ import { TRIAGE_LISTENERS } from "@corbits/triage-contracts";
 import { generateId } from "@intx/hub-common";
 import { storeAppKey } from "./app-key.js";
 import { connectTriage } from "./automation.js";
+import { memberPrincipal } from "./portal-credential.js";
 
-const { credential, principal, provider } = schema;
+const { credential, provider } = schema;
 
 type SessionResult = {
   user: { id: string };
@@ -312,18 +313,12 @@ export function createGithubManifestIntegration({
     });
   }
 
-  async function activePrincipal(userId: string, tenantId: string) {
-    return db.query.principal.findFirst({
-      where: and(eq(principal.tenantId, tenantId), eq(principal.kind, "user"), eq(principal.refId, userId), eq(principal.status, "active")),
-    });
-  }
-
   async function start(req: Request, tenantId: string): Promise<Response> {
     const trustedOrigins = new Set([new URL(req.url).origin, ...trustedPortalOrigins]);
     if (!validManifestMutationRequest(req, trustedOrigins)) return securedJson({ error: "forbidden" }, 403);
     const session = await getSession(req.headers);
-    const member = session ? await activePrincipal(session.user.id, tenantId) : undefined;
-    if (!session || !member) return securedJson({ error: "unauthorized" }, 401);
+    const memberId = session ? await memberPrincipal(db, tenantId, session.user.id) : undefined;
+    if (!session || memberId === undefined) return securedJson({ error: "unauthorized" }, 401);
     let body: typeof StartBody.infer;
     try { body = StartBody.assert(await req.json()); } catch { return securedJson({ error: "invalid_request" }, 400); }
     let portalOrigin: string;
@@ -333,13 +328,13 @@ export function createGithubManifestIntegration({
     if (!githubProvider) return securedJson({ error: "github_provider_missing" }, 409);
     if (!validGithubProvider(githubProvider, githubApiOrigin)) return securedJson({ error: "github_provider_invalid" }, 409);
     const existing = await db.select().from(credential).where(and(eq(credential.tenantId, tenantId), sql`${credential.name} IN ('github', 'github-hook')`));
-    if (!await canWriteCredentials(member.id, tenantId, existing)) return securedJson({ error: "forbidden" }, 403);
+    if (!await canWriteCredentials(memberId, tenantId, existing)) return securedJson({ error: "forbidden" }, 403);
     if (existing.length > 0 && !body.replace) return securedJson({ error: "replacement_confirmation_required" }, 409);
     const app = existing.find((row) => row.name === "github");
     const hook = existing.find((row) => row.name === "github-hook");
     const state = signManifestState(stateKey, {
       tenantId,
-      principalId: member.id,
+      principalId: memberId,
       userId: session.user.id,
       sessionId: session.session.id,
       appCredentialId: app?.id ?? generateId("credential"),
@@ -362,12 +357,12 @@ export function createGithubManifestIntegration({
     if (!session || !token || !code) return securedHtml("GitHub setup could not be verified.", 401);
     const state = verifyManifestState(stateKey, token, now());
     if (!state || state.userId !== session.user.id || state.sessionId !== session.session.id) return securedHtml("GitHub setup could not be verified.", 400);
-    const member = await activePrincipal(session.user.id, state.tenantId);
-    if (member?.id !== state.principalId) return securedHtml("GitHub setup could not be verified.", 400);
+    const memberId = await memberPrincipal(db, state.tenantId, session.user.id);
+    if (memberId !== state.principalId) return securedHtml("GitHub setup could not be verified.", 400);
     const existing = state.replaces
       ? [{ id: state.appCredentialId, name: "github" }, { id: state.hookCredentialId, name: "github-hook" }]
       : [];
-    if (!await canWriteCredentials(member.id, state.tenantId, existing)) {
+    if (!await canWriteCredentials(memberId, state.tenantId, existing)) {
       return securedHtml("You do not have permission to complete GitHub setup.", 403);
     }
     const currentProvider = await db.query.provider.findFirst({

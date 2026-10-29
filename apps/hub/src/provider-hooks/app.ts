@@ -1,16 +1,13 @@
 import { type } from "arktype";
 import { Hono } from "hono";
-import { describeRoute, resolver } from "hono-openapi";
+import { describeRoute } from "hono-openapi";
 import { HOOK_MOUNT_PATH } from "../hooks.js";
+import { json } from "../route-schema.js";
 import type { ProviderHook } from "./intake.js";
 import { PROVIDER_HOOKS } from "./providers.js";
 
 const Status = type({ status: "'queued' | 'coalesced' | 'accepted' | 'ignored' | 'needs-setup' | 'duplicate'" });
 const Failure = type({ error: "string" });
-
-function json(description: string, schema: Parameters<typeof resolver>[0]) {
-  return { description, content: { "application/json": { schema: resolver(schema) } } };
-}
 
 /** Whether a request under the hook mount is a provider hook rather than a stock or GitHub one. */
 export function isProviderHookPath(pathname: string): boolean {

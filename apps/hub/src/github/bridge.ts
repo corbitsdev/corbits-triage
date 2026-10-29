@@ -152,7 +152,7 @@ function isSentBy(payload: unknown, login: string): boolean {
   return sender?.["type"] === "Bot" && sender["login"] === login;
 }
 
-function json(status: number, body: unknown): Response {
+export function json(status: number, body: unknown): Response {
   return Response.json(body, { status });
 }
 
