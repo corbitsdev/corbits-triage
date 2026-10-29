@@ -1018,8 +1018,9 @@ found before anything is written.
 
 The manager also records what became of each finding it posted inline. Its
 send returns, per finding, the host comment that holds it (on GitHub read back
-from that review's comments and matched by path and the exact text written for
-the finding against the diff at the head the review was posted on; on Bitbucket
+from the pull request's review comments of that review, each matched by its
+path, the lines it was written on, which lie in the finding's, and the exact
+text written for the finding on those lines; on Bitbucket
 Data Center the id each inline post returns), and done
 keeps that id as `thread` on the finding in its reviewer-result row; ids that do
 not line up with the review's findings are logged and left out. A GitHub

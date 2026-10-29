@@ -176,7 +176,7 @@ function githubHost(head = HEAD, { pr = PR, pull = {}, checkRuns }: { pr?: Snaps
   const fixture = fixtureGithub(pr, {});
   async function read(url: URL): Promise<Response> {
     if (checkRuns && url.pathname.endsWith("/check-runs")) return Response.json({ check_runs: checkRuns });
-    if (/\/reviews\/\d+\/comments$/.test(url.pathname)) return Response.json([]);
+    if (/\/pulls\/\d+\/comments$/.test(url.pathname)) return Response.json([]);
     const response = await fixture(url);
     if (url.pathname !== `/repos/${PR.repo}/pulls/${PR.number}`) return response;
     const read = await response.json();
@@ -468,7 +468,11 @@ describe("triage-manager with code review", () => {
     const { writes, host } = githubHost();
     async function threaded(input: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
-      if (/\/reviews\/\d+\/comments$/.test(url.pathname)) return Response.json([{ id: 501, path: "src/flag.ts", body: "**Always true**\n\nThe flag can never be off." }]);
+      if (/\/pulls\/\d+\/comments$/.test(url.pathname)) {
+        const review = writes.findLastIndex((write) => write.path.endsWith("/reviews"));
+        const { comments } = writes[review]!.body as { comments: Array<{ path: string; body: string; line: number; start_line?: number }> };
+        return Response.json(comments.map((comment, index) => ({ id: 501 + index, pull_request_review_id: review + 1, path: comment.path, body: comment.body, original_line: comment.line, original_start_line: comment.start_line ?? null })));
+      }
       if (url.pathname === "/graphql" && threads === undefined) return Response.json({ message: "Bad credentials" }, { status: 401 });
       if (url.pathname === "/graphql") return Response.json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: threads } } } } });
       return host(input, init);
@@ -493,7 +497,7 @@ describe("triage-manager with code review", () => {
     const { writes, host } = githubHost();
     async function unreadable(input: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
-      if (/\/reviews\/\d+\/comments$/.test(url.pathname)) return Response.json({ message: "Server Error" }, { status: 502 });
+      if (/\/pulls\/\d+\/comments$/.test(url.pathname)) return Response.json({ message: "Server Error" }, { status: 502 });
       return host(input, init);
     }
     const hub = fakeHub({ takes: [reported({ result: REVIEW }, ON)], dones: [ENDED] });
