@@ -242,7 +242,7 @@ export function workflowProblems(workflow: PolicyWorkflow, actions: WrittenActio
   const own = Object.keys(workflow.groups ?? {}).filter((name) => GroupName.allows(name));
   const known = [...new Set([...own, ...Object.keys(AUTHOR_GROUPS), EVERYONE])];
   return [
-    ...(actions !== undefined && workflow.decide !== undefined ? [{ message: "`actions` and `decide` can't both be set; move the actions into decide.", path: ["actions"] }] : []),
+    ...(actions !== undefined && workflow.decide !== undefined ? [{ message: "`actions` and `decide` can't both be set; keep your steps in `actions` and remove `decide`, which Triage does not act on.", path: ["actions"] }] : []),
     ...groupProblems(workflow.groups ?? {}),
     ...BLOCK_KINDS.flatMap((kind) => referenceProblems(workflow[kind]?.for ?? [], [kind, "for"], known)),
     ...(workflow.decide ?? []).flatMap((rule, at) => referenceProblems(rule.if.author ?? [], ["decide", at, "if", "author"], known)),

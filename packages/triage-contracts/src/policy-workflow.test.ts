@@ -196,7 +196,7 @@ describe("policy file v4", () => {
     [`${RULES}decide:\n  - { if: { author: [maintainer] }, do: approve }\n`, "`decide[0].if.author` names `maintainer`, which is not a group; did you mean `maintainers`?", 7],
     [`${RULES}code-review: { on: false }\ndecide:\n  - { if: { code-review: clean }, do: approve }\n`, "`decide[0].if.code-review`: `code-review` is not turned on in this file; set `code-review.on: true` or remove the condition.", 8],
     [`${RULES}${ON}decide:\n  - if: { triage: pass }\n    do: approve\n  - if: { code-review: [clean, incomplete] }\n    do: [approve, merge]\n`, "`decide[1].if.code-review` can't match incomplete in a rule that approves or merges; incomplete is never clean.", 10],
-    [`${RULES}actions:\n  pass: [{ do: approve }]\ndecide:\n  - { if: { triage: pass }, do: approve }\n`, "`actions` and `decide` can't both be set; move the actions into decide.", 6],
+    [`${RULES}actions:\n  pass: [{ do: approve }]\ndecide:\n  - { if: { triage: pass }, do: approve }\n`, "`actions` and `decide` can't both be set; keep your steps in `actions` and remove `decide`, which Triage does not act on.", 6],
     [`${RULES}actions:\n  pass: [{ do: aprove }]\n`, `\`actions.pass[0].do\` must be one of ${STEP_KINDS}; did you mean \`approve\`?`, 7],
     [`${RULES}actions:\n  fail:\n    - do: comment\n`, "`actions.fail[0]` `comment` needs a target; write `{ do: comment, target: { body: … } }`.", 8],
     [`${RULES}actions:\n  pass: [{ do: approve, when: { author: [ADMIN] } }]\n`, "`actions.pass[0].when.author` must be a list of `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE`, `MANNEQUIN`, `BOT`, group names, `everyone`, `{ team: org/team }` or `{ users: [ … ] }`.", 7],
