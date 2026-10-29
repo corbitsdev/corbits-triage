@@ -174,3 +174,29 @@ test("a pull request changing a policy file stays open while the listing could n
   expect(reads.file.github).toBe(1);
   expect(polling()).toBe(true);
 });
+
+test("a row that could not read its standing keeps the last known one, so the policy pull request stays open after it", async () => {
+  const reads = hub([
+    [{ repo: REPO, source: "github", upgrade: { state: "start" }, pull }],
+    [{ repo: REPO, source: "github", pullUnread: true, error: "Could not read acme/widgets's policy from GitHub." }],
+    [{ repo: REPO, source: "github", upgrade: { state: "start" }, pullUnread: true }],
+  ]);
+  await mount();
+  await relist();
+  await relist();
+  expect(client.getQueryState(["policy-upgrades", "tenant"])?.data).toMatchObject({ rows: [{ upgrade: { state: "start" }, pull, pullUnread: true }] });
+  expect(reads.file.github).toBe(1);
+  expect(polling()).toBe(true);
+});
+
+test("a policy file merged while its standing could not be read settles the repository once it can", async () => {
+  hub([
+    [{ repo: REPO, source: "github", upgrade: { state: "start" } }],
+    [{ repo: REPO, source: "github", pullUnread: true, error: "Could not read acme/widgets's policy from GitHub." }],
+    [{ repo: REPO, source: "github", upgrade: { state: "ok" } }],
+  ]);
+  await mount();
+  await relist();
+  await relist();
+  expect(standing("github")).toBe("Has a policy file, merged just now");
+});

@@ -8,8 +8,11 @@ import { sameRepo, type RepoId } from "./repo-rows.ts";
 
 export type PolicyUpgradeRow = PolicyUpgrades["repos"][number];
 
-/** `settled`: each repository whose policy file was merged while the portal was open. */
-type Upgrades = { rows: PolicyUpgradeRow[]; settled: RepoId[] };
+/**
+ * `known`: each repository's last row with a standing, kept across rows that could not read it, which the next listing
+ * is set against. `settled`: each repository whose policy file was merged while the portal was open.
+ */
+type Upgrades = { rows: PolicyUpgradeRow[]; known: PolicyUpgradeRow[]; settled: RepoId[] };
 
 function starting(row: PolicyUpgradeRow): boolean {
   return row.upgrade?.state === "start";
@@ -54,11 +57,13 @@ export const POLICY_UPGRADES_QUERY_KEY = "policy-upgrades";
  * a close leaves it as it was, so each such repository's policy is read again on its host.
  */
 async function reconcile(queryClient: QueryClient, tenantId: string, before: Upgrades | undefined, listed: PolicyUpgradeRow[]): Promise<Upgrades> {
-  const rows = withLastKnownPulls(before?.rows ?? [], listed);
-  const settled = newlySettled(before?.rows ?? [], rows);
-  const reread = [...new Set([...settled, ...pullsClosed(before?.rows ?? [], rows)])];
+  const last = before?.known ?? [];
+  const rows = withLastKnownPulls(last, listed);
+  const settled = newlySettled(last, rows);
+  const reread = [...new Set([...settled, ...pullsClosed(last, rows)])];
   await Promise.all(reread.flatMap((row) => [POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, row.repo, row.source] }))));
-  return { rows, settled: [...(before?.settled ?? []), ...settled.map(idOf)] };
+  const known = rows.map((row) => (row.upgrade ? row : rowFor(last, idOf(row)) ?? row));
+  return { rows, known, settled: [...(before?.settled ?? []), ...settled.map(idOf)] };
 }
 
 function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryClient) {
