@@ -71,6 +71,16 @@ async function policyRead(input: RequestInfo | URL): Promise<Response> {
   return Response.json(read);
 }
 
+async function untilRulesShown() {
+  const deadline = Date.now() + 1000;
+  while ([...document.querySelectorAll(".c-checks")].some((cell) => cell.textContent === "")) {
+    if (Date.now() > deadline) throw new Error("The rules column was still empty after a second.");
+    await act(async function flushQueries() {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
 function rowText(source: string): string[] {
   const rows = [...document.querySelectorAll("tbody tr")];
   const row = rows.find((tr) => (tr.querySelector(".src") === null) === (source === "github"));
@@ -91,9 +101,7 @@ test("the same repository name on GitHub and Bitbucket Data Center shows each ho
       </QueryClientProvider>,
     );
   });
-  await act(async function packsRead() {
-    while ([...document.querySelectorAll(".c-checks")].some((cell) => cell.textContent === "")) await Bun.sleep(1);
-  });
+  await untilRulesShown();
   const [githubRules, githubHealth] = rowText("github");
   const [bitbucketRules, bitbucketHealth] = rowText("bitbucket-datacenter");
   expect(githubRules).toMatch(/rules? on$/);

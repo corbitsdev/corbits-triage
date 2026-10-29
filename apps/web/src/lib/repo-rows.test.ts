@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import type { PackState } from "./check-packs.ts";
 import { projectQueue, type OpenPulls, type PrItem, type RepoRecord } from "./hub-api.ts";
-import { groupInbox, regroupInbox } from "./inbox-view.ts";
-import { findRepo, hostedRepos, mergeRepositories, packsPending, repoHealth, repoKey, repoRows, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
+import { groupInbox, regroupInbox, waitsOnIn } from "./inbox-view.ts";
+import { findRepo, hostedRepos, mergeRepositories, packsPending, repoHealth, repoKey, repoRows, reposNeedingSetup, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   const base: PrItem = {
@@ -83,7 +83,7 @@ describe("repository rows", () => {
     const rows = repoRows(all, states, items, [], [], undefined, null);
     expect(rows.map((row) => ("error" in row.pulls ? null : [row.pulls.awaiting, row.pulls.needsYou]))).toEqual([[2, 0], [0, 1], [0, 0], [0, 0], [0, 0]]);
     expect(groupInbox(items, triageReadyRepos(all, states)).awaiting).toBe(2);
-    expect(triageReadyRepos(all, states)).toEqual(new Set(["acme/api"]));
+    expect(triageReadyRepos(all, states)).toEqual(new Set([repoKey({ name: "acme/api" })]));
     expect(packsPending(states)).toBe(true);
   });
 
@@ -186,5 +186,18 @@ describe("merged repositories", () => {
     const active = hostedRepos([{ repo: "acme/api", source: "github" }]);
     const [github, bitbucket] = repoRows(merged, packs, [], active, [{ name: "acme/api", source: "bitbucket-datacenter" }], undefined, null);
     expect([github!.health.label, bitbucket!.health.label]).toEqual(["Webhooks OK", "Catching up"]);
+  });
+
+  test("the same name on both hosts is set up, awaits triage and counts in Settings on its own host", () => {
+    const github = { name: "acme/api", connected: true, source: "github" as const, enabled: true };
+    const bitbucket = { name: "acme/api", connected: true, source: "bitbucket-datacenter" as const, enabled: true };
+    const merged = [github, bitbucket];
+    const packs = new Map([[repoKey(github), policyFile("acme/api")], [repoKey(bitbucket), read(null)]]);
+    const items = projectQueue([], [], twoHosts([1], [2]));
+    const needsSetup = reposNeedingSetup(merged, packs);
+    expect(items.map((pull) => [pull.source, waitsOnIn({ item: pull, handled: null }, needsSetup)])).toEqual([["github", "triage"], ["bitbucket-datacenter", "setup"]]);
+    expect(groupInbox(items, triageReadyRepos(merged, packs)).awaiting).toBe(1);
+    expect(triageReadyRepos(merged, packs).size).toBe(1);
+    expect(triageReadyRepos(merged, new Map([...packs, [repoKey(bitbucket), policyFile("acme/api")]])).size).toBe(2);
   });
 });

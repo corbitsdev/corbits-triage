@@ -500,7 +500,7 @@ function PolicyUpgradeNotice() {
   const starting = rows.length - waiting.length;
   return (
     <>
-      {waiting.length ? <p role="status" className="note">{waiting.map((row, at) => <Fragment key={`${row.source}:${row.repo}`}>{at > 0 ? " · " : null}<Link to={repoHref({ name: row.repo, source: row.source })}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
+      {waiting.length ? <p role="status" className="note">{waiting.map((row, at) => <Fragment key={repoKey({ name: row.repo, source: row.source })}>{at > 0 ? " · " : null}<Link to={repoHref({ name: row.repo, source: row.source })}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
       {starting ? <p role="status" className="note"><Link to="/repositories">{repositoriesText(starting)}</Link> {starting === 1 ? "has" : "have"} no policy file yet, so Triage runs nothing there.</p> : null}
     </>
   );

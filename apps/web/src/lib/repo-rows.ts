@@ -24,8 +24,9 @@ function needsSetup(state: PackState | undefined): boolean {
   return state !== undefined && !state.pending && state.error === null && !policyRuns(state);
 }
 
+/** The `repoKey` of each repository whose policy needs setup. */
 export function reposNeedingSetup(repos: RepoRecord[], packs: ReadonlyMap<string, PackState>): Set<string> {
-  return new Set(repos.filter((repo) => needsSetup(packs.get(repoKey(repo)))).map((repo) => repo.name));
+  return new Set(repos.filter((repo) => needsSetup(packs.get(repoKey(repo)))).map(repoKey));
 }
 
 export function packsPending(packs: ReadonlyMap<string, PackState>): boolean {
@@ -88,8 +89,9 @@ export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
   return new Set(enabledRepos(repos).map((repo) => repo.name));
 }
 
+/** The `repoKey` of each enabled repository whose policy runs. */
 export function triageReadyRepos(repos: RepoRecord[], packs: ReadonlyMap<string, PackState>): Set<string> {
-  return new Set(enabledRepos(repos).filter((repo) => policyRuns(packs.get(repoKey(repo)))).map((repo) => repo.name));
+  return new Set(enabledRepos(repos).filter((repo) => policyRuns(packs.get(repoKey(repo)))).map(repoKey));
 }
 
 type RepoPulls =
