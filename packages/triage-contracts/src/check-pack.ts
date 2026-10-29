@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { asRecord, asRepo } from "@corbits/common";
+import { asRecord, asRepo, errorText } from "@corbits/common";
 import { AUTHOR_ASSOCIATIONS, type AuthorAssociation } from "./repo-policy.js";
 import type { RepoSource } from "./repo-source.js";
 import { compileGlob, PATTERN_LANGUAGES, PATTERN_PRESETS, type PatternRule } from "./code-patterns.js";
@@ -937,7 +937,7 @@ function checkGlobs(globs: string[] | undefined, where: string): void {
     try {
       compileGlob(glob);
     } catch (error) {
-      throw new Error(`${where} glob ${JSON.stringify(glob)}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`${where} glob ${JSON.stringify(glob)}: ${errorText(error)}`);
     }
   }
 }
