@@ -925,8 +925,10 @@ label off that head, so it never stands on a head not yet triaged.
    mail that names no event (the reconcile pass, Triage again, Review again)
    is `catch-up`. A pass acted when it posted a verdict that held no Do for CI
    (the verdict row's `detail.actions`, `held` with `ci: "pending"`); a
-   verdict given while CI still runs holds every Do for CI, so the pass after
-   CI finishes decides them again under the same events and effect ids.
+   verdict given while CI still runs holds for CI every Do Triage may write on
+   its own, so the pass after CI finishes decides them again under the same
+   events and effect ids. A pass whose verdict a later pass of its run on the
+   head replaced keeps `acted`, so its events are not woken again.
    Events on a head a push superseded are not carried, since effect ids are
    per head. A pass the reconcile pass queues, after a CI wait or a build
    status change (on Data Center, where no event reports a finished build),

@@ -173,6 +173,21 @@ test.each([
   });
 }, 120_000);
 
+test("PostgreSQL: a pass whose verdict a later one of its run replaced still acted, so its events are not woken again", async () => {
+  await withDatabase(async function replaced(db) {
+    const at = new Date();
+    await startManager(db, GITHUB, "run_a");
+    for (const [id, events] of [["d1", ["opened"]], ["d2", ["updated"]]] as const) {
+      await recordEvent(db, TENANT, GITHUB, id, prMail("h1", [...events]));
+      await take(db, TENANT, GITHUB, "run_a");
+      await done(db, TENANT, GITHUB, "run_a", [], { wait: true, report: { head: "h1", request: { comment: `Triage: ${id}` } } });
+    }
+    await replaceVerdict(db, TENANT, { runId: "run_a", repo: GITHUB.repo, number: GITHUB.number, headSha: "h1", startedAt: at, verdictAt: at, settled: true, state: "ready-monitoring", actor: "triage", humanGated: false, checks: [], dos: [], commented: true, detail: { actions: [{ kind: "merge", effectId: "e1", held: true, ci: "pending" }] } });
+    await recordEvent(db, TENANT, GITHUB, "d3", prMail("h1", ["checks"]));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", request: { events: ["updated", "checks"] } });
+  });
+}, 120_000);
+
 test.each([["after"], ["before"]])("PostgreSQL: an approval for an older head recorded %s a push leaves the pass on the push's head and is taken with it", async (order) => {
   await withDatabase(async function approvals(db) {
     const push = { type: "webhook" as const, head: "h2", payload: { kind: "pr", headSha: "h2" } };
