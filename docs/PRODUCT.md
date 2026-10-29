@@ -309,8 +309,9 @@ On GitHub, a pull request carrying `pauseLabel` starts no run, and while the
 pull request cannot be read it is not triaged but retried, never run unpaused;
 through a long GitHub outage it waits out a bounded number of retries and is
 triaged on its next event. Code review always runs on Anthropic with the workspace's Anthropic key; `provider` has no effect. `pace` is accepted and runs nothing. `decide`
-is not carried out. A file that turns `code-review` on, or writes its own `decide`,
-holds approve and merge for a person on Triage. `decide` replaces `actions`,
+is not carried out; `actions` are. With `code-review` on, an action runs once the
+head's review meets its step's `when.findings`, and approve and merge without one
+run only when the review has no findings open. `decide` replaces `actions`,
 so a file holds one or the other, and a file that uses `extends` holds none of
 these keys.
 

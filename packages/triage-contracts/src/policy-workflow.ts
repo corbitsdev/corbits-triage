@@ -31,14 +31,11 @@ const Severity = type.enumerated(...SEVERITIES);
 const Duration = type(/^[1-9]\d*[smhd]$/);
 const Count = type("number.integer").atLeast(1);
 
-export const blockCleanSchema = type({ "+": "reject", "below?": Severity });
-
 const CodeReviewSchema = type({
   "+": "reject",
   on: "boolean",
   "for?": GroupNames,
   "when?": { "+": "reject", "triage?": Verdicts, "paths?": Globs, "rules?": type.enumerated(...RULE_GATES) },
-  "clean?": blockCleanSchema,
   "provider?": type.enumerated(...PROVIDERS),
 });
 
@@ -165,7 +162,7 @@ function referenceProblems(names: readonly string[], path: readonly PropertyKey[
 }
 
 /** A step as a valid file writes it: a kind alone in `decide`, or a step whose `when.author` names kinds, groups, teams and people. */
-type StepObject = { do: string; when?: { author?: readonly FileAuthorMatch[] } };
+type StepObject = { do: string; when?: { author?: readonly FileAuthorMatch[]; findings?: unknown } };
 type WrittenStep = string | StepObject;
 type StepList = readonly [readonly PropertyKey[], readonly WrittenStep[]];
 
@@ -210,6 +207,16 @@ function outcomesOf(condition: DecideRule["if"][BlockKind]): readonly string[] {
   return [];
 }
 
+/** A step's `when.findings` reads code review's report, so it needs code review on. */
+function findingsProblems(workflow: PolicyWorkflow, actions: WrittenActions | undefined): PathProblem[] {
+  if (workflow["code-review"]?.on === true) return [];
+  return stepLists(workflow, actions).flatMap(([path, steps]) => steps.flatMap(function unreviewed(step, at): PathProblem[] {
+    if (typeof step === "string" || step.when?.findings === undefined) return [];
+    const where = [...path, at, "when", "findings"];
+    return [{ message: `\`${pathText(where)}\` reads code review's findings; set \`code-review.on: true\` or remove the condition.`, path: where }];
+  }));
+}
+
 function ruleProblems(rule: DecideRule, at: number, workflow: PolicyWorkflow): PathProblem[] {
   if (Object.keys(rule.if).length === 0) return [{ message: `\`decide[${at}].if\` must set a condition.`, path: ["decide", at, "if"] }];
   const kinds = kindsOf(rule.do);
@@ -240,6 +247,7 @@ export function workflowProblems(workflow: PolicyWorkflow, actions: WrittenActio
     ...BLOCK_KINDS.flatMap((kind) => referenceProblems(workflow[kind]?.for ?? [], [kind, "for"], known)),
     ...(workflow.decide ?? []).flatMap((rule, at) => referenceProblems(rule.if.author ?? [], ["decide", at, "if", "author"], known)),
     ...stepReferenceProblems(workflow, actions, known),
+    ...findingsProblems(workflow, actions),
     ...(workflow.decide ?? []).flatMap((rule, at) => ruleProblems(rule, at, workflow)),
   ];
 }
@@ -263,23 +271,18 @@ export function withAuthors<T extends StepObject>(step: T, groups: Readonly<Reco
   return { ...step, when: { ...step.when, author: readAuthors(step.when.author, groups) } };
 }
 
-const UNCLEAN_KINDS: readonly string[] = ["approve", "merge"];
-
 /**
  * Schema 3 `actions` as `decide`: each verdict's steps become one rule on that triage outcome, every step kept with its
  * target and conditions, and limited to the events the actions wake on when they wake on fewer than all. A Pass or Fail
  * with no steps did nothing, so it maps to `nothing`; an Unsure with none maps to no rule, which `decide` flags for a
- * maintainer, as the Unsure label did. With a block on, approve and merge run only when at least one block ran and every block that ran is clean:
- * otherwise a second rule runs the other steps, each in its own place so its effect stays the same.
+ * maintainer, as the Unsure label did.
  */
-export function decideOf(actions: PolicyActions, blocksOn: boolean): DecideRule[] {
+export function decideOf(actions: PolicyActions): DecideRule[] {
   const limited = POLICY_EVENTS.some((event) => !actions.when.includes(event));
   return VERDICTS.flatMap((verdict): DecideRule[] => {
     const condition = { triage: verdict, ...(limited && { event: [...actions.when] }) };
     const steps: Step[] = actions[verdict];
     if (steps.length === 0) return verdict === "unsure" ? [] : [{ if: condition, do: "nothing" }];
-    if (!blocksOn || !steps.some((step) => UNCLEAN_KINDS.includes(step.do))) return [{ if: condition, do: steps }];
-    const unclean = steps.map((step): Step => (UNCLEAN_KINDS.includes(step.do) ? { do: "nothing" } : step));
-    return [{ if: { ...condition, all: "clean" }, do: steps }, { if: condition, do: unclean }];
+    return [{ if: condition, do: steps }];
   });
 }

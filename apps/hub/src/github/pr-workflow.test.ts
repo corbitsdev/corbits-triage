@@ -35,11 +35,11 @@ function job(policyWorkflow: PolicyWorkflow | undefined, kind = "pr", pauseLabel
 
 test("only a block on, or a decide other than the actions', needs the PR workflow, whose trigger carries the blocks, decide and code review's block", () => {
   const pack = { actions: defaultActions() };
-  expect(prWorkflowKeys({ decide: decideOf(pack.actions, false) }, pack)).toBeUndefined();
+  expect(prWorkflowKeys({ decide: decideOf(pack.actions) }, pack)).toBeUndefined();
   expect(prWorkflowKeys({ decide: DECIDE }, pack)).toEqual({ decide: DECIDE });
   expect(prWorkflowKeys({ "code-review": { on: true } }, pack)).toEqual({ "code-review": { on: true } });
-  expect(workflowPart({ "code-review": { on: true, for: ["maintainers"], when: { triage: "pass", paths: ["src/**"], rules: "any" }, clean: { below: "high" }, provider: "anthropic" }, decide: DECIDE })).toEqual({
-    codeReview: { on: true, for: ["maintainers"], triage: ["pass"], rules: "any", paths: ["src/**"], clean: { below: "high" }, provider: "anthropic" },
+  expect(workflowPart({ "code-review": { on: true, for: ["maintainers"], when: { triage: "pass", paths: ["src/**"], rules: "any" }, provider: "anthropic" }, decide: DECIDE })).toEqual({
+    codeReview: { on: true, for: ["maintainers"], triage: ["pass"], rules: "any", paths: ["src/**"], provider: "anthropic" },
     blocks: ["code-review"],
     decide: DECIDE,
   });
@@ -58,10 +58,9 @@ test("a pull request carrying the pause label on GitHub starts no run, and one w
   expect(await unread.route(unlabelled)).toEqual(unlabelled);
 });
 
-test("a policy writing its own decide leaves approve and merge to a person; code review alone leaves the job as it is", async () => {
+test("the gate leaves an unpaused job's grants as they are, with code review on or a decide of its own", async () => {
   const { route } = gate();
-  expect(await route(job({ decide: DECIDE }))).toMatchObject({ automatic: ["comment"] });
-  for (const sent of [job(undefined), job({ "code-review": { on: true } })]) {
+  for (const sent of [job(undefined), job({ "code-review": { on: true }, decide: DECIDE }), job({ decide: DECIDE })]) {
     expect(await route(sent)).toEqual(sent);
   }
 });

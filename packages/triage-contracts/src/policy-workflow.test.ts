@@ -72,49 +72,21 @@ describe("policy file v4", () => {
     });
   });
 
-  test("schema 3 actions beside a block that is on approve and merge only when every block that ran is clean, and otherwise run the rest in their places", () => {
-    const file = `${RULES}code-review: { on: true }\nactions:\n  pass: [{ do: request-review, target: { to: codeowners } }, { do: approve }, { do: merge }]\n`;
-    const pass = [{ do: "request-review", target: { to: "codeowners" } }, { do: "approve" }, { do: "merge" }];
+  test("schema 3 actions beside a block that is on read as decide with every step as written, approve and merge included", () => {
+    const file = `${RULES}${ON}actions:\n  pass: [{ do: request-review, target: { to: codeowners } }, { do: approve, when: { findings: { above: P2 } } }, { do: merge }]\n`;
+    const pass = [{ do: "request-review", target: { to: "codeowners" } }, { do: "approve", when: { findings: { above: "P2" } } }, { do: "merge" }];
     expect(checkPolicyFile(file, REPO)).toMatchObject({
       ok: true,
-      workflow: {
-        decide: [
-          { if: { triage: "pass", all: "clean" }, do: pass },
-          { if: { triage: "pass" }, do: [pass[0], { do: "nothing" }, { do: "nothing" }] },
-          { if: { triage: "fail" }, do: "nothing" },
-        ],
-      },
+      policy: { actions: { pass } },
+      workflow: { decide: [{ if: { triage: "pass" }, do: pass }, { if: { triage: "fail" }, do: "nothing" }] },
     });
   });
 
-  test("schema 3 actions beside a block that is on approve or merge only when every block is clean", () => {
-    expect(checkPolicyFile(`${RULES}code-review: { on: true }\nactions:\n  pass: [{ do: approve }, { do: merge }]\n`, REPO)).toMatchObject({
+  test("a step's findings condition reads as written on any verdict's list", () => {
+    const file = `${RULES}${ON}actions:\n  pass: [{ do: request-changes, when: { findings: { above: P1 } } }]\n  fail: [{ do: close, when: { findings: { any: false } } }]\n`;
+    expect(checkPolicyFile(file, REPO)).toMatchObject({
       ok: true,
-      workflow: {
-        decide: [
-          { if: { triage: "pass", all: "clean" }, do: [{ do: "approve" }, { do: "merge" }] },
-          { if: { triage: "pass" }, do: [{ do: "nothing" }, { do: "nothing" }] },
-          { if: { triage: "fail" }, do: "nothing" },
-        ],
-      },
-    });
-  });
-
-  test("a skipped security block leaves the approve and merge gate to the blocks that run", () => {
-    const actions = "actions:\n  pass: [{ do: approve }, { do: merge }]\n";
-    expect(checkPolicyFile(`${RULES}${ON}security: { on: true }\n${actions}`, REPO)).toMatchObject({
-      ok: true,
-      workflow: {
-        decide: [
-          { if: { triage: "pass", all: "clean" }, do: [{ do: "approve" }, { do: "merge" }] },
-          { if: { triage: "pass" }, do: [{ do: "nothing" }, { do: "nothing" }] },
-          { if: { triage: "fail" }, do: "nothing" },
-        ],
-      },
-    });
-    expect(checkPolicyFile(`${RULES}security: { on: true }\n${actions}`, REPO)).toMatchObject({
-      ok: true,
-      workflow: { decide: [{ if: { triage: "pass" }, do: [{ do: "approve" }, { do: "merge" }] }, { if: { triage: "fail" }, do: "nothing" }] },
+      policy: { actions: { pass: [{ do: "request-changes", when: { findings: { above: "P1" } } }], fail: [{ do: "close", when: { findings: { any: false } } }] } },
     });
   });
 
@@ -178,13 +150,14 @@ describe("policy file v4", () => {
     [`${RULES}code-review: { on: true, when: { paths: ["src/**", "!"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}code-review: { when: { triage: pass } }\n`, "`code-review.on` must be true or false.", 6],
     [`${RULES}code-review: { onn: true }\n`, "`code-review.onn` is not a key; did you mean `code-review.on`?", 6],
-    [`${RULES}code-review: on\n`, "`code-review` must be a mapping of on, for, when, clean and provider.", 6],
+    [`${RULES}code-review: on\n`, "`code-review` must be a mapping of on, for, when and provider.", 6],
     [`${RULES}code-reveiw: { on: true }\n`, "`code-reveiw` is not a key; did you mean `code-review`?", 6],
     [`${RULES}blocks: {}\n`, "`blocks` is not a key; use extends, onFail, rules, actions, labels, groups, code-review, pace, pauseLabel or decide.", 6],
     [`${RULES}code-review: { on: true, whn: { triage: pass } }\n`, "`code-review.whn` is not a key; did you mean `code-review.when`?", 6],
-    [`${RULES}code-review: { on: true, clean: { below: severe } }\n`, "`code-review.clean.below` must be low, medium, high or critical.", 6],
-    [`${RULES}code-review: { on: true, clean: { minConfidence: 0.7 } }\n`, "`code-review.clean.minConfidence` is not available yet; remove it.", 6],
-    [`${RULES}code-review: { on: true, clean: { coverage: full } }\n`, "`code-review.clean.coverage` is not available yet; remove it.", 6],
+    [`${RULES}code-review: { on: true, clean: { below: medium } }\n`, "`code-review.clean` was removed; say which findings each action allows with `when.findings` on it, such as `actions.pass[].when.findings: { above: P2 }`.", 6],
+    [`${RULES}actions:\n  pass: [{ do: approve, when: { findings: { above: P2 } } }]\n`, "`actions.pass[0].when.findings` reads code review's findings; set `code-review.on: true` or remove the condition.", 7],
+    [`${RULES}${ON}actions:\n  pass: [{ do: approve, when: { findings: { above: P4 } } }]\n`, "`actions.pass[0].when.findings` must be `{ above: <priority> }` with a priority of P0, P1, P2 or P3, or `{ any: true }` or `{ any: false }`.", 8],
+    [`${RULES}${ON}actions:\n  pass: [{ do: approve, when: { findings: { above: P2, any: true } } }]\n`, "`actions.pass[0].when.findings` must be `{ above: <priority> }` with a priority of P0, P1, P2 or P3, or `{ any: true }` or `{ any: false }`.", 8],
     [`${RULES}code-review: { on: true, provider: azure }\n`, "`code-review.provider` must be anthropic, openai, xai, google, opencode or custom.", 6],
     [`${RULES}code-review: { on: true, for: [maintainer] }\n`, "`code-review.for` names `maintainer`, which is not a group; did you mean `maintainers`?", 6],
     [`${RULES}code-review: { on: true, for: [reviewers] }\n`, "`code-review.for` names `reviewers`, which is not a group; define it under groups.", 6],

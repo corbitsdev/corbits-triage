@@ -22,8 +22,7 @@ export interface Replayed {
 /**
  * Comments posted when their priority is at most `priority` and their top confidence at least the cutoff for their
  * agreement: `oneFinder` for comments one finder reported, `bothFinders` for those both did. A cutoff of 0 keeps
- * comments without a confidence; Infinity drops them all. A comment without a priority posts only when `priority` is
- * Infinity.
+ * comments without a confidence; Infinity drops them all.
  */
 export interface Cutoff {
   oneFinder: number;
@@ -36,7 +35,7 @@ export const KEEP_ALL: Cutoff = { oneFinder: 0, bothFinders: 0, priority: Number
 export function posts(comment: Comment, cutoff: Cutoff): boolean {
   const least = comment.finders >= 2 ? cutoff.bothFinders : cutoff.oneFinder;
   const confident = least === 0 || (comment.confidence !== undefined && comment.confidence >= least);
-  const severe = cutoff.priority === Number.POSITIVE_INFINITY || (comment.priority !== undefined && comment.priority <= cutoff.priority);
+  const severe = cutoff.priority === Number.POSITIVE_INFINITY || comment.priority <= cutoff.priority;
   return confident && severe;
 }
 
@@ -103,7 +102,7 @@ export function commentsOf(outputs: SavedOutputs): Comment[] {
     if (!entry || !written || !sameFinding(entry.finding, written)) throw new Error(`comment ${index} at ${posted.path}:${posted.start} does not replay as the review reported it`);
     const known = entry.group.members.flatMap((i) => (confidences[i] === undefined ? [] : [confidences[i]]));
     const { path, start, end, priority } = posted;
-    return { path, start, end, ...(priority !== undefined && { priority }), finders: posted.agreement.finders, ...(known.length > 0 && { confidence: Math.max(...known) }) };
+    return { path, start, end, priority, finders: posted.agreement.finders, ...(known.length > 0 && { confidence: Math.max(...known) }) };
   }
   if (reported.length !== outputs.review.comments.length) throw new Error(`${reported.length} replayed findings, ${outputs.review.comments.length} comments`);
   return outputs.review.comments.map(comment);

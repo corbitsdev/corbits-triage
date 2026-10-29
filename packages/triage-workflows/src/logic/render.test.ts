@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { classificationSources, emptyPack, type CheckPack } from "@corbits/triage-contracts";
-import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict, withFailure } from "./render.js";
+import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict } from "./render.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR, type FocusedPlan, type QualityPlan } from "./quality.js";
 import { REVIEW_ANSWERED_REASON, type DeterministicResult } from "./checks.js";
 
@@ -464,31 +464,5 @@ describe("requested changes rendering", () => {
   test("leaves the review out of a comment that has other reasons", () => {
     const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...det, checks: [review, conflicts] } });
     expect(verdict.feedback).toBe("**Triage: Fail**\n\n@octocat, please address the following:\n- merge conflicts with base");
-  });
-});
-
-describe("a check failed after the verdict", () => {
-  const failed = { check: "code-review", kind: "machine", result: "fail", reason: "Code review found 1 problem on this head.", evidence: [], output: { kind: "values", values: { findings: 1 } } } as const;
-  const sources = { quality: [], custom: [], rules: [] };
-  const asked = "**Triage: Fail**\n\n@octocat, please address the following:\n- Code review found 1 problem on this head.";
-
-  const passing = { state: "ready-monitoring", reason: "all deterministic rules passed", findings: [], checks: [], needsJudgment: true, sources } as DeterministicResult;
-  const requested = { state: "needs-author-update", reason: "a reviewer requested changes", findings: [], checks: [{ check: "no-changes-requested", kind: "machine", result: "fail", reason: "a reviewer requested changes", evidence: ["changes requested by @maya"], output: { kind: "values", values: {} } }], needsJudgment: false, sources } as DeterministicResult;
-
-  test.each([
-    ["a Pass that posted no comment fails and posts one", passing, "Code review found 1 problem on this head.", "Fix: Code review found 1 problem on this head."],
-    ["a Fail whose only reason is a maintainer's requested changes posts one", requested, "a reviewer requested changes; Code review found 1 problem on this head.", "Address requested changes from @maya; the author fixes: Code review found 1 problem on this head."],
-  ])("%s asking the author to fix it", (_name, det, reason, nextAction) => {
-    const rendered = { ...renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det }), feedback: "" };
-    const made = withFailure(rendered, failed, { author: "octocat", det, reviewers: [] });
-    expect(made).toMatchObject({ verdict: "fail", reason, feedback: asked, actor: "author", nextAction });
-  });
-
-  test.each([
-    ["a next step keeps its actor and names the author for the fix", "Review", { actor: "maintainer", nextAction: "Review; the author fixes: Code review found 1 problem on this head." }],
-    ["no next step makes the fix the author's", "", { actor: "author", nextAction: "Fix: Code review found 1 problem on this head." }],
-  ])("an Unsure with %s", (_name, nextAction, next) => {
-    const rendered = { ...renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: passing }), verdict: "unsure" as const, actor: "maintainer" as const, nextAction };
-    expect(withFailure(rendered, failed, { author: "octocat", det: passing, reviewers: [] })).toMatchObject({ verdict: "unsure", ...next });
   });
 });

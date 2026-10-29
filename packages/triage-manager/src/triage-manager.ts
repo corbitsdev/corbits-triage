@@ -24,7 +24,7 @@ const MAIL = { project: { from: "trigger.payload" }, fields: ["payload"] } as co
 /** The newest pull request mail take read back from the hub, which pr-triage's steps trust as the hub's. */
 const TAKEN = { project: { from: "steps.take.output" }, fields: ["taken"] } as const;
 
-/** The verdict the pass posts and runs: evaluateRules', failed by a code review that found problems, or with approve and merge held while the policy's checks are not clean. */
+/** The verdict the pass posts and runs: evaluateRules', with each Do whose findings condition code review does not meet held. */
 const CLEARED = { from: "steps.cleared.output" } as const;
 
 function stepsOf(...ids: string[]) {

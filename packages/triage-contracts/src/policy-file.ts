@@ -7,7 +7,7 @@ import { asRecord } from "@corbits/common";
 import { CATALOG_IDS, CHECK_PACK_KIND, CHECK_PACK_SCHEMA_VERSION, policyOverrideSchema, readCheckPack, refusalNames, readPolicyOverride, withAuthorKinds, type PolicyOverride } from "./check-pack.js";
 import { fileProblems } from "./policy-file-problems.js";
 import { isPolicyRulesFile, PolicyFileError, policyRulesSchema, readRulesFile } from "./policy-rules.js";
-import { BLOCK_KINDS, decideOf, withoutReserved, type PolicyWorkflow } from "./policy-workflow.js";
+import { decideOf, withoutReserved, type PolicyWorkflow } from "./policy-workflow.js";
 
 export const POLICY_FILE_PATH = ".corbits-triage.yml";
 /** Read in this order on the default branch; the first one found is the policy. */
@@ -115,7 +115,7 @@ function policyOf(file: Record<string, unknown>, repo: string): { policy: Record
   if (body.extends !== undefined) return { policy: { ...header, ...overrideOf({ ...body, ...header, repo }, repo) }, workflow };
   const { dropped, ...pack } = readCheckPack({ ...body, ...header, repo }, repo);
   if (dropped) throw new Error(`The policy file holds what no longer runs: ${refusalNames(dropped)}.`);
-  return { policy: pack, workflow: { ...workflow, decide: workflow.decide ?? decideOf(pack.actions, BLOCK_KINDS.some((kind) => workflow[kind]?.on === true)) } };
+  return { policy: pack, workflow: { ...workflow, decide: workflow.decide ?? decideOf(pack.actions) } };
 }
 
 /**

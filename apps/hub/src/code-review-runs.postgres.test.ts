@@ -127,6 +127,12 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
     expect(await reviewsOf(GITHUB, "sha12")).toMatchObject({ carriedTo: null });
     expect(await reviewsOf(GITHUB, "sha11")).toMatchObject({ carriedTo: null });
     expect(hostReads).toBe(7);
+
+    // A review stored before every finding carried a priority still shows, without the findings that have none.
+    const { priority: _priority, ...unprioritised } = OUTPUT.comments[0]!;
+    await recordEvent(db, TENANT, GITHUB, "run_unprioritised", { type: "reviewer-result", head: "sha13", payload: { kind: "code-review", result: { ...OUTPUT, comments: [unprioritised, ...OUTPUT.comments] } } });
+    await claim([reviewer("run_unprioritised", "sha13")], [eventKey("run_old"), eventKey("run_new"), eventKey("run_unprioritised")]);
+    expect(await reviewsOf(GITHUB)).toMatchObject({ review: { status: "completed", headSha: "sha13", comments: REVIEW.comments } });
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

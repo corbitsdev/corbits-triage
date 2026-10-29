@@ -20,7 +20,7 @@ export * from "./repo-source.js";
 export * from "./rule-prose.js";
 export * from "./step-when.js";
 export * from "./policy-rules.js";
-export { BLOCK_KINDS, blockCleanSchema, decideOf, kindsOf, policyWorkflowSchema, SEVERITIES, type BlockKind, type DecideRule, type PolicyWorkflow } from "./policy-workflow.js";
+export { BLOCK_KINDS, decideOf, kindsOf, policyWorkflowSchema, SEVERITIES, type BlockKind, type DecideRule, type PolicyWorkflow } from "./policy-workflow.js";
 export * from "./code-review-models.js";
 export * from "./code-review.js";
 export * from "./stage-result.js";

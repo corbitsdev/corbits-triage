@@ -14,7 +14,7 @@ export interface Finding extends Site {
   why?: string;
   trigger?: string;
   /** 0 blocks release, 1 is urgent, 2 is normal, 3 is low. */
-  priority?: number;
+  priority: number;
 }
 
 const TEXT_FIELDS = ["code", "title", "why", "trigger"] as const;
@@ -104,7 +104,7 @@ function rangeOf(value: unknown): [number, number] | undefined {
   return match ? [Number(match[1]), Number(match[2] ?? match[1])] : undefined;
 }
 
-/** Any finding shape with a path and a line or a line range, flat or under `location`. */
+/** Any finding shape with a path, a line or a line range, flat or under `location`, and a priority. */
 export function findingOf(raw: unknown): Finding | undefined {
   if (!isRecord(raw)) return undefined;
   const item = isRecord(raw.location) ? { ...raw, ...raw.location } : raw;
@@ -114,10 +114,10 @@ export function findingOf(raw: unknown): Finding | undefined {
   if (!range) return undefined;
   const [start, rangeEnd] = range;
   const end = integerOf(firstOf(item, END_KEYS)) ?? rangeEnd;
-  const finding: Finding = { path: path.replace(/^(\.\/|[ab]\/)/, ""), start: Math.min(start, end), end: Math.max(start, end) };
-  for (const field of TEXT_FIELDS) if (typeof item[field] === "string") finding[field] = item[field];
   const priority = integerOf(item.priority);
-  if (priority !== undefined) finding.priority = priority;
+  if (priority === undefined) return undefined;
+  const finding: Finding = { path: path.replace(/^(\.\/|[ab]\/)/, ""), start: Math.min(start, end), end: Math.max(start, end), priority };
+  for (const field of TEXT_FIELDS) if (typeof item[field] === "string") finding[field] = item[field];
   return finding;
 }
 

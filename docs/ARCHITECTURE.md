@@ -276,7 +276,9 @@ are the detail of each step.
    review go up, then the policy's actions. Each action runs where the
    `pr-triage` role's grants, written from the policy file, allow it, and is
    otherwise held for a person, who takes it once or allows that kind in the
-   repository from then on.
+   repository from then on. With code review on, each action whose step's
+   `when.findings` the head's review does not meet is held for a person too
+   (see [Policy blocks](#policy-blocks)).
 8. **End.** The manager ends after step 7, or while its head waits only on
    CI. A new head while it is alive restarts its pass on that head. A pull
    request with nothing outstanding has no manager; its next event starts
@@ -1020,9 +1022,20 @@ manager runs code review behind `rulesGate` in `triage-contracts`: under
 review stays shut unless every policy rule in the verdict's `checks` read
 without a model whose failure fails the pull request passed (`hardFailures`,
 shared with triage), CI only through `ci-green` and never the built-in
-`not-a-draft` or `no-changes-requested`. The manager does not run `decide`,
-so the hub takes approve and merge out of such a mail's `automatic` and they
-wait in Needs you.
+`not-a-draft` or `no-changes-requested`. The manager does not run `decide`; it
+runs the policy's `actions`. Code review's findings never change the verdict.
+The manager's `cleared` step (`packages/triage-manager/src/actions/review-clean.ts`)
+reads each Do's step in the pack and holds the Do for a person when the head's
+review does not meet the step's `when.findings`: `{ above: P<n> }` allows only
+findings less severe than P<n>, `{ any: false }` none and `{ any: true }` any.
+A step
+without one is held only when it approves or merges and the review has any
+finding open. A review that did not run, failed, ran past its deadline, read
+only part of the change or reviewed another head meets no condition. Each Do
+it holds adds one line to the verdict's comment naming the action and why, and
+a held approve makes the head not approvable, so Triage takes back an earlier
+approval. A pull request the block's `for` or `when` leaves out runs its Dos as
+if code review were off.
 
 ## Tenancy and authority
 
@@ -1347,9 +1360,7 @@ read it, and passes the rest of the request to stock.
   host's listener (`apps/hub/src/manager-intake.ts`), on both hosts. Each
   pull request the mail names (a reconciler's `items`, a backlog's open pull
   requests) passes one gate first, whatever sent the mail: on GitHub, a pull
-  request carrying the policy's pause label is dropped, and a policy file
-  that writes its own `decide` leaves approve and merge to a person, since no
-  workflow carries it out. The hub records one webhook event per pull request
+  request carrying the policy's pause label is dropped. The hub records one webhook event per pull request
   that passed, with the head's code review request when the policy turns
   code review on and the App's login on GitHub, then mails the listener the
   heads. Once it records a head, every judge or code review the claim still

@@ -268,13 +268,12 @@ function reportedOf(group: Group, kept: readonly Candidate[], sites: readonly Si
   const members = group.members.map((i) => kept[i]!);
   const { path, start, end } = sites[group.representative]!;
   const { title, why, trigger, code } = kept[group.representative]!;
-  const priorities = members.flatMap((m) => (m.priority === undefined ? [] : [m.priority]));
   const agreement = { finders: new Set(members.flatMap((m) => m.finders)).size, reports: members.reduce((total, m) => total + m.reports, 0) };
-  return { path, start, end, title, why, trigger, code, ...(priorities.length > 0 && { priority: Math.min(...priorities) }), defect: group.defect, agreement };
+  return { path, start, end, title, why, trigger, code, priority: Math.min(...members.map((m) => m.priority)), defect: group.defect, agreement };
 }
 
 function severityOf(finding: Reported): number {
-  return finding.priority ?? Number.POSITIVE_INFINITY;
+  return finding.priority;
 }
 
 function bySeverityThenAgreement(a: Reported, b: Reported): number {
@@ -363,7 +362,7 @@ function ownWords({ title, defect, why, trigger, path, start }: Reported) {
 /** A finding as the review carries it, in the words given or else its finder's. */
 function commentOf(finding: Reported, { title, body }: { title: string; body: string }) {
   const { path, start, end, agreement, priority, code, unverified } = finding;
-  return { path, start, end, title, body, ...(priority !== undefined && { priority }), ...(code !== undefined && { quoted: code }), agreement, ...(unverified && { unverified }) };
+  return { path, start, end, title, body, priority, ...(code !== undefined && { quoted: code }), agreement, ...(unverified && { unverified }) };
 }
 
 /**

@@ -354,7 +354,7 @@ function e2eConfig(values: Record<string, unknown>, provider: ProviderId): E2ECo
 }
 
 function findingsAt(items: readonly Finding[]): Finding[] {
-  return items.map(({ path, start, end, code }) => ({ path, start, end, ...(code !== undefined && { code }) }));
+  return items.map(({ path, start, end, priority, code }) => ({ path, start, end, priority, ...(code !== undefined && { code }) }));
 }
 
 async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, github: typeof fetch): Promise<E2EResult> {
@@ -538,10 +538,10 @@ function stageTotals(stage: Stage, results: readonly E2EResult[], keys: readonly
 function baselineCase(result: E2EResult, key: CaseKey) {
   const final = result.stages.final;
   const caught = final?.caught ?? [];
-  const review = result.outputs?.review as { comments: (Finding & { priority?: number })[] } | undefined;
-  function placed(comment: Finding & { priority?: number }, index: number) {
+  const review = result.outputs?.review as { comments: Finding[] } | undefined;
+  function placed(comment: Finding, index: number) {
     const outcome = final?.outcomes[index];
-    return { path: comment.path, line: comment.start, ...(comment.priority !== undefined && { priority: comment.priority }), ...(outcome?.kind === "caught" && { bug: outcome.bug }) };
+    return { path: comment.path, line: comment.start, priority: comment.priority, ...(outcome?.kind === "caught" && { bug: outcome.bug }) };
   }
   return {
     id: result.id,

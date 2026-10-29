@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
 import { CodeReviewComment, REPO_SOURCES, repoSourceOf, StageResult, type RepoSource } from "@corbits/triage-contracts";
+import { asRecord } from "@corbits/common";
 import { diffHash } from "@corbits/common/diff-hash";
 import type { PullRequestToReview } from "./pull-request-reader.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
@@ -42,16 +43,30 @@ type Found = Omit<typeof CodeReviewFound.infer, "carriedTo">;
 
 type Review = typeof ReviewRun.infer;
 
+function prioritised(findings: unknown): unknown {
+  return Array.isArray(findings) ? findings.filter((finding) => typeof asRecord(finding)?.["priority"] === "number") : findings;
+}
+
+/**
+ * A stored review's result without the findings stored before every finding carried a priority, which the finder's
+ * reply now drops, so an old review still shows.
+ */
+function withPriorities(payload: Record<string, unknown>): Record<string, unknown> {
+  const result = asRecord(payload["result"]);
+  if (!result) return payload;
+  return { ...payload, result: { ...result, comments: prioritised(result["comments"]), ...(result["dropped"] !== undefined && { dropped: prioritised(result["dropped"]) }) } };
+}
+
 /** A code review as the portal shows it. */
 function reviewOf(record: CodeReviewRecord): Review {
   const base = { headSha: record.head, startedAt: record.at };
   if (record.state === "running") return { ...base, status: "running" };
   if (record.state === "failed") return { ...base, status: "failed" };
-  const reported = StageResult.assert({ ...record.payload, head: record.head });
+  const reported = StageResult.assert({ ...withPriorities(record.payload), head: record.head });
   if ("failed" in reported) return { ...base, status: "failed" };
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
   const { summary, budgetExhausted, complete } = reported.result;
-  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
+  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
   return { ...base, status: "completed", summary, comments, budgetExhausted, ...(complete !== undefined && { complete }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 

@@ -20,7 +20,7 @@ export interface Item {
   repoSource?: RepoSource;
   /** The hub waits no longer for the host's checks. */
   noWait?: true;
-  /** The mail names blocks, so the comment lists no Dos and approve and merge wait in Needs you. */
+  /** The mail names blocks, so the comment lists no Dos: code review may still hold some. */
   blocksOn?: true;
   /** The App's bot account on GitHub, whose comments and reviews are triage's own. */
   appLogin?: string;

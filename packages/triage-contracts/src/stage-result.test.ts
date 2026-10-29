@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { type } from "arktype";
 import { StageResult } from "./stage-result.js";
 
-const REVIEW = { summary: "One bug.", comments: [{ path: "src/a.ts", start: 3, end: 4, title: "Off by one", body: "The loop skips the last item." }], budgetExhausted: false };
+const REVIEW = { summary: "One bug.", comments: [{ path: "src/a.ts", start: 3, end: 4, title: "Off by one", body: "The loop skips the last item.", priority: 1 }], budgetExhausted: false };
 const VERDICT = { repo: "acme/widgets", number: 8, headSha: "h1", verdict: "pass", checks: [], request: { repo: "acme/widgets", number: 8, comment: "Ready." }, automatic: ["labels"], actions: [] };
 
 test("a stage result is read by its kind, and one whose result is not that kind's output is refused", () => {

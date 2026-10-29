@@ -7,7 +7,7 @@ import { errorText } from "@corbits/common";
 import { unrunnable } from "../logic/execute-do.js";
 import type { Item } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation } from "../logic/quality.js";
-import { choiceOver, decidesByModel, hostAwaited, degradedVerdict, evaluateModel, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, withFailure, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
+import { choiceOver, decidesByModel, hostAwaited, degradedVerdict, evaluateModel, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
 import { waitingMark } from "./waiting.js";
 
@@ -109,7 +109,7 @@ export function partsOf(sources: DeterministicResult["sources"], { plan, focused
   return failing.length > 0 ? focusedPartRequests(requests, failing) : undefined;
 }
 
-const DO_NAMES: Record<ActionKind, string> = {
+export const DO_NAMES: Record<ActionKind, string> = {
   labels: "label",
   assign: "assign",
   "request-review": "request review",
@@ -210,20 +210,6 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
     ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
   };
   return { ...verdict, request: toMirrorRequest(verdict, owned, it.source) };
-}
-
-/**
- * `verdict` on `it` as evaluate makes it once `failed`, a check made after it such as code review, found problems.
- * What the verdict made of its rendering is made again, as the policy makes it for the new verdict. A degraded verdict
- * that names no head keeps what it marks on the pull request in its verdict's place, and is still not posted.
- */
-export function verdictWithFailure(it: Item, verdict: Verdict, failed: CheckResult): Verdict {
-  const { author, reviewers } = it.facts;
-  if (verdict.headSha === null) {
-    const made = withFailure(verdict, failed, { author, det: it.det, reviewers });
-    return { ...verdict, ...made, request: { ...verdict.request, comment: made.feedback } };
-  }
-  return verdictFrom(it, withFailure(renderedOf(it, verdict), failed, { author, det: it.det, reviewers }));
 }
 
 /** What `verdict` rendered, without what verdictFrom made of it on `it`. */
