@@ -94,10 +94,11 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function hubFetch(bitbucket: BitbucketListing): void {
+/** `accessAnswered` false leaves the access check loading. */
+function hubFetch(bitbucket: BitbucketListing, accessAnswered: boolean): void {
   globalThis.fetch = async function answer(input: RequestInfo | URL) {
     const path = new URL(input instanceof Request ? input.url : String(input), "http://hub.test").pathname;
-    if (path.endsWith("/evaluate")) return json({ effect: "allow" });
+    if (path.endsWith("/evaluate")) return accessAnswered ? json({ effect: "allow" }) : new Promise<Response>(() => {});
     if (path.endsWith("/bitbucket-datacenter/tenant/connection")) {
       return bitbucket === null ? json({ error: "not found" }, 404) : json({ baseUrl: "https://bitbucket.test", hookUrl: "https://hub.test/hook" });
     }
@@ -108,8 +109,8 @@ function hubFetch(bitbucket: BitbucketListing): void {
   } as unknown as typeof fetch;
 }
 
-/** Waits until no query is fetching across two flushes, so a query a finished one enables has started and settled too; still fetching after a second fails the test. */
-async function settle(client: QueryClient) {
+/** Waits until only `stillFetching` queries are fetching across two flushes, so a query a finished one enables has started and settled too; more after a second fails the test. */
+async function settle(client: QueryClient, stillFetching: number) {
   const deadline = Date.now() + 1000;
   let idleFlushes = 0;
   while (idleFlushes < 2) {
@@ -117,12 +118,12 @@ async function settle(client: QueryClient) {
     await act(async function flushQueries() {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    idleFlushes = client.isFetching() === 0 ? idleFlushes + 1 : 0;
+    idleFlushes = client.isFetching() === stillFetching ? idleFlushes + 1 : 0;
   }
 }
 
-async function mount(node: ReactNode, bitbucket: BitbucketListing = null) {
-  hubFetch(bitbucket);
+async function mount(node: ReactNode, bitbucket: BitbucketListing = null, accessAnswered = true) {
+  hubFetch(bitbucket, accessAnswered);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const host = document.createElement("div");
   document.body.append(host);
@@ -131,7 +132,7 @@ async function mount(node: ReactNode, bitbucket: BitbucketListing = null) {
     root?.render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
     await Promise.resolve();
   });
-  await settle(client);
+  await settle(client, accessAnswered ? 0 : 1);
 }
 
 function mountSwitch(changes: Partial<PortalSnapshot>) {
@@ -169,17 +170,15 @@ test("the same policy with a saved model shows no model prompt", async () => {
   expect(document.body.textContent ?? "").not.toContain("needs a model");
 });
 
-test("a failed model catalog read shows no model prompt", async () => {
-  await mountSwitch({ modelsError: "The hub is unavailable." });
+test.each([
+  ["model catalog", { modelsError: "The hub is unavailable." }],
+  ["key", { credentialsError: "The hub is unavailable." }],
+])("a failed %s read shows no model prompt", async (_read, changes) => {
+  await mountSwitch(changes);
   expect(document.body.textContent ?? "").not.toContain("needs a model");
 });
 
-test("a failed key read shows no model prompt", async () => {
-  await mountSwitch({ credentialsError: "The hub is unavailable." });
-  expect(document.body.textContent ?? "").not.toContain("needs a model");
-});
-
-function mountConnect(current: PortalSnapshot, bitbucket: BitbucketListing = null) {
+function mountConnect(current: PortalSnapshot, bitbucket: BitbucketListing = null, accessAnswered = true) {
   portal = portalValue(current);
   return mount(
     <SessionProvider>
@@ -193,6 +192,7 @@ function mountConnect(current: PortalSnapshot, bitbucket: BitbucketListing = nul
       </MemoryRouter>
     </SessionProvider>,
     bitbucket,
+    accessAnswered,
   );
 }
 
@@ -232,4 +232,16 @@ test("setup shows a failed Bitbucket Data Center listing with Try again", async 
   expect(openRepositoriesButton()).toBeUndefined();
   expect(document.querySelector("[role=alert]")?.textContent).toContain("Could not read your repositories from Bitbucket Data Center.");
   expect([...document.querySelectorAll("button")].some((element) => element.textContent === "Try again")).toBe(true);
+});
+
+test("setup back from GitHub says nothing about visible repositories while access is still loading", async () => {
+  const browser = (window as unknown as { happyDOM: { setURL: (url: string) => void } }).happyDOM;
+  browser.setURL("https://portal.test/connect?installation_id=1");
+  try {
+    await mountConnect({ ...snapshot(starterPack(REPO), undefined), repos: [] }, null, false);
+    expect(document.body.textContent).toContain("Choose repositories again");
+    expect(document.body.textContent).not.toContain("No repositories are visible");
+  } finally {
+    browser.setURL("https://portal.test/");
+  }
 });

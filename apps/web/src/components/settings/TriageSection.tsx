@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from "react";
+import { Button } from "@corbits/react-ui";
 import { Link } from "react-router-dom";
 import { presetFor, TRIAGE_LISTENERS, type DeployedVersions, type RepoSource } from "@corbits/triage-contracts";
 import { useCheckPacks } from "../../lib/check-packs.ts";
@@ -25,13 +26,18 @@ function undeployedSources(deployments: readonly DeployedWorkflow[], sources: re
   return sources.filter((source) => currentDeployment(deployments, TRIAGE_LISTENERS[source])?.live !== true);
 }
 
-type Status = { sources: RepoSource[]; undeployed: RepoSource[]; keysUnread: boolean; needsModel: boolean; modelUnread: boolean; triaging: number; total: number };
+type Status = { sources: RepoSource[]; undeployed: RepoSource[]; needsModel: boolean; triaging: number; total: number };
 
-function statusText({ sources, undeployed, keysUnread, needsModel, modelUnread, triaging, total }: Status): string {
-  if (keysUnread) return "Triage could not read its keys, so it cannot tell whether triage is running.";
+/** Whether Triage runs depends on the keys and the decision model, so a failed read of either leaves it unknown. */
+function unreadText({ credentialsError, modelsError }: PortalSnapshot): string | null {
+  if (credentialsError !== undefined) return "Couldn't read your keys. Triage can't tell whether it is running.";
+  if (modelsError !== undefined) return "Couldn't read your decision model. Triage can't tell whether it is running.";
+  return null;
+}
+
+function statusText({ sources, undeployed, needsModel, triaging, total }: Status): string {
   if (sources.length === 0) return "Triage is not running: no source is connected.";
   if (needsModel) return "Triage needs a decision model before it can run. Add one below.";
-  if (modelUnread) return "Triage could not read its decision model, so it cannot tell whether triage is running.";
   if (undeployed.length === sources.length) return "Triage is not running: its workflow is not deployed.";
   if (undeployed.length > 0) return `Triage is not running on ${undeployed.map(hostFullName).join(" or ")}: its workflow is not deployed.`;
   if (total === 0) return "Triage is running, but no repository is connected yet.";
@@ -68,17 +74,16 @@ function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
       <div className="source-body">
         {snapshot.denied.credentials && <DeniedNotice section="credentials" />}
         <div className="sentences">
-          {snapshot.modelsError && !snapshot.credentialsError
-            ? <p role="alert" className="field-error">Triage could not read the saved decision model: {snapshot.modelsError}</p>
-            : <KeyRow
-                words={words}
-                name="decision model"
-                keys={modelSecrets(snapshot.credentials).filter(isActiveCredential)}
-                denied={snapshot.denied.credentials}
-                remove={removeDecisionModel}
-                error={snapshot.credentialsError}
-                editor={(onSaved) => <DecisionModelForm onSaved={onSaved} />}
-              />}
+          {snapshot.modelsError && <p role="alert" className="field-error">Triage could not read the saved decision model: {snapshot.modelsError}</p>}
+          <KeyRow
+            words={words}
+            name="decision model"
+            keys={modelSecrets(snapshot.credentials).filter(isActiveCredential)}
+            denied={snapshot.denied.credentials}
+            remove={removeDecisionModel}
+            error={snapshot.credentialsError}
+            editor={(onSaved) => <DecisionModelForm onSaved={onSaved} />}
+          />
         </div>
       </div>
     </div>
@@ -86,6 +91,7 @@ function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
 }
 
 export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: DeployedSection }) {
+  const { refresh } = usePortal();
   const enabled = useMemo(() => [...triageEnabledRepos(snapshot.repos)], [snapshot.repos]);
   const packs = useCheckPacks(enabled);
   const ready = !deployed.denied && !deployed.loading && !deployed.unavailable && !packsPending(packs);
@@ -94,11 +100,10 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
     sources,
     undeployed: undeployedSources(deployed.rows, sources),
     needsModel: lacksDecisionModel(snapshot),
-    keysUnread: snapshot.credentialsError !== undefined,
-    modelUnread: snapshot.modelsError !== undefined,
     triaging: triageReadyRepos(snapshot.repos, packs).size,
     total: snapshot.repos.length,
   };
+  const unread = unreadText(snapshot);
 
   return (
     <section className="sec" id="triage" aria-labelledby="sec-triage">
@@ -111,7 +116,8 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
         {ready && (
           <div className="sentences">
             <div className="sentence">
-              <span className="txt">{statusText(status)}</span>
+              <span className="txt">{unread ?? statusText(status)}</span>
+              {unread && <Button type="button" variant="outline" size="sm" onClick={refresh}>Try again</Button>}
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
             {deployed.stalled?.map((host) => (

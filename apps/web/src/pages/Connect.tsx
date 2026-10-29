@@ -68,8 +68,9 @@ export default function Connect() {
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
   const openable = useRepositories();
-  const bitbucketError = snapshot && connectedSources(snapshot.credentials).includes("bitbucket-datacenter") ? openable.error : null;
-  const listingError = bitbucketError ? `Could not read your repositories from Bitbucket Data Center. ${bitbucketError.message}` : "";
+  const bitbucketConnected = Boolean(snapshot && connectedSources(snapshot.credentials).includes("bitbucket-datacenter"));
+  const bitbucketError = bitbucketConnected ? openable.error : null;
+  const listingError = bitbucketError ? `Could not read your repositories from Bitbucket Data Center. ${bitbucketError.message}` : null;
   const verdicts = useTriageVerdicts();
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const catching = useMemo(() => catchingUpRepos(verdicts.data?.pulls ?? [], triaged), [verdicts.data, triaged]);
@@ -154,7 +155,10 @@ export default function Connect() {
   const sync = useGithubSync(githubConnected && (fromGithub || repos.length === 0));
   const syncError = sync.error ? `Could not read your repositories from GitHub. ${sync.error.message}` : "";
   const noReposYet = fromGithub && sync.data?.repos.length === 0;
-  const noneVisible = !openable.pending && !bitbucketError && !syncError && !sync.isFetching && openable.repos.length === 0;
+  // Only a listing that was read can show there are none; one still loading or not allowed says nothing.
+  const githubRead = !githubConnected || (sync.data !== undefined && !syncError);
+  const bitbucketRead = !bitbucketConnected || (!openable.pending && !bitbucketError);
+  const noneVisible = !noReposYet && githubRead && bitbucketRead && openable.repos.length === 0;
 
   // Each sync result moves onboarding to the step GitHub's state implies.
   const [lastSync, setLastSync] = useState(sync.data);
