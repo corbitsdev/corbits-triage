@@ -117,7 +117,12 @@ function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
 
 function KeysUnreadNotice({ message }: { message: string }) {
   const { refreshNow } = usePortal();
-  const retry = useMutation({ mutationFn: refreshNow });
+  const retry = useMutation({
+    mutationFn: async function retryKeys() {
+      const next = await refreshNow();
+      if (next?.credentialsError) throw new Error(next.credentialsError);
+    },
+  });
   return (
     <main className="page-notice" id="main">
       <p>Couldn't read your workspace's keys.</p>

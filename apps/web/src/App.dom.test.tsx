@@ -239,21 +239,31 @@ test("a connected workspace whose keys could not be read sees a notice with Try 
   expect([...document.querySelectorAll("button")].some((button) => button.textContent === "Try again")).toBe(true);
 });
 
-test("a retry that fails says so and offers Try again again", async () => {
+async function retryKeys(settle: () => void) {
   snapshot = { ...connectedSnapshot, credentialsError: "The hub is unavailable." };
   connected = false;
   renderAt("/");
-
   await act(async () => {
     [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   await act(async () => {
-    failRefresh(new Error("Could not reach the service."));
+    settle();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys: Could not reach the service.");
+}
+
+test("a retry that still cannot read the keys says so and offers Try again again", async () => {
+  await retryKeys(() => finishRefresh());
+
+  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys: The hub is unavailable.");
   expect([...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.disabled).toBe(false);
+});
+
+test("a retry that cannot reach the service says so", async () => {
+  await retryKeys(() => failRefresh(new Error("Could not reach the service.")));
+
+  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys: Could not reach the service.");
 });
 
 test("a workspace with no keys stored is sent to onboarding", () => {
