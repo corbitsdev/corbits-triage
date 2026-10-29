@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import { diffFiles, type DiffFileStatus } from "@corbits/common/diff-files";
 import { DIFF_MOUNT } from "@corbits/repo-read-tool";
+import type { UnreadLines } from "@corbits/triage-contracts";
 import type { LinesRead } from "./lines-read.js";
 
 /** Where the read tools show the folder the checkout action writes the pull request's diff into, one patch per changed file. */
@@ -127,12 +128,39 @@ export function shownIn(reply: string): LinesRead {
   return read;
 }
 
-function partShown(part: DiffPart, reads: readonly LinesRead[]): boolean {
-  for (let line = 1; line <= part.lines; line++) if (!reads.some((read) => read.get(part.path)?.has(line))) return false;
-  return true;
+/** Past this many files, a review's unread files are counted but not listed. */
+const MAX_UNREAD_FILES = 50;
+
+/** Past this many ranges, a file's unread lines run to the end of its last range, so none is left out. */
+const MAX_UNREAD_RANGES = 20;
+
+/** The lines of the file's patch none of `reads` showed; a line a part continues from the one before is that same line. */
+function unreadOf(file: IndexedFile, reads: readonly LinesRead[]): Set<number> {
+  const unread = new Set<number>();
+  let started = 0;
+  let continued = false;
+  for (const part of file.parts) {
+    const first = continued ? started : started + 1;
+    for (let line = 1; line <= part.lines; line++) if (!reads.some((read) => read.get(part.path)?.has(line))) unread.add(first + line - 1);
+    started = first + part.lines - 1;
+    continued = !part.text.endsWith("\n");
+  }
+  return unread;
 }
 
-/** Whether every line of every patch file was shown in at least one of `reads`. */
-export function readWhole(files: readonly IndexedFile[], reads: readonly LinesRead[]): boolean {
-  return files.every((file) => file.parts.every((part) => partShown(part, reads)));
+/** At most MAX_UNREAD_RANGES of `ranges`, the last running to the end of the last of them. */
+function capped(ranges: [number, number][]): [number, number][] {
+  if (ranges.length <= MAX_UNREAD_RANGES) return ranges;
+  const kept = ranges.slice(0, MAX_UNREAD_RANGES);
+  kept[MAX_UNREAD_RANGES - 1] = [kept[MAX_UNREAD_RANGES - 1]![0], ranges.at(-1)![1]];
+  return kept;
+}
+
+/** The first MAX_UNREAD_FILES changed files with patch lines none of `reads` showed, those lines, and how many files have any. */
+export function unreadLines(files: readonly IndexedFile[], reads: readonly LinesRead[]): { unread: UnreadLines[]; unreadFiles: number } {
+  const unread = files.flatMap(function unreadIn(file) {
+    const lines = unreadOf(file, reads);
+    return lines.size > 0 ? [{ path: file.path, lines: capped(rangesOf(lines)) }] : [];
+  });
+  return { unread: unread.slice(0, MAX_UNREAD_FILES), unreadFiles: unread.length };
 }

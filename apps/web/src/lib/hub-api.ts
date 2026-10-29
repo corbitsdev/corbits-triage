@@ -800,6 +800,10 @@ export type CodeReviewRun = {
   budgetExhausted?: boolean;
   /** Whether its finders between them read every line of the diff; a finished review without it is not complete. */
   complete?: boolean;
+  /** The first 50 changed files with patch lines no finder read, in at most 20 ranges each; absent on a review recorded before it was kept. */
+  unread?: { path: string; lines: [number, number][] }[];
+  /** How many files have patch lines no finder read; absent with `unread`. */
+  unreadFiles?: number;
 };
 
 /**

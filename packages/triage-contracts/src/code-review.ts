@@ -39,12 +39,18 @@ export type CodeReviewComment = typeof CodeReviewComment.infer;
 /** A finding the review left out: its check found it not real, or could not decide and only one finder reported it. */
 const CodeReviewDropped = CodeReviewComment.and({ verdict: "'not_real' | 'unsure'", reason: "string" });
 
+/** A changed file's repository path and the ranges of its patch's lines no finder was shown, numbered through the whole patch. */
+export const UnreadLines = type({ path: "string", lines: type(["number", "number"]).array() });
+export type UnreadLines = typeof UnreadLines.infer;
+
 /**
  * What a code review run answers: its summary, its findings, the findings its check dropped, whether its reader
  * stopped early, and `complete` when its finders between them were shown every line of the diff without either
- * spending its budget. A review without it, as one recorded before it was reported, is not complete.
+ * spending its budget. A review without it, as one recorded before it was reported, is not complete. `unread` lists the
+ * first 50 files with patch lines no finder was shown, in at most 20 ranges each, and `unreadFiles` counts every such
+ * file; a review recorded before they were reported has neither.
  */
-export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean", "complete?": "boolean" });
+export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean", "complete?": "boolean", "unread?": UnreadLines.array(), "unreadFiles?": "number.integer >= 0" });
 export type CodeReviewOutput = typeof CodeReviewOutput.infer;
 
 /** The title and priority of a finding, or of a comment a review posted before every finding carried a priority. */

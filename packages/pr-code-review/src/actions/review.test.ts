@@ -9,7 +9,7 @@ import { linesOf } from "@corbits/repo-read-tool";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { consolidateDirectorOf } from "../consolidate-director.js";
 import type { CodeReviewProfile, Effort, Role } from "../profile.js";
-import { DIFF_DIR, DIFF_INDEX, indexedFiles, MAX_PART_BYTES, readWhole, shownTag } from "../diff-parts.js";
+import { DIFF_DIR, DIFF_INDEX, indexedFiles, MAX_PART_BYTES, shownTag, unreadLines } from "../diff-parts.js";
 import { BUDGET_EXHAUSTED, checkoutPath, checkoutUnder, diffDirOf } from "./checkout.js";
 import { candidates, checks, findersInput, review, reviewInputFor, writeInput } from "./review.js";
 
@@ -128,8 +128,9 @@ test("a single line past the part limit is cut inside the line, and its parts re
   expect(file!.parts.map((part) => part.lines)).toEqual([5, 1, 1]);
   expect(file!.parts[1]!.text).not.toContain("\n");
   const everyLine = new Map(file!.parts.map((part) => [part.path, new Set(Array.from({ length: part.lines }, (_, i) => i + 1))]));
-  expect(readWhole([file!], [everyLine])).toBe(true);
-  expect(readWhole([file!], [new Map([...everyLine].slice(0, 2))])).toBe(false);
+  expect(unreadLines([file!], [everyLine])).toEqual({ unread: [], unreadFiles: 0 });
+  expect(unreadLines([file!], [new Map([...everyLine].slice(0, 2))]).unread).toEqual([{ path: "min.js", lines: [[6, 6]] }]);
+  expect(unreadLines([file!], []).unread).toEqual([{ path: "min.js", lines: [[1, file!.lines]] }]);
 });
 
 test("a checkout whose tree holds .corbits as a link or a file still gets its diff, written beside the tree and never through it", async () => {
@@ -187,6 +188,31 @@ test("a review is complete only when the finders between them were shown every l
   expect(await complete(shownReply(whole, true), shownReply({}))).toBe(false);
   expect(await complete(shownReply(whole), shownReply({}, true))).toBe(false);
   expect(await complete(reply({ findings: [] }), reply({ findings: [] }))).toBe(false);
+});
+
+test("a review names each file a finder skipped, with the patch lines neither finder was shown", async () => {
+  const diff = diffOf("src/a.ts", "x") + diffOf("src/b.ts", "y");
+  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff, checkout })) };
+  const found = await candidates({ reviewInput, findDiff: shownReply({ "/diff/0001.patch": [[1, 6]], "/diff/0002.patch": [[1, 2]] }), findRepo: shownReply({ "/diff/0001.patch": [[1, 6]] }) });
+  expect(found.complete).toBe(false);
+  expect(found.unread).toEqual([{ path: "src/b.ts", lines: [[3, 6]] }]);
+  expect(found.unreadFiles).toBe(1);
+});
+
+test("a file's unread lines past twenty ranges run to its last unread line, and none lies past its patch", () => {
+  const [file] = indexedFiles(largeDiff(60).big);
+  const everyOther = new Map([[file!.parts[0]!.path, new Set(Array.from({ length: file!.lines }, (_, i) => i + 1).filter((line) => line % 2 === 0))]]);
+  const [unread] = unreadLines([file!], [everyOther]).unread;
+  expect(unread!.lines.length).toBe(20);
+  expect(unread!.lines.slice(0, 19)).toEqual(Array.from({ length: 19 }, (_, i) => [2 * i + 1, 2 * i + 1]));
+  expect(unread!.lines[19]).toEqual([39, file!.lines]);
+});
+
+test("a review lists the first fifty files with unread lines and counts them all", () => {
+  const files = indexedFiles(Array.from({ length: 60 }, (_, i) => diffOf(`src/f${i}.ts`, "x")).join(""));
+  const { unread, unreadFiles } = unreadLines(files, []);
+  expect(unread.map((file) => file.path)).toEqual(files.slice(0, 50).map((file) => file.path));
+  expect(unreadFiles).toBe(60);
 });
 
 test("a repository finder that spent its budget before answering in JSON found nothing, and the diff finder's findings stay", async () => {

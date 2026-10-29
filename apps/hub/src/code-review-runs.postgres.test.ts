@@ -26,6 +26,8 @@ const REVIEW = {
   comments: [{ path: "src/total.ts", start: 3, end: 3, title: "total() skips the first element", body: "The loop starts at 1.", priority: 1, quoted: "for (let i = 1; i < xs.length; i++) sum += xs[i];", unverified: true as const }],
   budgetExhausted: true,
   complete: false,
+  unread: [{ path: "src/a.ts", lines: [[3, 6]] as [number, number][] }],
+  unreadFiles: 1,
 };
 
 const OUTPUT = { ...REVIEW, comments: REVIEW.comments.map((comment) => ({ ...comment, agreement: { finders: 1, reports: 1 } })) };

@@ -161,7 +161,7 @@ export function mergesOnItsOwn(item: PrItem): boolean {
   return item.actions.some((action) => action.kind === "merge" && !awaitsApproval(action) && action.status !== "done" && action.status !== "satisfied");
 }
 
-function joined(phrases: string[]): string {
+export function joined(phrases: string[]): string {
   if (phrases.length < 2) return phrases.join("");
   return `${phrases.slice(0, -1).join(", ")} and ${phrases[phrases.length - 1]}`;
 }

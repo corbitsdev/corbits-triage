@@ -27,7 +27,7 @@ const SESSION = { id: "ses_member", userId: USER.id, token: "tok_member", expire
 const GITHUB: PullRequestRef = { source: "github", repo: "acme/widgets", number: 7 };
 const BITBUCKET: PullRequestRef = { source: "bitbucket-datacenter", repo: "ACME/widgets", number: 7 };
 const OTHER_PULL: PullRequestRef = { source: "github", repo: "acme/widgets", number: 8 };
-const REVIEW = { summary: "No bugs.", comments: [], budgetExhausted: false };
+const REVIEW = { summary: "No bugs.", comments: [], budgetExhausted: false, complete: false, unread: [{ path: "src/a.ts", lines: [[3, 6]] }], unreadFiles: 1 };
 const OpenApi = type({ paths: "Record<string, Record<string, unknown>>" });
 const Operation = type({ requestBody: { content: { "application/json": { schema: "object" } } }, responses: { 200: { content: { "application/json": { schema: "object" } } }, 400: "object", 403: "object", 413: "object" } });
 const FencedOperation = Operation.and({ responses: { 409: "object" } });
@@ -202,7 +202,7 @@ test("PostgreSQL: done keeps each posted finding's comment, the first pass on a 
     await post(app, "done", { ...GITHUB, reviewers: [] }, manager);
     await post(app, "take", GITHUB, manager);
     expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threadIds: { runId: "run_reviewer", ids: [501] } }, manager)).json()).toEqual({ outcome: "ended" });
-    expect(logged).toEqual([expect.objectContaining({ msg: "finding_threads_misaligned", findings: 3, ids: 1 })]);
+    expect(logged).toEqual([expect.objectContaining({ msg: "code_review_incomplete", runId: "run_reviewer", head: "h1", unread: ["src/a.ts"], unreadFiles: 1 }), expect.objectContaining({ msg: "finding_threads_misaligned", findings: 3, ids: 1 })]);
     await recordEvent(db, TENANT, GITHUB, "posted", { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1" } });
     expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h1" }, threads: [] });
     expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threadIds: { runId: "run_reviewer", ids: [501, null, 502] } }, manager)).json()).toEqual({ outcome: "ended" });
