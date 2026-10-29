@@ -34,7 +34,7 @@ import {
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { policyKinds, REPO_SOURCES, repoSourceOf, timingsFrom, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
-import { asRecord, errorText } from "@corbits/common";
+import { asRecord, decodedSegment, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
@@ -995,14 +995,6 @@ const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandl
 const CREDENTIAL_WRITE = /^\/api\/tenants\/([^/]+)\/credentials(?:\/([^/]+))?$/;
 const PROVIDER_WRITE = /^\/api\/tenants\/([^/]+)\/providers(?:\/([^/]+))?$/;
 
-function decodedSegment(segment: string): string | undefined {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return undefined;
-  }
-}
-
 /** Rolls the workspace after a release write succeeds, starting again the listeners of the hosts the write reaches. */
 async function forwardReleaseWrite(req: Request, path: string, forward: () => Promise<Response> | Response): Promise<Response> {
   const release = workflowsBundled ? await releaseWriteOf(composition.db, req, path) : undefined;
@@ -1046,12 +1038,8 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
   if (req.method === "PATCH") {
     const tenantMatch = /^\/api\/tenants\/([^/]+)$/.exec(path);
     if (tenantMatch) {
-      let tenantId = tenantMatch[1]!;
-      try {
-        tenantId = decodeURIComponent(tenantId);
-      } catch {
-        return Response.json({ error: "not_found" }, { status: 404 });
-      }
+      const tenantId = decodedSegment(tenantMatch[1]!);
+      if (tenantId === undefined) return Response.json({ error: "not_found" }, { status: 404 });
       const principalId = await tenantManager({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
       if (principalId instanceof Response) return principalId;
       let switchedOn = false;

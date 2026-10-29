@@ -1,12 +1,11 @@
 // Pull request heads for a tenant's repositories, read as the tenant's GitHub
 // App or Bitbucket Data Center token by each record's source, for hub-side work.
 import type { DB } from "@intx/db";
-import { asRecord } from "@corbits/common";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { tokenUser } from "@corbits/bitbucket-datacenter-tool/bitbucket";
 import { getChecks, listOpenPrs, readPr, type GithubFetch } from "@corbits/github-reads";
 import type { TenantBitbucket } from "../bitbucket-datacenter/tenant-bitbucket.js";
-import { GITHUB_CREDENTIAL, githubAppKey, type AppKeyDeps } from "./app-key.js";
+import { GITHUB_CREDENTIAL, githubAppKey, githubAppLogin, type AppKeyDeps } from "./app-key.js";
 import { createGithubAppCredentialFetch } from "./github-app-credential-adapter.js";
 import { forInstallation, type OpenPrsLister } from "./open-pulls.js";
 import { appGithubFetch, heldCredential } from "./portal-credential.js";
@@ -74,8 +73,8 @@ export function createTenantGithub(deps: TenantGithubDeps) {
 /** The login the workspace's GitHub App writes as, read from its credential without asking GitHub; undefined when it has no slug or can't be read, since the listing must not fail over it. */
 async function appBotLogin(db: DB["db"], tenantId: string): Promise<string | undefined> {
   try {
-    const slug = asRecord((await heldCredential(db, tenantId, GITHUB_CREDENTIAL))?.metadata)?.["appSlug"];
-    return typeof slug === "string" && slug !== "" ? `${slug}[bot]` : undefined;
+    const held = await heldCredential(db, tenantId, GITHUB_CREDENTIAL);
+    return held ? githubAppLogin(held) : undefined;
   } catch {
     return undefined;
   }

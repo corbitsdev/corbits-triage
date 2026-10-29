@@ -6,6 +6,7 @@ import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import type { ReactorDirector } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { type } from "arktype";
+import { errorText } from "@corbits/common";
 import { setTimeout as sleep } from "node:timers/promises";
 import { hasEnded } from "./actions/hub.js";
 
@@ -64,7 +65,7 @@ function mailBundle(env: MailEnv): ToolBundle {
         const sent = await env.transport.send({ to: `${input.to}@${domain}`, type: "conversation.message", content: input.content }, signal);
         return { callId: call.id, content: { to: input.to, mailed: true, ...sent } };
       } catch (err) {
-        return { callId: call.id, content: err instanceof Error ? err.message : String(err), isError: true };
+        return { callId: call.id, content: errorText(err), isError: true };
       }
     },
   };

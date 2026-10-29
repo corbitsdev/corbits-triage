@@ -14,6 +14,7 @@
     "tools": "./src/index.ts"
   },
   "dependencies": {
+    "@corbits/common": "workspace:*",
     "@intx/agent": "workspace:*",
     "@intx/types": "workspace:*",
     "minimatch": "10.2.6",

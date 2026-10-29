@@ -1,14 +1,13 @@
 import { useState } from "react";
 import { Button } from "@corbits/react-ui";
 import { Link } from "react-router-dom";
-import { errorText } from "@corbits/common";
+import { counted, errorText } from "@corbits/common";
 import { githubAppHeld, githubSecrets, namedSecrets, otherSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
 import { githubAppPickerUrl, githubWebhookUrl, GITHUB_APP_PICKER_UNAVAILABLE, openGithubInstallation } from "../../lib/github-manifest.ts";
 import { useGithubReturnSync } from "../../lib/github-return-sync.ts";
 import { useGithubManageAccess } from "../../lib/github-sync.ts";
 import { GITHUB_CREDENTIAL_NAME, GITHUB_READ_CREDENTIAL_NAME, githubAppSlugFromCredentials, hasActiveGithubCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
-import { counted } from "../../lib/plural.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { CopyField } from "../CopyField.tsx";
 import { CredentialRow } from "./CredentialRow.tsx";

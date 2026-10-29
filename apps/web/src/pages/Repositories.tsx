@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { Button } from "@corbits/react-ui";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
-import { errorText } from "@corbits/common";
+import { counted, errorText } from "@corbits/common";
 import HealthMark from "../components/repo-panel/HealthMark.tsx";
 import RepoPanel from "../components/repo-panel/RepoPanel.tsx";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
@@ -23,10 +23,6 @@ import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { relativeTime } from "../lib/triage-view.ts";
 
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
-
 function listed(words: string[]): string {
   if (words.length <= 1) return words.join("");
   return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
@@ -43,7 +39,7 @@ function checksLabel(state: PackState | undefined): string {
   if (!state || state.pending) return "";
   if (state.error) return "Could not read";
   if (state.found?.kind === "invalid") return "Policy file refused";
-  return state.found ? `${plural(enabledCheckCount(state.found.pack), "rule")} on` : "Not set up";
+  return state.found ? `${counted(enabledCheckCount(state.found.pack), "rule", "rules")} on` : "Not set up";
 }
 
 function ownersLabel(owners: string[]): string {

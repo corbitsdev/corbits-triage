@@ -3,7 +3,7 @@
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
 import { SidecarIdentityValidationError, type AllocatedSidecarTarget } from "@intx/hub-sessions";
-import { asRecord, errorText } from "@corbits/common";
+import { asRecord, decodedSegment, errorText } from "@corbits/common";
 import { REPO_SOURCES, type RepoSource } from "@corbits/triage-contracts";
 
 /** A write that can change a workspace's release: its catalog decides which workflows publish and the offerings they run on. */
@@ -17,14 +17,6 @@ export type ReleaseWrite = { tenantId: string; redeploy: readonly RepoSource[] }
 export function credentialHosts(name: string): readonly RepoSource[] {
   const host = REPO_SOURCES.find((source) => name === source || name.startsWith(`${source}-`));
   return host ? [host] : REPO_SOURCES;
-}
-
-function decoded(segment: string): string | undefined {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return undefined;
-  }
 }
 
 async function credentialName(db: DB["db"], req: Request, tenantId: string, credentialId: string | undefined): Promise<string | undefined> {
@@ -47,10 +39,10 @@ async function credentialName(db: DB["db"], req: Request, tenantId: string, cred
 export async function releaseWriteOf(db: DB["db"], req: Request, path: string): Promise<ReleaseWrite | undefined> {
   if (!WRITE_METHODS.has(req.method)) return undefined;
   const written = RELEASE_WRITE.exec(path);
-  const tenantId = written ? decoded(written[1]!) : undefined;
+  const tenantId = written ? decodedSegment(written[1]!) : undefined;
   if (!written || tenantId === undefined) return undefined;
   if (written[2] !== "credentials") return { tenantId, redeploy: REPO_SOURCES };
-  const credentialId = written[3] === undefined ? undefined : decoded(written[3]);
+  const credentialId = written[3] === undefined ? undefined : decodedSegment(written[3]);
   const name = await credentialName(db, req, tenantId, credentialId);
   return { tenantId, redeploy: name === undefined ? REPO_SOURCES : credentialHosts(name) };
 }

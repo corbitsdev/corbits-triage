@@ -1,4 +1,4 @@
-import { asRecord } from "@corbits/common";
+import { asRecord, optionalString } from "@corbits/common";
 
 export const TRIAGE_STATE_KIND = "corbits.triage.state";
 export const TRIAGE_STATE_SCHEMA_VERSION = 1;
@@ -55,10 +55,6 @@ const HELD_FOR_CI = "waiting";
 
 export function triageStateName(repo: string): string {
   return `triage-state/${repo}`;
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function parseRow(raw: unknown): PrTriageRow | null {

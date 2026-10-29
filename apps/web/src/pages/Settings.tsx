@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useParams } from "react-router-dom";
 import { connectedSources, isPerson, type HubPrincipal, type PortalSnapshot } from "../lib/hub-api.ts";
-import { counted } from "../lib/plural.ts";
+import { counted } from "@corbits/common";
 import { usePortal } from "../lib/portal.tsx";
 import { useDeployedVersions, usePrincipals, type TenantSection } from "../lib/tenant-entities.ts";
 import { InvitePeople } from "../components/InvitePeople.tsx";

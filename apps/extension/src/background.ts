@@ -5,6 +5,7 @@ import type { Reply, Request } from "./messages.ts";
 import { policyFor } from "./policy-source.ts";
 import { prKey } from "./pr.ts";
 import { browserSession, sessionGithub, sessionLogin, type SessionReads } from "./session-reads.ts";
+import { settle } from "./settle.ts";
 import { openPanelOnActionClick, openSidePanel } from "./side-panel.ts";
 import { clearRunning, clearSaved, githubToken, readAs, saveView, setRunState, tokenSaved, views } from "./storage.ts";
 import { FRESH_MS, type TriageView } from "./view.ts";
@@ -12,14 +13,6 @@ import { FRESH_MS, type TriageView } from "./view.ts";
 type Triage = Extract<Request, { type: "triage" }>;
 
 const running = new Map<string, Promise<null>>();
-
-async function settle(work: Promise<unknown>): Promise<void> {
-  try {
-    await work;
-  } catch (cause) {
-    console.warn(errorText(cause));
-  }
-}
 
 /** Opened in the same turn as the click's message: the side panel opens only inside a user gesture. */
 function openPanel(windowId: number | undefined): void {

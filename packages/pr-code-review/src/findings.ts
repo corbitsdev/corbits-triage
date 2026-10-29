@@ -1,3 +1,4 @@
+import { isRecord } from "@corbits/common";
 import { diffFiles } from "@corbits/common/diff-files";
 
 /** A line range of the head side of a file. */
@@ -72,10 +73,6 @@ function closingBrace(text: string, open: number): number {
     else if (c === "}" && --depth === 0) return i;
   }
   return -1;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function integerOf(value: unknown): number | undefined {

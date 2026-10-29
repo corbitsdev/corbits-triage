@@ -11,6 +11,7 @@ import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
 import { DEPLOYER_ROLE, emptyPack, exportPolicyFile, parseTriageState, TRIAGE_LISTENERS, triageStateName, TriageStats } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
+import { mirrorCallId } from "@corbits/triage-workflows/actions/mirror";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { replaceVerdict } from "./github/verdict-record-store.js";
 import { mirrorOutcomesOf, summaryOf } from "./github/verdict-row.js";
@@ -561,7 +562,7 @@ async function seedVerdict(db: Db, tenantId: string, runId: string, started: Dat
   const number = Number(verdict["number"]);
   const headSha = String(verdict["headSha"]);
   const trigger = { repo: REPO, source: "github" as const, number, headSha, startedAt: started.toISOString() };
-  const mirror = mirrorOutcomesOf(mirrored ? { call: `mirror:${REPO.replace("/", "--")}:${number}`, ok: true } : undefined);
+  const mirror = mirrorOutcomesOf(mirrored ? { call: mirrorCallId(REPO, number), ok: true } : undefined);
   const summary = summaryOf(verdict, new Date(started.getTime() + tookMs).toISOString(), trigger, mirror, undefined);
   if (!summary) throw new Error(`no summary for ${runId}`);
   await replaceVerdict(db, tenantId, { runId, repo: REPO, number, headSha, startedAt: started, ...summary, runStatus: "completed" });

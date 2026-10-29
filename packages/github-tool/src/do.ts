@@ -1,3 +1,4 @@
+import { errorText } from "@corbits/common";
 import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { checkRepo } from "@corbits/repo-read-tool/host-reads";
@@ -91,7 +92,7 @@ async function takeBackOwnRequest(gh: GithubFetch, input: { repo: string; number
     await dismissDoChangeRequests(gh, input);
     return undefined;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return errorText(err);
   }
 }
 

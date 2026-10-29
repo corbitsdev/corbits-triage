@@ -3,7 +3,7 @@ import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
 import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, threadsUnread, triageEventsOf, trustedRequestOf, visibleText, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
-import { isRecord } from "@corbits/common";
+import { errorText, isRecord } from "@corbits/common";
 import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
 import { packMerges } from "../logic/actions.js";
 import { asText } from "../logic/extract.js";
@@ -478,7 +478,7 @@ export async function readFacts(input: unknown, hostFor: (source: RepoSource) =>
   try {
     pack = packFromInput(rawPack);
   } catch (error) {
-    return fail(`${DEPLOYMENT_UNREADABLE}${error instanceof Error ? error.message : String(error)}`, granted);
+    return fail(`${DEPLOYMENT_UNREADABLE}${errorText(error)}`, granted);
   }
   const repoSource = repoSourceOf(request.repoSource);
   const source = policySource(request);

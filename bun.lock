@@ -324,6 +324,7 @@
       "name": "@corbits/repo-read-tool",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
         "minimatch": "10.2.6",
@@ -422,6 +423,7 @@
       "name": "@corbits/model-test",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-manager": "workspace:*",

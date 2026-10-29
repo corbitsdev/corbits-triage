@@ -1,4 +1,5 @@
 import { parse } from "@ast-grep/napi";
+import { errorText } from "@corbits/common";
 import { isForeignPath, PATTERN_EXTENSIONS, PATTERN_PRESETS, type PatternExtension, patternRuleApplies, type PatternLanguage, type PatternRule, type PatternsCheck, type RepoSource } from "@corbits/triage-contracts";
 import type { PrFileFacts } from "./checks.js";
 import { addedLines } from "./hunks.js";
@@ -129,7 +130,7 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
       else matches.push(...fileMatches(file, file.patch!, content, grammarOf(file.path)!, rules));
     }
   } catch (error) {
-    return { unread: error instanceof Error ? error.message : String(error) };
+    return { unread: errorText(error) };
   }
   if (matches.length === 0 && unchecked.length > 0) return { unread: namedUnchecked(unchecked) };
   const skipped = [

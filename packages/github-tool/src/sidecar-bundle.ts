@@ -39,6 +39,7 @@ import {
 import { DoNotRunnableError, executeDo, parseDoInput } from "./do";
 import { cachedLoads, checkRepo, checkTarget } from "@corbits/repo-read-tool/host-reads";
 import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
+import { errorText } from "@corbits/common";
 import { diffHash } from "@corbits/common/diff-hash";
 
 export const CREDENTIAL_HANDLE = "github";
@@ -349,7 +350,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
       try {
         return { ...mirrored, dismissed: [...dismissed, ...await dismissDoChangeRequests(gh, target)] };
       } catch (err) {
-        return { ...mirrored, dismissed, changeRequestsKept: err instanceof Error ? err.message : String(err) };
+        return { ...mirrored, dismissed, changeRequestsKept: errorText(err) };
       }
     }
     case "github_execute_do_auto":
@@ -385,7 +386,7 @@ function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promis
     } catch (err) {
       return {
         callId: call.id,
-        content: err instanceof Error ? err.message : String(err),
+        content: errorText(err),
         isError: true,
       };
     }

@@ -1,6 +1,7 @@
 // Requires PostgreSQL at localhost:5432 (docs/DEV.md). Checks the rules in docs/INVARIANTS.md after every sequence of
 // events on a pull request, each on a pull request of its own, so no reset is needed between them.
 import { afterAll, expect, mock, setDefaultTimeout, test } from "bun:test";
+import { errorText } from "@corbits/common";
 import { emptyPack } from "@corbits/triage-contracts";
 import { OWNER } from "../chain/github.ts";
 import { LETTERS, open, play, settle, walk, type Letter } from "./events.ts";
@@ -47,7 +48,7 @@ async function check(letters: readonly Letter[], model = stack): Promise<Checked
   } catch (err) {
     // The queue may hold the failed sequence's mail; the next sequence starts from none.
     model.queue.length = 0;
-    return { played: [...letters], breaks: [`threw after ${played.length} events: ${err instanceof Error ? err.message : String(err)}`] };
+    return { played: [...letters], breaks: [`threw after ${played.length} events: ${errorText(err)}`] };
   }
 }
 

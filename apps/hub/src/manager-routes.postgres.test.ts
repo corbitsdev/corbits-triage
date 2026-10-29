@@ -10,6 +10,7 @@ import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession 
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
 import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
+import { mirrorCallId } from "@corbits/triage-workflows/actions/mirror";
 import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createOverdueWake, createSupersede } from "./manager-intake.js";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
@@ -356,7 +357,7 @@ function postedOn(pr: PullRequestRef, head: string) {
     report: {
       head,
       verdict: { repo: pr.repo, number: pr.number, headSha: head, verdict: "pass", state: "ready-monitoring", actor: "author", humanGated: false, degraded: null, checks: [{ check: "title", kind: "machine", result: "pass" }], actions, request },
-      mirror: { call: `mirror:${pr.repo.replace("/", "--")}:${pr.number}`, ok: true },
+      mirror: { call: mirrorCallId(pr.repo, pr.number), ok: true },
       executed: { dos: [{ effectId: `auto-${head}`, status: "done" }] },
       rules: { items: [{ facts: { repo: pr.repo, number: pr.number, title: "Fix the widget", author: "octocat" }, det: { findings: [{ reason: "The title says what changed." }] } }] },
     },

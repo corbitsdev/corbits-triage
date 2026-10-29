@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "
 import { Badge, Button, StatusDot } from "@corbits/react-ui";
 import { Link, useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
-import { errorText } from "@corbits/common";
+import { counted, errorText } from "@corbits/common";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
 import { useRepositories } from "../lib/bitbucket-datacenter.ts";
 import { connectedSources, githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
@@ -19,7 +19,6 @@ import {
   startGithubManifest,
 } from "../lib/github-manifest.ts";
 import { useGithubSync } from "../lib/github-sync.ts";
-import { counted } from "../lib/plural.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { sameRepo } from "../lib/repo-id.ts";
 import { hostedRepos } from "../lib/repo-rows.ts";
