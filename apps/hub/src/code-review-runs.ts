@@ -51,7 +51,7 @@ function reviewOf(record: CodeReviewRecord): Review {
   if ("failed" in reported) return { ...base, status: "failed" };
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
   const { summary, budgetExhausted, complete } = reported.result;
-  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
+  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
   return { ...base, status: "completed", summary, comments, budgetExhausted, ...(complete !== undefined && { complete }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 

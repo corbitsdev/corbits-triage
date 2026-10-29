@@ -1027,8 +1027,8 @@ runs the policy's `actions`. Code review's findings never change the verdict.
 The manager's `cleared` step (`packages/triage-manager/src/actions/review-clean.ts`)
 reads each Do's step in the pack and holds the Do for a person when the head's
 review does not meet the step's `when.findings`: `{ above: P<n> }` allows only
-findings less severe than P<n>, `{ any: false }` none and `{ any: true }` any,
-with priorities mapped onto severities by `PRIORITY_SEVERITIES`. A step
+findings less severe than P<n>, `{ any: false }` none and `{ any: true }` any.
+A step
 without one is held only when it approves or merges and the review has any
 finding open. A review that did not run, failed, ran past its deadline, read
 only part of the change or reviewed another head meets no condition. Each Do

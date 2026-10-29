@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { CodeReviewOutput, PRIORITY_SEVERITIES, PRIORITIES, RULE_GATES, rulesGate, SEVERITIES, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
+import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
 import { DO_NAMES } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
@@ -19,12 +19,6 @@ type Finding = CodeReviewOutput["comments"][number];
 
 /** What code review says of the verdict's head: nothing, while the policy leaves it out; why it is incomplete; or its findings. */
 type Reviewed = { incomplete: string } | { findings: Finding[] };
-
-/** A finding's severity; one without a priority counts as the most severe, and one past P3 as P3. */
-function severityAt({ priority = 0 }: Finding): number {
-  const at = Math.min(Math.max(priority, 0), PRIORITIES.length - 1);
-  return SEVERITIES.indexOf(PRIORITY_SEVERITIES[PRIORITIES[at]!]);
-}
 
 /**
  * The review of the verdict's head while the policy turns code review on. One the policy's `for` or `when` left out
@@ -47,8 +41,8 @@ function reviewOf({ taken, review, reviewers, head }: TakeOutput, verdict: Verdi
 /** The findings `condition` does not allow. */
 function openUnder(condition: FindingsCondition, findings: readonly Finding[]): Finding[] {
   if ("any" in condition) return condition.any ? [] : [...findings];
-  const floor = SEVERITIES.indexOf(PRIORITY_SEVERITIES[condition.above]);
-  return findings.filter((finding) => severityAt(finding) >= floor);
+  const ceiling = PRIORITIES.indexOf(condition.above);
+  return findings.filter((finding) => finding.priority <= ceiling);
 }
 
 function findingsText(condition: FindingsCondition, count: number): string {

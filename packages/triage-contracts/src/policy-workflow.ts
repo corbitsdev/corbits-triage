@@ -5,7 +5,6 @@ import { asRecord } from "@corbits/common";
 import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, Glob, GROUP_NAME_MAX, GroupName, Label, POLICY_EVENTS, VERDICTS, type AuthorKind, type AuthorMatch, type FileAuthorMatch, type PolicyActions, type Step, type VerdictWord } from "./check-pack.js";
 import { RULE_GATES } from "./rules-gate.js";
 import { EVERYONE } from "./step-when.js";
-import type { Priority } from "./types.js";
 
 export const BLOCK_KINDS = ["code-review"] as const;
 export type BlockKind = (typeof BLOCK_KINDS)[number];
@@ -20,10 +19,6 @@ export const PROVIDERS = ["anthropic", "openai", "xai", "google", "opencode", "c
 
 /** Least severe first. */
 export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
-type Severity = (typeof SEVERITIES)[number];
-
-/** The severity of a finding of each priority, as code review reports it and a step's `when.findings` names it. */
-export const PRIORITY_SEVERITIES: Readonly<Record<Priority, Severity>> = { P0: "critical", P1: "high", P2: "medium", P3: "low" };
 
 export const BLOCK_OUTCOMES = ["clean", "findings", "incomplete", "skipped"] as const;
 

@@ -45,7 +45,7 @@ const FINISHED = {
   budgetExhausted: true,
   comments: [
     { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1 },
-    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it." },
+    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it.", priority: 3 },
   ],
 };
 let completed: CompletedReview | null = FINISHED;
@@ -282,7 +282,7 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   expect(sentReviews).toEqual([{
     commit_id: HEAD,
     event: "COMMENT",
-    body: "Fixes the widget.\n\nStopped early: the reviewer reached its limit for reading the repository.\n\nThis review did not read the whole change; approve and merge are held until a review does.\n\n**Stale import** · `src/other.ts:5`\n\nRemove it.\n\n<!-- corbits-code-review -->",
+    body: "Fixes the widget.\n\nStopped early: the reviewer reached its limit for reading the repository.\n\nThis review did not read the whole change; approve and merge are held until a review does.\n\n**P3 · Stale import** · `src/other.ts:5`\n\nRemove it.\n\n<!-- corbits-code-review -->",
     comments: [{ path: "src/widget.ts", line: 1, side: "RIGHT", body: "**P1 · Unchecked input**\n\nValidate it first.\n\nAlso lines 2–3." }],
   }]);
 

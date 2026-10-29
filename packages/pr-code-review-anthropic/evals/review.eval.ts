@@ -354,7 +354,7 @@ function e2eConfig(values: Record<string, unknown>, provider: ProviderId): E2ECo
 }
 
 function findingsAt(items: readonly Finding[]): Finding[] {
-  return items.map(({ path, start, end, code }) => ({ path, start, end, ...(code !== undefined && { code }) }));
+  return items.map(({ path, start, end, priority, code }) => ({ path, start, end, priority, ...(code !== undefined && { code }) }));
 }
 
 async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, github: typeof fetch): Promise<E2EResult> {

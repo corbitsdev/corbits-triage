@@ -103,7 +103,7 @@ export function commentsOf(outputs: SavedOutputs): Comment[] {
     if (!entry || !written || !sameFinding(entry.finding, written)) throw new Error(`comment ${index} at ${posted.path}:${posted.start} does not replay as the review reported it`);
     const known = entry.group.members.flatMap((i) => (confidences[i] === undefined ? [] : [confidences[i]]));
     const { path, start, end, priority } = posted;
-    return { path, start, end, ...(priority !== undefined && { priority }), finders: posted.agreement.finders, ...(known.length > 0 && { confidence: Math.max(...known) }) };
+    return { path, start, end, priority, finders: posted.agreement.finders, ...(known.length > 0 && { confidence: Math.max(...known) }) };
   }
   if (reported.length !== outputs.review.comments.length) throw new Error(`${reported.length} replayed findings, ${outputs.review.comments.length} comments`);
   return outputs.review.comments.map(comment);

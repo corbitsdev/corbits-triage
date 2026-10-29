@@ -18,7 +18,7 @@ const KEY: CaseKey = {
 test("ten identical findings on one defect score one catch and nine false alarms", () => {
   const [key] = loadKeys(["disaster-ninja-fe-1230"]);
   if (!key) throw new Error("no key");
-  const spam = Array.from({ length: 10 }, () => ({ path: "src/core/logical_layers/renderers/GenericRenderer.ts", start: 236, end: 236 }));
+  const spam = Array.from({ length: 10 }, () => ({ path: "src/core/logical_layers/renderers/GenericRenderer.ts", start: 236, end: 236, priority: 2 }));
   const score = scoreCase(key, spam);
   expect(score.caught).toHaveLength(1);
   expect(score.falseAlarms).toBe(9);
@@ -27,9 +27,9 @@ test("ten identical findings on one defect score one catch and nine false alarms
 
 test("a finding catches an uncaught bug it hits, else is a false alarm when it hits a caught one", () => {
   const findings = [
-    { path: "src/a.ts", start: 12, end: 12 },
-    { path: "src/a.ts", start: 12, end: 12 },
-    { path: "src/a.ts", start: 10, end: 10 },
+    { path: "src/a.ts", start: 12, end: 12, priority: 2 },
+    { path: "src/a.ts", start: 12, end: 12, priority: 2 },
+    { path: "src/a.ts", start: 10, end: 10, priority: 2 },
   ];
   expect(scoreCase(KEY, findings)).toMatchObject({
     caught: ["b1", "b2"],
@@ -41,8 +41,8 @@ test("a finding catches an uncaught bug it hits, else is a false alarm when it h
 
 test("each ignored item absorbs one finding, also on a clean case", () => {
   const twice = [
-    { path: "src/b.ts", start: 6, end: 6 },
-    { path: "src/b.ts", start: 6, end: 6 },
+    { path: "src/b.ts", start: 6, end: 6, priority: 2 },
+    { path: "src/b.ts", start: 6, end: 6, priority: 2 },
   ];
   const clean = { ...KEY, kind: "clean" as const, bugs: [] };
   expect(scoreCase(clean, twice)).toMatchObject({ falseAlarms: 1, ignored: 1, flaggedClean: true, outcomes: [{ kind: "ignored", item: "i2" }, { kind: "falseAlarm" }] });
