@@ -1,0 +1,14 @@
+{
+  "name": "@corbits/policy-corpus-test",
+  "version": "0.1.0",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "type": "module",
+  "dependencies": {
+    "@corbits/common": "workspace:*",
+    "@corbits/triage-contracts": "workspace:*",
+    "arktype": "catalog:",
+    "yaml": "2.9.1"
+  },
+  "description": "One corpus of policy files run through every place that reads a policy, each held to the file's expected outcome"
+}

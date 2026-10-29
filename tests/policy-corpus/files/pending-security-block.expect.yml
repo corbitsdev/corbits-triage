@@ -1,0 +1,7 @@
+# A reserved block: triage reads the file without it and names it pending, while the portal refuses to write it.
+accept: true
+pending: "Line 6: `security`: security and deslop reviews are not available yet, so Triage skips this block; remove it."
+seams:
+  hubWrite:
+    accept: false
+    reason: "Line 6: `security`: security and deslop reviews are not available yet, so Triage skips this block; remove it."

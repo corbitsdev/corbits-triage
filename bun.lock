@@ -409,6 +409,16 @@
         "drizzle-orm": "catalog:",
       },
     },
+    "tests/policy-corpus": {
+      "name": "@corbits/policy-corpus-test",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/common": "workspace:*",
+        "@corbits/triage-contracts": "workspace:*",
+        "arktype": "catalog:",
+        "yaml": "2.9.1",
+      },
+    },
     "vendor/interchange/apps/hub": {
       "name": "@intx/hub-app",
       "version": "0.5.0",
@@ -979,6 +989,8 @@
     "@corbits/openai-null-delta": ["@corbits/openai-null-delta@workspace:packages/openai-null-delta"],
 
     "@corbits/policy-check-action": ["@corbits/policy-check-action@workspace:packages/policy-check-action"],
+
+    "@corbits/policy-corpus-test": ["@corbits/policy-corpus-test@workspace:tests/policy-corpus"],
 
     "@corbits/pr-code-review": ["@corbits/pr-code-review@workspace:packages/pr-code-review"],
 

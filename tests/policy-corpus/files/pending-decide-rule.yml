@@ -1,0 +1,10 @@
+rules:
+  - check: ci-green
+    text: CI must pass.
+    reason: Required.
+    evidence: [maintainer-stated]
+decide:
+  - if: { triage: pass }
+    do: approve
+  - if: { triage: pass, deslop: clean }
+    do: merge
