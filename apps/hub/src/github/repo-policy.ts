@@ -45,7 +45,7 @@ async function fileResolved(deps: RepoPolicyDeps, tenantId: string, repo: string
   const shared = extendsOf(content);
   if (shared !== undefined) return overSharedFile(deps.policyFile, tenantId, repo, source, content, shared);
   refuseUnknownChecks(content);
-  return { pack: readCheckPack(content, repo) };
+  return { pack: readCheckPack(content, repo, true) };
 }
 
 /** Why triage would refuse a policy file holding `policy`, resolved as a pushed file is; undefined when it would run it. */

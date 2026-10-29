@@ -217,9 +217,20 @@ describe("check pack contract", () => {
       [{ ...ACTIONS, pass: [{ do: "comment", target: {} }] }, "Pass step 1 target must set exactly body."],
       [{ ...ACTIONS, pass: [{ do: "approve", for: "staff" }] }, "Pass step 1 for must be one of OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE, MANNEQUIN, BOT."],
       [{ ...ACTIONS, fail: [{ kind: "comment", target: { body: "Hi" } }] }, "Fail step 1 must not set kind."],
-      [{ ...ACTIONS, pass: [{ do: "labels", target: { from: "list", labels: ["Risk: High"] } }] }, "Pass step 1 label Risk: High is one Triage takes back; name another."],
     ];
     for (const [actions, reason] of rejected) expect(() => readCheckPack({ ...emptyPack(REPO), actions })).toThrow(reason);
+  });
+
+  test("a labels step holding a level label is left out and named, and the rest of the pack loads", () => {
+    const level = { do: "labels", target: { from: "list", labels: ["Risk: High"] } };
+    const withOthers = { do: "labels", target: { from: "list", labels: ["needs-qa", "Risk: High", "sensitive: MEDIUM", "risk: high"] } };
+    const read = readCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, pass: [COMMENT, COMMENT, level, withOthers] } });
+    expect(read.actions.pass).toEqual([COMMENT]);
+    expect(read.dropped).toEqual([
+      "Pass step 3 label Risk: High is one Triage takes back, so the whole step is skipped",
+      "Pass step 4 label Risk: High is one Triage takes back, so the whole step is skipped; its other labels (needs-qa) are not added either",
+    ]);
+    expect(() => readCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, pass: [level] } }, REPO, true)).toThrow("Pass step 1 label Risk: High is one Triage takes back; name another.");
   });
 
   test("the schema accepts what the parser reads, and a rejection says why", () => {
