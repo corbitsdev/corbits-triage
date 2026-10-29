@@ -24,8 +24,8 @@ export interface MirrorInput {
   header?: TriageHeader;
   /** Writes nothing once the pull request has moved past this head. */
   onHead?: string;
-  /** The pass's verdict: a comment that already holds it for `onHead` is kept rather than written over. */
-  keepVerdict?: string;
+  /** The pass's verdict and policy: a comment that already holds them for `onHead` is kept rather than written over. */
+  keepVerdict?: Omit<KeptVerdict, "head">;
   close: boolean;
 }
 
@@ -58,7 +58,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput, login: string) {
   if (i.onHead !== undefined && i.onHead !== pr.head.sha) return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: HEAD_MOVED };
   // An empty comment means nothing is asked of the author, so an earlier one would be stale instructions.
   if (i.comment === "") await deleteTriageComments(gh, repo, number, login);
-  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined, ...(i.keepVerdict && { keepVerdictOn: { head: i.onHead!, verdict: i.keepVerdict } }) }, login) : null;
+  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined, ...(i.keepVerdict && { keepVerdictOn: { head: i.onHead!, ...i.keepVerdict } }) }, login) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   const kept = new Set((i.keep ?? []).map(lowercase));
   if (!current.some((name) => kept.has(lowercase(name)))) await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });

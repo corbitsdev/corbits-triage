@@ -1,7 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { repoSourceOf, VERDICTS } from "@corbits/triage-contracts";
+import { repoSourceOf, type KeptVerdict } from "@corbits/triage-contracts";
 import { progressMark } from "@corbits/triage-workflows/actions/waiting";
 import { writeMark, type MirrorOutcome } from "@corbits/triage-workflows/actions/mirror";
 import type { Awaits } from "@corbits/triage-workflows/logic/render";
@@ -9,7 +9,7 @@ import { managerMailOf } from "./hub.js";
 import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
 
 const Mailed = { output: { "reviewer?": Reviewer } } as const;
-const ProgressInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, "cleared?": { output: { verdict: type.enumerated(...VERDICTS) } }, "judgeMailed?": Mailed, "earlyReviewMailed?": Mailed, "reviewMailed?": Mailed });
+const ProgressInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, "cleared?": { output: { request: { "header?": type({ verdict: "string", policy: "object | null" }).as<Omit<KeptVerdict, "head">>() } } }, "judgeMailed?": Mailed, "earlyReviewMailed?": Mailed, "reviewMailed?": Mailed });
 const Granted = type({ automatic: "string[]", "appLogin?": "string", "codeReview?": "unknown" });
 
 /**
@@ -32,6 +32,7 @@ export async function progress(input: unknown, ctx: EffectContext, _signal: Abor
   const { pullRequest } = managerMailOf(parsed.payload);
   const pull = { repo: pullRequest.repo, number: pullRequest.number, onHead: head };
   // Only CI running again on the head, or a Review again, shows progress over the pass's verdict already posted on it.
-  const keepVerdict = !awaits.includes("ci") && asRecord(granted.codeReview)?.["again"] === undefined ? parsed.cleared?.output.verdict : undefined;
+  const header = !awaits.includes("ci") && asRecord(granted.codeReview)?.["again"] === undefined ? parsed.cleared?.output.request.header : undefined;
+  const keepVerdict = header && { verdict: header.verdict, policy: header.policy };
   return writeMark(progressMark(repoSourceOf(pullRequest.source), pull, awaits, granted.appLogin, keepVerdict), ctx);
 }

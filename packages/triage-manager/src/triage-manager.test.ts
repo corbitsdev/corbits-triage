@@ -779,13 +779,15 @@ describe("triage-manager with code review", () => {
     expect(hub.calls.at(-2)).toEqual(DONE_GAVE_UP);
   });
 
+  const POLICY = { repo: { id: "art_policy", version: 1 } };
   test.each([
-    ["an automatic pass keeps the verdict its rules still give", "pass", {}, [], false],
-    ["an automatic pass replaces a verdict its rules no longer give", "fail", {}, [], true],
-    ["CI running again replaces it", "pass", {}, [{ facts: { checks: "pending", pendingChecks: ["ci"], mergeable: true }, pack: RULES }], true],
-    ["a Review again replaces it", "pass", { again: "again_1" }, [], true],
-  ])("progress over a Pass on the head: %s", async (_name, passVerdict, again, items, written) => {
-    const posted = { id: 42, user: { login: REQUEST["appLogin"], type: "Bot" }, body: `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy: null, verdict: "pass" })} -->\n**Triage: Pass**` };
+    ["an automatic pass keeps the verdict its rules still give", "pass", POLICY, {}, [], false],
+    ["an automatic pass replaces a verdict its rules no longer give", "fail", POLICY, {}, [], true],
+    ["an automatic pass replaces a verdict made under another policy", "pass", { repo: { ...POLICY.repo, version: 2 } }, {}, [], true],
+    ["CI running again replaces it", "pass", POLICY, {}, [{ facts: { checks: "pending", pendingChecks: ["ci"], mergeable: true }, pack: RULES }], true],
+    ["a Review again replaces it", "pass", POLICY, { again: "again_1" }, [], true],
+  ])("progress over a Pass on the head: %s", async (_name, passVerdict, policy, again, items, written) => {
+    const posted = { id: 42, user: { login: REQUEST["appLogin"], type: "Bot" }, body: `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy: POLICY, verdict: "pass" })} -->\n**Triage: Pass**` };
     const writes: string[] = [];
     async function fetch(path: string, init?: RequestInit): Promise<Response> {
       if (init?.method !== undefined) {
@@ -798,7 +800,7 @@ describe("triage-manager with code review", () => {
     const ctx = { perform: ({ run }: { run: (scope: unknown) => Promise<unknown> }) => run({ credentials: { resolve: async () => ({ kind: "http", fetch }) } }) } as unknown as EffectContext;
     const taken = hubRequest(RULES, { codeReview: { ...CODE_REVIEW.codeReview, ...again } });
     const take = { run: true, approvals: [], triage: true, overdue: false, head: HEAD, taken, reviewers: [] };
-    const input = { payload: wake(), take: { output: take }, rules: { output: { items } }, cleared: { output: { verdict: passVerdict } }, reviewMailed: { output: { reviewer: reviewer() } } };
+    const input = { payload: wake(), take: { output: take }, rules: { output: { items } }, cleared: { output: { request: { header: { head: HEAD, policy, verdict: passVerdict } } } }, reviewMailed: { output: { reviewer: reviewer() } } };
     await actions.progress(input, ctx, new AbortController().signal);
     expect(writes.some((write) => write.startsWith("PATCH"))).toBe(written);
   });

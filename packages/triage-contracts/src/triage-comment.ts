@@ -17,8 +17,8 @@ export type MarkedComment = { id: number; body: string; updatedAt?: string };
 
 export type WrittenComment = { commentId: number; updated: boolean; unchanged?: string; kept?: "verdict" };
 
-/** The verdict a progress comment leaves in place: the comment's marker names this head and this verdict. */
-export type KeptVerdict = { head: string; verdict: string };
+/** The verdict a progress comment leaves in place: the comment's marker names this head, verdict and policy. */
+export type KeptVerdict = Pick<TriageHeader, "head" | "verdict" | "policy">;
 
 /** What reached the head since an earlier one: how many commits, and the pull requests merged into the branch among them. */
 export type HeadChange = { commits: number; merged: number[] };
@@ -168,12 +168,13 @@ export async function upsertMarked(host: CommentHost, body: string, current: Mar
 /**
  * Edits the current comment to `text` without a verdict of its own, as while a verdict is in progress, and writes nothing
  * when it already says that. The comment keeps the header of the verdict it held, so the verdict that replaces it still
- * says what changed since that one. With `keepVerdictOn`, a comment whose marker holds that verdict for that head is kept.
+ * says what changed since that one. With `keepVerdictOn`, a comment whose marker holds that verdict for that head under
+ * that policy is kept.
  */
 export async function writeUnheadedComment(host: CommentHost, markers: MarkerFormat, plainMarker: string, current: MarkedComment[], text: string, keepVerdictOn?: KeptVerdict): Promise<WrittenComment> {
   const latest = current[0];
   const kept = latest && markers.headerOf(latest.body);
-  if (kept && kept.head === keepVerdictOn?.head && kept.verdict === keepVerdictOn.verdict) return { commentId: latest.id, updated: false, kept: "verdict" };
+  if (kept && kept.head === keepVerdictOn?.head && kept.verdict === keepVerdictOn.verdict && samePolicy(kept.policy, keepVerdictOn.policy)) return { commentId: latest.id, updated: false, kept: "verdict" };
   const body = `${kept ? markers.current(kept) : plainMarker}\n${text}`;
   if (latest?.body === body) return { commentId: latest.id, updated: false, ...(latest.updatedAt && { unchanged: `unchanged since ${latest.updatedAt}` }) };
   return upsertMarked(host, body, current);

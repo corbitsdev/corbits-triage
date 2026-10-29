@@ -31,7 +31,7 @@ A workspace's listener and a pull request's manager.
   failed, ran past its one-hour deadline or whose run ended before it reported leaves the verdict to go up alone; a
   judge is deployed again on the next event, and a code review is not deployed again on that head until it changes or a
   Review again asks for one. The in-progress comment for code review leaves a verdict already posted on the head in
-  place while the pass's rules still give it; a judge the release does not publish posts nothing. `done` stops a reviewer this
+  place while the pass's rules still give it under the same policy; a judge the release does not publish posts nothing. `done` stops a reviewer this
   run deployed that ran past its deadline or whose run ended; the hub stops one on an older head when it records the
   newer head or when `done` reports it, and wakes a manager once a deadline passes with no manager up. The run's last step is its only end: it stops the run once `done` ends the pull
   request's claim, take is refused because another run holds it, or the passes fail or run out.

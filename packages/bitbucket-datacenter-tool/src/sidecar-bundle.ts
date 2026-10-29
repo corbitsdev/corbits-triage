@@ -78,6 +78,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
 ];
 
 const ARTIFACT_REF = obj({ id: str, version: { type: "number" } });
+const POLICY_REF = { type: ["object", "null"], properties: { repo: ARTIFACT_REF }, required: ["repo"] };
 
 const MIRROR_INPUT = obj({
   repo,
@@ -88,7 +89,7 @@ const MIRROR_INPUT = obj({
   header: {
     ...obj({
       head: str,
-      policy: { type: ["object", "null"], properties: { repo: ARTIFACT_REF }, required: ["repo"] },
+      policy: POLICY_REF,
       verdict: str,
     }),
     description: "What the comment is written for; an unchanged one is not written again",
@@ -101,7 +102,7 @@ const MIRROR_INPUT = obj({
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
-  keepVerdict: { ...str, description: "The pass's verdict: a comment that already holds it for onHead is kept rather than written over" },
+  keepVerdict: { ...obj({ verdict: str, policy: POLICY_REF }), description: "The pass's verdict and policy: a comment that already holds them for onHead is kept rather than written over" },
 }, ["repo", "number", "labels"]);
 
 const MIRROR_DESCRIPTION =

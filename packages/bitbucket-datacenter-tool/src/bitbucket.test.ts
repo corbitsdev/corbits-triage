@@ -97,13 +97,21 @@ describe("mirror", () => {
     expect(fake.comments.find((c) => c.id === 2)!.text).toBe("[corbits-triage]: #copied\nNot ours");
   });
 
+  test("progress over a verdict made under another policy writes, though the verdict is the same", async () => {
+    const fake = fakeBitbucket();
+    await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    const keepVerdict = { verdict: "pass", policy: { repo: { id: "art_policy", version: 2 } } };
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "In progress", onHead: "abc", keepVerdict }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(fake.comments[0]!.text).toEndWith("\nIn progress");
+  });
+
   test("progress keeps a verdict on the head only while it is the pass's verdict", async () => {
     const fake = fakeBitbucket();
     await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
     const progress = { ...REQUEST, comment: "In progress", onHead: "abc" };
-    expect(await mirror(fake.bb, { ...progress, keepVerdict: "pass" }, user)).toMatchObject({ commentId: 10, updated: false, kept: "verdict" });
+    expect(await mirror(fake.bb, { ...progress, keepVerdict: { verdict: "pass", policy: null } }, user)).toMatchObject({ commentId: 10, updated: false, kept: "verdict" });
     expect(fake.comments[0]!.text).toEndWith("\nPass");
-    expect(await mirror(fake.bb, { ...progress, keepVerdict: "fail" }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(await mirror(fake.bb, { ...progress, keepVerdict: { verdict: "fail", policy: null } }, user)).toMatchObject({ commentId: 10, updated: true });
     expect(fake.comments[0]!.text).toEndWith("\nIn progress");
   });
 

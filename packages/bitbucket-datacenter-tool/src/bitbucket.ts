@@ -225,8 +225,8 @@ export interface MirrorInput {
   statusHead?: string;
   /** Writes nothing once the pull request has moved past this head. */
   onHead?: string;
-  /** The pass's verdict: a comment that already holds it for `onHead` is kept rather than written over. */
-  keepVerdict?: string;
+  /** The pass's verdict and policy: a comment that already holds them for `onHead` is kept rather than written over. */
+  keepVerdict?: Omit<KeptVerdict, "head">;
   /** While this is the head, which may not be approved, the token user's approval is taken back. */
   notReadyHead?: string;
   /** While this is the head, which leaves the author nothing to fix, the token user's needs-work is taken back. */
@@ -267,7 +267,7 @@ export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: Bitbucket
   }
   async function writeComment() {
     if (i.comment === "") await deleteTriageComments(bb, repo, number, await user());
-    return i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header, branch: pr.branch, ...(i.keepVerdict && { keepVerdictOn: { head: i.onHead!, verdict: i.keepVerdict } }) }, await user()) : null;
+    return i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header, branch: pr.branch, ...(i.keepVerdict && { keepVerdictOn: { head: i.onHead!, ...i.keepVerdict } }) }, await user()) : null;
   }
   async function writeStatus() {
     return status && setVerdictBuild(bb, i.statusHead!, status, posted ? commentUrl(pr, posted.commentId) : pr.url);
