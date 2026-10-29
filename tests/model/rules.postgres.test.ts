@@ -24,8 +24,7 @@ afterAll(() => stack.stop());
 
 let pulls = 0;
 
-/** What a check played, and the rules it broke, read only for a sequence that is kept: reading them reports each unattributed manager once. */
-type Checked = { played: Letter[]; breaks: () => Promise<string[]> };
+type Checked = { played: Letter[]; breaks: string[] };
 
 /** Plays `letters` after an open on a pull request of its own, each that changes nothing left out, and settles it. */
 async function check(letters: readonly Letter[]): Promise<Checked> {
@@ -35,22 +34,11 @@ async function check(letters: readonly Letter[]): Promise<Checked> {
     const pull = await open(stack, ++pulls);
     for (const letter of letters) if (await play(stack, pull, letter)) played.push(letter);
     await settle(stack, pull);
-    return {
-      played,
-      breaks: function breaks() {
-        return broken(stack, pull, missed);
-      },
-    };
+    return { played, breaks: await broken(stack, pull, missed) };
   } catch (err) {
     // The queue may hold the failed sequence's mail; the next sequence starts from none.
     stack.queue.length = 0;
-    const threw = `threw after ${played.length} events: ${err instanceof Error ? err.message : String(err)}`;
-    return {
-      played: [...letters],
-      breaks: async function breaks() {
-        return [threw];
-      },
-    };
+    return { played: [...letters], breaks: [`threw after ${played.length} events: ${err instanceof Error ? err.message : String(err)}`] };
   }
 }
 
@@ -65,10 +53,9 @@ test(`every sequence up to ${LENGTH} events after an open keeps the rules`, asyn
     const next: Letter[][] = [];
     for (const letters of level) {
       const checked = await check(letters);
+      found.push(...checked.breaks.map((rule) => `${replayOf(letters)}: ${rule}`));
       // A sequence with an event that changed nothing is a shorter one already played, and so is every sequence after it.
-      if (checked.played.length < letters.length) continue;
-      found.push(...(await checked.breaks()).map((rule) => `${replayOf(letters)}: ${rule}`));
-      if (size < LENGTH) next.push(...LETTERS.map((letter) => [...letters, letter]));
+      if (size < LENGTH && checked.played.length === letters.length) next.push(...LETTERS.map((letter) => [...letters, letter]));
     }
     level = next;
   }
@@ -79,7 +66,7 @@ test(`${WALKS} seeded walks of ${WALK_LENGTH} events keep the rules`, async () =
   const found: string[] = [];
   for (let seed = 0; seed < WALKS; seed++) {
     const { played, breaks } = await check(walk(seed, WALK_LENGTH));
-    found.push(...(await breaks()).map((rule) => `seed ${seed}, ${replayOf(played)}: ${rule}`));
+    found.push(...breaks.map((rule) => `seed ${seed}, ${replayOf(played)}: ${rule}`));
   }
   expect(found).toEqual([]);
 });

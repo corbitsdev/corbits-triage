@@ -199,8 +199,9 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
   const runs = new Map<string, Run>();
   /** Each manager run's pull request, read off the mail its listener was deploying it for; none when that mail named several. */
   const managed = new Map<string, number | undefined>();
-  /** Unattributed live managers already reported, so each fails only the first pull request checked after it. */
-  const reported = new Set<string>();
+  /** The pull request being played when each manager run was deployed: a manager attributed to none is reported for that one. */
+  const deployedWhile = new Map<string, number>();
+  let playing = 0;
   /** Mail dropped at a run that had ended, or refused when sent to one; one whose copy a run took is not lost. */
   const dropped: Mail[] = [];
   const delivered = new Set<string>();
@@ -303,6 +304,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     const id = `run_${randomBytes(6).toString("hex")}`;
     await deployRun(id, released.definition);
     managed.set(id, serving.length === 1 ? serving[0] : undefined);
+    deployedWhile.set(id, playing);
     return Response.json({ id }, { status: 201 });
   }
 
@@ -459,6 +461,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     /** GitHub shows `pull` with no checks yet, and the hub takes in its opened webhook. */
     async open(pull: Pull): Promise<void> {
       github.open(repo, pull);
+      playing = pull.number;
       await webhook(pull.number, "opened", pull.head);
     },
     /** Runs the queued mail at `index` to its end, as the run it is addressed to. */
@@ -478,8 +481,8 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
       for (let mail = queue.shift(); mail; mail = queue.shift()) await runMail(mail);
     },
     /**
-     * What is left of pull request `number`'s runs and mail: its managers still live, live managers no pull request can
-     * be told for that no earlier check reported, mail no run took, and runs that did not complete.
+     * What is left of pull request `number`'s runs and mail: its managers still live, live managers deployed while it was
+     * played that no pull request can be told for, mail no run took, and runs that did not complete.
      */
     async leftover(number: number) {
       const rows = await db.select({ id: schema.workflowRun.id, status: schema.workflowRun.status }).from(schema.workflowRun).where(eq(schema.workflowRun.definitionId, `wfd_${TRIAGE_MANAGERS.github}`));
@@ -487,8 +490,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
       const named = ofPull(number);
       const failures = failed.filter((failure) => named(failure.mail)).map((failure) => `${failure.mail.to} ${failure.status}`);
       const lost = dropped.filter((mail) => named(mail) && !delivered.has(mail.id));
-      const unattributed = running.filter((id) => managed.get(id) === undefined && !reported.has(id));
-      for (const id of unattributed) reported.add(id);
+      const unattributed = running.filter((id) => managed.get(id) === undefined && deployedWhile.get(id) === number);
       return { live: running.filter((id) => managed.get(id) === number), unattributed, lost, failed: failures };
     },
     /** The writes to pull request `number` and to its comments, in the order GitHub received them. */
