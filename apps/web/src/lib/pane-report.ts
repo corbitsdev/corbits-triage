@@ -3,7 +3,7 @@ import type { CheckResult, GithubPullDetail, HeldBlock, PrItem, RunFailure } fro
 import { paneActions, paneFacts, type ActionBlocker, type MenuEntry, type PaneFacts, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, failedOnNewCommits, hasUncheckedCommits, primaryLabel, progressText, triageStoppedOn, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
 import { checkLabel, DO_NAMES } from "./pack-prose.ts";
-import { pendingDos, postedActions, type PendingDo } from "./pending-dos.ts";
+import { pendingDos, postedActions, verdictNote, type PendingDo } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
 import { lowerFirst, upperFirst } from "./triage-view.ts";
 
@@ -239,17 +239,15 @@ const ENDS_IN_A_STOP = /[.!?]"?$/;
 const ON_THE_PULL_REQUEST: ReadonlySet<ActionKind> = new Set(["approve", "close", "merge"]);
 
 /** What a held action does, lower case, naming the pull request after a verb that acts on it alone. */
-function heldAction({ kind, label }: Pick<PendingDo, "kind" | "label">): string {
-  const action = lowerFirst(label);
-  const verb = lowerFirst(DO_NAMES[kind]);
-  return ON_THE_PULL_REQUEST.has(kind) ? `${verb} this pull request${action.slice(verb.length)}` : action;
+function heldAction(pending: Pick<PendingDo, "kind" | "label" | "list">): string {
+  return ON_THE_PULL_REQUEST.has(pending.kind) ? `${lowerFirst(DO_NAMES[pending.kind])} this pull request${verdictNote(pending)}` : lowerFirst(pending.label);
 }
 
 /** A held action waiting on you is the decision even where the rules leave the turn to the author, asked as a question in its own verb. */
 function heldForYouText(item: PrItem): string | null {
   const [pending] = pendingDos(item).filter((held) => held.until === null);
   if (pending === undefined) return item.pendingApprovalId === null ? null : "Confirm or dismiss the post Triage held, on the pull request's page";
-  const action = heldAction(pending);
+  const action = upperFirst(heldAction(pending));
   return ENDS_IN_A_STOP.test(action) ? action : `${action}?`;
 }
 
@@ -368,7 +366,7 @@ export function heldChoices(bar: PaneBar): HeldChoice[] {
 }
 
 /** A held action as the line under the status says it: when it will run on its own, or what Triage would do once you let it. */
-export function heldText(pending: Pick<PendingDo, "kind" | "label" | "until">): string {
+export function heldText(pending: Pick<PendingDo, "kind" | "label" | "list" | "until">): string {
   if (pending.until !== null) return `Will run when ${pending.until}: ${lowerFirst(pending.label)}`;
   const said = heldAction(pending);
   return `Triage would ${said}${ENDS_IN_A_STOP.test(said) ? "" : "."}`;

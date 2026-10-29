@@ -10,7 +10,7 @@ import { linearIssues } from "../lib/linked-issue.ts";
 import { checkLabel, DO_NAMES } from "../lib/pack-prose.ts";
 import { heldText, lineText, passedChecks, type HeldChoice, type PaneStatus, type Problem, type Severity } from "../lib/pane-report.ts";
 import { heldOffer } from "../lib/pending-dos.ts";
-import { useAllowed, useHoldsDo } from "../lib/tenant-entities.ts";
+import { useAllowed, useHoldsDos } from "../lib/tenant-entities.ts";
 import { checkMeasuredText, lowerFirst, prHref } from "../lib/triage-view.ts";
 import { CitedEvidence } from "./CitedEvidence.tsx";
 import { DetailsBoundary } from "./DetailsBoundary.tsx";
@@ -50,14 +50,11 @@ export function StatusLine({ status }: { status: PaneStatus }) {
   );
 }
 
-type HeldRowProps = { choice: HeldChoice; wanted: readonly ActionKind[]; disabled: boolean; onApprove: (choice: HeldChoice, always: boolean) => void };
+type HeldRowProps = { choice: HeldChoice; offer: ReturnType<typeof heldOffer>; disabled: boolean; onApprove: (choice: HeldChoice, always: boolean) => void };
 
 /** One held action, run once as the person or, by one who may manage grants, left to Triage in this repository from now on. */
-function HeldRow({ choice, wanted, disabled, onApprove }: HeldRowProps) {
+function HeldRow({ choice, offer, disabled, onApprove }: HeldRowProps) {
   const { pending } = choice;
-  const holdsDo = useHoldsDo(pending.kind, pending.ref.repo);
-  const createsGrants = useAllowed("grant:*", "create");
-  const offer = heldOffer(pending, { holdsDo, createsGrants, wanted, onPrimary: choice.primary });
   return (
     <li>
       <span className="held-what">
@@ -74,12 +71,14 @@ type HeldActionsProps = { held: HeldChoice[]; wanted: readonly ActionKind[]; doB
 
 /** Each held action under the status line, with why it is held and how it may run; Hide for me hides them in this browser. */
 export function HeldActions({ held, wanted, doBlocked, onApprove, onHide }: HeldActionsProps) {
+  const holds = useHoldsDos(held.map((choice) => choice.pending));
+  const createsGrants = useAllowed("grant:*", "create");
   if (held.length === 0) return null;
   return (
     <div className="held">
       <ul aria-label="Held actions">
-        {held.map((choice) => (
-          <HeldRow key={choice.pending.key} choice={choice} wanted={wanted} disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onApprove={onApprove} />
+        {held.map((choice, index) => (
+          <HeldRow key={choice.pending.key} choice={choice} offer={heldOffer(choice.pending, { holdsDo: holds[index], createsGrants, wanted, onPrimary: choice.primary })} disabled={choice.entry === null ? doBlocked : choice.entry.blocker !== null} onApprove={onApprove} />
         ))}
       </ul>
       {onHide === null ? null : <Button type="button" variant="ghost" size="sm" onClick={onHide}>Hide for me</Button>}

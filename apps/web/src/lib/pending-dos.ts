@@ -117,6 +117,11 @@ export function withoutDecidedDos(item: PrItem, hidden: ReadonlySet<string>, sen
   return { ...item, actions: item.actions.filter((action) => !hidden.has(action.effectId) && !sent.has(sentKeyOf(action))) };
 }
 
+/** A merge held on a Fail or Unsure verdict says so wherever it is named. */
+export function verdictNote({ kind, list }: Pick<PendingDo, "kind" | "list">): string {
+  return kind === "merge" && list !== "pass" ? ` (the verdict was ${list}, not pass)` : "";
+}
+
 export function pendingDos(item: PrItem): PendingDo[] {
   const { repo, number, runId } = item;
   if (number === null || runId === null) return [];
@@ -125,9 +130,7 @@ export function pendingDos(item: PrItem): PendingDo[] {
     const text = offered(item, action) ? label(action, repo) : null;
     if (text === null) continue;
     const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind };
-    // A merge may be approved off a Fail or Unsure list, and the card says so.
-    const shown = action.kind === "merge" && action.list !== "pass" ? `${text} (the verdict was ${action.list}, not pass)` : text;
-    out.push({ key: action.effectId, sentKey: sentKeyOf(action), label: shown, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null, until: untilText(item, action) });
+    out.push({ key: action.effectId, sentKey: sentKeyOf(action), label: `${text}${verdictNote(action)}`, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null, until: untilText(item, action) });
   }
   return out;
 }
@@ -139,8 +142,13 @@ export function pendingDos(item: PrItem): PendingDo[] {
  * one the pane's primary button already carries out (`onPrimary`) offers no button of its own.
  */
 export function heldOffer(pending: Pick<PendingDo, "list" | "kind" | "until">, access: { holdsDo: boolean; createsGrants: boolean; wanted: readonly ActionKind[]; onPrimary: boolean }): { doIt: boolean; always: boolean } {
-  const runs = access.holdsDo && pending.until === null;
+  const runs = runsHeld(pending, access.holdsDo);
   return { doIt: runs && !access.onPrimary, always: runs && access.createsGrants && access.wanted.includes(pending.kind) && !alwaysHeld(pending.list, pending.kind) };
+}
+
+/** Whether you may run a held action now: it needs the Do's grant, and one that runs on its own once CI finishes waits for it. */
+export function runsHeld(pending: Pick<PendingDo, "until">, holdsDo: boolean): boolean {
+  return holdsDo && pending.until === null;
 }
 
 /** The pack's close stands in for the plain one, so only one Close is offered. */

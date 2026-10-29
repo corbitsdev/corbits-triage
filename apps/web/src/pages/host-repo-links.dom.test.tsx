@@ -60,6 +60,7 @@ mock.module("../lib/tenant-entities.ts", () => ({
     return { rows: [], loading: true, denied: false, unavailable: false };
   },
   useAllowed() { return false; },
+  useHoldsDos() { return []; },
 }));
 
 mock.module("../lib/triage-verdicts.ts", () => ({

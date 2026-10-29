@@ -6,7 +6,7 @@ import { CircleDot, FileText, Info, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
 import { useHandledMark, usePullPageItems, useQueueLoading } from "../lib/open-pulls.ts";
-import { useApprovals, useHoldsDo } from "../lib/tenant-entities.ts";
+import { useApprovals, useHoldsDos } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
@@ -14,7 +14,7 @@ import type { RepoSource } from "@corbits/triage-contracts";
 import { approvedHead, canRun, checkedHead, paneFacts, titleText } from "../lib/inbox-pane.ts";
 import { actionMode, hasUncheckedCommits, type ActionMode } from "../lib/inbox-view.ts";
 import { heldReason, isHeldBlock, lineText, paneStatus } from "../lib/pane-report.ts";
-import { heldOffer, offersClose, pendingDos, type PendingDo } from "../lib/pending-dos.ts";
+import { offersClose, pendingDos, runsHeld, type PendingDo } from "../lib/pending-dos.ts";
 import { useApproveDo, useHeldDoKeys } from "../lib/held-dos.ts";
 import { ApprovalCard } from "../components/ApprovalCard.tsx";
 import { VerdictChip } from "../components/VerdictChip.tsx";
@@ -329,12 +329,13 @@ export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
   onSkipDo: (pending: PendingDo) => void;
 }) {
   const { item, closed, locked, canMerge } = controls;
-  const holdsMerge = useHoldsDo("merge", item.repo);
+  const dos = closed || mode?.mode !== "waiting" ? [] : pendingDos(item);
+  const holds = useHoldsDos(dos);
   if (mode === null) return null;
-  const dos = closed || mode.mode !== "waiting" ? [] : pendingDos(item);
-  const heldMerge = dos.some((pending) => pending.kind === "merge" && heldOffer(pending, { holdsDo: holdsMerge, createsGrants: false, wanted: [], onPrimary: false }).doIt);
+  const held = dos.map((pending, index) => ({ pending, doIt: runsHeld(pending, holds[index]) }));
+  const heldMerge = held.some((offer) => offer.pending.kind === "merge" && offer.doIt);
   return (
-    <PrActionCard mode={mode} dos={dos} disabled={closed || !item.number || item.running || locked} canMerge={canMerge} onApprove={onApproveDo} onSkip={onSkipDo}>
+    <PrActionCard mode={mode} held={held} disabled={closed || !item.number || item.running || locked} canMerge={canMerge} onApprove={onApproveDo} onSkip={onSkipDo}>
       <PostingControls {...controls} heldMerge={heldMerge} />
     </PrActionCard>
   );

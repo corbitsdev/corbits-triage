@@ -9,7 +9,7 @@ import { PullActions, PullHistory } from "./PRDetail.tsx";
 const WHEN = "2026-10-26T12:00:00.000Z";
 
 let holdsDo = true;
-mock.module("../lib/tenant-entities.ts", () => ({ ...entities, useHoldsDo: () => holdsDo }));
+mock.module("../lib/tenant-entities.ts", () => ({ ...entities, useHoldsDos: (dos: unknown[]) => dos.map(() => holdsDo) }));
 
 test("commits come before conversation, and each section names itself when empty", () => {
   const html = renderToStaticMarkup(
@@ -97,26 +97,23 @@ test("a held approve waits on you as Approve, with Skip beside your controls", (
   expect(html).toMatch(/<div class="suggest">.*>Approve<\/button>.*>Skip<.*>Merge</);
 });
 
-test("a held merge waiting on you is the one Merge, closed to you while the host can't merge", () => {
-  const held = triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []);
-  const html = actions(held);
-  expect(html.match(/>Merge</g)).toHaveLength(1);
-  expect(html).toMatch(/<div class="suggest">.*<button(?![^>]*disabled="")[^>]*>Merge<\/button>.*>Skip</);
-  expect(actions(held, false, false)).toMatch(/<button[^>]*disabled=""[^>]*>Merge</);
-});
+function buttons(html: string): string[] {
+  return [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/g)].map(function buttonName([, attributes, inner]) {
+    const name = inner.replace(/<[^>]*>/g, "");
+    return attributes.includes('disabled=""') ? `${name} (disabled)` : name;
+  });
+}
 
-test("without the merge grant a held merge has no button of its own and the page keeps its Merge", () => {
-  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []), false, true, false);
-  expect(html.match(/>Merge</g)).toHaveLength(1);
-  expect(html).toMatch(/<div class="suggest">.*<\/div><\/div><div class="pr-actions-row">.*>Merge</);
-  expect(html).not.toMatch(/<div class="suggest">(?:(?!<\/div><\/div>).)*>Merge</);
-});
+const HELD = { held: true };
+const HELD_FOR_CI = { held: true, ci: "pending" };
 
-test("a merge that runs once CI finishes has no button of its own, and the page keeps its Merge", () => {
-  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true, ci: "pending" })], ["merge"]));
-  expect(html).toContain("Will run when CI finishes: merge");
-  expect(html.match(/>Merge</g)).toHaveLength(1);
-  expect(html).toMatch(/<div class="suggest">.*<div class="pr-actions-row"><button[^>]*>Skip<\/button><\/div><\/div>/);
+test.each([
+  ["a held merge waiting on you is the one Merge", HELD, [], true, true, ["Merge", "Skip", "More"]],
+  ["a held merge is closed to you while the host can't merge", HELD, [], true, false, ["Merge (disabled)", "Skip", "More"]],
+  ["without the merge grant a held merge has no button of its own and the page keeps its Merge", HELD, [], false, true, ["Skip", "Merge", "More"]],
+  ["a merge that runs once CI finishes has no button of its own, and the page keeps its Merge", HELD_FOR_CI, ["merge"], true, true, ["Skip", "Merge", "More"]],
+])("%s", (_name, rest, automatic, grant, canMerge, expected) => {
+  expect(buttons(actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, rest)], automatic), false, canMerge, grant))).toEqual(expected);
 });
 
 test("a closed pull request offers no held action and none of your controls", () => {
