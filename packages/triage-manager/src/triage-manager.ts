@@ -46,8 +46,8 @@ function progressAction(sources: Sources, mailed: readonly string[], after: read
 /**
  * Code review between triage's verdict and its mirror. A pass that deploys the review mails it the request and posts
  * nothing; the pass that collects its report mirrors the verdict, then posts the review. A review whose mail failed by
- * its deadline, that reported a failure or that ran past its deadline leaves the verdict to go up alone, as does a host
- * whose release publishes no code review.
+ * its deadline, that reported a failure, that ran past its deadline or whose run ended leaves the verdict to go up
+ * alone, as does a host whose release publishes no code review.
  */
 function reviewSteps(sources: Sources): Record<string, Primitive> {
   return {
@@ -71,8 +71,8 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
  * The judge between the rules and the verdict. A pass that deploys it mails the rules output and posts nothing; while
  * the host's checks run it is not deployed, and the verdict waits for them. The pass that has the judge's verdict posts
  * it, and code review when the policy asks for it, still posting nothing while a review is out. A judge the release
- * does not publish posts nothing. One that failed, could not be mailed, or ran past its deadline goes on to the
- * machine verdict and is not deployed again on that pass.
+ * does not publish posts nothing. One that failed, could not be mailed, ran past its deadline or whose run ended goes on
+ * to the machine verdict and is not deployed again on that pass.
  */
 function judgeSteps(sources: Sources): Record<string, Primitive> {
   return {
@@ -112,10 +112,12 @@ function passOf(id: string, sources: Sources) {
     id: `${id}-pass`,
     trigger: { type: "manual" },
     steps: {
-      paused: gate({ when: { from: "trigger.payload.wait" }, then: "poll", else: "take" }),
+      paused: gate({ when: { from: "trigger.payload.wait" }, then: "poll", else: "runsEnded" }),
       // Nothing signals it: the timeout is the wait, which a loop body cannot sleep.
-      poll: awaitSignal({ name: "manager-poll", timeout: POLL_MS, onTimeout: "take", after: ["paused"] }),
-      take: hubAction("take", { from: "trigger.payload.payload" }, ["paused", "poll"]),
+      poll: awaitSignal({ name: "manager-poll", timeout: POLL_MS, onTimeout: "runsEnded", after: ["paused"] }),
+      // Before take, so a reviewer that reported before its run ended has its report in take's events.
+      runsEnded: hubAction("runsEnded", { from: "trigger.payload" }, ["paused", "poll"]),
+      take: hubAction("take", { merge: [MAIL, stepsOf("runsEnded")] }, ["runsEnded"]),
       // Runs on every pass, reading nothing when take names no thread, so every branch's done records what it read.
       findingThreads: action({ handler: "findingThreads", input: { merge: [MAIL, stepsOf("take")] }, after: ["take"], credentials: sources, effect: { requires: [READ_PULL_REQUEST] } }),
       // Runs on every pass, approving nothing when there is nothing to run, so every branch's done reports its outcomes.

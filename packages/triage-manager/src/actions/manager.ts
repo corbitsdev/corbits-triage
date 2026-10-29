@@ -4,7 +4,7 @@ import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, JudgeVerdic
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { hostAwaited, type Awaits } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
-import { answered, callHub, endRun, managerMailOf, tenantPath, type ManagerMail } from "./hub.js";
+import { answered, callHub, endRun, managerMailOf, runEnded, tenantPath, type ManagerMail } from "./hub.js";
 
 /** `again` names the Review again a code review was deployed for. */
 export const Reviewer = type({ kind: "string > 0", head: "string > 0", runId: "string > 0", deployedBy: "string > 0", deadline: "string", "again?": "string > 0", "result?": "unknown" });
@@ -133,9 +133,42 @@ function stillAwaited(reviewers: readonly Reviewer[], head: string, waitingSince
   return [...(waitingSince !== undefined ? ["ci" as const] : []), ...(["judge", "code-review"] as const).filter(out)];
 }
 
+const RunsInput = type({ payload: "unknown", "out?": "string[]" });
+
+/**
+ * Which runs of the reviewers the last pass left out the hub shows ended. They are read before take, and a reviewer
+ * reports before its run ends, so a report sent before an ended run was read is in take's events. A read the hub does
+ * not answer leaves its reviewer out until its deadline, and `unread` says why.
+ */
+export async function runsEnded(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ ended: string[]; unread?: string }> {
+  const parsed = RunsInput(input);
+  if (parsed instanceof type.errors) throw new Error(`runsEnded: ${parsed.summary}`);
+  const { tenantId } = managerMailOf(parsed.payload);
+  const ended: string[] = [];
+  const unread: string[] = [];
+  for (const runId of parsed.out ?? []) {
+    const read = await runEnded(ctx, `ended:${runId}`, tenantId, runId);
+    if ("unread" in read) unread.push(read.unread);
+    else if (read.ended) ended.push(runId);
+  }
+  return { ended, ...(unread.length > 0 && { unread: unread.join("; ") }) };
+}
+
+/**
+ * The reviewers, each of `head` that is still awaited with its run in `ended` taken as past its deadline at `now`, so
+ * the pass decides without it rather than waiting out the deadline for a report that cannot come.
+ */
+function withEnded(reviewers: readonly Reviewer[], head: string, ended: readonly string[], awaited: readonly Awaits[], now: string): Reviewer[] {
+  return reviewers.map((reviewer) => (reviewer.head === head && reviewer.result === undefined && ended.includes(reviewer.runId) && awaited.some((kind) => kind === reviewer.kind) ? { ...reviewer, deadline: now } : reviewer));
+}
+
+const TakeInput = type({ payload: "unknown", runsEnded: { output: { ended: "string[]" } } });
+
 /** Claims the pull request and takes its pending events, or its open pass again; see `TakeOutput`. */
 export async function take(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<TakeOutput> {
-  const mail = managerMailOf(input);
+  const parsed = TakeInput(input);
+  if (parsed instanceof type.errors) throw new Error(`take: ${parsed.summary}`);
+  const mail = managerMailOf(parsed.payload);
   const answer = await asManager(ctx, mail, "take", mail.pullRequest, Taken);
   const nothing = { run: false, approvals: [], triage: false, overdue: false };
   if (answer === undefined) return { ...nothing, refused: true, reviewers: [] };
@@ -147,12 +180,12 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const mails = events.filter(({ event }) => event.type === "webhook").map(({ event }) => event);
   const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
-  const outstanding = Date.now() - Date.parse(claimedAt) >= LIFETIME_MS ? stillAwaited(answer.reviewers, head, waitingSince, reportOf(events, head, answer.reviewers)) : [];
+  const report = reportOf(events, head, answer.reviewers);
+  const outstanding = Date.now() - Date.parse(claimedAt) >= LIFETIME_MS ? stillAwaited(answer.reviewers, head, waitingSince, report) : [];
   const stopped = outstanding.length > 0;
   // A manager out of time takes every reviewer it still waits for as past its deadline, so the pass decides without it.
   const now = new Date().toISOString();
-  const reviewers = stopped ? answer.reviewers.map((reviewer) => (reviewer.head === head && reviewer.result === undefined ? { ...reviewer, deadline: now } : reviewer)) : answer.reviewers;
-  const report = reportOf(events, head, reviewers);
+  const reviewers = stopped ? answer.reviewers.map((reviewer) => (reviewer.head === head && reviewer.result === undefined ? { ...reviewer, deadline: now } : reviewer)) : withEnded(answer.reviewers, head, parsed.runsEnded.output.ended, stillAwaited(answer.reviewers, head, undefined, report), now);
   const overdue = late(reviewers, head, "code-review", report.review !== undefined || report.reviewFailed !== undefined) || late(reviewers, head, "judge", report.judge !== undefined || report.judgeFailed !== undefined);
   const waited = waitingSince === undefined ? undefined : Date.now() - Date.parse(waitingSince);
   const waitedOut = stopped || (waited !== undefined && waited >= CI_WAIT_MS);
@@ -252,30 +285,31 @@ function reviewersAfter(take: TakeOutput, mailed: readonly Reviewer[]): Reviewer
 }
 
 /**
- * The reviewers of the pass's head this run deployed that ran past their deadline with no report. The hub stops one on
- * an older head when it records the newer one; one an earlier manager deployed runs out on its own, since only its
- * deployer may stop it.
+ * The reviewers of the pass's head this run deployed that ran past their deadline, or whose run ended, with no report.
+ * The hub stops one on an older head when it records the newer one; one an earlier manager deployed runs out on its own,
+ * since only its deployer may stop it.
  */
 function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
   return reviewers.filter((reviewer) => reviewer.deployedBy === runId && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
 }
 
 /**
- * Whether the pass's head still waits for a reviewer of its own, out and within its deadline, whose result comes to this
- * manager. A head that waits only on the host's checks does not keep it: the next host event, or the reconciler once
- * CI settles, wakes a manager for it.
+ * The reviewers of the pass's head the head still waits for, out and within their deadline, whose result comes to this
+ * manager. A head that waits only on the host's checks keeps none: the next host event, or the reconciler once CI
+ * settles, wakes a manager for it.
  */
-function awaiting(take: TakeOutput, reviewers: readonly Reviewer[]): boolean {
-  if (take.stopped) return false;
-  return reviewers.some((reviewer) => reviewer.head === take.head && reviewer.result === undefined && Date.parse(reviewer.deadline) > Date.now());
+function awaiting(take: TakeOutput, reviewers: readonly Reviewer[]): Reviewer[] {
+  if (take.stopped) return [];
+  return reviewers.filter((reviewer) => reviewer.head === take.head && reviewer.result === undefined && Date.parse(reviewer.deadline) > Date.now());
 }
 
 /**
- * Closes the pass with what it ran and stops the reviewers it no longer waits for. A pass whose head still awaits a
- * reviewer asks the hub to `wait`. `more` runs the next pass at once, or with `wait` after polling for the reviewer;
- * `ended` ends the run once the head has its final verdict or waits only on CI, and a later event starts the next one.
+ * Closes the pass with what it ran and stops the reviewers it no longer waits for, past their deadline or with their run
+ * ended. A pass whose head still awaits a reviewer asks the hub to `wait`. `more` runs the next pass at once, or with
+ * `wait` after polling for the reviewer, and names the runs of the reviewers still `out` for it to read first; `ended`
+ * ends the run once the head has its final verdict or waits only on CI, and a later event starts the next one.
  */
-export async function done(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ outcome: "ended" | "refused" } | { outcome: "more"; wait: boolean }> {
+export async function done(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ outcome: "ended" | "refused" } | { outcome: "more"; wait: boolean; out: string[] }> {
   const parsed = DoneInput(input);
   if (parsed instanceof type.errors) throw new Error(`done: ${parsed.summary}`);
   if (parsed.take.output.refused) return { outcome: "refused" };
@@ -283,7 +317,8 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const mailed = [parsed.judgeMailed, parsed.earlyReviewMailed, parsed.reviewMailed].flatMap((step) => (step?.output.reviewer ? [step.output.reviewer] : []));
   const report = doneReport(parsed);
   const reviewers = reviewersAfter(parsed.take.output, mailed);
-  const wait = awaiting(parsed.take.output, reviewers);
+  const out = awaiting(parsed.take.output, reviewers).map((reviewer) => reviewer.runId);
+  const wait = out.length > 0;
   const posted = parsed.postReview?.output.threads;
   const reads = parsed.findingThreads?.output.reads;
   const unreads = [parsed.findingThreads?.output.unread, parsed.postReview?.output.unread].filter((why) => why !== undefined);
@@ -291,7 +326,7 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const answer = await asManager(ctx, mail, "done", body, Done);
   if (answer === undefined) return { outcome: "refused" };
   for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);
-  return answer;
+  return answer.outcome === "more" ? { ...answer, out } : answer;
 }
 
 /**

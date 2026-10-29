@@ -1,4 +1,5 @@
 import type { EffectContext, PerformScope } from "@intx/workflow";
+import { WorkflowRunResponse } from "@intx/types";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { type, type Type } from "arktype";
 import { asRecord } from "@corbits/common";
@@ -54,7 +55,7 @@ export function tenantPath(tenantId: string, path: string): string {
 type HubAnswer = { status: number; text: string };
 
 /** One hub call as this run, recorded under `effectId`, so a resumed run does not make it again. */
-export async function callHub(ctx: EffectContext, effectId: string, path: string, method: "POST" | "DELETE", body?: object): Promise<HubAnswer> {
+export async function callHub(ctx: EffectContext, effectId: string, path: string, method: "GET" | "POST" | "DELETE", body?: object): Promise<HubAnswer> {
   async function run({ credentials }: PerformScope): Promise<HubAnswer> {
     const hub = await credentials.resolve(HUB_CREDENTIAL_HANDLE);
     if (hub.kind !== "http") throw new Error(`${HUB_CREDENTIAL_HANDLE} is ${hub.kind}, not http`);
@@ -80,6 +81,23 @@ export async function deploy(ctx: EffectContext, effectId: string, tenantId: str
   const body = { source, entry: workflow.entry, sourceOfferingIds: offerings.ids, defaultSourceOfferingId: offerings.defaultId };
   const answer = await callHub(ctx, effectId, tenantPath(tenantId, "/workflows/deployments"), "POST", body);
   return answered(answer, `deploying ${workflow.packageName}`, Deployed).id;
+}
+
+const RunStatus = WorkflowRunResponse.pick("status");
+
+/** Whether the hub shows a run ended: stock reads a failed run as `error`, and a completed or cancelled one as `stopped`. */
+export function hasEnded({ status }: typeof RunStatus.infer): boolean {
+  return status === "error" || status === "stopped";
+}
+
+/** Whether the stock run read shows the run ended, read as this run under `effectId`, or why the hub did not answer. */
+export async function runEnded(ctx: EffectContext, effectId: string, tenantId: string, runId: string): Promise<{ ended: boolean } | { unread: string }> {
+  try {
+    const answer = await callHub(ctx, effectId, tenantPath(tenantId, `/workflows/runs/${encodeURIComponent(runId)}`), "GET");
+    return { ended: hasEnded(answered(answer, `reading run ${runId}`, RunStatus)) };
+  } catch (err) {
+    return { unread: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 const Noted = type({ noted: "boolean" });

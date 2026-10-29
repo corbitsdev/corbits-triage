@@ -22,11 +22,13 @@ const REPO = `${OWNER}/model`;
 // Under `ask`, the pr-triage role holds only posting: its labels and its comment.
 const PACK = { ...emptyPack(REPO), checks: { "max-files-changed": { enabled: true }, "ci-green": { enabled: true } } };
 const stack = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"] });
-const reviewed = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"], policyWorkflow: { "code-review": { on: true } } });
+const neverReady = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"], review: "fails-before-ready" });
+const diesAfterMail = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"], review: "dies-after-mail" });
 setDefaultTimeout(5 * 60_000);
 afterAll(async () => {
   await stack.stop();
-  await reviewed.stop();
+  await neverReady.stop();
+  await diesAfterMail.stop();
 });
 
 let pulls = 0;
@@ -74,9 +76,12 @@ test(`every sequence up to ${LENGTH} events after an open keeps the rules`, asyn
   expect(await everySequence(LENGTH)).toEqual([]);
 });
 
-test(`with code review on and its run failing before it is ready, every sequence up to ${REVIEW_LENGTH} event after an open keeps the rules`, async () => {
-  expect(await everySequence(REVIEW_LENGTH, reviewed)).toEqual([]);
-  expect(reviewed.reviewsRead()).not.toEqual([]);
+test.each([
+  ["failing before it is ready", neverReady],
+  ["dying after it takes its mail", diesAfterMail],
+])(`with code review on and its run %s, every sequence up to ${REVIEW_LENGTH} event after an open keeps the rules`, async (_fault, model) => {
+  expect(await everySequence(REVIEW_LENGTH, model)).toEqual([]);
+  expect(model.reviewsRead()).not.toEqual([]);
 });
 
 test(`${WALKS} seeded walks of ${WALK_LENGTH} events keep the rules`, async () => {

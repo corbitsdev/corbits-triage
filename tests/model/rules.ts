@@ -8,6 +8,9 @@ import type { modelStack } from "./stack.ts";
 
 type Stack = Awaited<ReturnType<typeof modelStack>>;
 
+/** More takes than this by one manager on one head is a manager polling for what will not come; the model needs two. */
+const TAKES_PER_HEAD = 4;
+
 /** The title a verdict comment opens with under its marker, by the verdict its header names. */
 const VERDICT_TITLES: Record<string, string> = { pass: "**Triage: Pass**", fail: "**Triage: Fail**", unsure: "**Triage: Unsure**" };
 
@@ -57,12 +60,14 @@ function onceEach(writes: readonly Write[]): string[] {
 
 /** Each rule the settled pull request breaks, by its number, saying how; `missed` is how many misses the fake GitHub had before it. */
 export async function broken(stack: Stack, pull: Played, missed: number): Promise<string[]> {
-  const { live, unattributed, lost, failed, waited } = await stack.leftover(pull.number);
+  const { live, unattributed, lost, failed, waited, exhausted, mostTakes } = await stack.leftover(pull.number);
   const breaks = [...oneVerdict(stack, pull), ...onceEach(stack.writes(pull.number))];
   if (live.length > 0) breaks.push(`R5: managers still live: ${live.join(", ")}`);
   if (unattributed.length > 0) breaks.push(`R5: live managers deployed for no single pull request: ${unattributed.join(", ")}`);
   if (lost.length > 0) breaks.push(`R5: mail no run took: ${lost.map((mail) => mail.to).join(", ")}`);
   if (waited.length > 0) breaks.push(`R7: a manager kept waiting on code review runs that had ended: ${waited.join(", ")}`);
+  if (exhausted.length > 0) breaks.push(`R7: managers ran out of passes: ${exhausted.join(", ")}`);
+  if (mostTakes > TAKES_PER_HEAD) breaks.push(`R7: a manager took the pull request ${mostTakes} times on one head`);
   if (failed.length > 0) breaks.push(`runs that did not complete: ${failed.join(", ")}`);
   const misses = stack.github.misses.slice(missed);
   if (misses.length > 0) breaks.push(`the fake GitHub was asked what it does not serve: ${misses.join(", ")}`);

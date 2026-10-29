@@ -28,10 +28,10 @@ A workspace's listener and a pull request's manager.
   head's request, or deploys it with the judge when it runs whatever the rules say and its `when` names every verdict; the
   pass that collects its report mirrors the verdict and posts the review together, and a later
   pass on that head posts the stored review again without deploying another. A reviewer that could not be mailed,
-  failed or ran past its one-hour deadline leaves the verdict to go up alone and is deployed again on the next event;
-  a judge the release does not publish posts nothing. `done` stops a reviewer this run deployed that ran past its
-  deadline; the hub stops one on an older head when it records the newer head or when `done` reports it, and wakes a manager once a deadline
-  passes with no manager up. The run's last step is its only end: it stops the run once `done` ends the pull
+  failed, ran past its one-hour deadline or whose run ended before it reported leaves the verdict to go up alone and
+  is deployed again on the next event; a judge the release does not publish posts nothing. `done` stops a reviewer this
+  run deployed that ran past its deadline or whose run ended; the hub stops one on an older head when it records the
+  newer head or when `done` reports it, and wakes a manager once a deadline passes with no manager up. The run's last step is its only end: it stops the run once `done` ends the pull
   request's claim, take is refused because another run holds it, or the passes fail or run out.
 
 What each deploys next, a published workflow's source asset at one commit and the offerings it runs on (`Release`), is

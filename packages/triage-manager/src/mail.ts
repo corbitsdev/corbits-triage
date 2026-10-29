@@ -7,6 +7,7 @@ import type { ReactorDirector } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { type } from "arktype";
 import { setTimeout as sleep } from "node:timers/promises";
+import { hasEnded } from "./actions/hub.js";
 
 const MAIL_TOOL = "mail";
 const READY_POLL_MS = 2_000;
@@ -40,7 +41,7 @@ async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: st
     if (!response.ok) throw new Error(`reading run ${to} answered ${response.status}: ${await response.text()}`);
     const run = Run(await response.json());
     if (run instanceof type.errors) throw new Error(`run ${to}: ${run.summary}`);
-    if (run.status === "error" || run.status === "stopped") throw new Error(`run ${to} ended (${run.status}) before it was mailed`);
+    if (hasEnded(run)) throw new Error(`run ${to} ended (${run.status}) before it was mailed`);
     if (run.publicKey) return;
     await sleep(READY_POLL_MS, undefined, { signal });
   }

@@ -270,7 +270,7 @@ test("PostgreSQL: a reviewer result is recorded only on the newest head a mail n
   });
 }, 120_000);
 
-test("PostgreSQL: done logs once each reviewer the pass gave up on past its deadline with no report", async () => {
+test("PostgreSQL: done logs once each reviewer the pass gave up on with no report, past its deadline or with its run ended", async () => {
   await withDatabase(async function overdue(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     await startManager(db, GITHUB, "run_a");
@@ -279,7 +279,8 @@ test("PostgreSQL: done logs once each reviewer the pass gave up on past its dead
     const silent = { kind: "code-review", head: "h1", runId: "run_silent", deployedBy: "run_a", deadline: past };
     const reported = { ...silent, kind: "judge", runId: "run_reported" };
     const due = { ...silent, runId: "run_due", deadline: new Date(Date.now() + 60_000).toISOString() };
-    await done(db, TENANT, GITHUB, "run_a", [silent, reported, due], { wait: true });
+    const ended = { ...due, runId: "run_ended" };
+    await done(db, TENANT, GITHUB, "run_a", [silent, reported, due, ended], { wait: true });
     await recordEvent(db, TENANT, GITHUB, "run_reported", { type: "reviewer-result", head: "h1", payload: { kind: "judge", failed: "the judge did not finish" } });
     await take(db, TENANT, GITHUB, "run_a");
     const logged: Record<string, unknown>[] = [];
@@ -288,7 +289,10 @@ test("PostgreSQL: done logs once each reviewer the pass gave up on past its dead
     }
     await done(db, TENANT, GITHUB, "run_a", [due], { wait: true, log });
     await done(db, TENANT, GITHUB, "run_a", [due], { log });
-    expect(logged).toEqual([{ level: "warn", msg: "reviewer_overdue", tenantId: TENANT, ...GITHUB, kind: "code-review", head: "h1", runId: "run_silent", deadline: past }]);
+    expect(logged).toEqual([
+      { level: "warn", msg: "reviewer_overdue", tenantId: TENANT, ...GITHUB, kind: "code-review", head: "h1", runId: "run_silent", deadline: past },
+      { level: "warn", msg: "reviewer_overdue", tenantId: TENANT, ...GITHUB, kind: "code-review", head: "h1", runId: "run_ended", deadline: ended.deadline },
+    ]);
   });
 }, 120_000);
 
