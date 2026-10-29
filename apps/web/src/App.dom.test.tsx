@@ -256,7 +256,7 @@ async function retryKeys(settle: () => void) {
 test("a retry that still cannot read the keys says so and offers Try again again", async () => {
   await retryKeys(() => finishRefresh());
 
-  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys: The hub is unavailable.");
+  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys.");
   expect([...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.disabled).toBe(false);
 });
 

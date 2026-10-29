@@ -115,6 +115,12 @@ function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
   );
 }
 
+function stillUnread(cause: Error, shown: string): string {
+  const text = errorText(cause);
+  if (text === shown) return "Still couldn't read your keys.";
+  return `Still couldn't read your keys: ${text}`;
+}
+
 function KeysUnreadNotice({ message }: { message: string }) {
   const { refreshNow } = usePortal();
   const retry = useMutation({
@@ -128,7 +134,7 @@ function KeysUnreadNotice({ message }: { message: string }) {
       <p>Couldn't read your workspace's keys.</p>
       <p role="alert" className="field-error">{message}</p>
       <Button type="button" variant="outline" size="sm" disabled={retry.isPending} onClick={() => retry.mutate()}>{retry.isPending ? "Trying again…" : "Try again"}</Button>
-      {retry.error && <p role="alert" className="field-error">Still couldn't read your keys: {errorText(retry.error)}</p>}
+      {retry.error && <p role="alert" className="field-error">{stillUnread(retry.error, message)}</p>}
     </main>
   );
 }
