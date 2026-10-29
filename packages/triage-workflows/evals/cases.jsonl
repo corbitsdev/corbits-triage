@@ -36,6 +36,13 @@
 {"name":"188","input":{"pull":"188"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
 {"name":"190","input":{"pull":"190"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
 {"name":"191","input":{"pull":"191"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
+{"name":"623","input":{"pull":"623"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
+{"name":"649","input":{"pull":"649"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
+{"name":"663","input":{"pull":"663"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
+{"name":"694","input":{"pull":"694"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
+{"name":"732","input":{"pull":"732"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
+{"name":"763","input":{"pull":"763"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
+{"name":"773","input":{"pull":"773"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
 {"name":"joho/godotenv#262","input":{"pull":"joho/godotenv#262"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
 {"name":"joho/godotenv#235","input":{"pull":"joho/godotenv#235"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
 {"name":"joho/godotenv#245","input":{"pull":"joho/godotenv#245"},"expect":{"docs":"pass","focused":"pass","verdict":"pass","instructed":"no"}}
@@ -48,6 +55,8 @@
 {"name":"148+45","input":{"pull":"148","mix":"45"},"expect":{"docs":"pass","focused":"fail","verdict":"fail","instructed":"no"}}
 {"name":"190+186","input":{"pull":"190","mix":"186"},"expect":{"docs":"pass","focused":"fail","verdict":"fail","instructed":"no"}}
 {"name":"187+188","input":{"pull":"187","mix":"188"},"expect":{"docs":"pass","focused":"fail","verdict":"fail","instructed":"no"}}
+{"name":"773+763","input":{"pull":"773","mix":"763"},"expect":{"docs":"pass","focused":"fail","verdict":"fail","instructed":"no"}}
+{"name":"732+763","input":{"pull":"732","mix":"763"},"expect":{"docs":"pass","focused":"fail","verdict":"fail","instructed":"no"}}
 {"name":"155+139-described","input":{"pull":"155","mix":"139","described":true},"expect":{"docs":"pass","focused":"fail","verdict":"fail","instructed":"no"}}
 {"name":"137+151-described","input":{"pull":"137","mix":"151","described":true},"expect":{"docs":"pass","focused":"fail","verdict":"fail","instructed":"no"}}
 {"name":"113+125-described","input":{"pull":"113","mix":"125","described":true},"expect":{"docs":"pass","focused":"fail","verdict":"fail","instructed":"no"}}
