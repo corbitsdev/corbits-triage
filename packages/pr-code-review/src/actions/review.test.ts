@@ -232,18 +232,20 @@ test("a finding is posted when the check confirms it, or cannot decide and both 
   ]);
 });
 
-test("a review checks at most its number of findings, in review order, and a finding past them is not checked and not posted", async () => {
+test("a review checks its most serious findings up to its number of checks, and one with a finding past them posts it nowhere and is not complete", async () => {
   const request = { kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout, budgets: { check: 100 } };
   const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail(request)) };
-  const found = Array.from({ length: 13 }, (_, i) => ({ path: "src/a.ts", start: i + 1, end: i + 1, code: `line ${i + 1}`, title: `t${i + 1}`, priority: 2 }));
+  const found = Array.from({ length: 13 }, (_, i) => ({ path: "src/a.ts", start: i + 1, end: i + 1, code: `line ${i + 1}`, title: `t${i + 1}`, priority: i === 0 ? 3 : i % 3 }));
   const folded = await candidates({ reviewInput, findDiff: reply({ findings: found }), findRepo: reply({ findings: found }) });
   const consolidate = reply({ groups: [], sites: found.map(({ path, start, end }) => ({ path, start, end })), unreadFindings: [] });
   const checked = await checks({ reviewInput, candidates: { output: folded }, consolidate });
   expect(checked.checks.map((c) => /<budget tokens="(\d+)"\/>/.exec(c.text)![1])).toEqual(Array(12).fill("100"));
   const check = { output: checked.checks.map(() => reply({ verdict: "real", reason: "r" }).output) };
-  const written = await writeInput({ reviewInput, candidates: { output: folded }, checks: { output: checked }, check });
-  expect(written.findings.map((f) => f.start)).toEqual(found.slice(0, 12).map((f) => f.start));
-  expect(written.dropped.map(({ finding, verdict, reason }) => [finding.start, finding.agreement.finders, verdict, reason])).toEqual([[13, 2, "unsure", "not checked: checker cap reached"]]);
+  const written = await writeInput({ reviewInput, candidates: { output: { ...folded, complete: true } }, checks: { output: checked }, check });
+  expect(written.findings.map((f) => f.priority)).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]);
+  expect(written.dropped.map(({ finding, verdict, reason }) => [finding.start, finding.priority, finding.agreement.finders, verdict, reason])).toEqual([[1, 3, 2, "unsure", "not checked: checker cap reached"]]);
+  const reviewed = await review({ writeInput: { output: written }, write: reply({ summary: "s", comments: [] }) });
+  expect(reviewed).toMatchObject({ complete: false, summary: "s\n\n1 finding was not checked: the review reached its limit of checks." });
 });
 
 const PROFILE = { packageName: "@corbits/pr-code-review" } as CodeReviewProfile;

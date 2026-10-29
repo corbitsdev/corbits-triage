@@ -942,7 +942,8 @@ is read only up to the clip, and counts as shown; a line cut across parts is
 a line of each part, shown once each is read. Each finder's reader reports
 the lines of each patch file `read_file` showed it, never `grep`'s matches;
 the review is `complete` only when the two finders between them were shown
-every line of every patch file and neither spent its budget. A review that is
+every line of every patch file, neither spent its budget, and no group was
+left unchecked past `budgets.checks` (below). A review that is
 not complete holds approve and merge, as one that stopped early does, and the
 portal and the posted review say so in INCOMPLETE_NOTE's one sentence. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
@@ -954,7 +955,9 @@ lines, and the repository read tools on the checkout. The first
 `budgets.checks` groups (12 by default) in review order (severity, then
 agreement) are checked, each on `budgets.check` (100,000 billable tokens by
 default); later groups are not checked and not posted, and are kept as unsure
-with the reason "not checked: checker cap reached". The check answers
+with the reason "not checked: checker cap reached". Such a review is not
+complete, and its summary ends with one sentence saying how many findings were
+not checked. The check answers
 real when lines it read show the claimed behaviour, reached by the trigger with
 no guard and not intended by the description, not real only when a line of
 code disproves it, and unsure when it cannot decide. The reader director makes
@@ -1038,7 +1041,8 @@ findings less severe than P<n>, `{ any: false }` none and `{ any: true }` any.
 A step
 without one is held only when it approves or merges and the review has any
 finding open. A review that did not run, failed, ran past its deadline, read
-only part of the change or reviewed another head meets no condition. Each Do
+only part of the change, left findings unchecked or reviewed another head meets
+no condition. Each Do
 it holds adds one line to the verdict's comment naming the action and why, and
 a held approve makes the head not approvable, so Triage takes back an earlier
 approval. A pull request the block's `for` or `when` leaves out runs its Dos as
