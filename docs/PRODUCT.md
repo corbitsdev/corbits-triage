@@ -47,8 +47,9 @@ How to use the portal, screen by screen, is in the
   runs when the server has no place for it (the policy file turns code review
   on), the actions Triage takes on its own, and outcomes before and after
   Triage.
-- **Audit**: who changed what in the workspace and what Triage did on pull
-  requests, newest first.
+- **Audit**: at `/audit`, not linked from the menu: the latest events the
+  workspace recorded, newest first: verdicts and the actions their runs took,
+  held action approvals, members, grants and workflow deployments.
 - **Settings**: Triage (sources, policy files, the decision model key, and
   whether Triage takes the actions each policy file names on its own), Code review (the
   provider's key and where reviews run), people and invitations, the account,
@@ -299,11 +300,12 @@ Their names are stable:
 | `Triage: Not Ready` | The head fails. |
 | `Triage: Needs Human Review` | The head is unsure. |
 | `Triage: Waiting for CI` | Triage is waiting for the head's CI before it decides, unless the pull request is Not Ready or Needs Human Review or the head has no checks. |
+| `Triage: Failed to Run` | Triage could not read the pull request; the next verdict replaces it. |
 | `rule: <rule id>` | A rule that failed on the head, such as `rule: docs`, from a `{ do: labels, target: { from: rules } }` step. |
 
 A head carries one verdict label at a time, and Triage takes back the ones
-that no longer apply, such as `Triage: Needs changes`, `Triage: Needs review`,
-`Triage: Ready to merge` and `triage:…` labels. A policy may rename any verdict's label (up to 50
+that no longer apply, including the retired `Triage: Needs changes`,
+`Triage: Needs review`, `Triage: Ready to merge` and `triage:…` labels. A policy may rename any verdict's label (up to 50
 characters) under `labels`, for example `labels: { pass: Ready to ship }`.
 Bitbucket Data Center has no labels; the `Corbits Triage` build status carries
 the verdict there.

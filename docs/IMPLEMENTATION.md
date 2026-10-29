@@ -119,7 +119,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `bun e2e/provisioners/<name>.ts` | Live checks against real services, by hand only; see [e2e/README.md](../e2e/README.md). |
 | `bun run eval` in `packages/triage-workflows` | Decision-model eval; see [DECISION_MODEL.md](DECISION_MODEL.md#measured-accuracy). |
 | `bun run eval:scan` in `packages/triage-workflows` | Repository scan eval; see `packages/triage-workflows/evals/SCAN.md`. |
-| `bun run eval:risk`, `eval:hidden-content`, `eval:duplicates` in `packages/triage-workflows` | Risk, hidden-content and duplicates evals; see `packages/triage-workflows/evals/RISK.md`. |
+| `bun run eval:risk`, `eval:hidden-content`, `eval:duplicates` in `packages/triage-workflows` | Risk, hidden-content and duplicates evals; see `packages/triage-workflows/evals/RISK.md`, the header of `packages/triage-workflows/evals/hidden-content.eval.ts` and [DECISION_MODEL.md](DECISION_MODEL.md). |
 | `bun run eval:review` | Code review eval; see `packages/pr-code-review-anthropic/evals/README.md`. |
 | `bun run holdback`, `report` | Holdback replay, cost and latency report. |
 | `bun run vendor:health`, `sh tooling/vendor-diff-check.sh` | Vendored Interchange health and drift gate. |

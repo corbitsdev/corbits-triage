@@ -82,7 +82,7 @@ Code review against the emulator: the emulator ignores GitHub's diff media type 
 ```sh
 bun run test     # unit + integration; hub tests need Postgres
 bun run test:chain  # the live chain: hub, sidecars, listener, manager, judge; about ten minutes
-bun run check    # typecheck every app, package and test; bundle the hub
+bun run check    # typecheck tooling, portal, extension, hub, packages, e2e and the tests; check exact dependencies; bundle the hub
 bun run lint
 ```
 
@@ -106,6 +106,6 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
 - **"Triage needs a decision model before it can run. Add one below."**: triage has not started. Save a decision model in the **Triage** section of Settings.
-- **A host's version line under Settings → Triage shows an error**: it is the hub's reason for the host's last roll, tried again every ten minutes.
+- **Settings → Triage shows "Updating Triage failed; see the hub log."**: the host's last roll failed; the hub's `workflow_release_failed` log line has the reason, and the roll is tried again every ten minutes.
 - **New PRs never reach triage**: the host has no live listener (`triage-listener-github` or `triage-listener-bitbucket-datacenter`). Settings → Triage says why; the hub's `workflow_release_*` log lines say what the last roll did. A failed roll is tried again ten minutes later; restart the hub, or save the decision model again, to roll at once.
 - **Portal shows "The hub answered with an error (HTTP 404)."**: the running hub does not have the route the portal calls. Restart `bun run dev`.
