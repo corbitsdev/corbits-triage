@@ -27,7 +27,7 @@
     "@noble/hashes": "2.4.0",
     "@intx/types": "workspace:*",
     "arktype": "catalog:",
-    "re2js": "2.8.6",
+    "re2js": "2.8.7",
     "@intx/authz": "workspace:*",
     "@intx/harness": "workspace:*",
     "@intx/inference": "workspace:*",

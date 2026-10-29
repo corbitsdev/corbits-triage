@@ -318,7 +318,7 @@
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
         "minimatch": "10.2.6",
-        "re2js": "2.8.6",
+        "re2js": "2.8.7",
         "tar": "catalog:",
       },
     },
@@ -392,7 +392,7 @@
         "@intx/workflow-host": "workspace:*",
         "@noble/hashes": "2.4.0",
         "arktype": "catalog:",
-        "re2js": "2.8.6",
+        "re2js": "2.8.7",
       },
       "devDependencies": {
         "@corbits/evals": "0.1.2",
@@ -1818,7 +1818,7 @@
 
     "rc9": ["rc9@3.1.0", "", { "dependencies": { "defu": "^6.1.7", "destr": "^2.0.5" } }, "sha512-ufjkNVzbRHKcCOmTahZkmVsyc3W+MSk3jY03m+a7tGHkIsdVMG9l10/3HvFbWkkKzY5VFp3pkRsIo/UYgmFL7Q=="],
 
-    "re2js": ["re2js@2.8.6", "", {}, "sha512-xLgQil4kIUCrAzVk9fRSkxkFNwmygLFjVxXrLc65aE1F0+Zsb8rxumFBy4XKyvgMCTL6kilDq3EZ0piE2dP/Dg=="],
+    "re2js": ["re2js@2.8.7", "", {}, "sha512-bRSL/vn3KAmlGfGNoVpcsBXLaVvl6AbuvMMWbz0m3vBj60nj+p2/biozfBUOSBP+5XTduF6mr6IO/ZVjmqqkVQ=="],
 
     "react": ["react@19.3.0", "", {}, "sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog=="],
 
