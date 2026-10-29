@@ -66,7 +66,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "bitbucket_datacenter_read_file",
-    description: `Read lines start to end (1-based, inclusive) of a file at a commit sha, at most ${MAX_LINES} lines, each prefixed with its line number; with whole, the file's text as it is.`,
+    description: `Read lines start to end (1-based, inclusive) of a file at a commit sha, at most ${MAX_LINES} lines and fewer when long lines fill the page, each prefixed with its line number; end in the result is the last line returned; with whole, the file's text as it is.`,
     inputSchema: obj({ repo, sha: str, path: str, start: { type: "integer" }, end: { type: "integer" }, whole: { type: "boolean" } }, ["repo", "sha", "path"]),
   },
 ];

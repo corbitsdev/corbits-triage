@@ -29,7 +29,7 @@ async function textOf(file: string): Promise<string | undefined> {
   return text.includes("\0") ? undefined : text;
 }
 
-/** Lines start..end (1-based, inclusive) of a text file, numbered, at most MAX_LINES of them. */
+/** Lines start..end (1-based, inclusive) of a text file, numbered and paged as `linesOf` pages them. */
 export async function readLines(root: string, path: string, start = 1, end = start + MAX_LINES - 1) {
   const file = await confine(root, path);
   if (!(await stat(file)).isFile()) throw new Error(`${path} is not a file`);

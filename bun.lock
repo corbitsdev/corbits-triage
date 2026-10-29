@@ -236,6 +236,9 @@
         "arktype": "catalog:",
         "ignore": "5.3.2",
       },
+      "devDependencies": {
+        "@intx/inference": "workspace:*",
+      },
     },
     "packages/pr-code-review-anthropic": {
       "name": "@corbits/pr-code-review-anthropic",

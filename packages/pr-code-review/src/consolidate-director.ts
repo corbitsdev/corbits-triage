@@ -26,7 +26,7 @@ interface Read {
   lines: number;
 }
 
-const Window = type({ text: "string" });
+const Window = type({ text: "string", end: "number", totalLines: "number" });
 
 /** The findings the input lists between its <findings> tags. */
 function findingsIn(content: string): Finding[] {
@@ -153,12 +153,6 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
 
   function onRead(asked: Read, result: ToolResult) {
     if (result.isError) return;
-    // A result over the reactor's size cap comes back as truncated text, so the window is read again in halves.
-    if (typeof result.content === "string") {
-      const half = Math.ceil(asked.lines / 2);
-      if (asked.lines > 1) next.push(read({ ...asked, lines: half }), read({ path: asked.path, start: asked.start + half, lines: asked.lines - half }));
-      return;
-    }
     const window = Window(result.content);
     if (window instanceof type.errors) throw new Error(`${name}: ${READ_FILE_TOOL[checkout.source]} returned no window: ${window.summary}`);
     for (const row of window.text.split("\n")) {
@@ -166,6 +160,9 @@ function consolidateDirector(caps: ReactorCapabilities, basePrompt: string, { na
       const line = Number(row.slice(0, tab));
       if (tab > 0 && Number.isInteger(line)) linesOf(asked.path).set(line, row.slice(tab + 1));
     }
+    // A page stops early when its lines fill a tool result; the rest of the window is read from where it stopped.
+    const last = asked.start + asked.lines - 1;
+    if (window.end < last && window.end < window.totalLines) next.push(read({ path: asked.path, start: window.end + 1, lines: last - window.end }));
   }
 
   function onToolDone(result: ToolResult) {
