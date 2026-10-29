@@ -34,7 +34,7 @@ beforeAll(async () => {
   hub = await startHub(database, github, portalDir);
   workspace = await signUp(hub, database);
   await setUpWorkspace(workspace, github, model.origin);
-  await listenerStarted(workspace);
+  await listenerStarted(hub, workspace);
 });
 
 afterAll(async () => {
@@ -72,7 +72,7 @@ async function rows(query: string): Promise<Record<string, unknown>[]> {
   try {
     return [...await db.execute(sql.raw(query))] as Record<string, unknown>[];
   } finally {
-    await cleanup("close the database connection", close);
+    await close();
   }
 }
 

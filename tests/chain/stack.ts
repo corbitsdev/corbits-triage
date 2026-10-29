@@ -63,7 +63,7 @@ export async function createDatabase(): Promise<Database> {
   try {
     await admin.db.execute(sql.raw(`create database ${name}`));
   } finally {
-    await cleanup("close the admin connection", () => admin.close());
+    await admin.close();
   }
   const url = `postgres://postgres:postgres@localhost:5432/${name}`;
   await Bun.$`${process.execPath} --conditions=intx-src apps/hub/src/migrate.ts`.cwd(ROOT).env({ PATH: CHILD_PATH, HOME: homedir(), DATABASE_URL: url }).quiet();
@@ -75,7 +75,7 @@ export async function dropDatabase(database: Database): Promise<void> {
   try {
     await admin.db.execute(sql.raw(`drop database if exists ${database.name} with (force)`));
   } finally {
-    await cleanup("close the admin connection", () => admin.close());
+    await admin.close();
   }
 }
 
@@ -89,12 +89,23 @@ function freePort(): number {
 async function collect(stream: ReadableStream<Uint8Array>, lines: string[], file: string): Promise<void> {
   const decoder = new TextDecoder();
   let partial = "";
+  let writable = true;
+  function keep(kept: string[]): void {
+    lines.push(...kept);
+    if (!writable || kept.length === 0) return;
+    try {
+      appendFileSync(file, `${kept.join("\n")}\n`);
+    } catch (err) {
+      writable = false;
+      console.error(`Could not write the hub log ${file}: ${String(err)}`);
+    }
+  }
   for await (const chunk of stream) {
     const parts = (partial + decoder.decode(chunk, { stream: true })).split("\n");
     partial = parts.pop()!;
-    lines.push(...parts);
-    if (parts.length > 0) appendFileSync(file, `${parts.join("\n")}\n`);
+    keep(parts);
   }
+  keep(partial === "" ? [] : [partial]);
 }
 
 export type Hub = { origin: string; dataDir: string; logs: string[]; logFile: string; stop: () => Promise<void> };
@@ -107,7 +118,9 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const logs: string[] = [];
   const logDir = join(LOG_ROOT, basename(Bun.main, ".test.ts"));
   mkdirSync(logDir, { recursive: true });
-  const logFile = join(logDir, `hub-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}.log`);
+  const logFile = join(logDir, "hub.log");
+  writeFileSync(logFile, "");
+  console.log(`Hub log: ${logFile}`);
   const child = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
     cwd: ROOT,
     env: {
@@ -169,8 +182,9 @@ export async function cleanup(what: string, step: () => unknown): Promise<void> 
   try {
     await step();
   } catch (err) {
-    console.error(`Could not ${what}: ${String(err)}`);
-    cleanupFailures.push(`Could not ${what}: ${String(err)}`);
+    const failure = `Could not ${what}: ${String(err)}`;
+    console.error(failure);
+    cleanupFailures.push(failure);
   }
 }
 
@@ -215,7 +229,7 @@ export async function signUp(hub: Hub, database: Database): Promise<Workspace> {
   try {
     await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.email, email));
   } finally {
-    await cleanup("close the database connection", close);
+    await close();
   }
   const cookie = signUp.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
   const transport = cookieTransport(hub.origin, cookie);
@@ -268,7 +282,7 @@ export async function buildPortal(dir: string): Promise<void> {
 }
 
 /** Waits for the hub to roll the workspace onto the build's release and its GitHub listener to be up. */
-export async function listenerStarted(workspace: Workspace): Promise<void> {
+export async function listenerStarted(hub: Hub, workspace: Workspace): Promise<void> {
   const deadline = Date.now() + LISTENER_START_MS;
   while (Date.now() < deadline) {
     const versions = await readDeployedVersions(workspace.transport, workspace.tenantId);
@@ -277,7 +291,7 @@ export async function listenerStarted(workspace: Workspace): Promise<void> {
     if (currentDeployment(versions.deployments, TRIAGE_LISTENERS.github)?.live && versions.rollouts.length > 0) return;
     await Bun.sleep(POLL_MS);
   }
-  throw new Error("The hub did not start the GitHub listener.");
+  throw new Error(`The hub did not start the GitHub listener.\n${hubLogTail(hub)}`);
 }
 
 /** A webhook delivery GitHub would send, signed with the App's secret; the hub's answer names what it did with it. */

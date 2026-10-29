@@ -90,7 +90,7 @@ export function chainStack(env: Record<string, string> = {}) {
     // Until a scenario switches it to policy, only posting runs on its own, so a Do in a policy is held.
     await saveAutomationMode(workspace.transport, workspace.tenantId, "ask");
     await setUpWorkspace(workspace, github, model.origin);
-    await listenerStarted(workspace);
+    await listenerStarted(hub, workspace);
   });
 
   afterAll(async () => {
