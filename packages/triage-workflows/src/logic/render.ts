@@ -917,7 +917,7 @@ export function summarize(results: Array<RenderOutput | null>): BacklogSummary {
   return { total: results.length, classified: done.length, coverage: `${done.length}/${results.length}`, byState };
 }
 
-/** A code review's posted body: the model's summary, then a fixed line per condition: it stopped early, or it is not complete. */
+/** A code review's posted body: the model's summary, then a fixed line per condition: it stopped early, it is not complete, or it left findings unchecked. */
 export function codeReviewSummary(review: Pick<CodeReviewOutput, "summary" | "budgetExhausted" | "complete" | "unchecked">): string {
   const unchecked = review.unchecked ?? 0;
   return [review.summary, ...(review.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...(review.complete === true ? [] : [INCOMPLETE_NOTE]), ...(unchecked > 0 ? [uncheckedNote(unchecked)] : [])].filter(Boolean).join("\n\n");
