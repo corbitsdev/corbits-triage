@@ -1283,6 +1283,19 @@ function withDropped<T extends object>(read: T, dropped: string[]): T & { droppe
   return { ...read, ...(dropped.length > 0 && { dropped }) };
 }
 
+/** A labels step naming a label Triage takes back would flip it across runs, so it is left out and named, and the rest of the pack still loads. */
+function withoutLevelLabelSteps(actions: PolicyActions, dropped: string[]): PolicyActions {
+  const kept = { ...actions };
+  for (const list of VERDICTS) {
+    kept[list] = actions[list].filter(function keepStep(step, i) {
+      const level = step.do === "labels" && step.target.from === "list" ? step.target.labels.find((label) => levelLabelRule(label) !== undefined) : undefined;
+      if (level !== undefined) dropped.push(`${STEP_WHERE[list]} ${i + 1} label ${level} is one Triage takes back; name another`);
+      return level === undefined;
+    });
+  }
+  return kept;
+}
+
 /** Reads a stored pack, throwing an Error whose message says why it is rejected. Version 1 reads as version 2. */
 export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const stored = policyObject(raw);
@@ -1293,7 +1306,7 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const repo = readRepo(body, expectedRepo);
   const checks = readChecks(body.checks);
   const custom = parseCustom(body.custom);
-  const actions = parseActions(body.actions, dropped);
+  const actions = withoutLevelLabelSteps(parseActions(body.actions, dropped), dropped);
   const labels = parseLabels(body.labels);
   const groups = parseGroups(body.groups);
   return withDropped(refuseTriageLabels({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels, ...(groups && { groups }) }), dropped);

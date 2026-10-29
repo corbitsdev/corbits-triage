@@ -230,9 +230,15 @@ describe("check pack contract", () => {
       [{ ...ACTIONS, pass: [{ do: "comment", target: {} }] }, "Pass step 1 target must set exactly body."],
       [{ ...ACTIONS, pass: [{ do: "approve", for: "staff" }] }, "Pass step 1 for must be one of OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE, MANNEQUIN, BOT."],
       [{ ...ACTIONS, fail: [{ kind: "comment", target: { body: "Hi" } }] }, "Fail step 1 must not set kind."],
-      [{ ...ACTIONS, pass: [{ do: "labels", target: { from: "list", labels: ["Risk: High"] } }] }, "Pass step 1 label Risk: High is one Triage takes back; name another."],
     ];
     for (const [actions, reason] of rejected) expect(() => readCheckPack({ ...emptyPack(REPO), actions })).toThrow(reason);
+  });
+
+  test("a labels step holding a level label is left out and named, and the rest of the pack loads", () => {
+    const level = { do: "labels", target: { from: "list", labels: ["Risk: High"] } };
+    const read = readCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, pass: [level, COMMENT] } });
+    expect(read.actions.pass).toEqual([COMMENT]);
+    expect(read.dropped).toEqual(["Pass step 1 label Risk: High is one Triage takes back; name another"]);
   });
 
   test("the schema accepts what the parser reads, and a rejection says why", () => {
