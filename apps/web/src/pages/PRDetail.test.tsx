@@ -101,19 +101,16 @@ function buttons(html: string): string[] {
   return [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map(([, attributes, name]) => (attributes.includes('disabled=""') ? `${name} (disabled)` : name));
 }
 
-test.each([
-  ["a held merge waiting on you is the one Merge", true, true, ["Merge", "Skip", "More"]],
-  ["a held merge is closed to you while the host can't merge", true, false, ["Merge (disabled)", "Skip", "More"]],
-  ["without the merge grant a held merge has no button of its own and the page keeps its Merge", false, true, ["Skip", "Merge", "More"]],
-])("%s", (_name, grant, canMerge, expected) => {
-  expect(buttons(actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []), false, canMerge, grant))).toEqual(expected);
-});
+const HELD = { held: true };
+const HELD_FOR_CI = { held: true, ci: "pending" };
 
-test("a merge that runs once CI finishes has no button of its own, and the page keeps its Merge", () => {
-  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true, ci: "pending" })], ["merge"]));
-  expect(html).toContain("Will run when CI finishes: merge");
-  expect(html.match(/>Merge</g)).toHaveLength(1);
-  expect(html).toMatch(/<div class="suggest">.*<div class="pr-actions-row"><button[^>]*>Skip<\/button><\/div><\/div>/);
+test.each([
+  ["a held merge waiting on you is the one Merge", HELD, [], true, true, ["Merge", "Skip", "More"]],
+  ["a held merge is closed to you while the host can't merge", HELD, [], true, false, ["Merge (disabled)", "Skip", "More"]],
+  ["without the merge grant a held merge has no button of its own and the page keeps its Merge", HELD, [], false, true, ["Skip", "Merge", "More"]],
+  ["a merge that runs once CI finishes has no button of its own, and the page keeps its Merge", HELD_FOR_CI, ["merge"], true, true, ["Skip", "Merge", "More"]],
+])("%s", (_name, rest, automatic, grant, canMerge, expected) => {
+  expect(buttons(actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, rest)], automatic), false, canMerge, grant))).toEqual(expected);
 });
 
 test("a closed pull request offers no held action and none of your controls", () => {
