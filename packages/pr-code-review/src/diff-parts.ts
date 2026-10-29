@@ -1,14 +1,18 @@
 import { posix } from "node:path";
 import { diffFiles, type DiffFileStatus } from "@corbits/common/diff-files";
+import { DIFF_MOUNT } from "@corbits/repo-read-tool";
 import type { LinesRead } from "./lines-read.js";
 
-/** Where the checkout action writes the pull request's diff, one patch per changed file, relative to the checkout's root. */
-export const DIFF_DIR = ".corbits/diff";
+/** Where the read tools show the folder the checkout action writes the pull request's diff into, one patch per changed file. */
+export const DIFF_DIR = DIFF_MOUNT;
 
 /** Lists every changed file of the diff: its path, status, line count and the patch files that hold it. */
 export const DIFF_INDEX = `${DIFF_DIR}/index.jsonl`;
 
-/** A file's patch past this many bytes is split into numbered parts, each well under what the read tools read whole. */
+/**
+ * A file's patch past this many bytes is split into numbered parts, each well under what the read tools read whole; a
+ * part ends at a line end, or inside a line longer than this.
+ */
 export const MAX_PART_BYTES = 1_500_000;
 
 export interface DiffPart {
@@ -29,19 +33,34 @@ function linesIn(text: string): string[] {
   return text.split(/(?<=\n)/).filter((line) => line !== "");
 }
 
-/** The patch cut at line ends into texts of at most MAX_PART_BYTES each, or one line alone when it is longer. */
+/** `line` cut into pieces of at most MAX_PART_BYTES each, never inside a character. */
+function pieces(line: string): string[] {
+  const bytes = Buffer.from(line);
+  const cut: string[] = [];
+  let from = 0;
+  while (from < bytes.length) {
+    let to = Math.min(from + MAX_PART_BYTES, bytes.length);
+    // A UTF-8 continuation byte is 10xxxxxx; cutting before one would split its character.
+    while (to < bytes.length && (bytes[to]! & 0xc0) === 0x80) to--;
+    cut.push(bytes.subarray(from, to).toString());
+    from = to;
+  }
+  return cut;
+}
+
+/** The patch cut into texts of at most MAX_PART_BYTES each, at line ends, and inside a line only when it is longer. */
 function split(patch: string): string[] {
   const parts: string[] = [];
   let part = "";
   let bytes = 0;
-  for (const line of linesIn(patch)) {
-    const size = Buffer.byteLength(line);
+  for (const piece of linesIn(patch).flatMap(pieces)) {
+    const size = Buffer.byteLength(piece);
     if (part !== "" && bytes + size > MAX_PART_BYTES) {
       parts.push(part);
       part = "";
       bytes = 0;
     }
-    part += line;
+    part += piece;
     bytes += size;
   }
   return part === "" ? parts : [...parts, part];

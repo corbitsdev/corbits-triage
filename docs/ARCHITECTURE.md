@@ -914,17 +914,22 @@ manager deploys one more review of a head for each `again` it has not
 reviewed, even where an earlier review of the head settled.
 Code review only reads: a checkout action downloads the head through the host
 credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>` and
-writes the whole diff into it under `.corbits/diff/`, and its tools are the
-host read bundle and repository reads confined to that folder. Each changed
-file's patch is its own file there, split at line ends into numbered parts of at
-most 1,500,000 bytes, so the read tools' 2,000,000-byte limit never refuses one;
-a deleted file has none. `.corbits/diff/index.jsonl` lists every changed file
+writes the whole diff beside it in `<sha>.diff`, a folder made afresh outside
+the tree the pull request controls (a link or file in the way fails the
+action). Its tools are the host read bundle and repository reads confined to
+the checkout, which show the diff folder at `/diff` to `read_file` and `list`
+only; no repository path is absolute, and grep never searches it. Each changed
+file's patch is its own file there, split into numbered parts of at most
+1,500,000 bytes, at a line end where one fits and inside a longer line
+otherwise, so the read tools' 2,000,000-byte limit never refuses one; a deleted
+file has none. `/diff/index.jsonl` lists every changed file
 with its path, status (added, modified, deleted or renamed), line count and
 patch files. No prompt carries the diff: plan and both finders get the index's
 path and read the patches with the repository reads on their token budget
 (`budgets.repoFinder` for the repository finder, 400,000 billable tokens each by
 default). `read_file` clips each line at 500 characters, so a longer diff line
-is read only up to the clip, and counts as shown. Each finder's reader reports
+is read only up to the clip, and counts as shown; a line cut across parts is
+a line of each part, shown once each is read. Each finder's reader reports
 the lines of each patch file `read_file` showed it, never `grep`'s matches;
 the review is `complete` only when the two finders between them were shown
 every line of every patch file and neither spent its budget. A review that is

@@ -37,12 +37,22 @@ export function refused<T extends ToolCallInput>(call: T, reason: string): T {
   return { ...call, arguments: { refusal: reason } };
 }
 
+/** Where `read_file` and `list` read the folder a call names as `diffRoot`; no repository path is absolute, so none is shadowed. */
+export const DIFF_MOUNT = "/diff";
+
 /**
- * The call confined to the checkout at `root`. The tools hold no root of their own: the director that runs them names
- * the checkout on every call, over whatever the model passed; the model's own call stays in history.
+ * The call confined to the checkout at `root`, and paths under DIFF_MOUNT to `diffRoot` when given. The tools hold no
+ * root of their own: the director that runs them names both on every call, over whatever the model passed; the model's
+ * own call stays in history.
  */
-export function rootedAt<T extends ToolCallInput>(call: T, root: string): T {
-  return { ...call, arguments: { ...call.arguments, root } };
+export function rootedAt<T extends ToolCallInput>(call: T, root: string, diffRoot?: string): T {
+  return { ...call, arguments: { ...call.arguments, root, ...(diffRoot !== undefined && { diffRoot }) } };
+}
+
+/** The path below DIFF_MOUNT that `path` names, if it names one. */
+function mounted(path: unknown): string | undefined {
+  if (path === DIFF_MOUNT) return ".";
+  return typeof path === "string" && path.startsWith(`${DIFF_MOUNT}/`) ? path.slice(DIFF_MOUNT.length + 1) : undefined;
 }
 
 export function isBelow(base: string, path: string): boolean {
@@ -66,9 +76,25 @@ async function confineRoot(root: unknown, checkouts: string): Promise<string> {
   return real;
 }
 
+/** A read_file or list under DIFF_MOUNT, confined to the call's `diffRoot` and answered with the path the model gave. */
+async function dispatchMounted(call: ToolCallInput, below: string, checkouts: string): Promise<unknown> {
+  const a = call.arguments;
+  const root = await confineRoot(a.diffRoot, checkouts);
+  switch (call.name) {
+    case "read_file":
+      return { ...(await readLines(root, below, a.start, a.end)), path: a.path };
+    case "list":
+      return { ...(await list(root, below)), path: a.path };
+    default:
+      throw new Error(`${call.name} does not read ${DIFF_MOUNT}`);
+  }
+}
+
 async function dispatch(call: ToolCallInput, checkouts: string): Promise<unknown> {
   const a = call.arguments;
   if (typeof a.refusal === "string") throw new Error(a.refusal);
+  const below = mounted(a.path);
+  if (below !== undefined) return dispatchMounted(call, below, checkouts);
   const root = await confineRoot(a.root, checkouts);
   switch (call.name) {
     case "read_file":

@@ -39,7 +39,7 @@ const SHA = "0123456789abcdef0123456789abcdef01234567";
 const FILE = "export function add(a: number, b: number) {\n  return a - b;\n}\n";
 const DIFF = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,3 +1,3 @@\n export function add(a: number, b: number) {\n-  return a + b;\n+  return a - b;\n }\n";
 /** The one patch file the checkout holds the diff in. */
-const PATCH = ".corbits/diff/0001.patch";
+const PATCH = "/diff/0001.patch";
 const FINDING = { path: "src/a.ts", start: 2, end: 2, priority: 1, confidence: 0.9, title: "add subtracts", why: "it uses -", trigger: "add(1, 1)", code: "  return a - b;" };
 /** A candidate the check step answers not real. */
 const PLANTED = { path: "src/a.ts", start: 1, end: 1, priority: 2, confidence: 0.6, title: "add is not exported", why: "callers cannot import it", trigger: "import { add }", code: "export function add(a: number, b: number) {" };
@@ -54,7 +54,7 @@ let model: ReturnType<typeof Bun.serve>;
 const fetched: string[] = [];
 /** How many of the diff finder's next answers are prose with no findings list. */
 let diffFinderProse = 0;
-/** Whether the diff finder greps the patch files for every line instead of reading them. */
+/** Whether the diff finder greps for every line instead of reading the patch files. */
 let diffFinderGreps = false;
 /** Whether the repository finder answers in prose once it has read. */
 let repoFinderProse = false;
@@ -121,7 +121,7 @@ function answer(body: MessagesRequest) {
     return [{ type: "tool_use", id: "verify", name: "read_file", input: { path: sent.includes(OUTSIDE.title) ? OUTSIDE.path : "src/a.ts" } }];
   }
   if (sent.includes("Verify this finding.")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
-  if (diffFinder && diffFinderGreps && !sent.includes("tool_result")) return [{ type: "tool_use", id: "grep-diff", name: "grep", input: { pattern: ".", glob: ".corbits/diff/*.patch" } }];
+  if (diffFinder && diffFinderGreps && !sent.includes("tool_result")) return [{ type: "tool_use", id: "grep-diff", name: "grep", input: { pattern: "." } }];
   if (diffFinder && !sent.includes("tool_result")) {
     return [
       { type: "tool_use", id: "index", name: "read_file", input: { path: DIFF_INDEX } },
@@ -231,7 +231,7 @@ test("the finders read the diff and the head the checkout action put on the side
   expect(results["index"]).toMatchObject({ content: { text: `1\t${JSON.stringify({ path: "src/a.ts", status: "modified", lines: 8, patches: [PATCH] })}\n2\t` } });
   expect(results["diff"]).toMatchObject({ content: { path: PATCH, text: expect.stringContaining("+  return a - b;") } });
   expect(results["read"]).toMatchObject({ content: { path: "src/a.ts", text: "1\texport function add(a: number, b: number) {\n2\t  return a - b;\n3\t}\n4\t" } });
-  expect(results["grep"]).toMatchObject({ content: { matches: [{ path: PATCH, line: 5 }, { path: "src/a.ts", line: 1 }] } });
+  expect(results["grep"]).toMatchObject({ content: { matches: [{ path: "src/a.ts", line: 1 }] } });
   expect(results["escape"]).toMatchObject({ content: `${join(dir, "head/src/a.ts")} is outside the repository`, isError: true });
   expect(first.run.outputs["review"]).toMatchObject({ summary: "One defect.", complete: true, comments: [{ path: "src/a.ts", start: 2, title: "add subtracts", agreement: { finders: 2 } }] });
 
@@ -240,12 +240,13 @@ test("the finders read the diff and the head the checkout action put on the side
   expect(fetched.filter((path) => path.includes("/tarball/"))).toHaveLength(1);
 });
 
-test("a review whose finders grepped the diff rather than reading it is not complete", async () => {
+test("a review whose finders grepped rather than reading the patch files is not complete, and grep never shows them", async () => {
   diffFinderGreps = true;
   try {
     const { run, results } = await review(join(dir, "data"));
     expect(run.terminalStatus).toBe("completed");
-    expect(results.find((r) => r.callId === "grep-diff")).toMatchObject({ content: { matches: Array.from({ length: 8 }, (_, i) => ({ path: PATCH, line: i + 1 })) } });
+    const grepped = results.find((r) => r.callId === "grep-diff")!.content as { matches: { path: string }[] };
+    expect(new Set(grepped.matches.map((match) => match.path))).toEqual(new Set(["src/a.ts", "src/b.ts"]));
     expect(run.outputs["review"]).toMatchObject({ complete: false, comments: [{ path: "src/a.ts", start: 2 }] });
   } finally {
     diffFinderGreps = false;

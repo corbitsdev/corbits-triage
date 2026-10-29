@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ReactorCapabilities, ReactorDirector, ToolCall } from "@intx/types/runtime";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { consolidateDirectorOf } from "../consolidate-director.js";
 import type { CodeReviewProfile, Effort, Role } from "../profile.js";
-import { DIFF_DIR, DIFF_INDEX, indexedFiles, MAX_PART_BYTES, shownTag } from "../diff-parts.js";
-import { BUDGET_EXHAUSTED, checkoutPath, checkoutUnder } from "./checkout.js";
+import { DIFF_DIR, DIFF_INDEX, indexedFiles, MAX_PART_BYTES, readWhole, shownTag } from "../diff-parts.js";
+import { BUDGET_EXHAUSTED, checkoutPath, checkoutUnder, diffDirOf } from "./checkout.js";
 import { candidates, checks, findersInput, review, reviewInputFor, writeInput } from "./review.js";
 
 const efforts: Record<Role, Effort> = { plan: "low", diffFinder: "low", repoFinder: "low", consolidate: "low", check: "low", write: "low" };
@@ -79,23 +79,30 @@ function largeDiff(count: number) {
   return { big, lines, diff: big + gone + diffOf("src/a.ts", "x") };
 }
 
-test("a diff past the read tools' limit is written as one patch per file, the large one in parts, with an index the prompts name", async () => {
+const CTX = { perform: ({ run }: { run: (scope: PerformScope) => unknown }) => run({} as PerformScope) } as unknown as EffectContext;
+
+/** The file the read tools show at `shown`, beside the checkout at `path`. */
+function besideCheckout(path: string, shown: string): string {
+  return join(diffDirOf(path), posix.relative(DIFF_DIR, shown));
+}
+
+test("a diff past the read tools' limit is written beside the checkout as one patch per file, the large one in parts, with an index the prompts name", async () => {
   const { big, lines, diff } = largeDiff(60_000);
   expect(Buffer.byteLength(diff)).toBeGreaterThan(2_000_000);
   const dataDir = mkdtempSync(join(tmpdir(), "review-diff-"));
   try {
     mkdirSync(checkoutPath(dataDir, checkout), { recursive: true });
-    const ctx = { perform: ({ run }: { run: (scope: PerformScope) => unknown }) => run({} as PerformScope) } as unknown as EffectContext;
-    const { path } = await checkoutUnder(() => dataDir)({ ...checkout, diff }, ctx);
-    const index = readFileSync(join(path, DIFF_INDEX), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line) as { path: string; status: string; lines: number; patches: string[] });
+    const { path } = await checkoutUnder(() => dataDir)({ ...checkout, diff }, CTX);
+    expect(readdirSync(path)).toEqual([]);
+    const index = readFileSync(besideCheckout(path, DIFF_INDEX), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line) as { path: string; status: string; lines: number; patches: string[] });
     expect(index.map(({ path: file, status, lines: count }) => [file, status, count])).toEqual([["src/big.ts", "modified", 60_005], ["src/gone.ts", "deleted", 6], ["src/a.ts", "modified", 6]]);
-    expect(index[0]!.patches).toEqual([".corbits/diff/0001-1.patch", ".corbits/diff/0001-2.patch"]);
+    expect(index[0]!.patches).toEqual(["/diff/0001-1.patch", "/diff/0001-2.patch"]);
     expect(index[1]!.patches).toEqual([]);
-    expect(index[2]!.patches).toEqual([".corbits/diff/0003.patch"]);
-    const parts = index[0]!.patches.map((part) => readFileSync(join(path, part), "utf8"));
+    expect(index[2]!.patches).toEqual(["/diff/0003.patch"]);
+    const parts = index[0]!.patches.map((part) => readFileSync(besideCheckout(path, part), "utf8"));
     for (const part of parts) expect(Buffer.byteLength(part)).toBeLessThanOrEqual(MAX_PART_BYTES);
     expect(parts.join("")).toBe(big);
-    expect(readdirSync(join(path, DIFF_DIR)).sort()).toEqual(["0001-1.patch", "0001-2.patch", "0003.patch", "index.jsonl"]);
+    expect(readdirSync(diffDirOf(path)).sort()).toEqual(["0001-1.patch", "0001-2.patch", "0003.patch", "index.jsonl"]);
 
     const built = await messages({ title: "t", description: "d", diff }, "p", { path: "src/a.ts", start: 1, end: 1, title: "t" });
     for (const step of ["plan", "diff", "repo"] as const) {
@@ -103,6 +110,55 @@ test("a diff past the read tools' limit is written as one patch per file, the la
       expect(built[step]).toContain(`<diff index="${DIFF_INDEX}"/>`);
       expect(built[step]).not.toContain(lines[0]);
     }
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("a single line past the part limit is cut inside the line, and its parts rebuild it", () => {
+  const line = `+${"é".repeat(1_250_000)}`;
+  const patch = `diff --git a/min.js b/min.js\n--- a/min.js\n+++ b/min.js\n@@ -1 +1 @@\n-a\n${line}\n`;
+  expect(Buffer.byteLength(patch)).toBeGreaterThan(2_500_000);
+  const [file] = indexedFiles(patch);
+  expect(file!.parts.length).toBe(3);
+  for (const part of file!.parts) expect(Buffer.byteLength(part.text)).toBeLessThanOrEqual(MAX_PART_BYTES);
+  expect(file!.parts.map((part) => part.text).join("")).toBe(patch);
+  expect(file!.parts.map((part) => part.lines)).toEqual([5, 1, 1]);
+  expect(file!.parts[1]!.text).not.toContain("\n");
+  const everyLine = new Map(file!.parts.map((part) => [part.path, new Set(Array.from({ length: part.lines }, (_, i) => i + 1))]));
+  expect(readWhole([file!], [everyLine])).toBe(true);
+  expect(readWhole([file!], [new Map([...everyLine].slice(0, 2))])).toBe(false);
+});
+
+test("a checkout whose tree holds .corbits as a link or a file still gets its diff, written beside the tree and never through it", async () => {
+  const diff = diffOf("src/a.ts", "x");
+  for (const plant of ["link", "file"] as const) {
+    const dataDir = mkdtempSync(join(tmpdir(), "review-diff-"));
+    try {
+      const path = checkoutPath(dataDir, checkout);
+      mkdirSync(path, { recursive: true });
+      mkdirSync(join(dataDir, "elsewhere"));
+      if (plant === "link") symlinkSync(join(dataDir, "elsewhere"), join(path, ".corbits"));
+      else writeFileSync(join(path, ".corbits"), "mine\n");
+      await checkoutUnder(() => dataDir)({ ...checkout, diff }, CTX);
+      expect(readFileSync(besideCheckout(path, "/diff/0001.patch"), "utf8")).toBe(diff);
+      expect(readdirSync(join(dataDir, "elsewhere"))).toEqual([]);
+      if (plant === "file") expect(readFileSync(join(path, ".corbits"), "utf8")).toBe("mine\n");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("a link where the diff goes beside the checkout fails the checkout rather than writing through it", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "review-diff-"));
+  try {
+    const path = checkoutPath(dataDir, checkout);
+    mkdirSync(path, { recursive: true });
+    mkdirSync(join(dataDir, "elsewhere"));
+    symlinkSync(join(dataDir, "elsewhere"), diffDirOf(path));
+    await expect(checkoutUnder(() => dataDir)({ ...checkout, diff: diffOf("src/a.ts", "x") }, CTX)).rejects.toThrow("exists and is not a folder");
+    expect(readdirSync(join(dataDir, "elsewhere"))).toEqual([]);
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }
@@ -117,7 +173,7 @@ function shownReply(shown: Record<string, [number, number][]>, exhausted = false
 test("a review is complete only when the finders between them were shown every line of every patch file and neither spent its budget", async () => {
   const { diff } = largeDiff(60_000);
   const [first, second] = indexedFiles(diff)[0]!.parts.map((part) => [part.path, part.lines] as const);
-  const small: [string, [number, number][]] = [".corbits/diff/0003.patch", [[1, 6]]];
+  const small: [string, [number, number][]] = ["/diff/0003.patch", [[1, 6]]];
   const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff, checkout })) };
   async function complete(findDiff: { output: { reply: string } }, findRepo: { output: { reply: string } }) {
     return (await candidates({ reviewInput, findDiff, findRepo })).complete;

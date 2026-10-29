@@ -3,7 +3,7 @@ import { getLogger } from "@intx/log";
 import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent, TokenUsage, ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
 import { refused, REPO_READ_DEFINITIONS, rootedAt } from "@corbits/repo-read-tool";
-import { BUDGET_EXHAUSTED, budgetOf, checkoutOf, checkoutPath, isCheckedOut } from "./actions/checkout.js";
+import { BUDGET_EXHAUSTED, budgetOf, checkoutOf, checkoutPath, diffDirOf, isCheckedOut } from "./actions/checkout.js";
 import { MODEL_FAILED, NO_CHECKOUT, NO_VERDICT, UNREADABLE } from "./failures.js";
 import { Verdict } from "./actions/review.js";
 import { firstObject, parseFindings } from "./findings.js";
@@ -153,7 +153,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
     pending = calls.length;
     if (spent < budget) {
       for (const c of calls) log.info("reader tool {name} {arguments}", { name: c.name, arguments: c.arguments });
-      return caps.executeTools(calls.map((c) => rootedAt(c, root)), true);
+      return caps.executeTools(calls.map((c) => rootedAt(c, root, diffDirOf(root))), true);
     }
     if (++refusedRounds > REFUSED_ROUNDS) {
       log.warn("reader kept calling tools past its budget of {budget} tokens; answering with its text", { budget });

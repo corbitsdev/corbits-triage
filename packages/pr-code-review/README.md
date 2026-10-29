@@ -19,9 +19,10 @@ prompt carries it, and the steps read it from the checkout.
 
 ### Process
 
-1. **checkout** puts the head in a folder on the sidecar and writes the whole diff into it under `.corbits/diff/`: one
-   patch per changed file, split into numbered parts past 1,500,000 bytes, none for a deleted file, and
-   `index.jsonl` listing each file's path, status, line count and patch files.
+1. **checkout** puts the head in a folder on the sidecar and writes the whole diff beside it, in `<sha>.diff` outside the
+   pull request's tree, which the read tools show at `/diff`: one patch per changed file, split into numbered parts of
+   at most 1,500,000 bytes (inside a line only when it is longer), none for a deleted file, and `index.jsonl` listing
+   each file's path, status, line count and patch files.
    **plan** then reads the index and patches there within a token budget (400,000 billable tokens) and names the risky changed areas
    and the code outside the diff they depend on. Each review runs in a deployment of its own; releasing it when the run ends,
    failed or not, removes the sidecar and the checkout with it.
