@@ -535,6 +535,10 @@ export async function modelStack(repo: string, { pack, automatic, policyWorkflow
       const unattributed = running.filter((id) => managed.get(id) === undefined && deployedWhile.get(id) === number);
       return { live: running.filter((id) => managed.get(id) === number), unattributed, lost, failed: failures, waited: waited.filter((id) => reviews.get(id) === number) };
     },
+    /** The code review runs a manager read, so a check of them can tell it played some. */
+    reviewsRead(): string[] {
+      return [...seen];
+    },
     /** The writes to pull request `number` and to its comments, in the order GitHub received them. */
     writes(number: number): Write[] {
       const own = new Set(github.writesTo(repo, number));

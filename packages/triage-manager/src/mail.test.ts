@@ -76,3 +76,10 @@ test("a cancelled step stops the mail tool's wait for a public key at once, and 
   expect(await result).toMatchObject({ isError: true, content: expect.stringContaining("aborted") });
   expect(sent).toEqual([]);
 }, 1_000);
+
+test("the mail tool stops waiting as soon as the hub shows the run ended, even with its public key published, and mails nothing", async () => {
+  const { polled, sent, tools } = mailTool([{ status: "deployed", publicKey: null }, { status: "error", publicKey: "pk" }]);
+  expect(await tools.run(readyCall(), new AbortController().signal)).toMatchObject({ isError: true, content: "run run_manager ended (error) before it was mailed" });
+  expect(polled).toHaveLength(2);
+  expect(sent).toEqual([]);
+}, 10_000);

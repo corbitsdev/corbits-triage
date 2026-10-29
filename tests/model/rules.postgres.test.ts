@@ -76,6 +76,7 @@ test(`every sequence up to ${LENGTH} events after an open keeps the rules`, asyn
 
 test(`with code review on and its run failing before it is ready, every sequence up to ${REVIEW_LENGTH} event after an open keeps the rules`, async () => {
   expect(await everySequence(REVIEW_LENGTH, reviewed)).toEqual([]);
+  expect(reviewed.reviewsRead()).not.toEqual([]);
 });
 
 test(`${WALKS} seeded walks of ${WALK_LENGTH} events keep the rules`, async () => {

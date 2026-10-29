@@ -152,7 +152,8 @@ const DeployInput = type({ payload: "unknown", take: { output: TakeOutput } });
 
 /**
  * Deploys code review from the host's published release; it is mailed the head's review request, and reports its result
- * to the hub, which wakes the pull request's manager. The mail waits for the new run until the review's deadline.
+ * to the hub, which wakes the pull request's manager. The mail waits for the new run to publish its public key, giving
+ * up when the run ends first or at the review's deadline.
  */
 export async function deployReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ reviewer: Reviewer; mail: MailInput }> {
   const parsed = DeployInput(input);
@@ -179,8 +180,8 @@ function mailedReview(reviewer: Reviewer, reply: string): { reviewer?: Reviewer;
 }
 
 /**
- * The review becomes a reviewer to wait for once its mail went. A mail that failed by its deadline leaves the pass to
- * post the verdict without code review.
+ * The review becomes a reviewer to wait for once its mail went. A mail that failed, because the run ended before it
+ * was ready or its deadline passed, leaves the pass to post the verdict without code review.
  */
 export async function reviewMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
   const parsed = MailedInput(input);

@@ -29,8 +29,8 @@ interface MailEnv extends BaseEnv {
 }
 
 /**
- * Waits until the hub shows the run published a non-empty public key, the deploy ack, and stops at once when the run
- * ended first. Stock never writes sidecarId.
+ * Waits until the hub shows the run published a non-empty public key, the deploy ack, and stops at once when it shows
+ * the run ended, even with its key published. Stock never writes sidecarId.
  */
 async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: string, signal: AbortSignal): Promise<void> {
   const hub = await env.capabilities.resolve("credentials").resolve(HUB_CREDENTIAL_HANDLE);
@@ -40,8 +40,8 @@ async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: st
     if (!response.ok) throw new Error(`reading run ${to} answered ${response.status}: ${await response.text()}`);
     const run = Run(await response.json());
     if (run instanceof type.errors) throw new Error(`run ${to}: ${run.summary}`);
+    if (run.status === "error" || run.status === "stopped") throw new Error(`run ${to} ended (${run.status}) before it was mailed`);
     if (run.publicKey) return;
-    if (run.status === "error" || run.status === "stopped") throw new Error(`run ${to} ended (${run.status}) before it published its public key`);
     await sleep(READY_POLL_MS, undefined, { signal });
   }
   throw new Error(`run ${to}: public key was not published by ${readyBy}`);

@@ -61,4 +61,5 @@ Stand-ins, and what they leave out:
 - The cancellation window, `mailAccept` and the listener's `onTrigger` admission, and the real coalescer.
 - A fake clock for CI and lifetime timers.
 - A judge stand-in, a code review that runs and reports, and so R2.
+- A code review run that ends after it is ready: the manager still waits for its report until the review's deadline.
 - Every sequence of three events and more, which takes longer than CI allows on one shard; the seeded walks reach some.
