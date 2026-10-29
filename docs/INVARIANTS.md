@@ -50,11 +50,12 @@ Stand-ins, and what they leave out:
   rule that a draft's webhooks are dropped is played by the test.
 - The intake's hooks are fixed: the listener is always routable, no pull request is paused, the App's login is fixed,
   code review's read of the pull request is the fake GitHub's head with an empty diff, and backlog reads are not served.
-- Code review's deploy records the run and grants its deployer `manage` on it. The run fails at once, as one whose
-  sandbox never connects, or is ready and fails as it takes its mail, as one whose sandbox dies. A read of it after one
-  that showed it ended, or a manager's second take of its pull request after the run died with no such read, is refused
-  and reported, so a manager that keeps waiting ends without waiting out the review's deadline. No code review runs or
-  reports.
+- Code review's deploy records the run and grants its deployer `manage` on it. The run either fails at once, or is
+  ready and fails as it takes its mail, as one whose sandbox dies. Failing at once is a sandbox that never connects,
+  which the hub replaces until the run has had three sandboxes in all, then fails the run; the model plays only that
+  final failure, not the replacements, which leave the run waiting. A read of it after one that showed it ended, or a
+  manager's second take of its pull request after the run died with no such read, is refused and reported, so a
+  manager that keeps waiting ends without waiting out the review's deadline. No code review runs or reports.
 - Runs use the real clock, so CI's start grace, reviewer deadlines and the manager's lifetime are not played. Where code
   review's run dies after it takes its mail, a run's timers fire as soon as they are set, so the manager's poll is
   played and takes no time; elsewhere no manager polls.

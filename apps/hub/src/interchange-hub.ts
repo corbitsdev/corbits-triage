@@ -393,9 +393,16 @@ export async function createInterchangeHub({
     const spec = await launchSpecs.get(anchorRunId);
     return spec?.frozenApprovalBundle.projection ?? null;
   }
+  async function publicKeyForAnchor(anchorRunId: string): Promise<string | null> {
+    const row = await db.query.workflowRun.findFirst({
+      where: (run, { eq }) => eq(run.id, anchorRunId),
+      columns: { publicKey: true },
+    });
+    if (row === undefined) throw new Error(`Workflow run ${anchorRunId} is gone`);
+    return row.publicKey;
+  }
   const classifyParkedRun = replaceUnstartedRuns({
-    runReader,
-    addressForAnchor,
+    publicKeyForAnchor,
     stock: createParkedRunClassifier({ runReader, addressForAnchor, projectionForAnchor }),
   });
   const workflowLifecycleService = createWorkflowLifecycleService({
