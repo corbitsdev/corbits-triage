@@ -57,11 +57,12 @@ function onceEach(writes: readonly Write[]): string[] {
 
 /** Each rule the settled pull request breaks, by its number, saying how; `missed` is how many misses the fake GitHub had before it. */
 export async function broken(stack: Stack, pull: Played, missed: number): Promise<string[]> {
-  const { live, unattributed, lost, failed } = await stack.leftover(pull.number);
+  const { live, unattributed, lost, failed, waited } = await stack.leftover(pull.number);
   const breaks = [...oneVerdict(stack, pull), ...onceEach(stack.writes(pull.number))];
   if (live.length > 0) breaks.push(`R5: managers still live: ${live.join(", ")}`);
   if (unattributed.length > 0) breaks.push(`R5: live managers deployed for no single pull request: ${unattributed.join(", ")}`);
   if (lost.length > 0) breaks.push(`R5: mail no run took: ${lost.map((mail) => mail.to).join(", ")}`);
+  if (waited.length > 0) breaks.push(`R7: a manager kept waiting on code review runs that had ended: ${waited.join(", ")}`);
   if (failed.length > 0) breaks.push(`runs that did not complete: ${failed.join(", ")}`);
   const misses = stack.github.misses.slice(missed);
   if (misses.length > 0) breaks.push(`the fake GitHub was asked what it does not serve: ${misses.join(", ")}`);

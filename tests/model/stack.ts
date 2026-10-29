@@ -26,7 +26,7 @@ import { WorkflowProjectionDefinition } from "@intx/types/sidecar";
 import { projectLiveToInert, runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type StepInvokeRequest, type WorkflowDefinition } from "@intx/workflow";
 import { collectHubConsumers } from "@intx/workflow-deploy";
 import { createCredentialsBackedAuthorize, createGrantEvaluator, createLocalCredentialsSnapshot, createWorkflowStepInvoker, snapshotStepGrants } from "@intx/workflow-host/local";
-import { DEFAULT_REPO_POLICY, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type CheckPack, type PolicyWorkflow, type TriageEvent } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-manager/actions/index";
 import { mailDirector } from "@corbits/triage-manager/directors";
 import * as loops from "@corbits/triage-manager/loops";
@@ -50,19 +50,30 @@ const GITHUB_ORIGIN = "https://api.github.com";
 const APP_LOGIN = "corbits[bot]";
 const OWNER_PRINCIPAL = "prn_owner";
 const LISTENER_RUN = "run_listener";
+const REVIEWER = "pr-code-review-reviewer-github";
+const OFFERINGS = { ids: ["off_model"], defaultId: "off_model" };
 
 /** The manager the release publishes beside the listener, as the hub writes it into `release.json`. */
 export const MANAGER_RELEASE: Release = {
   workflow: { assetId: `ast_${TRIAGE_MANAGERS.github}`, commitSha: "c0ffee", packageName: "@corbits/triage-manager", entry: "./triage-manager-github.mjs" },
-  offerings: { ids: ["off_model"], defaultId: "off_model" },
+  offerings: OFFERINGS,
+};
+
+/** The code review the release publishes beside the manager; its sandbox never connects, so its run fails before it is ready. */
+export const REVIEW_RELEASE: Release = {
+  workflow: { assetId: `ast_${REVIEWER}`, commitSha: "c0ffee", packageName: "@corbits/pr-code-review-reviewer-github-workflow", entry: "./pr-code-review-reviewer-github.mjs" },
+  offerings: OFFERINGS,
 };
 
 /** The definitions as the published `triage-listener-github` and `triage-manager-github` entries build them from that release. */
 const listenerDefinition = triageListener({ id: TRIAGE_LISTENERS.github, manager: MANAGER_RELEASE });
-const managerDefinition = triageManager({ id: TRIAGE_MANAGERS.github, sources: ["github"], codeReview: undefined });
+const managerDefinition = triageManager({ id: TRIAGE_MANAGERS.github, sources: ["github"], codeReview: REVIEW_RELEASE });
 
-/** Each published release by its asset, and the definition it deploys. */
-const RELEASED = new Map([[MANAGER_RELEASE.workflow.assetId, { release: MANAGER_RELEASE, definition: managerDefinition }]]);
+/** Each published release by its asset, and the definition it deploys; code review's never runs. */
+const RELEASED = new Map<string, { release: Release; definition?: WorkflowDefinition }>([
+  [MANAGER_RELEASE.workflow.assetId, { release: MANAGER_RELEASE, definition: managerDefinition }],
+  [REVIEW_RELEASE.workflow.assetId, { release: REVIEW_RELEASE }],
+]);
 
 const DeployBody = type({
   source: { kind: "'asset'", assetId: "string", package: { format: "'source'", commitSha: "string", packageName: "string" } },
@@ -125,7 +136,7 @@ async function createDatabase(repo: string) {
   await migrateTriageTables(handle.db, "public");
   await handle.db.insert(schema.tenant).values({ id: TENANT, name: "Model", slug: "model", domain: DOMAIN, config: { corbitsTriage: { repos: [{ name: repo, connected: true, enabled: true }] } } });
   await handle.db.insert(schema.principal).values({ id: OWNER_PRINCIPAL, tenantId: TENANT, kind: "user", refId: "usr_owner", status: "active" });
-  for (const workflow of [TRIAGE_LISTENERS.github, TRIAGE_MANAGERS.github]) {
+  for (const workflow of [TRIAGE_LISTENERS.github, TRIAGE_MANAGERS.github, REVIEWER]) {
     await handle.db.insert(schema.asset).values({ id: `ast_${workflow}`, tenantId: TENANT, kind: "workflow", name: workflow, creatorPrincipalId: OWNER_PRINCIPAL });
     await handle.db.insert(schema.workflowDefinition).values({ id: `wfd_${workflow}`, tenantId: TENANT, name: workflow, assetId: `ast_${workflow}` });
   }
@@ -187,10 +198,10 @@ function noteTaken(): void {}
 function log(): void {}
 
 /**
- * A repository with `pack` as its policy, `automatic` the kinds the pr-triage role holds on it, and everything a run of
- * it reaches; call `stop` after.
+ * A repository with `pack` and `policyWorkflow` as its policy, `automatic` the kinds the pr-triage role holds on it, and
+ * everything a run of it reaches; call `stop` after.
  */
-export async function modelStack(repo: string, { pack, automatic }: { pack: CheckPack; automatic: ActionKind[] }) {
+export async function modelStack(repo: string, { pack, automatic, policyWorkflow }: { pack: CheckPack; automatic: ActionKind[]; policyWorkflow?: PolicyWorkflow }) {
   const github = fakeGithub();
   github.addRepo(repo, null);
   const { db, drop } = await createDatabase(repo);
@@ -207,6 +218,11 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
   const delivered = new Set<string>();
   /** Each run whose body ended other than completed, or a step that threw. */
   const failed: { mail: Mail; status: string }[] = [];
+  /** Each code review run's pull request, read off the mail its manager was running. */
+  const reviews = new Map<string, number | undefined>();
+  /** Code review runs read again after a read showed they had ended. */
+  const waited: string[] = [];
+  const seen = new Set<string>();
   const directors = createWorkflowDirectorRegistry([mailDirector.factory]);
   const adapters = await loadAdapterRegistry([], { import: async function noAdapters() { return {}; } });
   const runTokens = createRunTokenStore({ db, cipher: createNoopCredentialCipher() });
@@ -277,8 +293,9 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     db,
     listener,
     routable,
-    readPull: function readPull() {
-      throw new Error("no code review in this stack");
+    async readPull(_tenantId, _record, number) {
+      const pull = github.pull(repo, number);
+      return { title: pull.title, description: pull.body, headSha: pull.head, draft: pull.draft === true, open: true, diff: "" };
     },
     openHeads: function openHeads() {
       throw new Error("no backlog in this stack");
@@ -302,10 +319,34 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
       return Response.json({ error: { code: "not_found", message: `${assetId} publishes no ${pkg.packageName}@${pkg.commitSha} ${body.entry}` } }, { status: 404 });
     }
     const id = `run_${randomBytes(6).toString("hex")}`;
+    if (!released.definition) return reviewRoute(id, serving);
     await deployRun(id, released.definition);
     managed.set(id, serving.length === 1 ? serving[0] : undefined);
     deployedWhile.set(id, playing);
     return Response.json({ id }, { status: 201 });
+  }
+
+  /** Code review's deploy: stock records the run, whose sandbox never connects, so the run fails before it is ready. */
+  async function reviewRoute(id: string, serving: readonly number[]): Promise<Response> {
+    const principalId = `prn_${id}`;
+    await db.insert(schema.principal).values({ id: principalId, tenantId: TENANT, kind: "workflow", refId: id, status: "active" });
+    await db.insert(schema.workflowRun).values({ id, anchorRunId: id, definitionId: `wfd_${REVIEWER}`, tenantId: TENANT, principalId, address: `${id}@${DOMAIN}`, status: "failed" });
+    reviews.set(id, serving.length === 1 ? serving[0] : undefined);
+    return Response.json({ id }, { status: 201 });
+  }
+
+  /**
+   * Stock's run read. A code review run, which has ended before it is first read, read again is recorded and refused,
+   * so a manager that keeps waiting on it fails its mail at once rather than after the review's deadline.
+   */
+  async function readRoute(target: string, url: URL, init?: RequestInit): Promise<Response> {
+    if (!reviews.has(target)) return app.request(url, init);
+    if (seen.has(target)) {
+      waited.push(target);
+      return Response.json({ error: { code: "model_waited_on_ended_run" } }, { status: 500 });
+    }
+    seen.add(target);
+    return app.request(url, init);
   }
 
   /** Stock's stop-run route: the caller must hold `manage` on the run; stock then ends it, here at once. */
@@ -325,7 +366,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     const runPath = /^\/api\/tenants\/[^/]+\/workflows\/runs\/([^/]+)$/.exec(url.pathname);
     if (method === "POST" && url.pathname === `/api/tenants/${TENANT}/workflows/deployments`) return deployRoute(runId, serving, init);
     if (method === "DELETE" && runPath) return stopRoute(runId, decodeURIComponent(runPath[1]!));
-    if (runPath) throw new Error(`${runId} read run ${runPath[1]}, which this stack does not serve`);
+    if (method === "GET" && runPath) return readRoute(decodeURIComponent(runPath[1]!), url, init);
     return app.request(url, init);
   }
 
@@ -443,7 +484,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
 
   /** The hub takes in a webhook on pull request `number` as the bridge mails it once its window flushes: `event` on `head`. */
   async function webhook(number: number, event: TriageEvent, head: string): Promise<void> {
-    const request = mailPayload({ name: repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic, source: { file: { path: ".corbits-triage.yml", sha: "model-1" } } }, { tenantId: TENANT, prNumber: number, headSha: head, deliveryId: randomUUID(), events: [event] });
+    const request = mailPayload({ name: repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic, policyWorkflow, source: { file: { path: ".corbits-triage.yml", sha: "model-1" } } }, { tenantId: TENANT, prNumber: number, headSha: head, deliveryId: randomUUID(), events: [event] });
     if (!(await toListener(TENANT, request))) throw new Error(`the hub took no mail for ${repo}#${number}`);
   }
 
@@ -482,7 +523,8 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     },
     /**
      * What is left of pull request `number`'s runs and mail: its managers still live, live managers deployed while it was
-     * played that no pull request can be told for, mail no run took, and runs that did not complete.
+     * played that no pull request can be told for, mail no run took, runs that did not complete, and its code review runs
+     * waited on after they had ended.
      */
     async leftover(number: number) {
       const rows = await db.select({ id: schema.workflowRun.id, status: schema.workflowRun.status }).from(schema.workflowRun).where(eq(schema.workflowRun.definitionId, `wfd_${TRIAGE_MANAGERS.github}`));
@@ -491,7 +533,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
       const failures = failed.filter((failure) => named(failure.mail)).map((failure) => `${failure.mail.to} ${failure.status}`);
       const lost = dropped.filter((mail) => named(mail) && !delivered.has(mail.id));
       const unattributed = running.filter((id) => managed.get(id) === undefined && deployedWhile.get(id) === number);
-      return { live: running.filter((id) => managed.get(id) === number), unattributed, lost, failed: failures };
+      return { live: running.filter((id) => managed.get(id) === number), unattributed, lost, failed: failures, waited: waited.filter((id) => reviews.get(id) === number) };
     },
     /** The writes to pull request `number` and to its comments, in the order GitHub received them. */
     writes(number: number): Write[] {

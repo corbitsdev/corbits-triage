@@ -48,10 +48,10 @@ test("the mail director runs its one tool on the step's input without a model ca
 
 test("the mail tool waits until a just-deployed run publishes its public key, then mails it at this run's domain as this run", async () => {
   const { polled, sent, tools, factory } = mailTool([
-    { sidecarId: null, publicKey: null },
-    { sidecarId: "sc_1", publicKey: null },
-    { sidecarId: "sc_1", publicKey: "" },
-    { sidecarId: null, publicKey: "pk" },
+    { status: "deployed", sidecarId: null, publicKey: null },
+    { status: "deployed", sidecarId: "sc_1", publicKey: null },
+    { status: "running", sidecarId: "sc_1", publicKey: "" },
+    { status: "running", sidecarId: null, publicKey: "pk" },
   ]);
   const call = readyCall();
   expect(await tools.run(call, new AbortController().signal)).toEqual({ callId: "mail", content: { to: "run_manager", mailed: true, messageId: "m1", status: "sent" } });
@@ -69,7 +69,7 @@ test("the mail tool waits until a just-deployed run publishes its public key, th
 }, 20_000);
 
 test("a cancelled step stops the mail tool's wait for a public key at once, and mails nothing", async () => {
-  const { sent, tools } = mailTool([{ publicKey: null }, { publicKey: null }]);
+  const { sent, tools } = mailTool([{ status: "deployed", publicKey: null }, { status: "deployed", publicKey: null }]);
   const step = new AbortController();
   const result = tools.run(readyCall(), step.signal);
   step.abort();

@@ -595,8 +595,9 @@ any other tenant or an unknown sender.
   When the policy turns code review on, the verdict's rules let it past, the
   hub read the head's review request and the release publishes a code review,
   a pass deploys it the same way (without one it declares no code-review
-  asset, and the verdict goes up alone), mails it the request until the
-  review's one-hour deadline, and still posts only the in-progress comment
+  asset, and the verdict goes up alone), mails it the request once its run
+  is ready, giving up as soon as the run ends first or at the review's
+  one-hour deadline, and still posts only the in-progress comment
   while that review is out. A pass that mails the judge deploys code review with it when the
   block runs whatever the rules say (`when.rules: any`), since under `pass`
   the judge's rules could still shut the gate, unless `when.triage` leaves

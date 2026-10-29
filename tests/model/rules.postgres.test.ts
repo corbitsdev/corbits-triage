@@ -5,39 +5,46 @@ import { emptyPack } from "@corbits/triage-contracts";
 import { OWNER } from "../chain/github.ts";
 import { LETTERS, open, play, settle, walk, type Letter } from "./events.ts";
 import { broken } from "./rules.ts";
-import { MANAGER_RELEASE, modelStack } from "./stack.ts";
+import { MANAGER_RELEASE, modelStack, REVIEW_RELEASE } from "./stack.ts";
 
 /** Every sequence of up to this many events after the open is played and checked; one with an event that changes nothing is not extended. */
 const LENGTH = 2;
 const WALKS = 300;
 const WALK_LENGTH = 10;
+/** With code review on, every sequence of up to this many events. */
+const REVIEW_LENGTH = 1;
 
 mock.module(new URL("../../packages/triage-manager/src/release.json", import.meta.url).pathname, function published() {
-  return { default: { github: { manager: MANAGER_RELEASE } } };
+  return { default: { github: { manager: MANAGER_RELEASE, codeReview: REVIEW_RELEASE } } };
 });
 
 const REPO = `${OWNER}/model`;
 // Under `ask`, the pr-triage role holds only posting: its labels and its comment.
-const stack = await modelStack(REPO, { pack: { ...emptyPack(REPO), checks: { "max-files-changed": { enabled: true }, "ci-green": { enabled: true } } }, automatic: ["labels", "comment"] });
+const PACK = { ...emptyPack(REPO), checks: { "max-files-changed": { enabled: true }, "ci-green": { enabled: true } } };
+const stack = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"] });
+const reviewed = await modelStack(REPO, { pack: PACK, automatic: ["labels", "comment"], policyWorkflow: { "code-review": { on: true } } });
 setDefaultTimeout(5 * 60_000);
-afterAll(() => stack.stop());
+afterAll(async () => {
+  await stack.stop();
+  await reviewed.stop();
+});
 
 let pulls = 0;
 
 type Checked = { played: Letter[]; breaks: string[] };
 
-/** Plays `letters` after an open on a pull request of its own, each that changes nothing left out, and settles it. */
-async function check(letters: readonly Letter[]): Promise<Checked> {
-  const missed = stack.github.misses.length;
+/** Plays `letters` after an open on a pull request of its own on `model`, each that changes nothing left out, and settles it. */
+async function check(letters: readonly Letter[], model = stack): Promise<Checked> {
+  const missed = model.github.misses.length;
   const played: Letter[] = [];
   try {
-    const pull = await open(stack, ++pulls);
-    for (const letter of letters) if (await play(stack, pull, letter)) played.push(letter);
-    await settle(stack, pull);
-    return { played, breaks: await broken(stack, pull, missed) };
+    const pull = await open(model, ++pulls);
+    for (const letter of letters) if (await play(model, pull, letter)) played.push(letter);
+    await settle(model, pull);
+    return { played, breaks: await broken(model, pull, missed) };
   } catch (err) {
     // The queue may hold the failed sequence's mail; the next sequence starts from none.
-    stack.queue.length = 0;
+    model.queue.length = 0;
     return { played: [...letters], breaks: [`threw after ${played.length} events: ${err instanceof Error ? err.message : String(err)}`] };
   }
 }
@@ -46,20 +53,29 @@ function replayOf(letters: readonly Letter[]): string {
   return ["open", ...letters].join(" ");
 }
 
-test(`every sequence up to ${LENGTH} events after an open keeps the rules`, async () => {
+/** The rules each sequence of up to `length` events after an open on `model` breaks. */
+async function everySequence(length: number, model = stack): Promise<string[]> {
   const found: string[] = [];
   let level: Letter[][] = [[]];
-  for (let size = 0; size <= LENGTH; size++) {
+  for (let size = 0; size <= length; size++) {
     const next: Letter[][] = [];
     for (const letters of level) {
-      const checked = await check(letters);
+      const checked = await check(letters, model);
       found.push(...checked.breaks.map((rule) => `${replayOf(letters)}: ${rule}`));
       // A sequence with an event that changed nothing is a shorter one already played, and so is every sequence after it.
-      if (size < LENGTH && checked.played.length === letters.length) next.push(...LETTERS.map((letter) => [...letters, letter]));
+      if (size < length && checked.played.length === letters.length) next.push(...LETTERS.map((letter) => [...letters, letter]));
     }
     level = next;
   }
-  expect(found).toEqual([]);
+  return found;
+}
+
+test(`every sequence up to ${LENGTH} events after an open keeps the rules`, async () => {
+  expect(await everySequence(LENGTH)).toEqual([]);
+});
+
+test(`with code review on and its run failing before it is ready, every sequence up to ${REVIEW_LENGTH} event after an open keeps the rules`, async () => {
+  expect(await everySequence(REVIEW_LENGTH, reviewed)).toEqual([]);
 });
 
 test(`${WALKS} seeded walks of ${WALK_LENGTH} events keep the rules`, async () => {
