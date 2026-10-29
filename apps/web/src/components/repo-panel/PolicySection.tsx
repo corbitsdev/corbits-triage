@@ -26,8 +26,8 @@ export default function PolicySection({ repo, source, pack, disabled }: PolicySe
   const { snapshot } = usePortal();
   const policyFile = usePolicyFile(repo, source);
   const policy = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, source));
-  const row = usePolicyUpgrade(repo);
-  const settled = useSettled(repo);
+  const row = usePolicyUpgrade({ name: repo, source });
+  const settled = useSettled({ name: repo, source });
   const [editing, setEditing] = useState(false);
   const file = policyFile.data;
   const host = HOST_NAME[source];

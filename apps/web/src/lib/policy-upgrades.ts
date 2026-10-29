@@ -4,19 +4,33 @@ import { exportPolicyFile, loadPolicyUpgrades, patchPolicyFile } from "./hub-api
 import { createHubTransport } from "./hub-transport.ts";
 import { POLICY_FILE_QUERY_KEY } from "./policy-file.ts";
 import { usePortal } from "./portal.tsx";
+import { sameRepo, type RepoId } from "./repo-rows.ts";
 
 export type PolicyUpgradeRow = PolicyUpgrades["repos"][number];
 
 /** `settled`: each repository whose policy file was merged while the portal was open. */
-type Upgrades = { rows: PolicyUpgradeRow[]; settled: string[] };
+type Upgrades = { rows: PolicyUpgradeRow[]; settled: RepoId[] };
 
 function starting(row: PolicyUpgradeRow): boolean {
   return row.upgrade?.state === "start";
 }
 
+function idOf(row: PolicyUpgradeRow): RepoId {
+  return { name: row.repo, source: row.source };
+}
+
+function rowFor(rows: readonly PolicyUpgradeRow[], repo: RepoId): PolicyUpgradeRow | undefined {
+  return rows.find((row) => sameRepo(idOf(row), repo));
+}
+
 /** The repositories that had no policy file before and now have one. */
-function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): string[] {
-  return before.filter((row) => starting(row) && now.some((next) => next.repo === row.repo && next.upgrade?.state === "ok")).map((row) => row.repo);
+function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): PolicyUpgradeRow[] {
+  return before.filter((row) => starting(row) && rowFor(now, idOf(row))?.upgrade?.state === "ok");
+}
+
+/** The repositories whose policy pull request was listed before and is not now: merged or closed, so their file may differ. */
+function pullsClosed(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): PolicyUpgradeRow[] {
+  return before.filter((row) => row.pull && rowFor(now, idOf(row))?.pull?.number !== row.pull.number);
 }
 
 const PULL_POLL_MS = 30_000;
@@ -29,9 +43,10 @@ function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryCli
     const rows = await loadPolicyUpgrades(createHubTransport(), tenantId);
     const before = queryClient.getQueryData<Upgrades>(queryKey);
     const settled = newlySettled(before?.rows ?? [], rows);
-    // A merge on the host gives the repository its file, so its policy is read again.
-    await Promise.all(settled.flatMap((repo) => [POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, repo] }))));
-    return { rows, settled: [...(before?.settled ?? []), ...settled] };
+    // A merge on the host gives the repository its file or changes it, and a close leaves it as it was, so its policy is read again.
+    const reread = [...new Set([...settled, ...pullsClosed(before?.rows ?? [], rows)])];
+    await Promise.all(reread.flatMap((row) => [POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, row.repo, row.source] }))));
+    return { rows, settled: [...(before?.settled ?? []), ...settled.map(idOf)] };
   };
   // A merge on the host changes a repository's standing without the portal knowing, so each load reads it again, and
   // while the pull request adding its policy file is open it is read again until it merges.
@@ -54,8 +69,8 @@ function useUpgradeRows(): PolicyUpgradeRow[] {
 }
 
 /** Whether the repository's policy file was merged while the portal was open. */
-export function useSettled(repo: string): boolean {
-  return useUpgrades()?.settled.includes(repo) ?? false;
+export function useSettled(repo: RepoId): boolean {
+  return useUpgrades()?.settled.some((done) => sameRepo(done, repo)) ?? false;
 }
 
 /** The repository's standing in a few words, wherever it is listed; undefined once it has a policy file. */
@@ -70,8 +85,9 @@ export function usePolicyUpgrades(): PolicyUpgradeRow[] {
 }
 
 /** The repository's standing when there is something to say: a file to start, or why it could not be read. */
-export function usePolicyUpgrade(repo: string): PolicyUpgradeRow | undefined {
-  return useUpgradeRows().find((row) => row.repo === repo && (row.error !== undefined || starting(row)));
+export function usePolicyUpgrade(repo: RepoId): PolicyUpgradeRow | undefined {
+  const row = rowFor(useUpgradeRows(), repo);
+  return row && (row.error !== undefined || starting(row)) ? row : undefined;
 }
 
 /** The workspace a policy write goes to, and reading every view of the policy again after one. */

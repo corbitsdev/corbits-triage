@@ -18,7 +18,7 @@ import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
-import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
+import { findRepo, hostedRepos, repoRows, sameRepo, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { relativeTime } from "../lib/triage-view.ts";
 
@@ -131,7 +131,7 @@ export default function Repositories() {
 
   /** A repository that still needs a policy file, or whose policy pull request waits for merge, says so in place of its usual health, which stays blank until its policy is read. */
   function healthOf(row: RepoRow): ReactNode {
-    const found = upgrades.find((upgrade) => upgrade.repo === row.name);
+    const found = upgrades.find((upgrade) => sameRepo({ name: upgrade.repo, source: upgrade.source }, row));
     const label = found && upgradeLabel(found);
     if (found?.pull) return <span className="hl wait"><span className="dot" />{label}</span>;
     if (label) return <HealthMark health={{ tone: "warn", label }} />;
