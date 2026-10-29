@@ -1,4 +1,4 @@
-import { skipToken, useIsFetching, useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { queryOptions, skipToken, useIsFetching, useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiError, type Transport } from "@intx/hub-client";
 import { DO_GRANT_ACTION, doResource, type ActionKind, type DeployedVersions } from "@corbits/triage-contracts";
 import {
@@ -15,6 +15,7 @@ import {
   type HubRole,
 } from "./hub-api.ts";
 import { createHubTransport } from "./hub-transport.ts";
+import type { PendingDo } from "./pending-dos.ts";
 import {
   ALLOWED_QUERY_KEY,
   APPROVALS_QUERY_KEY,
@@ -107,22 +108,28 @@ export function useTriageStalled(): DeployedVersions["stalled"] {
   return useTenantRead(DEPLOYED_VERSIONS_QUERY_KEY, readDeployedVersions, STALLED_REFRESH_MS).data?.stalled;
 }
 
-export function useAccess(resource: string, action: string): UseQueryResult<boolean> {
+function useAccessQuery() {
   const { snapshot } = usePortal();
   const signOutWhenRejected = useSignOutWhenRejected();
   const workspace = snapshot?.workspace;
-  return useQuery({
-    queryKey: [ALLOWED_QUERY_KEY, workspace?.tenantId, workspace?.principalId, resource, action],
-    queryFn: workspace === undefined ? skipToken : async function readAllowed() {
-      try {
-        return await evaluateAccess(createHubTransport(), workspace.tenantId, workspace.principalId, resource, action);
-      } catch (cause: unknown) {
-        signOutWhenRejected(cause);
-        throw cause;
-      }
-    },
-    staleTime: DIRECTORY_REFRESH_MS,
-  });
+  return function accessQuery(resource: string, action: string) {
+    return queryOptions({
+      queryKey: [ALLOWED_QUERY_KEY, workspace?.tenantId, workspace?.principalId, resource, action],
+      queryFn: workspace === undefined ? skipToken : async function readAllowed() {
+        try {
+          return await evaluateAccess(createHubTransport(), workspace.tenantId, workspace.principalId, resource, action);
+        } catch (cause: unknown) {
+          signOutWhenRejected(cause);
+          throw cause;
+        }
+      },
+      staleTime: DIRECTORY_REFRESH_MS,
+    });
+  };
+}
+
+export function useAccess(resource: string, action: string): UseQueryResult<boolean> {
+  return useQuery(useAccessQuery()(resource, action));
 }
 
 export function useAllowed(resource: string, action: string): boolean {
@@ -132,4 +139,14 @@ export function useAllowed(resource: string, action: string): boolean {
 /** Whether you may run a held action of this kind in the repository yourself. */
 export function useHoldsDo(kind: ActionKind, repo: string): boolean {
   return useAllowed(doResource(kind, repo), DO_GRANT_ACTION);
+}
+
+function allowedEach(results: UseQueryResult<boolean>[]): boolean[] {
+  return results.map((result) => result.data === true);
+}
+
+/** Whether you may run each held action yourself, in the same order. */
+export function useHoldsDos(dos: readonly Pick<PendingDo, "kind" | "ref">[]): boolean[] {
+  const accessQuery = useAccessQuery();
+  return useQueries({ queries: dos.map((pending) => accessQuery(doResource(pending.kind, pending.ref.repo), DO_GRANT_ACTION)), combine: allowedEach });
 }
