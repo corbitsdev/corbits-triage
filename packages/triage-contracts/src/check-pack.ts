@@ -335,7 +335,6 @@ export type CustomCheck = ModelCustomCheck | TextCustomCheck | PatternsCustomChe
 
 const LEVELS_MIN = 2;
 const LEVELS_MAX = 10;
-export const DEFAULT_SCORE_LEVELS = ["poor", "fair", "good", "great"] as const;
 const GLOB_MAX = 200;
 const GLOBS_MAX = 50;
 const CUSTOM_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -392,8 +391,6 @@ const LINE_MAX = 500;
 export const LABEL_MAX = 50;
 const LIST_MAX = 50;
 const STEPS_MAX = 20;
-
-export type CheckRef = string;
 
 /** The events a policy's actions wake on; a catch-up run wakes them whatever its policy names. */
 export const POLICY_EVENTS = ["opened", "updated", "checks", "ready"] as const satisfies readonly TriageEvent[];
@@ -627,21 +624,6 @@ function customIdProblem(id: string): string | undefined {
   return undefined;
 }
 
-/**
- * A custom rule's id from its name: lowercase words joined by hyphens. A taken name is numbered past the highest
- * number its ids already carry, so the id of a removed rule is not handed to another while a later one remains.
- */
-export function customRuleId(name: string, taken: Iterable<string>): string {
-  let base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, CUSTOM_ID_MAX - 12).replace(/^-+|-+$/g, "") || "rule";
-  if (/^(?:docs|focused|duplicates-open-pull-request)-/.test(`${base}-`)) base = `rule-${base}`;
-  if (QUESTION_LIKE.test(`${base}-2`)) base = `${base}-rule`;
-  const ids = [...taken];
-  const numbered = new RegExp(`^${base}-(\\d+)$`);
-  const highest = Math.max(0, ...ids.flatMap((id) => numbered.exec(id)?.[1] ?? []).map(Number));
-  if (highest === 0 && !ids.includes(base) && !RESERVED_IDS.has(base)) return base;
-  return `${base}-${Math.max(highest, 1) + 1}`;
-}
-
 const TRACKER_SET = new Set<string>(ISSUE_TRACKERS);
 
 export const CHECK_PACK_TITLE_PREFIX = "check-pack/";
@@ -709,10 +691,6 @@ export function starterPack(repo: string): CheckPack {
     checks[id] = { ...recommended[id]!, reason, evidence: [MAINTAINER_STATED] };
   }
   return { ...emptyPack(repo), checks, actions: { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] } };
-}
-
-export function applyRecommended(pack: CheckPack): CheckPack {
-  return { ...pack, checks: recommendedPack(pack.repo).checks };
 }
 
 export function catalogCheckEnabled(pack: CheckPack, id: CatalogId): boolean {

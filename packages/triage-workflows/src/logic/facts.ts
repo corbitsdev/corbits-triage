@@ -1,5 +1,5 @@
-import { checkCancelled, checkFailed, checkPending, latestDecisive, listPrFilesPage, readPrTemplates, reviewedOnHead, summarizeChecks, type CheckRun, type GithubFetch, type IssueComment, type Review } from "@corbits/github-reads";
-import { authorAssociation, authorKindOf, catalogCheckEnabled, isGeneratedPath, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { checkCancelled, checkFailed, checkPending, latestDecisive, reviewedOnHead, summarizeChecks, type CheckRun, type IssueComment, type Review } from "@corbits/github-reads";
+import { authorAssociation, authorKindOf, isGeneratedPath, policyTeams, shownBody, teamSlug, tierOf, visibleText, type CheckPack, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { hiddenIn, hiddenMarkup, nothingRemoved, writtenDescription } from "./hidden-content.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { MAX_CODE_RULES_PATCH_CHARS } from "./quality.js";
@@ -146,19 +146,6 @@ export function addFilesPage(listed: ListedFiles, cursor: FilesCursor, page: Fil
   return { offset: page.next, ...next };
 }
 
-/** Every changed file of a pull request, read page by page as the facts director reads them. */
-export async function listFiles(gh: GithubFetch, repo: string, number: number): Promise<PrFileFacts[]> {
-  const listed: ListedFiles = { files: [], patchChars: 0 };
-  let cursor: FilesCursor | undefined = FIRST_FILES_PAGE;
-  while (cursor !== undefined) {
-    const page = await listPrFilesPage(gh, repo, number, cursor);
-    const next = addFilesPage(listed, cursor, { ...page, files: page.files.flatMap(fileFacts) });
-    if (typeof next === "string") throw new Error(`${next} for #${number}`);
-    cursor = next;
-  }
-  return listed.files;
-}
-
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -249,11 +236,6 @@ export interface ItemContext {
   /** The repository's pull request templates, whose comments are the maintainers', not the author's. */
   templates: string[] | string;
   source: RepoSource;
-}
-
-/** A GitHub repository's pull request templates, read only when the hidden-content rule tells their comments apart. */
-export async function templatesFor(gh: GithubFetch, repo: string, pack: CheckPack): Promise<string[]> {
-  return catalogCheckEnabled(pack, "hidden-content") ? readPrTemplates(gh, repo) : [];
 }
 
 /** `text` as a reader sees it, noting in `hidden` what it hid; `where` names the place from its shown text. */
