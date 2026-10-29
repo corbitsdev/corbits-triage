@@ -65,7 +65,7 @@ describe("reconcileModelCatalog", () => {
   });
 });
 
-const ACCESS: MemberAccess = { kind: "member", workspace: { tenantId: "t", principalId: "p", userId: "u" }, workspaces: [], invitations: [] };
+const ACCESS: MemberAccess = { kind: "member", workspace: { tenantId: "t", principalId: "p", userId: "u" }, workspaces: [{ tenantId: "t", name: "Acme", slug: "acme" }], invitations: [] };
 
 async function savedModel(transport: Transport) {
   return (await loadPortal(transport, ACCESS)).decisionModel;

@@ -122,6 +122,8 @@ export type PortalSnapshot = {
   /** Absent when the hub refused or failed to say where code review runs. */
   codeReviewPlace?: CodeReviewPlace["provisioner"];
   codeReviewPlaces?: CodeReviewPlace["places"];
+  /** Set when the hub failed to read the workspace for a reason other than access, so an empty `repos` does not mean none are added. */
+  workspaceError?: string;
   /** Set when the hub failed to list the keys for a reason other than access, so an empty `credentials` does not mean no key is stored. */
   credentialsError?: string;
   /** Set when the hub failed to list the model catalog for a reason other than access, so an absent `decisionModel` does not mean none is saved. */
@@ -1141,9 +1143,10 @@ export async function loadPortal(transport: Transport, access: MemberAccess): Pr
   const { workspace, workspaces, invitations } = access;
   const tenantId = requireTenantId(workspace.tenantId);
   const tid = enc(tenantId);
-  const tenantFallback: TenantBody = { id: tenantId, name: "", slug: WORKSPACE_SLUG };
+  const tenantName = workspaces.find((option) => option.tenantId === tenantId)?.name;
+  if (tenantName === undefined) throw new Error("The open workspace is not one of yours.");
   const [tenant, credentials, catalog, places] = await Promise.all([
-    tolerateSection(transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`), tenantFallback),
+    tolerateSection(transport.fetch<TenantBody>("GET", `/api/tenants/${tid}`), undefined),
     tolerateSection(listAll<HubCredential>(transport, `/api/tenants/${tid}/credentials`), []),
     tolerateSection(listCatalog(transport, tenantId), EMPTY_CATALOG),
     tolerateSection(readCodeReviewPlace(transport, tid), undefined),
@@ -1151,15 +1154,15 @@ export async function loadPortal(transport: Transport, access: MemberAccess): Pr
   const decisionModel = decisionModelOf(catalog.value, credentials.value);
   return {
     workspace,
-    tenantName: tenant.value.name,
+    tenantName,
     workspaces,
     invitations,
-    repos: tenant.denied ? [] : reposFromConfig(tenant.value.config),
-    config: appConfig(tenant.value.config),
-    configVersion: configFingerprint(tenant.value.config),
+    repos: reposFromConfig(tenant.value?.config),
+    ...(tenant.value && { config: appConfig(tenant.value.config), configVersion: configFingerprint(tenant.value.config) }),
     credentials: credentials.value,
     ...(decisionModel && { decisionModel }),
     ...(places.value && { codeReviewPlace: places.value.provisioner, codeReviewPlaces: places.value.places }),
+    ...(tenant.failure && { workspaceError: tenant.failure.message }),
     ...(credentials.failure && { credentialsError: credentials.failure.message }),
     ...(catalog.failure && { modelsError: catalog.failure.message }),
     ...(places.failure && { codeReviewPlaceError: places.failure.message }),
