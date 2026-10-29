@@ -90,10 +90,14 @@ export function hasEnded({ status }: typeof RunStatus.infer): boolean {
   return status === "error" || status === "stopped";
 }
 
-/** Whether the stock run read shows the run ended, read as this run under `effectId`. */
-export async function runEnded(ctx: EffectContext, effectId: string, tenantId: string, runId: string): Promise<boolean> {
-  const answer = await callHub(ctx, effectId, tenantPath(tenantId, `/workflows/runs/${encodeURIComponent(runId)}`), "GET");
-  return hasEnded(answered(answer, `reading run ${runId}`, RunStatus));
+/** Whether the stock run read shows the run ended, read as this run under `effectId`, or why the hub did not answer. */
+export async function runEnded(ctx: EffectContext, effectId: string, tenantId: string, runId: string): Promise<{ ended: boolean } | { unread: string }> {
+  try {
+    const answer = await callHub(ctx, effectId, tenantPath(tenantId, `/workflows/runs/${encodeURIComponent(runId)}`), "GET");
+    return { ended: hasEnded(answered(answer, `reading run ${runId}`, RunStatus)) };
+  } catch (err) {
+    return { unread: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 const Noted = type({ noted: "boolean" });

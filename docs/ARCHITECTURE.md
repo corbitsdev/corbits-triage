@@ -617,9 +617,11 @@ any other tenant or an unknown sender.
   verdict to go up alone and is deployed again on the next event. Each
   reviewer keeps its head and deadline on the claim, so whichever manager
   takes the next pass on that head sees a deadline that passed with no
-  report. Take also reads, through the stock run read, the run of each
-  reviewer still out with no report on the pass, and takes one whose run
-  ended as past its deadline. Either way the manager posts the verdict
+  report. A pass after one that left reviewers out first reads each one's
+  run through the stock run read, before take, so a reviewer that reported
+  before its run ended has its report in take's events; take treats one
+  whose run ended with no report as past its deadline, and a read the hub
+  does not answer leaves the reviewer out. Either way the manager posts the verdict
   without that reviewer, which for a judge is
   Needs Human Review and for code review holds approve and merge for a person,
   and done logs `reviewer_overdue`. The triage reconcile pass, every 5
@@ -642,8 +644,8 @@ any other tenant or an unknown sender.
   within one pass of the deadline that manager posts the verdict without the
   reviewer and the pull request needs a person. Each reviewer the manager
   records names the manager run that deployed it (`deployedBy`). Done stops a
-  judge or code review this run deployed that ran past its deadline on the
-  pass's head, through the same stop-run route. Stock grants the
+  judge or code review this run deployed that ran past its deadline, or whose
+  run ended, on the pass's head, through the same stop-run route. Stock grants the
   deployer `read` on a run it deployed, and the vendored Interchange carries
   `manage` instead (`vendor/interchange/VENDORED.md`). A reviewer on an older
   head is stopped by the hub, which a later manager could not do: see intake

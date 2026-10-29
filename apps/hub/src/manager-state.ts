@@ -594,9 +594,12 @@ async function closingOf(tx: Tx, tenantId: string, pr: PullRequestRef, runId: st
   return { head, startedAt: first.takenAt, ...(mail && { mail }) };
 }
 
-/** The claim's reviewers that ran past their deadline with no report and that `recorded` no longer waits for. */
+/**
+ * The claim's reviewers with no report that `recorded` no longer waits for: past their deadline, or on the open pass's
+ * head, as one the manager gave up on because its run ended.
+ */
 async function givenUp(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, recorded: readonly Reviewer[], now: Date): Promise<Reviewer[]> {
-  const late = claim.reviewers.filter((reviewer) => reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime() && !recorded.some((kept) => kept.runId === reviewer.runId && kept.result === undefined));
+  const late = claim.reviewers.filter((reviewer) => reviewer.result === undefined && (Date.parse(reviewer.deadline) <= now.getTime() || reviewer.head === claim.pass?.head) && !recorded.some((kept) => kept.runId === reviewer.runId && kept.result === undefined));
   if (late.length === 0) return [];
   const rows = await tx.select({ key: managerState.key }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, inArray(managerState.key, late.map((reviewer) => eventKey(pr, reviewer.runId)))));
@@ -611,7 +614,8 @@ function reviewerKey({ kind, head, runId }: Reviewer): string {
 /**
  * Closes the open pass with what it reported and records `reviewers`. The manager has more to do while an event is
  * pending, at once, and once more after a pass that asks to `wait`; otherwise the claim ends, and a later event or
- * reviewer result starts the next manager. A reviewer the pass gave up on past its deadline with no report is logged.
+ * reviewer result starts the next manager. A reviewer the pass gave up on with no report, past its deadline or with its
+ * run ended, is logged.
  */
 export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], { wait = false, report, record, log }: DoneOptions = {}): Promise<DoneResult> {
   return db.transaction(async function finishPass(tx) {

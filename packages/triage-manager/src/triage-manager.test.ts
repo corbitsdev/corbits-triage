@@ -3,7 +3,7 @@ import { actionConsumer } from "@intx/authz";
 import { createActionCredentialsFactory, createCredentialProviderRegistry, createHttpCredentialProvider } from "@intx/harness";
 import type { GrantRule } from "@intx/types/authz";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import { runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
+import { runLocal, type ActionHandler, type EffectContext, type LoopFn, type OnTriggerPrimitive, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
 import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serve";
@@ -88,7 +88,7 @@ const allow: WorkflowAuthorizeFn = async function allow() {
 type HubCall = { method: string; path: string; body?: unknown };
 type HubAnswer = Record<string, unknown> | typeof REFUSED;
 
-/** The hub's manager routes, answering each take and done in turn, its deploy route, its stop-run route and its run read of a live run. */
+/** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route. */
 function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[] }) {
   const calls: HubCall[] = [];
   function answer(next: HubAnswer | undefined): Response {
@@ -101,7 +101,6 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
     if (url.pathname === `${TENANT_PATH}/manager/take`) return answer(takes.shift());
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
     if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
-    if (method === "GET" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return Response.json({ status: "running" });
     if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: DEPLOYED }, { status: 201 });
     if (method === NOTE.method && url.pathname === NOTE.path) return Response.json({ noted: true });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });
@@ -111,7 +110,7 @@ function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[
 
 /** The host's credentials as triage-workflows wires them, plus the hub credential deploy binds to the hub actions. */
 function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init?: RequestInit) => Promise<Response>) {
-  const consumers = ["take", "done", "deployReview", "deployJudge", "forward", "stop"].map(actionConsumer);
+  const consumers = ["runsEnded", "take", "done", "deployReview", "deployJudge", "forward", "stop"].map(actionConsumer);
   const cell = delivered(bindings, [{ credentialId: "hub", providerKey: "http", origin: HUB_ORIGIN, secret: "run-token" }]);
   cell.current = { ...cell.current, bindings: [...cell.current.bindings, ...consumers.map((consumer) => ({ handle: HUB_CREDENTIAL_HANDLE, credentialId: "hub", consumer }))] };
   const hubGrants: GrantRule[] = consumers.map((tool, index) => ({ id: `hub-${index}`, resource: "credential:hub", action: "use", effect: "allow", origin: "system", conditions: { tool }, expiresAt: null, roleId: null, principalId: null }));
@@ -193,7 +192,7 @@ const DONE = { method: "POST", path: `${TENANT_PATH}/manager/done`, body: expect
 function doneBody(calls: readonly HubCall[]): Record<string, unknown> {
   return calls.find((call) => call.path === DONE.path)?.body as Record<string, unknown>;
 }
-const STAGE_1 = ["approvals", "cleared", "donePosted", "evaluateRules", "executeRules", "facts", "findingThreads", "markUnready", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "take", "triaged", "unready"];
+const STAGE_1 = ["approvals", "cleared", "donePosted", "evaluateRules", "executeRules", "facts", "findingThreads", "markUnready", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "runsEnded", "take", "triaged", "unready"];
 
 /** A Bitbucket Data Center pull request at head `abc`, recording the build statuses posted on it. */
 function bitbucketHost() {
@@ -253,7 +252,7 @@ describe("triage-manager", () => {
   test("with an event pending after done, the manager runs its next pass at once, and a refused newcomer is harmless", async () => {
     const { writes, host } = githubHost();
     const newcomer = fakeHub({ takes: [REFUSED] });
-    expect(await runMail(github, wake(), host, newcomer.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: 1, ran: ["approvals", "done", "findingThreads", "paused", "ran", "take"] });
+    expect(await runMail(github, wake(), host, newcomer.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: 1, ran: ["approvals", "done", "findingThreads", "paused", "ran", "runsEnded", "take"] });
     expect(newcomer.calls).toEqual([TAKE, END]);
     expect(writes).toEqual([]);
 
@@ -374,7 +373,7 @@ describe("triage-manager", () => {
   test("an old review's reply finds nothing for its head, runs no stage 1 and leaves the superseded review for the hub to stop", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [{ ...reviewer(), head: "older" }] }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["approvals", "done", "findingThreads", "paused", "ran", "take"]);
+    expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["approvals", "done", "findingThreads", "paused", "ran", "runsEnded", "take"]);
     expect(writes).toEqual([]);
     expect(hub.calls).toEqual([TAKE, DONE, END]);
     expect(doneBody(hub.calls)["wait"]).toBe(false);
@@ -385,7 +384,7 @@ describe("triage-manager", () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, approval, "evt_approval")], request: undefined }], dones: [ENDED] });
     const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).toEqual(["approvals", "done", "findingThreads", "paused", "ran", "take", "triaged"]);
+    expect(ran).toEqual(["approvals", "done", "findingThreads", "paused", "ran", "runsEnded", "take", "triaged"]);
     expect(outputs["approvals"]).toEqual({ results: [{ dos: [expect.objectContaining({ effectId, status: "done" })] }] });
     expect(doneBody(hub.calls)["approvals"]).toEqual(outputs["approvals"]);
     expect(writes).toEqual([expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringMatching(/\nhi$/) } })]);
@@ -587,6 +586,29 @@ describe("triage-manager with code review", () => {
     expect(writes).toContainEqual(READY);
     expect(writes).not.toContainEqual(POSTED_REVIEW);
     expect(hub.calls).toEqual(calls);
+  });
+
+  test("a reviewer whose run was read as ended before take is given up, unless take collects its report; a read the hub refuses is said, not thrown", async () => {
+    function ctxOf(hub: (url: URL, init?: RequestInit) => Promise<Response>) {
+      async function fetch(path: string, init?: RequestInit) {
+        return hub(new URL(path, HUB_ORIGIN), init);
+      }
+      return { perform: ({ run }: { run: (scope: unknown) => Promise<unknown> }) => run({ credentials: { resolve: async () => ({ kind: "http", fetch }) } }) } as unknown as EffectContext;
+    }
+    async function runs(url: URL): Promise<Response> {
+      if (url.pathname.endsWith(`/${DEPLOYED}`)) return Response.json({ status: "stopped" });
+      if (url.pathname.endsWith("/run_live")) return Response.json({ status: "running" });
+      return Response.json({ error: { code: "not_found" } }, { status: 404 });
+    }
+    const signal = new AbortController().signal;
+    const read = await actions.runsEnded({ payload: wake(), out: [DEPLOYED, "run_live", "run_gone"] }, ctxOf(runs), signal);
+    expect(read).toEqual({ ended: [DEPLOYED], unread: expect.stringContaining("404") });
+
+    const ended = { runsEnded: { output: { ended: [DEPLOYED] } } };
+    const silent = await actions.take({ payload: wake(), ...ended }, ctxOf(fakeHub({ takes: [{ ...PASS, reviewers: [reviewer()] }] }).hub), signal);
+    expect(silent).toMatchObject({ run: true, triage: true, overdue: true });
+    const reporting = await actions.take({ payload: wake(), ...ended }, ctxOf(fakeHub({ takes: [reported({ result: REVIEW })] }).hub), signal);
+    expect(reporting).toMatchObject({ overdue: false, review: REVIEW, reviewers: [reviewer()] });
   });
 
   const CONTRIBUTOR = { author_association: "CONTRIBUTOR" };

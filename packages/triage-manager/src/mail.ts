@@ -6,8 +6,8 @@ import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import type { ReactorDirector } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { type } from "arktype";
-import { hasEnded } from "./actions/hub.js";
 import { setTimeout as sleep } from "node:timers/promises";
+import { hasEnded } from "./actions/hub.js";
 
 const MAIL_TOOL = "mail";
 const READY_POLL_MS = 2_000;

@@ -66,7 +66,7 @@ function undecided(reviewer: Reviewer, head: string | undefined): boolean {
  * Whether the pass deploys the judge, and whether it goes on to the verdict. The judge runs when the rules still need
  * it, the release publishes one and the host's checks have finished; while they run, the pass goes on to a verdict that
  * waits for them. A pass that deploys it, and every pass until it reports, posts nothing. One that reported, reported a
- * failure, or ran past its deadline goes on to the verdict and is not deployed again; one whose stored verdict the
+ * failure, ran past its deadline or whose run ended goes on to the verdict and is not deployed again; one whose stored verdict the
  * host's checks could still change is deployed again. A manager that stopped waiting deploys no judge it would not wait for.
  */
 export async function judgeScope(input: unknown): Promise<{ deploy: boolean; post: boolean }> {

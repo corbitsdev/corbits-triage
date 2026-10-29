@@ -11,7 +11,7 @@ request that changes how Triage keeps a rule names the rule.
 - **R4** Unreadable input never passes or approves. No automated check yet.
 - **R5** Nothing is left running after the final post. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles, none of its managers is live, no live manager was deployed for no single pull request, and no mail for it was lost to a run that had ended. Settling delivers every queued mail, so no mail is left waiting by construction.
 - **R6** An older run never overwrites a newer head's comment, label, status or approval. No automated check yet.
-- **R7** A pull request waiting on CI or a reviewer always gets its verdict. Checked by `tests/model/rules.postgres.test.ts`: R1's check covers a head waiting on CI, and with code review on, no manager waits on a code review run that has ended, before it was ready or after it took its mail.
+- **R7** A pull request waiting on CI or a reviewer always gets its verdict. Checked by `tests/model/rules.postgres.test.ts`: R1's check covers a head waiting on CI, and with code review on, no manager waits on a code review run that has ended, before it was ready or after it took its mail. In every stack, no manager runs out of passes or takes its pull request more than four times on one head.
 - **R8** GitHub and Bitbucket Data Center behave the same except where documented. No automated check yet.
 - **R9** Every reader of the policy agrees on what it says. No automated check yet.
 - **R10** The portal shows only what the hub says. No automated check yet.
@@ -55,8 +55,9 @@ Stand-ins, and what they leave out:
   that showed it ended, or a manager's second take of its pull request after the run died with no such read, is refused
   and reported, so a manager that keeps waiting ends without waiting out the review's deadline. No code review runs or
   reports.
-- A run's timers fire as soon as they are set, so the manager's poll takes no time. Actions read the real clock, so
-  CI's start grace, reviewer deadlines and the manager's lifetime are not played.
+- Runs use the real clock, so CI's start grace, reviewer deadlines and the manager's lifetime are not played. Where code
+  review's run dies after it takes its mail, a run's timers fire as soon as they are set, so the manager's poll is
+  played and takes no time; elsewhere no manager polls.
 - The policy is deterministic only, with no judge and no model.
 
 ## Not covered by the model check

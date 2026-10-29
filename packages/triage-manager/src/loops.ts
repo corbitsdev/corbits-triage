@@ -14,7 +14,12 @@ export function again(output: unknown): boolean {
   return doneOf(output)?.["outcome"] === "more";
 }
 
-/** The next pass works from the same mail, after polling for what its head awaits when done says to. */
-export function next(output: unknown, input: unknown): { payload: unknown; wait: boolean } {
-  return { payload: asRecord(input)?.["payload"], wait: doneOf(output)?.["wait"] === true };
+/**
+ * The next pass works from the same mail, after polling for what its head awaits when done says to, and reads first
+ * whether the runs of the reviewers done left `out` ended.
+ */
+export function next(output: unknown, input: unknown): { payload: unknown; wait: boolean; out?: unknown[] } {
+  const done = doneOf(output);
+  const out = done?.["out"];
+  return { payload: asRecord(input)?.["payload"], wait: done?.["wait"] === true, ...(Array.isArray(out) && { out }) };
 }
