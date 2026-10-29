@@ -114,6 +114,16 @@ function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
   );
 }
 
+function KeysUnreadNotice() {
+  const { refresh } = usePortal();
+  return (
+    <main className="page-notice" id="main">
+      <p role="alert">Couldn't read your workspace's keys.</p>
+      <Button type="button" variant="outline" size="sm" onClick={refresh}>Try again</Button>
+    </main>
+  );
+}
+
 function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
   const signOut = useSignOutAfterSending();
   return (
@@ -151,6 +161,8 @@ function Gate() {
   if (snapshot.denied.repos || snapshot.denied.credentials || snapshot.denied.models) {
     return <DeniedGate snapshot={snapshot} />;
   }
+  // Without the keys, whether the workspace is connected is unknown, so it is never sent back to onboarding.
+  if (snapshot.credentialsError) return <Layout><KeysUnreadNotice /></Layout>;
   if (!connected || path === "/connect") return <Connect />;
 
   if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;

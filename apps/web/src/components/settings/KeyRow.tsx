@@ -12,11 +12,10 @@ type KeyRowProps = {
   denied: boolean;
   remove: (credentialId: string) => Promise<void>;
   editor: (onSaved: () => void) => ReactNode;
-  error: string | undefined;
 };
 
 /** One model and its key: a stored key can be rotated or removed; without one, its form is open. Without access to credentials, only the sentence shows. */
-export function KeyRow({ words, name, keys, denied, remove, editor, error }: KeyRowProps) {
+export function KeyRow({ words, name, keys, denied, remove, editor }: KeyRowProps) {
   const { readOnly } = usePortal();
   const [editing, setEditing] = useState(false);
   const removal = useMutation({
@@ -28,7 +27,6 @@ export function KeyRow({ words, name, keys, denied, remove, editor, error }: Key
   const stored = keys.length > 0;
 
   if (denied) return <div className="sentence"><span className="txt">{words}</span></div>;
-  if (error) return <p role="alert" className="field-error">Triage could not read the saved keys: {error}</p>;
 
   return (
     <>

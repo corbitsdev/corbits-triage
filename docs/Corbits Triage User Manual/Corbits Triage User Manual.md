@@ -87,6 +87,8 @@ The first time you sign in to a new workspace, the portal walks you through two 
 
 You can also invite teammates from this screen by expanding **Invite people**, or do it later from Settings.
 
+A workspace that is already set up never comes back to these steps because the portal could not read its keys. Every page then says **Couldn't read your workspace's keys.** with **Try again**, which reads them again.
+
 ### After setup
 
 Once you press **Open Repositories**, the portal takes you to Repositories, where triage is still off for every repository. The next section shows how to turn it on, and the one after it shows what you will see.

@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import App from "./App.tsx";
@@ -11,7 +11,7 @@ function Passthrough({ children }: { children: ReactNode }) {
   return children;
 }
 
-const snapshot: PortalSnapshot = {
+const connectedSnapshot: PortalSnapshot = {
   workspace: { tenantId: "tenant", principalId: "principal", userId: "user" },
   tenantName: "Acme",
   workspaces: [],
@@ -86,11 +86,21 @@ mock.module("./lib/session.tsx", () => ({
 
 mock.module("./lib/user-cache.tsx", () => ({ UserQueryCache: Passthrough }));
 
+let snapshot = connectedSnapshot;
+let connected = true;
+let refreshes = 0;
+
+beforeEach(function connect() {
+  snapshot = connectedSnapshot;
+  connected = true;
+  refreshes = 0;
+});
+
 mock.module("./lib/portal.tsx", () => ({
   ...portal,
   PortalProvider: Passthrough,
   usePortal() {
-    return { configured: true, loading: false, connected: true, readOnly: false, snapshot, invitations: [], unverified: false, loadError: "", warn() {}, notify() {} };
+    return { configured: true, loading: false, connected, readOnly: false, snapshot, invitations: [], unverified: false, loadError: "", warn() {}, notify() {}, refresh() { refreshes += 1; } };
   },
 }));
 
@@ -195,4 +205,23 @@ test("Triage reads no policy when the workspace has no Triage role to allow acti
 
   expect(document.querySelector("h1")?.textContent).toBe("Triage");
   expect(requested.filter((url) => url.includes("/policy"))).toEqual([]);
+});
+
+test("a connected workspace whose keys could not be read sees a notice with Try again, not onboarding", () => {
+  snapshot = { ...connectedSnapshot, credentialsError: "The hub is unavailable." };
+  connected = false;
+  renderAt("/");
+
+  expect(document.querySelector("[role=alert]")?.textContent).toContain("Couldn't read your workspace's keys.");
+  expect(document.querySelector("#setup-title")).toBeNull();
+  act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click());
+  expect(refreshes).toBe(1);
+});
+
+test("a workspace with no keys stored is sent to onboarding", () => {
+  snapshot = { ...connectedSnapshot, repos: [] };
+  connected = false;
+  renderAt("/");
+
+  expect(document.querySelector("#setup-title")?.textContent).toBe("Set up Triage");
 });
