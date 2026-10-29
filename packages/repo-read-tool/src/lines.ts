@@ -1,7 +1,6 @@
 export const MAX_LINES = 400;
 const MAX_LINE_CHARS = 500;
-// Interchange cuts a tool result whose JSON is over 10,000 characters to a plain string the reader cannot count as
-// lines read; its limit is not exported, so a page stops below it with room to spare.
+// Under stock's 10,000-character tool-result cut, past which a page is not countable as read; a workflow step cannot set it.
 const MAX_RESULT_CHARS = 9_000;
 
 export function clip(line: string): string {
