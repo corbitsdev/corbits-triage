@@ -903,11 +903,9 @@ review
 (`CODE_REVIEW_PROVIDERS` in `triage-contracts`, which lists Anthropic). The
 manager deploys the code review workflow in a sandbox and posts its result. The
 hub attaches the review request to a pull request mail whose `codeReview` is on, which the policy
-file's `code-review` block or Review again sets, with the host's unified diff
-cut at a line boundary past 100,000 characters; on GitHub a diff too large for the diff API
-is built from the files' patches. The files a cut leaves unread, read from the
-diff's headers, ride as `cut.unread` and never reach a prompt; the review sent
-to GitHub lists them. The title and description are read as the facts step
+file's `code-review` block or Review again sets, with the host's whole unified
+diff; on GitHub a diff too large for the diff API is built from the files'
+patches. The title and description are read as the facts step
 reads them (`shownBody` and `visibleText` in `@corbits/triage-contracts`), so
 hidden text never reaches the review. `…/run` (Review again) records a pull
 request mail for the current head with code review on for everyone, on any
@@ -915,9 +913,13 @@ verdict and whatever the rules say, and names it with an `again` id. The
 manager deploys one more review of a head for each `again` it has not
 reviewed, even where an earlier review of the head settled.
 Code review only reads: a checkout action downloads the head through the host
-credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>`, and
-its tools are the host read bundle and repository reads confined to that
-folder. The consolidate step reads each finding's lines at the head and reports
+credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>` and
+writes the whole diff into it at `.corbits/diff.patch`, and its tools are the
+host read bundle and repository reads confined to that folder. No prompt
+carries the diff: plan and both finders get its path and the changed files,
+deletions marked, and read it with the repository reads on their token budget
+(`budgets.repoFinder` for the repository finder, 400,000 billable tokens each by
+default). The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file". The check step verifies every

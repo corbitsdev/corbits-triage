@@ -4,7 +4,7 @@ import { isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts"
 import { changedFiles, parseFindings, samePath, type Finding, type Site } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
-import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
+import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, DIFF_PATH, repositoryTag } from "./checkout.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
 
@@ -18,8 +18,6 @@ const ReviewRequest = type({
   "budgets?": { "repoFinder?": "number.integer > 0", "check?": "number.integer > 0", "checkTotal?": "number.integer > 0" },
   /** The pull request's number, so a run can be found by it. */
   "number?": "number.integer > 0",
-  /** Set when the diff was cut to its first `lines` of `of` lines to keep the review within its size limit, with the files it cut part-way or left out. */
-  "cut?": { lines: "number.integer >= 0", of: "number.integer > 0", "unread?": "string[]" },
 });
 type ReviewRequest = typeof ReviewRequest.infer;
 
@@ -137,9 +135,13 @@ function aboutPullRequest(request: ReviewRequest): string {
   return `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n</pull_request>`;
 }
 
-function pullRequest(request: ReviewRequest): string {
-  const cut = request.cut ? `\n\nThe diff shows its first ${request.cut.lines} of ${request.cut.of} lines; the rest was left out for size.` : "";
-  return `${aboutPullRequest(request)}\n\n<diff>\n${promptText(request.diff)}\n</diff>${cut}`;
+/**
+ * The checkout and token budget a step reads under, the pull request, the files it changes with deletions marked, and
+ * where in the checkout its whole diff is.
+ */
+function pullRequest(request: ReviewRequest, budget: number): string {
+  const files = `<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>`;
+  return `${repositoryTag(request.checkout)}${budgetTag(budget)}${aboutPullRequest(request)}\n\n${files}\n\n<diff path="${DIFF_PATH}"/>`;
 }
 
 /** A request the PR workflow's scope step handed over, rather than a trigger mail. */
@@ -158,16 +160,18 @@ export function reviewInputFor({ efforts }: Pick<CodeReviewProfile, "efforts">) 
     const request = ReviewRequest(triggerRequestOf(input));
     if (request instanceof type.errors) throw new Error(`reviewInput: invalid request: ${request.summary}`);
     const inference = Object.fromEntries(ROLES.map((role) => [role, { effort: request.efforts?.[role] ?? efforts[role], maxTokens: MAX_OUTPUT_TOKENS }])) as Record<Role, StepInference>;
-    return { request, plan: `${pullRequest(request)}\n\nPlan the review of this pull request.`, inference };
+    return { request, plan: `${pullRequest(request, DEFAULT_BUDGET)}\n\nPlan the review of this pull request.`, inference };
   };
 }
 
-/** Both finders' user messages with the plan appended; the repository finder's names its checkout and token budget. */
+/** Both finders' user messages with the plan appended, each under its token budget. */
 export async function findersInput(steps: Steps) {
   const { request } = stepOutput(steps, "reviewInput");
   const plan = replyOf(stepOutput(steps, "plan"));
-  const message = `${pullRequest(request)}\n\n<plan>\n${promptText(plan)}\n</plan>\n\nReview the diff above and report the defects this change introduces.`;
-  return { diff: message, repo: `${repositoryTag(request.checkout)}${budgetTag(request.budgets?.repoFinder ?? DEFAULT_BUDGET)}${message}` };
+  function message(budget: number) {
+    return `${pullRequest(request, budget)}\n\n<plan>\n${promptText(plan)}\n</plan>\n\nReview the diff and report the defects this change introduces.`;
+  }
+  return { diff: message(DEFAULT_BUDGET), repo: message(request.budgets?.repoFinder ?? DEFAULT_BUDGET) };
 }
 
 /** A finder's findings; one that spent its budget before answering in JSON found none, and the finder steps fail on any other unreadable reply. */
@@ -225,12 +229,12 @@ function consolidateMessage(request: ReviewRequest, kept: readonly Candidate[]):
   return `${repositoryTag(request.checkout)}${aboutPullRequest(request)}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nGroup the findings by the defect they describe.`;
 }
 
-/** Both finders' findings, those left once exact duplicates are folded together, whether the repository finder's budget ran out, and the consolidate step's message. */
+/** Both finders' findings, those left once exact duplicates are folded together, whether either finder's budget ran out, and the consolidate step's message. */
 export async function candidates(steps: Steps): Promise<Candidates> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const found = [...findingsOf(stepOutput(steps, "findDiff"), "diff"), ...findingsOf(stepOutput(steps, "findRepo"), "repo")];
   const kept = withoutDuplicates(found);
-  const budgetExhausted = replyOf(stepOutput(steps, "findRepo")).startsWith(BUDGET_EXHAUSTED);
+  const budgetExhausted = (["findDiff", "findRepo"] as const).some((id) => replyOf(stepOutput(steps, id)).startsWith(BUDGET_EXHAUSTED));
   return { found, kept, budgetExhausted, consolidate: consolidateMessage(request, kept), inference: inference.consolidate };
 }
 
@@ -364,7 +368,6 @@ function commentOf(finding: Reported, { title, body }: { title: string; body: st
  * finder's words.
  */
 export async function review(steps: Steps) {
-  const { request } = stepOutput(steps, "reviewInput");
   const { findings, dropped, budgetExhausted } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
@@ -373,5 +376,5 @@ export async function review(steps: Steps) {
   function droppedOf({ finding, verdict, reason }: Judged) {
     return { ...commentOf(finding, ownWords(finding)), verdict, reason };
   }
-  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, ...(request.cut && { cut: request.cut }) };
+  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted };
 }

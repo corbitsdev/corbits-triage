@@ -16,7 +16,10 @@ const MODEL_RETRY = { maxAttempts: MODEL_ATTEMPTS, initialBackoffMs: 5_000 };
 /** Its own sidecar, never one shared with other work: the review checks out the pull request's code. */
 export const CODE_REVIEW_PLACEMENT = { capabilities: [{ capability: "isolation:workload", effect: "require" as const }] };
 
-/** Checks the head out on the sidecar through the credential bound to it for each of `sources`; its output names the folder. */
+/**
+ * Checks the head out on the sidecar through the credential bound to it for each of `sources` and writes the diff into
+ * it; its output names the folder.
+ */
 export function checkoutAction(sources: Sources, input: Selector, after: readonly string[]) {
   return action({ handler: "checkout", input, after, credentials: sources, effect: { requires: [READ_REPOSITORY] }, timeout: TIMEOUT });
 }
@@ -29,10 +32,10 @@ export interface CodeReviewPlace {
 }
 
 /**
- * reviewInput → plan ‖ checkout (→ lint) → findDiff ‖ findRepo → candidates (fold exact duplicates) → consolidate (read the cited
- * lines at the head, group findings by defect) → checks (every group, by severity then agreement) → check (verify each
- * group against its diff hunk and the checkout) → writeInput (the groups to post) → write → review (the review to post,
- * and the groups it left out).
+ * reviewInput → checkout (the head, with the diff written into it) → plan ‖ lint → findDiff ‖ findRepo → candidates (fold
+ * exact duplicates) → consolidate (read the cited lines at the head, group findings by defect) → checks (every group, by
+ * severity then agreement) → check (verify each group against its diff hunk and the checkout) → writeInput (the groups
+ * to post) → write → review (the review to post, and the groups it left out).
  * Each model step's effort comes from the request, else the profile; its model is the one the profile names for it.
  * Under a prefix, every action's input also carries it as `$prefix`, so the action finds its steps' outputs.
  */
@@ -50,8 +53,8 @@ export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { pr
   }
   return {
     [id("reviewInput")]: action({ handler: "reviewInput", input: request, ...(after && { after }) }),
-    [id("plan")]: step({ agent: planAgent, input: outputOf("reviewInput", "plan"), inference: outputOf("reviewInput", "inference.plan"), after: [id("reviewInput")], timeout: TIMEOUT, retry: MODEL_RETRY }),
-    [id("checkout")]: checkoutAction(sources, outputOf("reviewInput", "request.checkout"), [id("reviewInput")]),
+    [id("checkout")]: checkoutAction(sources, { merge: [outputOf("reviewInput", "request.checkout"), { project: outputOf("reviewInput", "request"), fields: ["diff"] }] }, [id("reviewInput")]),
+    [id("plan")]: step({ agent: planAgent, input: outputOf("reviewInput", "plan"), inference: outputOf("reviewInput", "inference.plan"), after: [id("checkout")], timeout: TIMEOUT, retry: MODEL_RETRY }),
     [id("lint")]: action({
       handler: "lint",
       input: { merge: [{ project: { from: `steps.${id("checkout")}.output` }, fields: ["path"] }, { project: outputOf("reviewInput", "request"), fields: ["diff"] }] },
@@ -59,7 +62,7 @@ export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { pr
       timeout: TIMEOUT,
     }),
     [id("findersInput")]: action({ handler: "findersInput", input: stepsOf("reviewInput", "plan"), after: [id("plan")] }),
-    [id("findDiff")]: step({ agent: finderAgent(), input: outputOf("findersInput", "diff"), inference: outputOf("reviewInput", "inference.diffFinder"), after: [id("findersInput")], timeout: TIMEOUT, retry: MODEL_RETRY }),
+    [id("findDiff")]: step({ agent: finderAgent(), input: outputOf("findersInput", "diff"), inference: outputOf("reviewInput", "inference.diffFinder"), after: [id("findersInput"), id("checkout")], timeout: TIMEOUT, retry: MODEL_RETRY }),
     [id("findRepo")]: step({ agent: repoFinderAgent(), input: outputOf("findersInput", "repo"), inference: outputOf("reviewInput", "inference.repoFinder"), after: [id("findersInput"), id("checkout")], timeout: TIMEOUT, retry: MODEL_RETRY }),
     [id("candidates")]: action({ handler: "candidates", input: stepsOf("reviewInput", "findDiff", "findRepo"), after: [id("findDiff"), id("findRepo")] }),
     [id("consolidate")]: step({ agent: consolidateAgent(sources), input: outputOf("candidates", "consolidate"), inference: outputOf("candidates", "inference"), after: [id("candidates")], timeout: TIMEOUT, retry: MODEL_RETRY }),
@@ -71,7 +74,7 @@ export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { pr
     }),
     [id("writeInput")]: action({ handler: "writeInput", input: stepsOf("reviewInput", "candidates", "checks", "check"), after: [id("check")] }),
     [id("write")]: step({ agent: writeAgent, input: outputOf("writeInput", "text"), inference: outputOf("writeInput", "inference"), after: [id("writeInput")], timeout: TIMEOUT, retry: MODEL_RETRY }),
-    [id("review")]: action({ handler: "review", input: stepsOf("reviewInput", "writeInput", "write"), after: [id("write")] }),
+    [id("review")]: action({ handler: "review", input: stepsOf("writeInput", "write"), after: [id("write")] }),
   };
 }
 

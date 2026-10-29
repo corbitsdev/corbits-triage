@@ -14,22 +14,23 @@ under `prefix`, as `codeReviewReviewer`, the review a pull request's manager dep
 The request is `{ kind: "code-review", title, description, diff, checkout }`. The title and description are as the host
 shows them, without hidden text. Optional fields are `number` (the pull request's), `efforts` per step,
 `budgets.repoFinder` (400,000 billable tokens by default), `budgets.check` (each check's, 100,000 by default),
-`budgets.checkTotal` (all of a review's checks together, 400,000 by default), and `cut` (`{ lines, of, unread? }`)
-when the sender cut the diff for size, `unread` naming the files it cut part-way or left out; the review carries it and
-never puts those names in a prompt.
+and `budgets.checkTotal` (all of a review's checks together, 400,000 by default). The diff is reviewed whole: no
+prompt carries it, and the steps read it from the checkout.
 
 ### Process
 
-1. **plan** names the risky changed areas and the code outside the diff they depend on; meanwhile **checkout** puts the
-   head in a folder on the sidecar. Each review runs in a deployment of its own; releasing it when the run ends,
+1. **checkout** puts the head in a folder on the sidecar and writes the whole diff into it at `.corbits/diff.patch`.
+   **plan** then reads the diff there within a token budget (400,000 billable tokens) and names the risky changed areas
+   and the code outside the diff they depend on. Each review runs in a deployment of its own; releasing it when the run ends,
    failed or not, removes the sidecar and the checkout with it.
    **lint** then runs the sidecar's pinned oxlint with the repository's `.oxlintrc.json` over the changed files and
    keeps hits on added lines; only its data keys are kept, a config with any other key is refused unrun, and with none
    it is `skipped`. It answers `complete` with findings (`ToolFinding` in `src/findings.ts`), `skipped` or
    `incomplete`; a failure is never an empty list.
-2. **findDiff** reads the diff; **findRepo** reads that folder within a token budget. They run in parallel. An answer
-   with no findings list fails the finder's step; a repository finder that spent its budget before answering found
-   nothing and the review says it stopped early.
+2. **findDiff** reads the diff from the folder within a token budget (400,000 billable tokens); **findRepo** reads it
+   and the rest of the folder within `budgets.repoFinder`. They run in parallel, each given the changed files with
+   deletions marked so it skips them. An answer with no findings list fails the finder's step; a finder that spent its
+   budget before answering found nothing and the review says it stopped early.
 3. **candidates** folds exact duplicates (same file, same lines, same title ignoring case and spacing, or,
    when neither has a title, the same explanation and the same quoted line wherever both quote one) and remembers
    which finders reported each finding.

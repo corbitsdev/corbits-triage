@@ -1,5 +1,5 @@
-import { rename, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { checkout as bitbucketCheckout } from "@corbits/bitbucket-datacenter-tool";
 import { checkout as githubCheckout } from "@corbits/github-tool";
 import { checkoutsUnder, checkTarget, sidecarDataDir } from "@corbits/repo-read-tool";
@@ -8,6 +8,12 @@ import { type } from "arktype";
 
 export const Checkout = type({ source: "'github' | 'bitbucket-datacenter'", repo: "string", sha: /^[0-9a-f]{40}$/ });
 export type Checkout = typeof Checkout.infer;
+
+/** The checkout action's input: the head, and the pull request's diff it writes into the checkout at DIFF_PATH. */
+const CheckoutInput = Checkout.and({ diff: "string" });
+
+/** Where the review's steps read the pull request's whole diff, relative to the checkout's root. */
+export const DIFF_PATH = ".corbits/diff.patch";
 
 export const READ_FILE_TOOL = { github: "github_read_file", "bitbucket-datacenter": "bitbucket_datacenter_read_file" } as const;
 
@@ -52,21 +58,34 @@ async function download(host: HostFetch, { source, repo, sha }: Checkout, path: 
   }
 }
 
-/** The checkout action over the sidecar data dir `dataDir` names: the head's folder, downloaded through the host's credential unless already there. */
+/** The host as the credential bound for `source` reaches it. */
+async function hostOf(credentials: PerformScope["credentials"], source: Checkout["source"]): Promise<HostFetch> {
+  const mediated = await credentials.resolve(source);
+  if (mediated.kind !== "http") throw new Error(`${source} credential must be http, got ${mediated.kind}`);
+  return function host(hostPath: string, init?: RequestInit) {
+    return mediated.fetch(hostPath, init);
+  };
+}
+
+async function writeDiff(path: string, diff: string) {
+  const file = join(path, DIFF_PATH);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, diff);
+}
+
+/**
+ * The checkout action over the sidecar data dir `dataDir` names: the head's folder, downloaded through the host's
+ * credential unless already there, with the pull request's whole diff written into it at DIFF_PATH.
+ */
 export function checkoutUnder(dataDir: () => string) {
   return async function checkout(input: unknown, ctx: EffectContext): Promise<{ path: string }> {
-    const parsed = Checkout(input);
+    const parsed = CheckoutInput(input);
     if (parsed instanceof type.errors) throw new Error(`checkout: invalid input: ${parsed.summary}`);
-    const target: Checkout = parsed;
+    const { diff, ...target } = parsed;
     const path = checkoutPath(dataDir(), target);
     async function run({ credentials }: PerformScope) {
-      if (await isCheckedOut(path)) return { path };
-      const mediated = await credentials.resolve(target.source);
-      if (mediated.kind !== "http") throw new Error(`${target.source} credential must be http, got ${mediated.kind}`);
-      function host(hostPath: string, init?: RequestInit) {
-        return mediated.fetch(hostPath, init);
-      }
-      await download(host, target, path);
+      if (!(await isCheckedOut(path))) await download(await hostOf(credentials, target.source), target, path);
+      await writeDiff(path, diff);
       return { path };
     }
     return (await ctx.perform({ effectId: "checkout", capability: READ_REPOSITORY, run })) as { path: string };

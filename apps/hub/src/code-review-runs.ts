@@ -4,7 +4,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
-import { CodeReviewComment, DiffCut, REPO_SOURCES, repoSourceOf, StageResult, type RepoSource } from "@corbits/triage-contracts";
+import { CodeReviewComment, REPO_SOURCES, repoSourceOf, StageResult, type RepoSource } from "@corbits/triage-contracts";
 import { diffHash } from "@corbits/common/diff-hash";
 import type { PullRequestToReview } from "./pull-request-reader.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
@@ -28,7 +28,6 @@ const CompletedRun = type({
   summary: "string",
   comments: CodeReviewComment.array(),
   budgetExhausted: "boolean",
-  "cut?": DiffCut,
   "diffHash?": "string",
 });
 const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string" });
@@ -50,9 +49,9 @@ function reviewOf(record: CodeReviewRecord): Review {
   const reported = StageResult.assert({ ...record.payload, head: record.head });
   if ("failed" in reported) return { ...base, status: "failed" };
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
-  const { summary, budgetExhausted, cut } = reported.result;
+  const { summary, budgetExhausted } = reported.result;
   const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, ...(priority !== undefined && { priority }), ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
-  return { ...base, status: "completed", summary, comments, budgetExhausted, ...(cut && { cut }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
+  return { ...base, status: "completed", summary, comments, budgetExhausted, ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 
 type CodeReviewRunsDeps = {

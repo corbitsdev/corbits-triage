@@ -58,12 +58,17 @@ function lineValue(lines: readonly string[], lead: string): string | undefined {
   return line?.slice(lead.length).split("\t")[0];
 }
 
-function sectionPath(section: string): string | undefined {
+/** A section's lines before its first hunk. */
+function metaOf(section: string): string[] {
   const lines = section.split("\n");
-  const header = lines[0]!.slice(HEADER.length);
-  const prefixes = prefixesOf(header);
   const end = lines.findIndex((line) => line.startsWith("@@"));
-  const meta = end < 0 ? lines : lines.slice(0, end);
+  return end < 0 ? lines : lines.slice(0, end);
+}
+
+function sectionPath(section: string): string | undefined {
+  const meta = metaOf(section);
+  const header = meta[0]!.slice(HEADER.length);
+  const prefixes = prefixesOf(header);
   const added = lineValue(meta, "+++ ");
   if (added !== undefined && added !== "/dev/null") return pathOf(added, prefixes.new);
   const renamed = lineValue(meta, "rename to ") ?? lineValue(meta, "copy to ");
@@ -73,17 +78,19 @@ function sectionPath(section: string): string | undefined {
   return headerPath(header, prefixes);
 }
 
-/** The path of each file whose part of the diff ends after `from`; undefined when there is none or any path cannot be read. */
-export function filesFrom(diff: string, from: number): string[] | undefined {
-  const starts = [...diff.matchAll(/^diff --git /gm)].map((match) => match.index);
-  const paths = starts.flatMap((start, i) => ((starts[i + 1] ?? diff.length) > from ? [sectionPath(diff.slice(start, starts[i + 1]))] : []));
-  const known = paths.filter((path) => path !== undefined);
-  return paths.length > 0 && known.length === paths.length ? known : undefined;
-}
-
 function sections(diff: string): string[] {
   const starts = [...diff.matchAll(/^diff --git /gm)].map((match) => match.index);
   return starts.map((start, i) => diff.slice(start, starts[i + 1]));
+}
+
+/** Each file the diff changes, by its head-side path or its base-side path when deleted; throws when a file's path cannot be read. */
+export function diffFiles(diff: string): { path: string; deleted: boolean }[] {
+  return sections(diff).map(function fileOf(section) {
+    const path = sectionPath(section);
+    if (path === undefined) throw new Error(`unreadable diff header: ${section.split("\n")[0]}`);
+    const meta = metaOf(section);
+    return { path, deleted: lineValue(meta, "+++ ") === "/dev/null" || meta.some((line) => line.startsWith("deleted file mode ")) };
+  });
 }
 
 /** The head-side lines the diff adds, by each file's head-side path; throws when a file's path cannot be read. */

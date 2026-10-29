@@ -46,32 +46,6 @@ export function credentialBindingsFor(sources: Sources) {
   ]);
 }
 
-const PLAN_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["areas", "outside_diff"],
-  properties: {
-    areas: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "why", "what_to_check"],
-        properties: { path: { type: "string" }, why: { type: "string" }, what_to_check: { type: "string" } },
-      },
-    },
-    outside_diff: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["symbol_or_path", "why"],
-        properties: { symbol_or_path: { type: "string" }, why: { type: "string" } },
-      },
-    },
-  },
-};
-
 const CONSOLIDATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -116,13 +90,9 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
     return { sources: [{ provider: profile.provider, model: profile.models[role] }] };
   }
 
-  function structuredAgent(id: string, name: "plan" | "write", schema: Record<string, unknown>) {
-    return defineAgent({ id, systemPrompt: SYSTEM_PROMPTS[name], tools: [], capabilities: [], inference: inference(name), director: structured.build({ name, schema }) });
-  }
-
-  /** The diff finder: one model turn over the pull request's diff, no tools, run by the reader so an unreadable answer fails its step. */
+  /** The diff finder: the model reads the pull request's diff from the checkout its input names with the read tools, confined to it. */
   function finderAgent(systemPrompt = SYSTEM_PROMPTS["finder-diff"]) {
-    return defineAgent({ id: "code-review-finder", systemPrompt, tools: [], capabilities: [], inference: inference("diffFinder"), director: reader.build({ answer: "findings" }) });
+    return defineAgent({ id: "code-review-finder", systemPrompt, tools: [repoReadUnder(dataDir)], capabilities: [], inference: inference("diffFinder"), director: reader.build({ tools: "diff", answer: "findings" }) });
   }
 
   /** The repository finder: the model reads the checkout its input names with the read tools, confined to it. */
@@ -162,8 +132,16 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
       inference: inference("check"),
       director: reader.build({ tools: "check", answer: "verdict" }),
     }),
-    planAgent: structuredAgent("code-review-plan", "plan", PLAN_SCHEMA),
-    writeAgent: structuredAgent("code-review-write", "write", WRITE_SCHEMA),
+    /** Plans the review, reading the pull request's diff from the checkout its input names with the read tools. */
+    planAgent: defineAgent({
+      id: "code-review-plan",
+      systemPrompt: SYSTEM_PROMPTS.plan,
+      tools: [repoReadUnder(dataDir)],
+      capabilities: [],
+      inference: inference("plan"),
+      director: reader.build({ tools: "diff", answer: "plan" }),
+    }),
+    writeAgent: defineAgent({ id: "code-review-write", systemPrompt: SYSTEM_PROMPTS.write, tools: [], capabilities: [], inference: inference("write"), director: structured.build({ name: "write", schema: WRITE_SCHEMA }) }),
   };
 }
 

@@ -3,14 +3,6 @@ import { type } from "arktype";
 /** Shown beside a review whose reader reached its limit for reading the repository before it finished. */
 export const BUDGET_EXHAUSTED_NOTE = "Stopped early: the reviewer reached its limit for reading the repository.";
 
-/** Shown beside a review of a diff cut for size whose left-out files cannot be named. */
-export const SOME_NOT_REVIEWED_NOTE = "Some files were not reviewed: the diff was over the size limit.";
-
-/** Heads the list of files a review of a diff cut for size read part-way or left out. */
-export function notReviewedNote(files: number): string {
-  return `Not reviewed in full: ${files === 1 ? "1 file" : `${files} files`}, over the size limit.`;
-}
-
 /** Shown with a finding none of whose file's lines could be read. */
 export const UNVERIFIED_FINDING = "Not checked against the file";
 
@@ -21,17 +13,14 @@ export const UNVERIFIED_FINDING = "Not checked against the file";
 export const CodeReviewComment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", "priority?": "number", "quoted?": "string", "unverified?": "true" });
 export type CodeReviewComment = typeof CodeReviewComment.infer;
 
-/** A diff cut to its first `lines` of `of` lines for size, with the files it cut part-way or left out. */
-export const DiffCut = type({ lines: "number", of: "number", "unread?": "string[]" });
-
 /** A finding the review left out: its check found it not real, or could not decide and only one finder reported it. */
 const CodeReviewDropped = CodeReviewComment.and({ verdict: "'not_real' | 'unsure'", reason: "string" });
 
 /**
- * What a code review run answers: its summary, its findings, the findings its check dropped, whether its reader stopped
- * early and how its diff was cut.
+ * What a code review run answers: its summary, its findings, the findings its check dropped and whether its reader
+ * stopped early.
  */
-export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean", "cut?": DiffCut });
+export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean" });
 export type CodeReviewOutput = typeof CodeReviewOutput.infer;
 
 /** A finding's title as people read it, after its priority when it has one. */

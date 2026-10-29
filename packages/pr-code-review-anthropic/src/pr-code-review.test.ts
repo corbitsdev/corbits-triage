@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { InferenceEvent } from "@intx/types/inference-events";
 import type { ToolResult } from "@intx/types/runtime";
 import { projectLiveToInert, type StepInvokeRequest, type WorkflowAuthorizeFn } from "@intx/workflow";
-import { checkoutUnder } from "@corbits/pr-code-review/actions/checkout";
+import { checkoutUnder, DIFF_PATH } from "@corbits/pr-code-review/actions/checkout";
 import { codeReviewAgents, credentialBindingsFor } from "@corbits/pr-code-review/agents";
 import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
 import { CHECK_UNFINISHED, UNCITED } from "@corbits/pr-code-review/reader-director";
@@ -101,10 +101,13 @@ function verdict(sent: string) {
   return { verdict: "unsure", reason: "The caller was not read." };
 }
 
-/** Each step's answer by its prompt; the repository finder reads three times, then answers. */
+/** Each step's answer by its prompt; the diff finder reads the diff, and the repository finder reads three times, then answers. */
 function answer(body: MessagesRequest) {
   const system = JSON.stringify(body.system);
   const sent = JSON.stringify(body.messages);
+  const repoFinder = system.includes("rest of the codebase");
+  const diffFinder = sent.includes("Review the diff and report") && !repoFinder;
+  if (sent.includes("Plan the review")) return [{ type: "text", text: JSON.stringify({ areas: [], outside_diff: [] }) }];
   if (sent.includes("Verify this finding.") && checkKeepsReading === "confirms" && sent.includes("Budget spent")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
   if (sent.includes("Verify this finding.") && checkKeepsReading && sent.includes(OUTSIDE.title)) {
     return [{ type: "tool_use", id: `verify-${sent.split("tool_result").length}`, name: "read_file", input: { path: OUTSIDE.path } }];
@@ -113,14 +116,15 @@ function answer(body: MessagesRequest) {
     return [{ type: "tool_use", id: "verify", name: "read_file", input: { path: sent.includes(OUTSIDE.title) ? OUTSIDE.path : "src/a.ts" } }];
   }
   if (sent.includes("Verify this finding.")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
-  if (system.includes("<tools>") && !sent.includes("tool_result")) {
+  if (diffFinder && !sent.includes("tool_result")) return [{ type: "tool_use", id: "diff", name: "read_file", input: { path: DIFF_PATH } }];
+  if (repoFinder && !sent.includes("tool_result")) {
     return [
       { type: "tool_use", id: "read", name: "read_file", input: { path: "src/a.ts" } },
       { type: "tool_use", id: "grep", name: "grep", input: { pattern: "function add" } },
       { type: "tool_use", id: "escape", name: "read_file", input: { path: join(dir, "head/src/a.ts") } },
     ];
   }
-  if (sent.includes("Review the diff above") && !system.includes("<tools>") && diffFinderProse > 0) {
+  if (diffFinder && diffFinderProse > 0) {
     diffFinderProse--;
     return [{ type: "text", text: "The loop at src/a.ts:2 subtracts { instead of adding." }];
   }
@@ -128,11 +132,10 @@ function answer(body: MessagesRequest) {
     writeProse--;
     return [{ type: "text", text: "One defect: add subtracts." }];
   }
-  if (system.includes("<tools>") && repoFinderProse) return [{ type: "text", text: "I read src/a.ts and ran out of budget before writing findings." }];
-  const reported = [FINDING, ...(planted ? [PLANTED] : []), ...(outside && system.includes("<tools>") ? [OUTSIDE] : [])];
+  if (repoFinder && repoFinderProse) return [{ type: "text", text: "I read src/a.ts and ran out of budget before writing findings." }];
+  const reported = [FINDING, ...(planted ? [PLANTED] : []), ...(outside && repoFinder ? [OUTSIDE] : [])];
   let text: unknown = { findings: reported };
   if (system.includes("<cited_code>")) text = { groups: [{ defect: "add subtracts", members: [0], representative: 0 }] };
-  if (sent.includes("Plan the review")) text = { areas: [], outside_diff: [] };
   if (sent.includes("Write the review.")) text = { summary: "One defect.", comments: [{ finding: 0, title: "add subtracts", body: "Use +." }] };
   return [{ type: "text", text: JSON.stringify(text) }];
 }
@@ -208,14 +211,15 @@ async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { 
   return { run, results, attempts };
 }
 
-test("the repository finder reads the head the checkout action put on the sidecar, confined to it, and a second review of the head reuses it", async () => {
+test("the finders read the diff and the head the checkout action put on the sidecar, confined to it, and a second review of the head reuses it", async () => {
   const first = await review(join(dir, "data"));
   expect(first.run.terminalStatus).toBe("completed");
   expect(first.run.outputs["checkout"]).toEqual({ path: join(dir, "data/checkouts/github/acme/widgets", SHA) });
   expect(first.run.outputs["lint"]).toEqual({ status: "skipped", reason: "no lint config" });
   const results = Object.fromEntries(first.results.map((r) => [r.callId, r]));
+  expect(results["diff"]).toMatchObject({ content: { path: DIFF_PATH, text: expect.stringContaining("+  return a - b;") } });
   expect(results["read"]).toMatchObject({ content: { path: "src/a.ts", text: "1\texport function add(a: number, b: number) {\n2\t  return a - b;\n3\t}\n4\t" } });
-  expect(results["grep"]).toMatchObject({ content: { matches: [{ path: "src/a.ts", line: 1 }] } });
+  expect(results["grep"]).toMatchObject({ content: { matches: [{ path: DIFF_PATH, line: 5 }, { path: "src/a.ts", line: 1 }] } });
   expect(results["escape"]).toMatchObject({ content: `${join(dir, "head/src/a.ts")} is outside the repository`, isError: true });
   expect(first.run.outputs["review"]).toMatchObject({ summary: "One defect.", comments: [{ path: "src/a.ts", start: 2, title: "add subtracts", agreement: { finders: 2 } }] });
 
@@ -243,10 +247,10 @@ test("a repository finder that spends its budget and then answers in prose stopp
   }
 });
 
-test("a review whose checkout is not on this sidecar fails at the repository finder", async () => {
+test("a review whose checkout is not on this sidecar fails at its first step that reads it", async () => {
   const { run } = await review(join(dir, "here"), join(dir, "elsewhere"));
   expect(run.terminalStatus).not.toBe("completed");
-  expect(run.outputs["findRepo"]).toBeUndefined();
+  expect(run.outputs["plan"]).toBeUndefined();
 });
 
 test("a plan step whose model call keeps failing fails the review after its tries rather than handing the finders its error", async () => {

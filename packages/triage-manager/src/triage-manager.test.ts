@@ -715,7 +715,6 @@ describe("triage-manager with code review", () => {
 
   test.each([
     ["a finding below `clean.below` does not", finding(2), { clean: { below: "high" } }, { reviewed: true }, undefined],
-    ["a review cut for size holds", { ...CLEAN.result, cut: { lines: 1, of: 2 } }, {}, { reviewed: true }, "Code review did not read the whole change on this head."],
     ["a review that stopped early holds", { ...CLEAN.result, budgetExhausted: true }, {}, { reviewed: true }, "Code review did not read the whole change on this head."],
     ["a review skipped for failed rules holds", undefined, { rules: "pass" }, { reviewed: false, skipped: "rules failed: CI green" }, "Code review did not run on this head."],
     ["a review `for` leaves out does not", undefined, { rules: "pass", for: ["maintainers"] }, { reviewed: false, skipped: "the author is not in the maintainers group" }, undefined],
@@ -728,7 +727,7 @@ describe("triage-manager with code review", () => {
 
   test("cleared keeps the reason of a Do already held, such as for CI", async () => {
     const waiting = { ...APPROVE_DO, kind: "merge", held: true, reason: "Waiting for checks to finish." };
-    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: { ...REVIEW, cut: { lines: 1, of: 2 } }, taken: { blocks: ["code-review"], ...CODE_REVIEW } };
+    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: { ...REVIEW, budgetExhausted: true }, taken: { blocks: ["code-review"], ...CODE_REVIEW } };
     const { actions: [merge] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { ...PASSED, actions: [waiting] } }, reviewScope: { output: { reviewed: true } } }) as { actions: Record<string, unknown>[] };
     expect(merge).toEqual(waiting);
   });

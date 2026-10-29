@@ -34,16 +34,27 @@ function turnText(turn: AssistantTurn): string {
   return turn.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
 }
 
-const ANSWERS = ["findings", "verdict"] as const;
+const ANSWERS = ["findings", "verdict", "plan"] as const;
 
 export interface ReaderDirectorConfig {
   /** The tools section appended to the system prompt while the model reads; absent for a finder that reads no checkout. */
   tools?: keyof typeof TOOL_PROMPTS;
-  /** What the reply must hold: a findings list, or the check's verdict and reason. */
+  /** What the reply must hold: a findings list, the check's verdict and reason, or the review's plan. */
   answer: (typeof ANSWERS)[number];
 }
 
 type Verdict = typeof Verdict.infer;
+
+const Plan = type({
+  areas: type({ path: "string", why: "string", what_to_check: "string" }).array(),
+  outside_diff: type({ symbol_or_path: "string", why: "string" }).array(),
+});
+type Plan = typeof Plan.infer;
+
+function planOf(json: unknown): Plan | undefined {
+  const plan = Plan(json);
+  return plan instanceof type.errors ? undefined : plan;
+}
 
 function verdictOf(json: unknown): Verdict | undefined {
   const verdict = Verdict(json);
@@ -57,7 +68,8 @@ function verdictOf(json: unknown): Verdict | undefined {
  * tools, which earlier thinking blocks are bound to, so once the input's budget of billable tokens is spent each
  * further tool call is answered with BUDGET_SPENT; after REFUSED_ROUNDS such rounds the model's latest text is the
  * reply. A findings reply whose calls were refused, or with no findings list once the budget is spent, starts with
- * BUDGET_EXHAUSTED. A verdict reply is the first verdict and reason in the model's text; a real or not_real one that
+ * BUDGET_EXHAUSTED. A plan reply is the first plan in the model's text, or its text once a call was refused or the budget
+ * is spent. A verdict reply is the first verdict and reason in the model's text; a real or not_real one that
  * cites, as path:line, no line the input's diff hunks or the model's reads showed is unsure, its reason led by UNCITED.
  * Once a call was refused, only a not_real that cites one stands, and any other verdict, or none, is unsure; so is no
  * verdict once the budget is spent. Any other answer with no findings list or no verdict, or a failed model call, fails
@@ -79,9 +91,17 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
 
   function reply(text: string) {
     if (answer === "verdict") return verdictReply(text);
+    if (answer === "plan") return planReply(text);
     if (refusedRounds > 0) return caps.reply(`${BUDGET_EXHAUSTED}${text}`);
     if (!("unparsable" in parseFindings(text))) return caps.reply(text);
     if (root !== "" && spent >= budget) return caps.reply(`${BUDGET_EXHAUSTED}${text}`);
+    throw new Error(UNREADABLE);
+  }
+
+  function planReply(text: string) {
+    const plan = firstObject(text, planOf);
+    if (plan) return caps.reply(JSON.stringify(plan));
+    if (refusedRounds > 0 || (root !== "" && spent >= budget)) return caps.reply(text);
     throw new Error(UNREADABLE);
   }
 

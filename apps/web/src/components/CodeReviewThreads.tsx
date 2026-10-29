@@ -88,25 +88,6 @@ function SendReview({ item, completed, carriedTo, send }: { item: Reviewed; comp
   return <SendToGithub item={item} completed={completed} carriedTo={carriedTo} send={send} />;
 }
 
-/** A list of more unread files than this starts collapsed. */
-const SHOWN_UNREAD = 5;
-
-function CutNote({ cut }: { cut: NonNullable<CodeReviewRun["cut"]> }) {
-  const { unread } = cut;
-  const said = `Reviewed the first ${cut.lines} of ${cut.of} lines of the diff; the rest was over the size limit.`;
-  if (!unread?.length) return <p className="note">{said} Some files were not reviewed.</p>;
-  const heading = unread.length === 1 ? "1 file not reviewed in full" : `${unread.length} files not reviewed in full`;
-  return (
-    <div className="note">
-      {said}
-      <details open={unread.length <= SHOWN_UNREAD}>
-        <summary>{heading}</summary>
-        <ul className="cr-unread">{unread.map((path) => <li key={path}><code>{path}</code></li>)}</ul>
-      </details>
-    </div>
-  );
-}
-
 /**
  * The pull request's code review once there is one; before it, why its head was left out, or that it is awaited while the
  * hub waits on it or the policy file turns it on. Review again on a reviewed pull request that is not a draft while code
@@ -139,7 +120,6 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       {skipped ? <p className="note">Not reviewed: {item.codeReviewSkipped}.{completed ? ` The review below is of ${shortSha(completed.headSha)}.` : null}</p> : null}
       {completed && carriedTo ? <p className="note">Carried over from {shortSha(completed.headSha)}: the new commits leave the diff as it was reviewed.</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
-      {completed?.cut ? <CutNote cut={completed.cut} /> : null}
       {completed?.budgetExhausted ? <p className="note">{BUDGET_EXHAUSTED_NOTE}</p> : null}
       {completed?.comments?.length ? <ol className="threads">{completed.comments.map((comment, index) => <Thread key={index} comment={comment} review={completed} />)}</ol> : null}
     </section>
