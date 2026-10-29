@@ -41,6 +41,7 @@ A local instance needs Docker running. The Atlassian image sets itself up from `
 
 ```sh
 docker run -d --name bitbucket-dev -p 7990:7990 -p 7999:7999 \
+  --add-host=host.docker.internal:host-gateway \
   -v bitbucket-dev:/var/atlassian/application-data/bitbucket \
   -e SERVER_PROXY_NAME=localhost -e SERVER_PROXY_PORT=7990 -e SERVER_SCHEME=http \
   -e SETUP_BASEURL=http://localhost:7990 -e SETUP_DISPLAYNAME=Bitbucket \
@@ -59,8 +60,9 @@ Then:
 3. Create an HTTP access token (avatar, **Manage account**, **HTTP access tokens**) with Project read and Repository admin, as under [Token](#token).
 4. Start the hub with `BITBUCKET_EGRESS_ALLOWLIST=localhost`, since it refuses a loopback instance unless it is listed: `BITBUCKET_EGRESS_ALLOWLIST=localhost bun run dev`.
 5. In the portal, connect `http://localhost:7990` with the token.
+6. Turn triage on for the repository; that creates its webhook.
 
-The webhook URL Triage registers is built from `BETTER_AUTH_BASE_URL`, so a local hub registers a `localhost` address, which the container cannot reach. For live events, edit the webhook on the repository in Bitbucket and set its URL to `http://host.docker.internal:<hub port>/` followed by the path of the registered URL.
+The webhook URL Triage registers is built from `BETTER_AUTH_BASE_URL`, so a local hub registers a `localhost` address, which the container cannot reach. For live events, edit the webhook on the repository in Bitbucket and set its URL to `http://host.docker.internal:<hub port>/` followed by the path of the registered URL. Rotating the webhook secret puts the registered URL back, so edit it again afterwards.
 
 ## Token
 
