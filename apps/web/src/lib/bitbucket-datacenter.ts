@@ -46,13 +46,16 @@ export function useBitbucketDatacenterRepositories() {
   });
 }
 
-/** `pending` until the Bitbucket Data Center repositories are known, or known to be none. */
-export function useRepositories(): { repos: RepoRecord[]; pending: boolean } {
+/** `pending` until the Bitbucket Data Center repositories are known, or known to be none; `error` when reading the connection or its repositories failed. */
+export function useRepositories(): { repos: RepoRecord[]; pending: boolean; error: Error | null; retry: () => Promise<unknown> } {
   const { snapshot } = usePortal();
   const connection = useBitbucketDatacenterConnection();
   const listing = useBitbucketDatacenterRepositories();
   const repos = useMemo(() => mergeRepositories(snapshot?.repos ?? [], listing.data), [snapshot?.repos, listing.data]);
-  return { repos, pending: connection.isPending || listing.isLoading };
+  async function retry() {
+    return connection.error ? connection.refetch() : listing.refetch();
+  }
+  return { repos, pending: connection.isPending || listing.isLoading, error: connection.error ?? listing.error, retry };
 }
 
 function requireTenant(tenantId: string | undefined): string {

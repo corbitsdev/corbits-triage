@@ -3,7 +3,7 @@ import { Button } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { AuthorKind, CheckPack } from "@corbits/triage-contracts";
-import type { GithubPullDetail, PrItem } from "../lib/hub-api.ts";
+import { lacksDecisionModel, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { useMediaQuery } from "../lib/media-query.ts";
@@ -547,7 +547,7 @@ function Toasts({ notices, onUndo }: { notices: Notices; onUndo: () => void }) {
 /** Without a decision model Triage judges nothing, so the list points to where one is connected. */
 function ConnectModel() {
   const { snapshot, readOnly } = usePortal();
-  if (snapshot?.decisionModel) return null;
+  if (!snapshot || !lacksDecisionModel(snapshot)) return null;
   return (
     <div className="grants">
       <section className="rs" aria-labelledby="connect-model">

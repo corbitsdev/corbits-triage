@@ -1,10 +1,11 @@
 import { useMemo, type ReactNode } from "react";
+import { Button } from "@corbits/react-ui";
 import { Link } from "react-router-dom";
 import { presetFor, TRIAGE_LISTENERS, type DeployedVersions, type RepoSource } from "@corbits/triage-contracts";
 import { useCheckPacks } from "../../lib/check-packs.ts";
 import { modelSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
-import { connectedSources, currentDeployment, isActiveCredential, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
+import { connectedSources, currentDeployment, isActiveCredential, lacksDecisionModel, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
 import { counted } from "../../lib/plural.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { hostFullName } from "../../lib/pull-link.ts";
@@ -25,11 +26,16 @@ function undeployedSources(deployments: readonly DeployedWorkflow[], sources: re
   return sources.filter((source) => currentDeployment(deployments, TRIAGE_LISTENERS[source])?.live !== true);
 }
 
-type Status = { sources: RepoSource[]; undeployed: RepoSource[]; model: boolean; triaging: number; total: number };
+type Status = { sources: RepoSource[]; undeployed: RepoSource[]; needsModel: boolean; triaging: number; total: number };
 
-function statusText({ sources, undeployed, model, triaging, total }: Status): string {
+/** Whether Triage runs depends on the decision model, so a failed read of it leaves that unknown. */
+function unreadText({ modelsError }: PortalSnapshot): string | null {
+  return modelsError === undefined ? null : "Couldn't read your decision model. Triage can't tell whether it is running.";
+}
+
+function statusText({ sources, undeployed, needsModel, triaging, total }: Status): string {
   if (sources.length === 0) return "Triage is not running: no source is connected.";
-  if (!model) return "Triage needs a decision model before it can run. Add one below.";
+  if (needsModel) return "Triage needs a decision model before it can run. Add one below.";
   if (undeployed.length === sources.length) return "Triage is not running: its workflow is not deployed.";
   if (undeployed.length > 0) return `Triage is not running on ${undeployed.map(hostFullName).join(" or ")}: its workflow is not deployed.`;
   if (total === 0) return "Triage is running, but no repository is connected yet.";
@@ -66,6 +72,7 @@ function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
       <div className="source-body">
         {snapshot.denied.credentials && <DeniedNotice section="credentials" />}
         <div className="sentences">
+          {snapshot.modelsError && <p role="alert" className="field-error">Triage could not read the saved decision model: {snapshot.modelsError}</p>}
           <KeyRow
             words={words}
             name="decision model"
@@ -82,6 +89,7 @@ function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
 }
 
 export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: DeployedSection }) {
+  const { refresh } = usePortal();
   const enabled = useMemo(() => [...triageEnabledRepos(snapshot.repos)], [snapshot.repos]);
   const packs = useCheckPacks(enabled);
   const ready = !deployed.denied && !deployed.loading && !deployed.unavailable && !packsPending(packs);
@@ -89,10 +97,11 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
   const status = {
     sources,
     undeployed: undeployedSources(deployed.rows, sources),
-    model: snapshot.decisionModel !== undefined,
+    needsModel: lacksDecisionModel(snapshot),
     triaging: triageReadyRepos(snapshot.repos, packs).size,
     total: snapshot.repos.length,
   };
+  const unread = unreadText(snapshot);
 
   return (
     <section className="sec" id="triage" aria-labelledby="sec-triage">
@@ -105,7 +114,8 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
         {ready && (
           <div className="sentences">
             <div className="sentence">
-              <span className="txt">{statusText(status)}</span>
+              <span className="txt">{unread ?? statusText(status)}</span>
+              {unread && <Button type="button" variant="outline" size="sm" onClick={refresh}>Try again</Button>}
               <Link className="linkish" to="/repositories">Choose repositories</Link>
             </div>
             {deployed.stalled?.map((host) => (
@@ -118,7 +128,7 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
                 <span className="txt">{sidecarText(deployed.sidecar)}</span>
               </div>
             )}
-            {sources.length > 0 && status.model && <TriageVersions deployed={deployed} sources={sources} />}
+            {sources.length > 0 && !status.needsModel && !unread && <TriageVersions deployed={deployed} sources={sources} />}
           </div>
         )}
         <GithubSource snapshot={snapshot} />

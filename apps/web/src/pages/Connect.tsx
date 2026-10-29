@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { Badge, Button, StatusDot } from "@corbits/react-ui";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { errorText } from "@corbits/common";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
+import { useRepositories } from "../lib/bitbucket-datacenter.ts";
+import { connectedSources, githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { hubOnLocalhost } from "../lib/hub-origin.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { generateWebhookSecret, isPrivateKeyPem } from "../lib/connect-view.ts";
@@ -66,6 +67,10 @@ export default function Connect() {
   const [secretNotice, setSecretNotice] = useState("");
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
+  const openable = useRepositories();
+  const bitbucketConnected = Boolean(snapshot && connectedSources(snapshot.credentials).includes("bitbucket-datacenter"));
+  const bitbucketError = bitbucketConnected ? openable.error : null;
+  const listingError = bitbucketError ? `Could not read your repositories from Bitbucket Data Center. ${bitbucketError.message}` : null;
   const verdicts = useTriageVerdicts();
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const catching = useMemo(() => catchingUpRepos(verdicts.data?.pulls ?? [], triaged), [verdicts.data, triaged]);
@@ -150,6 +155,10 @@ export default function Connect() {
   const sync = useGithubSync(githubConnected && (fromGithub || repos.length === 0));
   const syncError = sync.error ? `Could not read your repositories from GitHub. ${sync.error.message}` : "";
   const noReposYet = fromGithub && sync.data?.repos.length === 0;
+  // Only a listing that was read can show there are none; one still loading or not allowed says nothing.
+  const githubRead = !githubConnected || (sync.data !== undefined && !syncError);
+  const bitbucketRead = !bitbucketConnected || (!openable.pending && !bitbucketError);
+  const noneVisible = !noReposYet && githubRead && bitbucketRead && openable.repos.length === 0;
 
   // Each sync result moves onboarding to the step GitHub's state implies.
   const [lastSync, setLastSync] = useState(sync.data);
@@ -260,11 +269,14 @@ export default function Connect() {
       {sync.isFetching && <div className="setup-waiting" role="status"><StatusDot label="Working" live tone="emphasis" /><div><strong>Reading your repositories from GitHub…</strong></div></div>}
       {error && <p role="alert" className="error">{error}</p>}
       {syncError && <p role="alert" className="error">{syncError}</p>}
+      {listingError && <p role="alert" className="error">{listingError}</p>}
       {repos.length > 0 && <div className="repository-list">{repos.map(renderInstallRow)}</div>}
+      {noneVisible && <p role="status">No repositories are visible to this connection yet. <Link className="linkish" to="/settings/triage">Change the connection in Settings</Link>.</p>}
       <div className="task-actions">
-        <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>
+        {openable.repos.length > 0 && <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>}
         {githubConnected && <Button type="button" variant="outline" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</Button>}
         {syncError && <Button type="button" variant="outline" disabled={sync.isFetching} onClick={() => void sync.refetch()}>Try again</Button>}
+        {listingError && <Button type="button" variant="outline" disabled={openable.pending} onClick={() => void openable.retry()}>Try again</Button>}
       </div>
     </>;
   }
