@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { Switch } from "@corbits/react-ui";
 import { errorText } from "@corbits/common";
+import { lacksDecisionModel } from "../../lib/hub-api.ts";
 import { usePortal } from "../../lib/portal.tsx";
 
 type TriageSwitchProps = {
@@ -56,7 +57,7 @@ export default function TriageSwitch({ repo, enabled, triaging, disabled, onSwit
         </div>
         <Switch id={switchId} className="sw lg" checked={enabled} onCheckedChange={onSwitch} label="Triage pull requests in this repository" disabled={disabled} />
       </div>
-      <ModelGap show={needsModel && snapshot?.decisionModel === undefined} />
+      <ModelGap show={needsModel && snapshot !== null && lacksDecisionModel(snapshot)} />
       {triaging && !ruleOn ? <p className="help" role="status">Triage is on. It starts once the policy has a rule.</p> : null}
       {rerunError ? <p role="alert" className="error">{rerunError}</p> : null}
     </>

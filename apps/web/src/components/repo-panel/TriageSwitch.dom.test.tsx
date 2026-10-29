@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { recommendedPack, starterPack, type CheckPack } from "@corbits/triage-contracts";
 import { HeldInboxProvider } from "../../lib/held-inbox.tsx";
 import { policyNeedsModel } from "../../lib/pack-rules.ts";
-import { GITHUB_CREDENTIAL_NAME, type HubCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
+import { BITBUCKET_DATACENTER_CREDENTIAL_NAME, GITHUB_CREDENTIAL_NAME, type HubCredential, type PortalSnapshot } from "../../lib/hub-api.ts";
 import type { usePortal } from "../../lib/portal.tsx";
 import { SessionProvider } from "../../lib/session.tsx";
 import Connect from "../../pages/Connect.tsx";
@@ -43,7 +43,7 @@ function credential(): HubCredential {
   };
 }
 
-function snapshot(pack: CheckPack, model: PortalSnapshot["decisionModel"]): PortalSnapshot {
+function snapshot(pack: CheckPack, model: PortalSnapshot["decisionModel"], modelsDenied = false): PortalSnapshot {
   return {
     workspace: { tenantId: "tenant", principalId: "principal", userId: "user" },
     tenantName: "Acme",
@@ -52,7 +52,7 @@ function snapshot(pack: CheckPack, model: PortalSnapshot["decisionModel"]): Port
     repos: [{ name: pack.repo, connected: true, source: "github", enabled: true }],
     credentials: [credential()],
     ...(model ? { decisionModel: model } : {}),
-    denied: { repos: false, credentials: false, models: false },
+    denied: { repos: false, credentials: false, models: modelsDenied },
   };
 }
 
@@ -105,8 +105,8 @@ async function mount(node: ReactNode) {
   });
 }
 
-function mountSwitch(pack: CheckPack, model: PortalSnapshot["decisionModel"]) {
-  portal = portalValue(snapshot(pack, model));
+function mountSwitch(pack: CheckPack, model: PortalSnapshot["decisionModel"], modelsDenied = false) {
+  portal = portalValue(snapshot(pack, model, modelsDenied));
   return mount(
     <MemoryRouter>
       <TriageSwitch
@@ -139,9 +139,14 @@ test("the same policy with a saved model shows no model prompt", async () => {
   expect(document.body.textContent ?? "").not.toContain("needs a model");
 });
 
-test("setup has no decision model step and opens Repositories", async () => {
-  portal = portalValue(snapshot(starterPack(REPO), undefined));
-  await mount(
+test("a refused model catalog read shows no model prompt", async () => {
+  await mountSwitch(recommendedPack(REPO), undefined, true);
+  expect(document.body.textContent ?? "").not.toContain("needs a model");
+});
+
+function mountConnect(current: PortalSnapshot) {
+  portal = portalValue(current);
+  return mount(
     <SessionProvider>
       <MemoryRouter initialEntries={["/connect"]}>
         <HeldInboxProvider>
@@ -153,10 +158,25 @@ test("setup has no decision model step and opens Repositories", async () => {
       </MemoryRouter>
     </SessionProvider>,
   );
+}
+
+function openRepositoriesButton(): HTMLButtonElement | undefined {
+  return [...document.querySelectorAll("button")].find((element) => element.textContent === "Open Repositories");
+}
+
+test("setup has no decision model step and opens Repositories", async () => {
+  await mountConnect(snapshot(starterPack(REPO), undefined));
   expect(document.body.textContent).not.toContain("Decision model");
   expect(document.body.textContent).toContain("Two steps");
-  const button = [...document.querySelectorAll("button")].find((element) => element.textContent === "Open Repositories");
+  const button = openRepositoriesButton();
   if (!button) throw new Error("no Open Repositories button");
   act(() => button.click());
   expect(document.body.textContent).toContain("/repositories");
+});
+
+test("setup offers no Open Repositories while there are no repositories to open", async () => {
+  await mountConnect({ ...snapshot(starterPack(REPO), undefined), repos: [], credentials: [{ ...credential(), name: BITBUCKET_DATACENTER_CREDENTIAL_NAME }] });
+  expect(document.querySelector("[aria-current=step] h2")?.textContent).toBe("Repositories");
+  expect(document.body.textContent).not.toContain("Choose repositories on GitHub");
+  expect(openRepositoriesButton()).toBeUndefined();
 });

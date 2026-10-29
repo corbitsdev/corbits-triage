@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { errorText } from "@corbits/common";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
+import { useRepositories } from "../lib/bitbucket-datacenter.ts";
 import { githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { hubOnLocalhost } from "../lib/hub-origin.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
@@ -66,6 +67,7 @@ export default function Connect() {
   const [secretNotice, setSecretNotice] = useState("");
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
+  const openable = useRepositories().repos;
   const verdicts = useTriageVerdicts();
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const catching = useMemo(() => catchingUpRepos(verdicts.data?.pulls ?? [], triaged), [verdicts.data, triaged]);
@@ -262,7 +264,7 @@ export default function Connect() {
       {syncError && <p role="alert" className="error">{syncError}</p>}
       {repos.length > 0 && <div className="repository-list">{repos.map(renderInstallRow)}</div>}
       <div className="task-actions">
-        <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>
+        {openable.length > 0 && <Button type="button" onClick={() => navigate("/repositories")}>Open Repositories</Button>}
         {githubConnected && <Button type="button" variant="outline" disabled={busy} onClick={() => void chooseRepositories()}>Choose repositories again</Button>}
         {syncError && <Button type="button" variant="outline" disabled={sync.isFetching} onClick={() => void sync.refetch()}>Try again</Button>}
       </div>

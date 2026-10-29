@@ -124,6 +124,8 @@ export type PortalSnapshot = {
   codeReviewPlaces?: CodeReviewPlace["places"];
   /** Set when the hub failed to list the keys for a reason other than access, so an empty `credentials` does not mean no key is stored. */
   credentialsError?: string;
+  /** Set when the hub failed to list the model catalog for a reason other than access, so an absent `decisionModel` does not mean none is saved. */
+  modelsError?: string;
   /** Set when the hub failed to say where code review runs for a reason other than access. */
   codeReviewPlaceError?: string;
   denied: SectionDenied;
@@ -1155,6 +1157,7 @@ export async function loadPortal(transport: Transport, access: MemberAccess): Pr
     ...(decisionModel && { decisionModel }),
     ...(places.value && { codeReviewPlace: places.value.provisioner, codeReviewPlaces: places.value.places }),
     ...(credentials.failure && { credentialsError: credentials.failure.message }),
+    ...(catalog.failure && { modelsError: catalog.failure.message }),
     ...(places.failure && { codeReviewPlaceError: places.failure.message }),
     denied: {
       repos: tenant.denied,
@@ -1162,6 +1165,13 @@ export async function loadPortal(transport: Transport, access: MemberAccess): Pr
       models: catalog.denied,
     },
   };
+}
+
+/** True only when the catalog and the keys were both read and no decision model is saved; a refused or failed read says nothing either way. */
+export function lacksDecisionModel(snapshot: PortalSnapshot): boolean {
+  if (snapshot.decisionModel) return false;
+  if (snapshot.denied.models || snapshot.denied.credentials) return false;
+  return snapshot.modelsError === undefined && snapshot.credentialsError === undefined;
 }
 
 export const BITBUCKET_DATACENTER_CREDENTIAL_NAME = "bitbucket-datacenter";
