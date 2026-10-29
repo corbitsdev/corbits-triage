@@ -1,5 +1,4 @@
-import { AUTHOR_GROUPS, hostKinds, type ActionKind, type AuthorGroup, type AuthorKind, type AuthorMatch, type RepoSource, type Step } from "@corbits/triage-contracts";
-import { DO_NAMES } from "./pack-prose.ts";
+import { AUTHOR_GROUPS, type AuthorGroup, type AuthorKind, type AuthorMatch, type Step } from "@corbits/triage-contracts";
 
 export const FOR_NAMES = {
   anyone: "anyone",
@@ -21,11 +20,6 @@ export const FOR_NAMES = {
 } as const satisfies Record<"anyone" | AuthorGroup | Exclude<AuthorKind, "BOT"> | "team" | "users" | "group", string>;
 
 type ForChoice = keyof typeof FOR_NAMES;
-
-/** A host without labels shows the verdict as a build status, written with the comment. */
-export function doName(source: RepoSource, kind: ActionKind): string {
-  return kind === "comment" && !hostKinds(source).includes("labels") ? "Comment and build status" : DO_NAMES[kind];
-}
 
 /** The first author a step is for. */
 export function stepFor(step: Step): AuthorMatch | undefined {

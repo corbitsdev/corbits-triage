@@ -351,7 +351,7 @@ Draft pull requests are not decided at all, and a closed pull request gets no ve
 
 ### Actions
 
-The file lists steps for each verdict, and the Policy section shows them under **Pass**, **Fail** and **Unsure**, after the verdict Triage posts: **Comment with the verdict** and the verdict's label, such as **Label “Triage: Ready”**, or on Bitbucket **Comment and build status with the verdict**. A step or comment Triage may not do on its own says **(waits for you on Triage)**, and so does the label when the comment waits; a label Triage may not add while it may comment says **(not added: Triage may not add labels here)**. On Bitbucket a comment posted from Triage sets no build status. A held step is approved on Triage, where **Always, in this repository** also lets Triage do it on its own from then on (see [Taking action](#taking-action)). Each step names an action and who it is for.
+The file lists steps for each verdict, and the Policy section shows them under **Pass**, **Fail** and **Unsure**, after the verdict Triage posts: **Comment with the verdict** and, on GitHub, the verdict's label, such as **Label “Triage: Ready”**. A step or comment Triage may not do on its own says **(waits for you on Triage)**, and so does the label when the comment waits; a label Triage may not add while it may comment says **(not added: Triage may not add labels here)**. On Bitbucket a comment posted from Triage sets no build status. A held step is approved on Triage, where **Always, in this repository** also lets Triage do it on its own from then on (see [Taking action](#taking-action)). Each step names an action and who it is for.
 
 | Action | What it does |
 | --- | --- |
