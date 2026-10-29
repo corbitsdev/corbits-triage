@@ -10,6 +10,7 @@ import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession 
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
 import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
+import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createOverdueWake, createSupersede } from "./manager-intake.js";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
@@ -182,6 +183,61 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
       expect(await (await post(app, "take", pr, manager)).json()).toMatchObject({ outcome: "pass", events: [{ key: `evt:${pr.source}:${pr.repo}#7:run_reviewer`, event: { type: "reviewer-result", payload: { kind: "code-review", result: REVIEW } } }] });
       expect(await (await post(app, "done", { ...pr, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });
     }
+  });
+}, 60_000);
+
+test("PostgreSQL: done keeps each posted finding's comment, the first pass on a newer head names them, resolved ones last so a reopened thread is seen, and what became of their threads lands on their findings", async () => {
+  await withDatabase(async function threads(db) {
+    const logged: Record<string, unknown>[] = [];
+    function log(entry: Record<string, unknown>): void {
+      logged.push(entry);
+    }
+    const app = buildHub(db, { log });
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
+    const findings = ["a.ts", "b.ts", "c.ts"].map((path) => ({ path, start: 1, end: 1, title: `In ${path}`, body: "Wrong.", priority: 2 }));
+    await webhook(db, GITHUB);
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", threads: [] });
+    await post(app, "reviewer-result", { ...GITHUB, kind: "code-review", head: "h1", result: { ...REVIEW, comments: findings } }, reviewer);
+    await post(app, "done", { ...GITHUB, reviewers: [] }, manager);
+    await post(app, "take", GITHUB, manager);
+    expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threadIds: { runId: "run_reviewer", ids: [501] } }, manager)).json()).toEqual({ outcome: "ended" });
+    expect(logged).toEqual([expect.objectContaining({ msg: "finding_threads_misaligned", findings: 3, ids: 1 })]);
+    await recordEvent(db, TENANT, GITHUB, "posted", { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h1" }, threads: [] });
+    expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threadIds: { runId: "run_reviewer", ids: [501, null, 502] } }, manager)).json()).toEqual({ outcome: "ended" });
+    const runs = createCodeReviewRuns({ db, read: () => Promise.reject(new Error("not read")), log: ignore });
+    async function threadsShown() {
+      const { completed } = await runs.latest(TENANT, { repo: GITHUB.repo, source: GITHUB.source, number: GITHUB.number });
+      return completed?.status === "completed" && completed.comments.map((finding) => [finding.path, finding.thread]);
+    }
+    expect(await threadsShown()).toEqual([["a.ts", { state: "untouched" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "untouched" }]]);
+
+    await recordEvent(db, TENANT, GITHUB, "pushed", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h2" }, threads: [501, 502] });
+    const reads = [{ id: 501, state: "resolved" }, { id: 502, state: "outdated" }, { id: 900, state: "replied", at: "2026-10-20T00:00:00.000Z" }];
+    expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threads: reads, threadsUnread: "github -> 502" }, manager)).json()).toEqual({ outcome: "ended" });
+    expect(logged.at(-1)).toMatchObject({ level: "warn", msg: "finding_threads_unread", error: "github -> 502" });
+
+    expect(await threadsShown()).toEqual([
+      ["a.ts", { state: "resolved" }],
+      ["b.ts", { state: "not-tracked" }],
+      ["c.ts", { state: "outdated" }],
+    ]);
+
+    await recordEvent(db, TENANT, GITHUB, "again", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h2" }, threads: [] });
+    await post(app, "done", { ...GITHUB, reviewers: [] }, manager);
+
+    await recordEvent(db, TENANT, GITHUB, "pushed again", { type: "webhook", head: "h3", payload: { kind: "pr", headSha: "h3" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h3" }, threads: [502, 501] });
+    await post(app, "done", { ...GITHUB, reviewers: [], threads: [{ id: 501, state: "resolved" }, { id: 502, state: "outdated" }] }, manager);
+    expect(await threadsShown()).toEqual([["a.ts", { state: "resolved" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "outdated" }]]);
+
+    await recordEvent(db, TENANT, GITHUB, "reopened", { type: "webhook", head: "h4", payload: { kind: "pr", headSha: "h4" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h4" }, threads: [502, 501] });
+    await post(app, "done", { ...GITHUB, reviewers: [], threads: [{ id: 501, state: "untouched" }, { id: 502, state: "outdated" }] }, manager);
+    expect(await threadsShown()).toEqual([["a.ts", { state: "untouched" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "outdated" }]]);
   });
 }, 60_000);
 

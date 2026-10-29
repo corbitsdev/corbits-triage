@@ -23,7 +23,7 @@ import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
 import { diffHash } from "@corbits/common/diff-hash";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
-import { BitbucketRefusal, mirror, readPr, sendCodeReview, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
+import { BitbucketRefusal, findingThreadStates, mirror, readPr, sendCodeReview, setStatus, statusOf, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
 
 export const CREDENTIAL_HANDLE = "bitbucket-datacenter";
 
@@ -58,6 +58,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "bitbucket_datacenter_author_teams",
     description: "Say which of the given groups (@PROJECT/group or group) the author is a member of. Groups past the first 20, or not listable with the token, are unknown.",
     inputSchema: obj({ repo, author: str, teams: { type: "array", items: str } }),
+  },
+  {
+    name: "bitbucket_datacenter_finding_thread_states",
+    description: "Say, for the thread each of the comments ids opened, whether it is resolved, outdated, replied to by someone other than the comment's author (with the reply's time), or untouched. A deleted comment is left out; one that could not be read is named in unread.",
+    inputSchema: obj({ repo, number: { type: "integer" }, ids: { type: "array", items: { type: "integer" } } }),
   },
   {
     name: "bitbucket_datacenter_read_file",
@@ -176,6 +181,8 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return defaultReviewers(bb, a.repo, a.number);
     case "bitbucket_datacenter_author_teams":
       return authorTeams(bb, { repo: a.repo, author: a.author, teams: a.teams });
+    case "bitbucket_datacenter_finding_thread_states":
+      return findingThreadStates(bb, a.repo, a.number, a.ids);
     case "bitbucket_datacenter_read_file":
       return readWindow(bb, reads, a);
     case "bitbucket_datacenter_mirror":

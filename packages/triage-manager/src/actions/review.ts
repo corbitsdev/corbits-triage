@@ -8,7 +8,7 @@ import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import { Mailed, type MailInput } from "../mail.js";
 import { publishedFor } from "../release.js";
 import { deploy, managerMailOf } from "./hub.js";
-import { Reviewer, storedReview, TakeOutput } from "./manager.js";
+import { Reviewer, storedReviewer, TakeOutput } from "./manager.js";
 
 /** How long the manager waits for a code review it deployed, from its deploy to its report. */
 export const REVIEW_DEADLINE_MS = 60 * 60_000;
@@ -196,24 +196,37 @@ export async function earlyReviewMailed(input: unknown): Promise<{ reviewer?: Re
 }
 
 const PostInput = type({ payload: "unknown", take: { output: TakeOutput }, reviewScope: { output: { reviewed: "boolean" } } });
+const Sent = type({ skipped: "string" }).or({ threads: "(number | null)[] | null", "unread?": "string" });
+
+/** This pass's report and the run that made it, or else the review an earlier pass stored. */
+function toPost(review: TakeOutput["review"], runId: string | undefined, stored: ReturnType<typeof storedReviewer>): ReturnType<typeof storedReviewer> {
+  if (review && runId !== undefined) return { review, runId };
+  return stored;
+}
 
 /**
  * Posts the code review reported on its head after the verdict: this pass's, or one an earlier pass stored when this
- * pass's rules still let code review past. The host writes nothing for a review already there.
+ * pass's rules still let code review past. The host writes nothing for a review already there. `threads` names each
+ * finding's inline comment under the run that reported the review, for the hub to keep on its findings, or `unread`
+ * why the host could not read them back.
  */
-export async function postReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ posted: boolean }> {
+export async function postReview(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ posted: boolean; threads?: { runId: string; ids: (number | null)[] }; unread?: string }> {
   const parsed = PostInput(input);
   if (parsed instanceof type.errors) throw new Error(`postReview: ${parsed.summary}`);
-  const { head, taken, reviewers } = parsed.take.output;
+  const { head, taken, reviewers, review, reviewRun } = parsed.take.output;
   if (head === undefined || !taken) return { posted: false };
-  const review = parsed.take.output.review ?? (parsed.reviewScope.output.reviewed ? storedReview(reviewers, head) : undefined);
-  if (!review) return { posted: false };
-  const summary = codeReviewSummary(review);
-  if (!summary && review.comments.length === 0) return { posted: false };
+  const found = toPost(review, reviewRun, parsed.reviewScope.output.reviewed ? storedReviewer(reviewers, head) : undefined);
+  if (!found) return { posted: false };
+  const summary = codeReviewSummary(found.review);
+  if (!summary && found.review.comments.length === 0) return { posted: false };
   const { pullRequest } = managerMailOf(parsed.payload);
   const source = repoSourceOf(pullRequest.source);
-  const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: review.comments, appLogin: taken["appLogin"] };
+  const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: found.review.comments.map(({ thread: _thread, ...finding }) => finding), appLogin: taken["appLogin"] };
   const result = await hostWrite(ctx)(source, call(toolName(source, "send_code_review"), args, `review:${head}`));
   if (result.isError) throw new Error(`postReview: ${JSON.stringify(result.content)}`);
-  return { posted: true };
+  const sent = Sent.assert(result.content);
+  // A review the host skipped, as one whose head moved on, names no comments.
+  if ("skipped" in sent) return { posted: true };
+  if (sent.threads === null) return { posted: true, ...(sent.unread !== undefined && { unread: sent.unread }) };
+  return { posted: true, threads: { runId: found.runId, ids: sent.threads } };
 }

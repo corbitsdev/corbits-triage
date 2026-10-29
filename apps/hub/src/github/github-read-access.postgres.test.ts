@@ -44,8 +44,8 @@ const FINISHED = {
   summary: "Fixes the widget.",
   budgetExhausted: true,
   comments: [
-    { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1 },
-    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it.", priority: 3 },
+    { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1, thread: { state: "not-tracked" as const } },
+    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it.", priority: 3, thread: { state: "not-tracked" as const } },
   ],
 };
 let completed: CompletedReview | null = FINISHED;
@@ -59,13 +59,14 @@ const READS: Record<string, unknown> = {
   [`/repos/${REPO}/pulls/8`]: {
     number: 8, title: "Fix the widget", state: "open",
     body: "Fixes #10, see https://github.com/acme/widgets/issues/11\n<!-- Closes #9 -->",
-    body_html: "<p>Fixes <a href=\"https://github.com/acme/widgets/issues/10\">#10</a>, see <a href=\"https://github.com/acme/widgets/issues/11\">#11</a></p>\n", user: { login: "octocat" }, head: { sha: HEAD, ref: "fix" }, mergeable: true, labels: [], assignees: [] },
+    body_html: "<p>Fixes <a href=\"https://github.com/acme/widgets/issues/10\">#10</a>, see <a href=\"https://github.com/acme/widgets/issues/11\">#11</a></p>\n", user: { login: "octocat" }, head: { sha: HEAD, ref: "fix" }, base: { sha: "base" }, mergeable: true, labels: [], assignees: [] },
   [`/repos/${REPO}/issues/9`]: { number: 9, title: "Hidden", state: "open", body: "", html_url: "https://github.com/acme/widgets/issues/9" },
   [`/repos/${REPO}/issues/10`]: { number: 10, title: "Shown", state: "open", body: "", html_url: "https://github.com/acme/widgets/issues/10" },
   [`/repos/${REPO}/issues/11`]: { number: 11, title: "Pasted", state: "open", body: "", html_url: "https://github.com/acme/widgets/issues/11" },
   [`/repos/${REPO}/pulls/8/commits`]: [{ sha: HEAD, commit: { message: "fix: the widget" } }],
   [`/repos/${REPO}/pulls/8/files`]: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+fixed" }],
   [`/repos/${REPO}/issues/8/comments`]: [],
+  [`/repos/${REPO}/compare/base...older`]: { files: [{ filename: "src/widget.ts", status: "modified", patch: "@@ -1 +1 @@\n+fixed" }] },
   [`/repos/${REPO}/pulls/9`]: { number: 9, title: "Held by a ruleset", state: "open", user: { login: "octocat" }, head: { sha: HEAD, ref: "held" }, mergeable: true, mergeable_state: "blocked", labels: [], assignees: [] },
   [`/repos/${REPO}/pulls/9/commits`]: [],
   [`/repos/${REPO}/pulls/9/files`]: [],
@@ -85,6 +86,7 @@ async function github(req: Request): Promise<Response> {
   if (req.method === "GET" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
     return Response.json(sentReviews.map((review, index) => ({ id: 100 + index, user: { login: "triage[bot]" }, state: "COMMENTED", commit_id: review.commit_id, body: review.body })));
   }
+  if (req.method === "GET" && /^\/repos\/[^/]+\/[^/]+\/pulls\/8\/reviews\/\d+\/comments$/.test(pathname)) return Response.json([]);
   if (req.method === "POST" && pathname === `/repos/${REPO}/pulls/8/reviews`) {
     const posted = await req.json() as SentReview;
     if (posted.event === "COMMENT") sentReviews.push(posted);

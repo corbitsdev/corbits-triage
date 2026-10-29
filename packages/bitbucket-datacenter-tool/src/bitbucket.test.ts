@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { executeAction, type ActionStep } from "./action";
-import { mirror, sendCodeReview, type BitbucketFetch, type Comment } from "./bitbucket";
+import { findingThreadStates, mirror, sendCodeReview, type BitbucketFetch, type Comment } from "./bitbucket";
 import { runAction } from "./sidecar-bundle";
 
 const BOT = { id: 7, slug: "triage-bot" };
@@ -145,9 +145,9 @@ describe("sendCodeReview", () => {
 
   test("posts a finding the diff shows inline on its first shown line, the rest in the summary, once per head", async () => {
     const fake = fakeBitbucket();
-    expect(await sendCodeReview(fake.bb, REVIEW, user)).toEqual({ commentId: 11, sent: true });
-    expect(await sendCodeReview(fake.bb, REVIEW, user)).toEqual({ commentId: 11, sent: false });
-    expect(await sendCodeReview(fake.bb, { ...REVIEW, sha: "d36740c", reviewed: "abc" }, user)).toEqual({ commentId: 11, sent: false });
+    expect(await sendCodeReview(fake.bb, REVIEW, user)).toEqual({ commentId: 11, sent: true, threads: [10, null] });
+    expect(await sendCodeReview(fake.bb, REVIEW, user)).toEqual({ commentId: 11, sent: false, threads: [10, null] });
+    expect(await sendCodeReview(fake.bb, { ...REVIEW, sha: "d36740c", reviewed: "abc" }, user)).toEqual({ commentId: 11, sent: false, threads: [10, null] });
     expect(fake.writes.map((w) => w.body)).toEqual([
       {
         text: expect.stringMatching(/^\[corbits-code-review\]: #abc\/[0-9a-f]{12}\n\*\*P1 · Off by one\*\*\n\nThe loop stops early\.\n\nAlso lines 12–14\.$/),
@@ -200,5 +200,33 @@ describe("sendCodeReview", () => {
     await sendCodeReview(fake.bb, { ...REVIEW, comments: [FINDINGS[0]!, escaping] }, user);
     expect(fake.requested.filter((path) => path.includes("/diff/"))).toEqual([`${PR_PATH}/diff/src/app.ts?withComments=false`]);
     expect(fake.comments.at(-1)!.text).toContain("**Escapes**");
+  });
+});
+
+describe("findingThreadStates", () => {
+  // A comment as Data Center answers it, trimmed to the fields read.
+  const THREADS: Record<number, unknown> = {
+    10: { id: 10, author: BOT, createdDate: 1, threadResolved: true, threadResolvedDate: 1_792_000_000_000, comments: [{ id: 20, author: AUTHOR, createdDate: 2 }] },
+    11: { id: 11, author: BOT, createdDate: 1, threadResolved: false, anchor: { path: "src/app.ts", line: 11, orphaned: true } },
+    12: { id: 12, author: BOT, createdDate: 1, comments: [{ id: 21, author: BOT, createdDate: 2, comments: [{ id: 22, author: AUTHOR, createdDate: 1_792_000_100_000 }] }] },
+    13: { id: 13, author: BOT, createdDate: 1, threadResolved: false, comments: [{ id: 23, author: BOT, createdDate: 2 }] },
+  };
+
+  async function bb(path: string): Promise<Response> {
+    const id = Number(path.slice(`${PR_PATH}/comments/`.length));
+    if (id === 15) return Response.json({ errors: [{ message: "Server error" }] }, { status: 500 });
+    return id in THREADS ? Response.json(THREADS[id]) : Response.json({ errors: [{ message: "No comment" }] }, { status: 404 });
+  }
+
+  test("reads a resolved, outdated, replied and untouched thread, a reply nested in Triage's own counting, leaves a deleted comment out, and names only a comment it failed to read as unread", async () => {
+    expect(await findingThreadStates(bb, "TRI/widgets", 1, [10, 15, 11, 12, 13, 14])).toEqual({
+      threads: [
+        { id: 10, state: "resolved", at: new Date(1_792_000_000_000).toISOString() },
+        { id: 11, state: "outdated" },
+        { id: 12, state: "replied", at: new Date(1_792_000_100_000).toISOString() },
+        { id: 13, state: "untouched" },
+      ],
+      unread: `bitbucket GET ${PR_PATH}/comments/15 -> 500 Server error`,
+    });
   });
 });

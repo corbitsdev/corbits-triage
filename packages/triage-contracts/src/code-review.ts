@@ -10,10 +10,25 @@ export const INCOMPLETE_NOTE = "This review did not read the whole change; appro
 export const UNVERIFIED_FINDING = "Not checked against the file";
 
 /**
- * One finding of a code review: its lines in the reviewed head, what is wrong, its priority (0 is the most severe), the
- * code it quotes and, when none of its lines could be read, `unverified`.
+ * What became of a finding's thread on the host: the author resolved it, the code under it changed, someone other than
+ * Triage replied, or none of these yet.
  */
-export const CodeReviewComment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", priority: "number", "quoted?": "string", "unverified?": "true" });
+export const THREAD_STATES = ["resolved", "outdated", "replied", "untouched"] as const;
+export type ThreadState = (typeof THREAD_STATES)[number];
+
+/** A thread's state as the host reads it, by the id of Triage's comment; `at` is the host's time of the change, when it names one. */
+export const ThreadRead = type({ id: "number", state: type.enumerated(...THREAD_STATES), "at?": "string" });
+export type ThreadRead = typeof ThreadRead.infer;
+
+/** Triage's comment for a finding posted inline, and its thread's state: untouched when posted, then as last read, since `at` when the host names it. */
+export const FindingThread = type({ id: "number", state: type.enumerated(...THREAD_STATES), "at?": "string" });
+export type FindingThread = typeof FindingThread.infer;
+
+/**
+ * One finding of a code review: its lines in the reviewed head, what is wrong, its priority (0 is the most severe), the
+ * code it quotes, when none of its lines could be read, `unverified`, and once it is posted inline, its `thread`.
+ */
+export const CodeReviewComment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", priority: "number", "quoted?": "string", "unverified?": "true", "thread?": FindingThread });
 export type CodeReviewComment = typeof CodeReviewComment.infer;
 
 /** A finding the review left out: its check found it not real, or could not decide and only one finder reported it. */
@@ -84,3 +99,9 @@ export function findingSection(finding: CodeReviewComment): string {
  * pull request has moved past it. `reviewed` is the head the review was made for when it was carried over to `sha`.
  */
 export type SendCodeReviewInput = { repo: string; number: number; sha: string; reviewed?: string; summary: string; comments: CodeReviewComment[] };
+
+/**
+ * Each finding's inline comment on the host, in the order of the review's findings; null for one held in the summary.
+ * `threads` is null, and `unread` says why, when the host wrote the review but its comments could not be read back.
+ */
+export type SentThreads = { threads: (number | null)[] | null; unread?: string };

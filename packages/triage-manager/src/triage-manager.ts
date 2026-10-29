@@ -2,7 +2,7 @@ import { action, awaitSignal, defineWorkflow, gate, loop, onTrigger, SELF_RUN_RE
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
 import { credentialBindingsFor, judgeAgent, type Sources } from "@corbits/triage-workflows/agents";
-import { WRITE_PULL_REQUEST } from "@corbits/triage-workflows/logic/host";
+import { READ_PULL_REQUEST, WRITE_PULL_REQUEST } from "@corbits/triage-workflows/logic/host";
 import { hostAction, triageSteps } from "@corbits/triage-workflows/triage-steps";
 import { HUB_WRITE } from "./actions/hub.js";
 import { LIFETIME_MS } from "./actions/manager.js";
@@ -61,7 +61,7 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
     reviewSent: gate({ when: { from: "steps.reviewMailed.output.post" }, then: "mirrorRules", else: "progressReviewing", after: ["reviewMailed"] }),
     progressReviewing: progressAction(sources, ["reviewMailed"], ["reviewSent"]),
     // A pass that mailed its review records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
-    doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "reviewMailed")] }, ["progressReviewing"]),
+    doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "reviewMailed")] }, ["progressReviewing"]),
     posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "progressAwaiting", after: ["reviewing"] }),
     postReview: action({ handler: "postReview", input: { merge: [MAIL, stepsOf("take", "reviewScope")] }, after: ["mirrorRules"], credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } }),
   };
@@ -92,9 +92,9 @@ function judgeSteps(sources: Sources): Record<string, Primitive> {
     // A pass that mailed its judge records it, and a review mailed with it, as reviewers; a skipped step is missing from
     // every selector, so each branch has its own done.
     progressJudging: progressAction(sources, ["judgeMailed"], ["earlyReviewing"]),
-    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed")] }, ["progressJudging"]),
+    doneJudging: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "judgeMailed")] }, ["progressJudging"]),
     progressJudgingReview: progressAction(sources, ["judgeMailed", "earlyReviewMailed"], ["earlyReviewMailed"]),
-    doneJudgingReview: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "judgeMailed", "earlyReviewMailed")] }, ["progressJudgingReview"]),
+    doneJudgingReview: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "judgeMailed", "earlyReviewMailed")] }, ["progressJudgingReview"]),
     judgeWait: gate({ when: { from: "steps.judgeScope.output.post" }, then: "evaluateRules", else: "progressAwaiting", after: ["judging"] }),
   };
 }
@@ -116,8 +116,10 @@ function passOf(id: string, sources: Sources) {
       // Nothing signals it: the timeout is the wait, which a loop body cannot sleep.
       poll: awaitSignal({ name: "manager-poll", timeout: POLL_MS, onTimeout: "take", after: ["paused"] }),
       take: hubAction("take", { from: "trigger.payload.payload" }, ["paused", "poll"]),
+      // Runs on every pass, reading nothing when take names no thread, so every branch's done records what it read.
+      findingThreads: action({ handler: "findingThreads", input: { merge: [MAIL, stepsOf("take")] }, after: ["take"], credentials: sources, effect: { requires: [READ_PULL_REQUEST] } }),
       // Runs on every pass, approving nothing when there is nothing to run, so every branch's done reports its outcomes.
-      approvals: { ...hostAction("execute", sources, stepsOf("take"), ["take"]), handler: "executeApprovals" },
+      approvals: { ...hostAction("execute", sources, stepsOf("take"), ["findingThreads"]), handler: "executeApprovals" },
       ran: gate({ when: { from: "steps.take.output.run" }, then: "triaged", else: "done", after: ["approvals"] }),
       triaged: gate({ when: { from: "steps.take.output.triage" }, then: "unready", else: "done", after: ["ran"] }),
       unready: { ...unready, input: TAKEN, after: ["triaged"] },
@@ -133,10 +135,10 @@ function passOf(id: string, sources: Sources) {
       executeRules: { ...executeRules, input: CLEARED, after: ["postReview"] },
       // A skipped step is missing from every selector, so the branches that report a posted verdict, or a head triaged
       // while a reviewer is out, have their own done.
-      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules", "cleared", "reviewScope", "mirrorRules", "executeRules")] }, ["executeRules"]),
+      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "cleared", "reviewScope", "mirrorRules", "postReview", "executeRules")] }, ["executeRules"]),
       progressAwaiting: progressAction(sources, [], ["judgeWait", "posting"]),
-      doneAwaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals", "rules")] }, ["progressAwaiting"]),
-      done: hubAction("done", { merge: [MAIL, stepsOf("take", "approvals")] }, ["ran", "triaged"]),
+      doneAwaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules")] }, ["progressAwaiting"]),
+      done: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals")] }, ["ran", "triaged"]),
     },
   });
 }
@@ -170,10 +172,10 @@ export function triageManager({ id, sources, codeReview, judge }: { id: string; 
       stop: hubAction("stop", { from: "trigger.payload" }, ["passes", "exhausted"]),
     },
   });
-  const posts = ["executeApprovals", "postReview", "progress"].flatMap((handler) => sources.map((source) => ({ action: handler, handle: source, provider: source, name: source, locator: "tenant" }) as const));
+  const hostSteps = ["executeApprovals", "postReview", "progress", "findingThreads"].flatMap((handler) => sources.map((source) => ({ action: handler, handle: source, provider: source, name: source, locator: "tenant" }) as const));
   return defineWorkflow({
     id,
-    credentialBindings: [...credentialBindingsFor(sources), ...posts],
+    credentialBindings: [...credentialBindingsFor(sources), ...hostSteps],
     grantRequirements: [
       { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION, source: "creator" },
       { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },

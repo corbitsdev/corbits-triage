@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { githubCalls, githubWrite } from "./sidecar-bundle.js";
 import { type GithubFetch } from "@corbits/github-reads";
-import { mergePr, mirror, sendCodeReview, upsertTriageComment } from "./github.js";
+import { findingThreadStates, mergePr, mirror, sendCodeReview, upsertTriageComment } from "./github.js";
 
 type RecordedRequest = { path: string; method: string; body: unknown };
 
@@ -344,16 +344,22 @@ describe("sendCodeReview", () => {
   function pull(head: string) {
     return recorder(function respond(path, init) {
       if (path.includes("/reviews?per_page")) return [];
+      if (path.includes("/pulls/8/comments?per_page")) {
+        return [
+          { id: 32, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 12, original_line: 13, body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._" },
+          { id: 31, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 10, original_line: 12, body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9." },
+        ];
+      }
       if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: PATCH }];
       if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: head }, base: { repo: { id: 1 } } };
       return { id: 9 };
     });
   }
 
-  test("anchors a range to the first hunk that shows it, names the lines past it, and keeps lines between hunks in the body, and marks unverified findings", async () => {
+  test("anchors a range to the first hunk that shows it, names the lines past it, keeps lines between hunks in the body, marks unverified findings, and names each inline finding's comment", async () => {
     const { gh, requests } = pull("abc123");
-    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true });
-    expect(requests.at(-1)?.body).toEqual({
+    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true, threads: [31, null, 32] });
+    expect(requests.find((request) => request.method === "POST")?.body).toEqual({
       commit_id: "abc123",
       event: "COMMENT",
       body: "**Between hunks** · `src/a.ts:20–30`\n\nC.\n\n_Not checked against the file._\n\n<!-- corbits-code-review -->",
@@ -368,15 +374,95 @@ describe("sendCodeReview", () => {
     const { gh, requests } = pull("abc123");
     const long = Array.from({ length: 5 }, (_, index) => ({ path: "src/b.ts", start: index + 1, end: index + 1, title: `T${index}`, body: "x".repeat(20_000) }));
     await sendCodeReview(gh, { ...review, comments: long }, login);
-    const body = (requests.at(-1)?.body as { body: string }).body;
+    const body = (requests.find((request) => request.method === "POST")!.body as { body: string }).body;
     expect(body.length).toBeLessThanOrEqual(65_536);
     expect(body.match(/\*\*T\d\*\*/g)).toEqual(["**T0**", "**T1**", "**T2**"]);
     expect(body.endsWith("2 more in the portal.\n\n<!-- corbits-code-review -->")).toBe(true);
+  });
+
+  /** The App's reviews as GitHub keeps them, the pull request's inline comments listed back newest first, on a pull request whose head can move. */
+  function reviewedPull() {
+    const reviews: Array<{ id: number; user: typeof APP; commit_id: string; body: string; comments: Array<{ path: string; body: string; line: number; start_line?: number }> }> = [];
+    const pr = { head: "abc123", patch: PATCH, readBack: true, dropFirst: false };
+    const { gh, requests } = recorder(function respond(path, init) {
+      if (path.includes("/reviews?per_page")) return reviews;
+      if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: pr.patch }];
+      if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: pr.head }, base: { repo: { id: 1 } } };
+      const listed = path.includes("/pulls/8/comments?per_page");
+      if (listed && !pr.readBack) return Response.json({ message: "Server Error" }, { status: 502 });
+      if (listed) {
+        const rows = reviews.flatMap((posted) => posted.comments.map(({ path: file, body, line, start_line }, index) => ({ id: 40 + index, pull_request_review_id: posted.id, path: file, body, original_line: line, original_start_line: start_line ?? null })));
+        return rows.slice(pr.dropFirst ? 1 : 0).reverse();
+      }
+      const posted = JSON.parse(String(init?.body));
+      reviews.push({ id: 9, user: APP, commit_id: posted.commit_id, body: posted.body, comments: posted.comments });
+      return { id: 9 };
+    });
+    return { gh, requests, pr };
+  }
+
+  test("a review sent again writes nothing and names the same comment for each finding", async () => {
+    const { gh, requests } = reviewedPull();
+    const first = await sendCodeReview(gh, review, login);
+    const again = await sendCodeReview(gh, review, login);
+    expect(first).toEqual({ reviewId: 9, sent: true, threads: [40, null, 41] });
+    expect(again).toEqual({ reviewId: 9, sent: false, threads: first.threads });
+    expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
+  });
+
+  test("a review sent again from a newer head whose diff moved finds its comments by the lines they were written on", async () => {
+    const { gh, pr } = reviewedPull();
+    await sendCodeReview(gh, review, login);
+    pr.head = "def456";
+    pr.patch = "@@ -10,3 +12,4 @@\n ten\n-old\n+new\n+added\n twelve\n@@ -40 +43 @@\n-x\n+y";
+    expect(await sendCodeReview(gh, { ...review, sha: "def456", reviewed: "abc123" }, login)).toEqual({ reviewId: 9, sent: false, threads: [40, null, 41] });
+  });
+
+  test("findings of the same text on different lines each get their own comment", async () => {
+    const { gh } = reviewedPull();
+    const twin = { path: "src/a.ts", title: "Unchecked input", body: "Validate it first." };
+    expect(await sendCodeReview(gh, { ...review, comments: [{ ...twin, start: 11, end: 11 }, { ...twin, start: 41, end: 41 }] }, login)).toEqual({ reviewId: 9, sent: true, threads: [40, 41] });
+  });
+
+  test("a posted inline comment missing from the read-back leaves the review's comments unread rather than passing it for a summary finding", async () => {
+    const { gh, pr } = reviewedPull();
+    pr.dropFirst = true;
+    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true, threads: null, unread: "1 of review 9's 2 inline comments matched no finding" });
+  });
+
+  test("a posted review whose comments cannot be read back still counts as sent, with its comments unknown until it is sent again", async () => {
+    const { gh, pr } = reviewedPull();
+    pr.readBack = false;
+    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true, threads: null, unread: expect.stringContaining("502") });
+    pr.readBack = true;
+    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: false, threads: [40, null, 41] });
   });
 
   test("writes nothing once the pull request has moved past the reviewed head", async () => {
     const { gh, requests } = pull("def456");
     expect(await sendCodeReview(gh, review, login)).toMatchObject({ reviewId: null, sent: false });
     expect(requests.some((request) => request.method === "POST")).toBe(false);
+  });
+});
+
+describe("findingThreadStates", () => {
+  test("reads a reply from a long thread's newest comments, and Triage's own later comments are no reply", async () => {
+    function comment(databaseId: number, login: string) {
+      return { databaseId, createdAt: `2026-10-20T00:00:${String(databaseId % 60).padStart(2, "0")}Z`, author: { login } };
+    }
+    const opener = comment(501, APP.login);
+    const newest = [...Array.from({ length: 99 }, (_, index) => comment(1000 + index, APP.login)), comment(1099, "octocat")];
+    const threads = [
+      { isResolved: false, isOutdated: false, opener: { nodes: [opener] }, comments: { nodes: newest } },
+      { isResolved: false, isOutdated: false, opener: { nodes: [comment(502, APP.login)] }, comments: { nodes: [comment(502, APP.login), comment(503, APP.login)] } },
+    ];
+    const { gh, requests } = recorder(function respond() {
+      return { data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: threads } } } } };
+    });
+    expect(await findingThreadStates(gh, "acme/widgets", 8, [501, 502])).toEqual([
+      { id: 501, state: "replied", at: comment(1099, "octocat").createdAt },
+      { id: 502, state: "untouched" },
+    ]);
+    expect((requests[0]!.body as { query: string }).query).toContain("comments(last: 100)");
   });
 });

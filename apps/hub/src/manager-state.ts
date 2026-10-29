@@ -7,7 +7,7 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, AWAITED_STAGES, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource, type ThreadRead } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
 import { timings } from "./timings.js";
@@ -60,7 +60,7 @@ export type PullRequestRef = { source: RepoSource; repo: string; number: number 
 type TakenEvent = { key: string; event: ManagerEvent };
 
 type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[]; waitingSince?: string; headSince?: string; claimedAt: string };
-type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean } & Latest);
+type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean; threads: number[] } & Latest);
 type ClosedPass = Claim["history"][number];
 /** What a pass reports as done closes it: the head it worked on, whether its verdict waits for the host's checks, or the mirror request of the verdict it posted. */
 export type PassReport = { head: string; waiting?: true; request?: Record<string, unknown> };
@@ -417,6 +417,79 @@ async function newestRequest(tx: Tx, tenantId: string, pr: PullRequestRef, head?
   return row && eventOf(row.key, row.state).payload;
 }
 
+/** The rows of every result a code review of the pull request reported. */
+function codeReviewResults(db: DB["db"] | Tx, tenantId: string, pr: PullRequestRef) {
+  return db.select({ key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${eventPrefix(pr)}%`), sql`${managerState.state}->>'type' = 'reviewer-result'`, sql`${managerState.state}->'payload'->>'kind' = 'code-review'`));
+}
+
+const ReportedFindings = type({ result: { comments: type({ "thread?": FindingThread }).array() } });
+
+/** The findings a code review reported; a failed one reported none. */
+function findingsOf({ payload }: ManagerEvent): (typeof ReportedFindings.infer)["result"]["comments"] {
+  const reported = ReportedFindings(payload);
+  return reported instanceof type.errors ? [] : reported.result.comments;
+}
+
+/** How many threads a pass reads at most, which bounds Bitbucket Data Center's one read per comment; GitHub reads every thread in pages either way. */
+const MAX_THREAD_READS = 100;
+
+/** The newest `count` of `ids`, in their order. */
+function newest(ids: readonly number[], count: number): number[] {
+  return ids.slice(Math.max(0, ids.length - count));
+}
+
+/**
+ * The comments of findings reported on heads other than `head`, which a pass on `head` reads, at most
+ * `MAX_THREAD_READS`: the newest of those not yet resolved, then the newest resolved ones, which a person can reopen.
+ */
+async function threadsBefore(tx: Tx, tenantId: string, pr: PullRequestRef, head: string): Promise<number[]> {
+  const results = eventsOf(await codeReviewResults(tx, tenantId, pr));
+  const threads = new Map(results.flatMap(({ event }) => (event.head === head ? [] : findingsOf(event).flatMap((finding) => (finding.thread ? [[finding.thread.id, finding.thread.state] as const] : [])))));
+  const ids = [...threads.keys()];
+  const open = newest(ids.filter((id) => threads.get(id) !== "resolved"), MAX_THREAD_READS);
+  const resolved = newest(ids.filter((id) => threads.get(id) === "resolved"), MAX_THREAD_READS - open.length);
+  return [...open, ...resolved];
+}
+
+/** The first pass on a head reads the threads of findings posted before it; the passes after it on that head read none. */
+async function threadsFor(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head: string): Promise<number[]> {
+  return claim.history.some((pass) => pass.head === head) ? [] : threadsBefore(tx, tenantId, pr, head);
+}
+
+/** A finding's thread once `id` is its comment and `read` what the host last said of it, if anything; a comment just posted is untouched. */
+function threadAfter(before: FindingThread | undefined, id: number, read: ThreadRead | undefined): FindingThread {
+  if (read) return read;
+  return before?.id === id ? before : { id, state: "untouched" };
+}
+
+/** The ids of each finding's inline comment as the manager posted the review a run reported, in its findings' order. */
+export type PostedThreads = { runId: string; ids: (number | null)[] };
+
+/**
+ * Keeps on each finding of the review `posted` names the id of its inline comment, and on each finding whose comment
+ * `reads` names, its thread's state, with the host's time of the change when it names one. Ids that do not line up with
+ * the review's findings are logged and left out, so a bookkeeping write never blocks the pass.
+ */
+export async function recordFindingThreads(tx: Tx, tenantId: string, pr: PullRequestRef, posted: PostedThreads | undefined, reads: readonly ThreadRead[] | undefined, log: (entry: Record<string, unknown>) => void): Promise<void> {
+  if (!posted && !reads) return;
+  const read = new Map(reads?.map((thread) => [thread.id, thread]));
+  for (const { key, event } of eventsOf(await codeReviewResults(tx, tenantId, pr).for("update"))) {
+    const findings = findingsOf(event);
+    const named = posted && key === eventKey(pr, posted.runId) ? posted.ids : undefined;
+    const lined = named === undefined || named.length === findings.length;
+    if (!lined) log({ level: "warn", msg: "finding_threads_misaligned", tenantId, ...pr, key, findings: findings.length, ids: named.length });
+    const ids = lined ? named : undefined;
+    const comments = findings.map(function threaded(finding, index) {
+      const id = ids === undefined ? finding.thread?.id : ids[index];
+      return id === undefined || id === null ? finding : { ...finding, thread: threadAfter(finding.thread, id, read.get(id)) };
+    });
+    if (JSON.stringify(comments) === JSON.stringify(findings)) continue;
+    const payload = { ...event.payload, result: { ...asRecord(event.payload["result"]), comments } };
+    await tx.update(managerState).set({ state: eventOf(key, asStored({ ...event, payload })) }).where(and(eq(managerState.tenantId, tenantId), eq(managerState.key, key)));
+  }
+}
+
 /** A code review the pull request's manager deployed: still out, what it reported, or that the manager gave up on it. */
 export type CodeReviewRecord = { runId: string; head: string; at: string } & ({ state: "running" } | { state: "reported"; payload: Record<string, unknown> } | { state: "failed"; failed: string });
 
@@ -435,9 +508,7 @@ export async function codeReviews(db: DB["db"], tenantId: string, pr: PullReques
   const taken = new Set([...claim.history.flatMap((pass) => pass.events), ...(claim.pass ? claim.pass.events : [])]);
   const named = new Set(reviewers.map((reviewer) => reviewer.runId));
   const prefix = eventKey(pr, "");
-  const events = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
-    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, like(managerState.key, `${eventPrefix(pr)}%`), sql`${managerState.state}->>'type' = 'reviewer-result'`, sql`${managerState.state}->'payload'->>'kind' = 'code-review'`));
-  const results = eventsOf(events).filter((result) => taken.has(result.key) || named.has(result.key.slice(prefix.length)));
+  const results = eventsOf(await codeReviewResults(db, tenantId, pr)).filter((result) => taken.has(result.key) || named.has(result.key.slice(prefix.length)));
   const records: CodeReviewRecord[] = results.map((result) => ({ runId: result.key.slice(prefix.length), head: result.event.head, at: result.event.receivedAt, state: "reported", payload: result.event.payload }));
   const reported = new Set(records.map((record) => record.runId));
   const pending = reviewers.filter((reviewer) => !reported.has(reviewer.runId));
@@ -470,7 +541,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
       const pass = { ...claim.pass, takes: claim.pass.takes + 1 };
       await writeClaim(tx, tenantId, pr, { ...claim, pass });
       const events = await eventsByKey(tx, tenantId, pass.events);
-      return { outcome: "pass", pass, events, resumed: true, ...(await latest(tx, tenantId, pr, claim, pass.head)) };
+      return { outcome: "pass", pass, events, resumed: true, threads: await threadsFor(tx, tenantId, pr, claim, pass.head), ...(await latest(tx, tenantId, pr, claim, pass.head)) };
     }
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
       .where(pending(tenantId, pr))
@@ -487,7 +558,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     if (kept.length === 0) return { outcome: "idle", ...(await latest(tx, tenantId, pr, claim)) };
     const pass = { id, head, events: kept.map((row) => row.key), takenAt, takes: 1 };
     await writeClaim(tx, tenantId, pr, { ...claim, pass });
-    return { outcome: "pass", pass, events: kept, resumed: false, ...(await latest(tx, tenantId, pr, claim, head)) };
+    return { outcome: "pass", pass, events: kept, resumed: false, threads: await threadsFor(tx, tenantId, pr, claim, head), ...(await latest(tx, tenantId, pr, claim, head)) };
   });
 }
 

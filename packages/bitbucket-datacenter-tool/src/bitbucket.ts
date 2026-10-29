@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import { errorText } from "@corbits/common";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
 
@@ -257,18 +258,28 @@ function anchorOf(finding: CodeReviewComment, file: FileDiff): Anchor | undefine
   return undefined;
 }
 
+/** The inline comment already standing for `finding` on one of `heads`, or null when there is none. */
+function standing(own: Map<string, number>, heads: readonly string[], finding: CodeReviewComment): number | null {
+  for (const head of heads) {
+    const id = own.get(codeReviewMarker(head, finding));
+    if (id !== undefined) return id;
+  }
+  return null;
+}
+
 /**
  * Sends a code review on `sha` as an inline comment per finding the diff shows and one summary comment holding the
  * rest, posted last. Each comment names the head and finding it is for, so a repeat posts only what is missing, and
- * nothing once the summary stands on `sha` or on the head the review was carried over from.
+ * nothing once the summary stands on `sha` or on the head the review was carried over from. Either way `threads` names
+ * each finding's inline comment.
  */
 export async function sendCodeReview(bb: BitbucketFetch, input: SendCodeReviewInput, user: BitbucketUser) {
   const { repo, number, sha, reviewed } = input;
   const me = await user();
-  const own = new Map((await listComments(bb, repo, number)).filter((c) => c.author.id === me.id).map((c) => [c.text.split("\n", 1)[0], c.id]));
+  const own = new Map((await listComments(bb, repo, number)).filter((c) => c.author.id === me.id).map((c) => [c.text.split("\n", 1)[0]!, c.id]));
   const heads = [sha, ...(reviewed === undefined ? [] : [reviewed])];
   const summaryId = heads.map((head) => own.get(codeReviewMarker(head))).find((id) => id !== undefined);
-  if (summaryId !== undefined) return { commentId: summaryId, sent: false };
+  if (summaryId !== undefined) return { commentId: summaryId, sent: false, threads: input.comments.map((finding) => standing(own, heads, finding)) };
   if ((await readPr(bb, repo, number)).sha !== sha) return { commentId: null, sent: false, skipped: HEAD_MOVED };
   const diffs = new Map<string, FileDiff>();
   for (const path of new Set(input.comments.map((finding) => finding.path).filter(plainSegments))) {
@@ -277,17 +288,71 @@ export async function sendCodeReview(bb: BitbucketFetch, input: SendCodeReviewIn
     diffs.set(path, file);
   }
   const outside: string[] = [];
+  const threads: SentThreads["threads"] = [];
   for (const finding of input.comments) {
     const file = diffs.get(finding.path);
     const anchor = file === undefined ? undefined : anchorOf(finding, file);
     if (!anchor) {
       outside.push(findingSection(finding));
+      threads.push(null);
       continue;
     }
-    if (heads.some((head) => own.has(codeReviewMarker(head, finding)))) continue;
+    const existing = standing(own, heads, finding);
+    if (existing !== null) {
+      threads.push(existing);
+      continue;
+    }
     const text = [codeReviewMarker(sha, finding), inlineFindingText(finding, { start: anchor.line, end: anchor.line })].join("\n");
-    await json(bb, `${prPath(repo, number)}/comments`, send("POST", { text, anchor }));
+    threads.push((await json(bb, `${prPath(repo, number)}/comments`, send("POST", { text, anchor }))).id as number);
   }
   const text = [codeReviewMarker(sha), [input.summary, ...outside].filter((part) => part !== "").join("\n\n")].join("\n");
-  return { commentId: (await createComment(bb, { repo, number, text })).commentId, sent: true };
+  return { commentId: (await createComment(bb, { repo, number, text })).commentId, sent: true, threads };
+}
+
+type ThreadComment = { author: { id: number }; createdDate: number; threadResolved?: boolean; threadResolvedDate?: number; anchor?: { orphaned?: boolean }; comments?: ThreadComment[] };
+
+/** Data Center leaves `comments` out of a comment nobody replied to. */
+function replies(comment: ThreadComment): ThreadComment[] {
+  if (comment.comments === undefined) return [];
+  return comment.comments.flatMap((reply) => [reply, ...replies(reply)]);
+}
+
+/**
+ * A comment thread's state: resolved, outdated once the line it was anchored to left the diff, or replied to by someone
+ * other than the comment's author, newest reply first.
+ */
+function threadReadOf(id: number, comment: ThreadComment): ThreadRead {
+  if (comment.threadResolved === true) return { id, state: "resolved", ...(comment.threadResolvedDate !== undefined && { at: new Date(comment.threadResolvedDate).toISOString() }) };
+  if (comment.anchor?.orphaned === true) return { id, state: "outdated" };
+  const answers = replies(comment).filter((reply) => reply.author.id !== comment.author.id);
+  if (answers.length === 0) return { id, state: "untouched" };
+  return { id, state: "replied", at: new Date(Math.max(...answers.map((reply) => reply.createdDate))).toISOString() };
+}
+
+/** The state of the thread comment `id` opened, or undefined for a comment deleted since. */
+async function threadAt(bb: BitbucketFetch, repo: string, number: number, id: number): Promise<ThreadRead | undefined> {
+  const path = `${prPath(repo, number)}/comments/${id}`;
+  const res = await bb(path, { headers: { accept: "application/json" } });
+  if (res.status === 404) return undefined;
+  if (!res.ok) throw new Error(`bitbucket GET ${path} -> ${res.status} ${await errorMessage(res)}`.trimEnd());
+  return threadReadOf(id, await res.json() as ThreadComment);
+}
+
+/**
+ * The state of the thread each comment of `ids` opened; a comment deleted since has none. A comment that could not be
+ * read is named in `unread`, so one failure leaves only its own thread unread.
+ */
+export async function findingThreadStates(bb: BitbucketFetch, repo: string, number: number, ids: readonly number[]): Promise<{ threads: ThreadRead[]; unread?: string }> {
+  const threads: ThreadRead[] = [];
+  const failed: string[] = [];
+  for (const id of ids) {
+    if (!Number.isSafeInteger(id)) throw new Error(`comment id must be an integer, got ${id}`);
+    try {
+      const read = await threadAt(bb, repo, number, id);
+      if (read) threads.push(read);
+    } catch (err) {
+      failed.push(errorText(err));
+    }
+  }
+  return { threads, ...(failed.length > 0 && { unread: failed.join("; ") }) };
 }

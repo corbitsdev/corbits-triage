@@ -1,6 +1,8 @@
+import { type } from "arktype";
+import { errorText } from "@corbits/common";
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
-import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, writeHeadedComment, writeUnheadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -271,16 +273,54 @@ function reviewBody(summary: string, sections: readonly string[]): string {
   return [summary, ...kept, ...more, CODE_REVIEW_MARKER].filter((part) => part !== "").join("\n\n");
 }
 
+type ReviewCommentRow = { id: number; pull_request_review_id: number | null; path: string; body: string; original_line: number | null; original_start_line: number | null };
+
+/** The lines a comment was written on, in the head its review was posted on; a single-line comment names no start. */
+function writtenLines(row: ReviewCommentRow): FindingLines | undefined {
+  if (row.original_line === null) return undefined;
+  return { start: row.original_start_line ?? row.original_line, end: row.original_line };
+}
+
+/** Whether `row` is the inline comment written for `finding`: on its file, within its lines, with exactly its text there. */
+function writtenFor(finding: CodeReviewComment, row: ReviewCommentRow): boolean {
+  const at = writtenLines(row);
+  return at !== undefined && row.path === finding.path && at.start >= finding.start && at.end <= finding.end && row.body === inlineFindingText(finding, at);
+}
+
+/**
+ * Each finding's inline comment in the App's review, read off the comments' own lines in the head the review was posted
+ * on, or null for a finding the review's body holds. The review's own comment list names no lines, so the pull
+ * request's is read. `inline` is how many findings were posted inline, or, for a review sent before, every inline
+ * comment it holds; when fewer match, the ids are unread rather than a posted finding passing for a summary one.
+ */
+async function reviewThreads(gh: GithubFetch, repo: string, number: number, reviewId: number, findings: readonly CodeReviewComment[], inline?: number): Promise<SentThreads> {
+  try {
+    const rows = await jsonAll<ReviewCommentRow>(gh, `/repos/${repo}/pulls/${number}/comments?per_page=100`);
+    const unused = rows.filter((row) => row.pull_request_review_id === reviewId);
+    const expected = inline ?? unused.length;
+    const threads = findings.map(function threadOf(finding) {
+      const at = unused.findIndex((row) => writtenFor(finding, row));
+      return at === -1 ? null : unused.splice(at, 1)[0]!.id;
+    });
+    const matched = threads.filter((id) => id !== null).length;
+    if (matched < expected) return { threads: null, unread: `${expected - matched} of review ${reviewId}'s ${expected} inline comments matched no finding` };
+    return { threads };
+  } catch (err) {
+    // The review stands once posted; its comment ids are read again the next time it is sent.
+    return { threads: null, unread: errorText(err) };
+  }
+}
+
 /**
  * Sends a code review as one COMMENT review on `sha`: each finding the diff shows is an inline comment, the rest are in
  * the review's body. The App's review carries a marker, so sending it again, on `sha` or on the head it was carried over
- * from, whose unchanged lines still hold it, writes nothing.
+ * from, whose unchanged lines still hold it, writes nothing. Either way `threads` names each finding's inline comment.
  */
 export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput, login: string) {
   const { repo, number, sha, reviewed } = input;
   const heads = [sha, ...(reviewed === undefined ? [] : [reviewed])];
   const sent = (await reviewsBy(gh, repo, number, login)).find((review) => heads.some((head) => head === review.commit_id) && review.body?.includes(CODE_REVIEW_MARKER));
-  if (sent) return { reviewId: sent.id, sent: false };
+  if (sent) return { reviewId: sent.id, sent: false, ...(await reviewThreads(gh, repo, number, sent.id, input.comments)) };
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   if (pr.head.sha !== sha) return { reviewId: null, sent: false, skipped: HEAD_MOVED };
   const patches = new Map((await listPrFiles(gh, repo, number)).flatMap((file) => (file.patch === undefined ? [] : [[file.path, parsePatch(file.patch)] as const])));
@@ -293,7 +333,63 @@ export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput
   }
   const body = reviewBody(input.summary, outside);
   const posted = await json(gh, `/repos/${repo}/pulls/${number}/reviews`, send("POST", { commit_id: sha, event: "COMMENT", body, comments }));
-  return { reviewId: posted.id as number, sent: true };
+  return { reviewId: posted.id as number, sent: true, ...(await reviewThreads(gh, repo, number, posted.id, input.comments, comments.length)) };
+}
+
+const ThreadComment = type({ databaseId: "number", createdAt: "string", author: type({ login: "string" }).or("null") });
+const ThreadsReply = type({
+  data: {
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          pageInfo: { hasNextPage: "boolean", endCursor: "string | null" },
+          nodes: type({ isResolved: "boolean", isOutdated: "boolean", opener: { nodes: ThreadComment.array() }, comments: { nodes: ThreadComment.array() } }).array(),
+        },
+      },
+    },
+  },
+});
+type ReviewThread = (typeof ThreadsReply.infer)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][number];
+
+// A thread's state needs only the comment that opened it and its newest reply, so the newest page of comments is enough.
+const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      isResolved isOutdated
+      opener: comments(first: 1) { nodes { databaseId createdAt author { login } } }
+      comments(last: 100) { nodes { databaseId createdAt author { login } } }
+    }
+  } } }
+}`;
+
+/** A thread's state, read off the comment that opened it: a reply counts only when someone other than its author wrote it. */
+function threadRead(thread: ReviewThread): ThreadRead | undefined {
+  const [first] = thread.opener.nodes;
+  if (!first) return undefined;
+  const id = first.databaseId;
+  if (thread.isResolved) return { id, state: "resolved" };
+  if (thread.isOutdated) return { id, state: "outdated" };
+  const reply = thread.comments.nodes.findLast((comment) => comment.databaseId !== id && comment.author?.login !== first.author?.login);
+  return reply ? { id, state: "replied", at: reply.createdAt } : { id, state: "untouched" };
+}
+
+/** The state of each review thread a comment of `ids` opened; only GraphQL tells whether a thread is resolved. */
+export async function findingThreadStates(gh: GithubFetch, repo: string, number: number, ids: readonly number[]): Promise<ThreadRead[]> {
+  const [owner, name] = repo.split("/");
+  const wanted = new Set(ids);
+  const reads: ThreadRead[] = [];
+  let after: string | null = null;
+  do {
+    const reply = await json(gh, "/graphql", send("POST", { query: THREADS_QUERY, variables: { owner, name, number, after } }));
+    const { reviewThreads } = ThreadsReply.assert(reply).data.repository.pullRequest;
+    for (const thread of reviewThreads.nodes) {
+      const read = threadRead(thread);
+      if (read && wanted.has(read.id)) reads.push(read);
+    }
+    after = reviewThreads.pageInfo.hasNextPage ? reviewThreads.pageInfo.endCursor : null;
+  } while (after !== null);
+  return reads;
 }
 
 export type CreateIssueCommentInput = {

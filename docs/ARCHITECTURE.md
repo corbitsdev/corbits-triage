@@ -1016,6 +1016,36 @@ and posts it as one `COMMENT` review pinned to its head. The review's marker
 and `commit_id` are its effect id, so the App's marked review of that head is
 found before anything is written.
 
+The manager also records what became of each finding it posted inline. Its
+send returns, per finding, the host comment that holds it (on GitHub read back
+from the pull request's review comments of that review, each matched by its
+path, the lines it was written on, which lie in the finding's, and the exact
+text written for the finding on those lines; on Bitbucket
+Data Center the id each inline post returns), and done
+keeps that id as `thread` on the finding in its reviewer-result row; ids that do
+not line up with the review's findings are logged and left out. A GitHub
+read-back that fails, or that matches fewer comments to findings than the
+review holds inline, leaves the ids unknown and is logged as
+`finding_threads_unread`; the review counts as posted, and a later send of it
+reads them again. The first pass on a newer head gets from take at most 100
+ids, the newest unresolved findings' first and then the newest resolved ones,
+so a reopened thread is seen, reads them in one `findingThreads`
+step through the host read tool (`finding_thread_states`: GitHub's GraphQL
+`reviewThreads`, Data Center's comment by id), and done writes each state on its
+finding: resolved, outdated, replied (by someone other than Triage) or
+untouched, with `at` only when the host names the time of the change (a reply's
+time on both hosts, a resolve's on Data Center). A read the host refuses is
+logged as `finding_threads_unread` and leaves the findings as they were; on Data
+Center, where each comment is its own read, only the comments that failed stay
+unread. On Data
+Center the fields read (`threadResolved`, `threadResolvedDate`, `anchor.orphaned`,
+nested `comments`) follow its REST reference and have not been checked against a
+running instance. The portal shows it
+from `GET …/code-review`; a finding held in the summary, one a person sent from
+the portal that the manager never posts again on that head, or one posted
+before Triage kept its comment is `not-tracked`. A
+closed or merged pull request is not read again.
+
 The steps, the provider profile and how to add a provider are in
 [packages/pr-code-review/README.md](../packages/pr-code-review/README.md); the
 eval and its numbers in
