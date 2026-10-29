@@ -221,7 +221,7 @@ export async function postReview(input: unknown, ctx: EffectContext, _signal: Ab
   if (!summary && found.review.comments.length === 0) return { posted: false };
   const { pullRequest } = managerMailOf(parsed.payload);
   const source = repoSourceOf(pullRequest.source);
-  const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: found.review.comments, appLogin: taken["appLogin"] };
+  const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: found.review.comments.map(({ thread: _thread, ...finding }) => finding), appLogin: taken["appLogin"] };
   const result = await hostWrite(ctx)(source, call(toolName(source, "send_code_review"), args, `review:${head}`));
   if (result.isError) throw new Error(`postReview: ${JSON.stringify(result.content)}`);
   const sent = Sent.assert(result.content);
