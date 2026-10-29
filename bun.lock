@@ -146,6 +146,7 @@
       "name": "@corbits/bitbucket-datacenter-reads",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "arktype": "catalog:",

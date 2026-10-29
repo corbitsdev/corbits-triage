@@ -32,12 +32,18 @@ describe("normalizeBitbucket", () => {
     ["pr:reviewer:needs_work", { participant: { status: "NEEDS_WORK" } }, "changes-requested"],
     ["pr:reviewer:unapproved", { participant: { status: "UNAPPROVED" } }, null],
     ["pr:comment:added", { comment: { id: 4, text: "Please also add multiply.", author: { slug: "rev" } } }, "commented"],
+    ["pr:comment:edited", { comment: { id: 4, text: "Rename it.", threadResolved: true }, previousComment: "Rename it." }, "threads"],
+    ["pr:comment:edited", { comment: { id: 4, text: "Rename it.", threadResolved: false }, previousComment: "Rename it." }, "threads"],
     ["pr:declined", { pullRequest: pullRequest({ state: "DECLINED" }) }, "closed"],
     ["pr:deleted", {}, "closed"],
   ] as const)("%s %j wakes triage as %s", (eventKey, extra, expected) => {
     const intake = normalizeBitbucket(eventKey, "d", prEvent(eventKey, extra));
     if (intake?.kind !== "pr") throw new Error(`${eventKey} gave ${JSON.stringify(intake)}`);
     expect(triageEventOf(intake.mail)).toBe(expected);
+  });
+
+  test("an edit of a comment's text wakes nothing", () => {
+    expect(normalizeBitbucket("pr:comment:edited", "d", prEvent("pr:comment:edited", { comment: { id: 4, text: "Rename it, please." }, previousComment: "Rename it." }))).toBeNull();
   });
 
   test("triage's own comments and comments on a pull request no longer open are ignored", () => {

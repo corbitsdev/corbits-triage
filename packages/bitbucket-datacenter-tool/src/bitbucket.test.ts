@@ -9,7 +9,7 @@ const REPO_PATH = "/rest/api/1.0/projects/TRI/repos/widgets";
 const PR_PATH = `${REPO_PATH}/pull-requests/1`;
 
 // Shapes recorded from Bitbucket Data Center 10.5, trimmed to the fields read.
-function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number; failBuild?: boolean; participants?: unknown[]; openReads?: number } = {}) {
+function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number; failBuild?: boolean; participants?: unknown[]; openReads?: number; threads?: unknown[] | "refused" } = {}) {
   const pr = { id: 1, version: 4, state: "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: seed.participants ?? [] };
   const comments: Comment[] = seed.comments ?? [];
   const builds: Array<Record<string, unknown>> = [];
@@ -27,6 +27,8 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
     if (path.startsWith(`${REPO_PATH}/commits?since=abc&until=d36740c&`)) return Response.json({ values: ["merge1521", "d36740c"].map((id) => ({ id, message: id, author: { name: "admin" }, committerTimestamp: 0 })), isLastPage: true });
     if (path.startsWith(`${REPO_PATH}/pull-requests?state=MERGED&direction=INCOMING&at=refs%2Fheads%2Ffix&`)) return Response.json({ values: [{ id: 1521, properties: { mergeCommit: { id: "merge1521" } } }, { id: 1490, properties: { mergeCommit: { id: "elsewhere" } } }], isLastPage: true });
     if (path.startsWith(`${PR_PATH}/activities?`)) {
+      if (seed.threads === "refused") return Response.json({ errors: [{ message: "unavailable" }] }, { status: 503 });
+      if (seed.threads) return Response.json({ values: seed.threads.map((comment) => ({ action: "COMMENTED", commentAction: "ADDED", comment })), isLastPage: true });
       const values = comments.map((comment) => ({ action: "COMMENTED", commentAction: "ADDED", comment })).reverse();
       return Response.json({ values: [{ action: "OPENED" }, ...values], isLastPage: true });
     }
@@ -158,6 +160,26 @@ describe("executeAction", () => {
     const clean = fakeBitbucket();
     expect(await executeAction(clean.bb, { request: REQUEST, step: step("merge", {}) }, user)).toEqual({ status: "done", result: { merged: true } });
     expect(clean.writes.map((w) => w.path)).toEqual([`${PR_PATH}/merge?version=4`]);
+  });
+
+  test("refuses a merge while a person's inline thread is neither resolved nor orphaned, or the threads cannot be read; triage's own findings are left to code review", async () => {
+    function thread(id: number, slug: string, fields: object) {
+      return { id, text: "note", author: { slug }, createdDate: 0, ...fields };
+    }
+    const threads = [
+      thread(1, "maya", { anchor: { orphaned: false }, threadResolved: false, comments: [thread(5, "admin", {})] }),
+      thread(2, "li", { anchor: { orphaned: false }, threadResolved: true }),
+      thread(3, "li", { anchor: { orphaned: true }, threadResolved: false }),
+      thread(4, "triage-bot", { threadResolved: false }),
+      { ...thread(6, "triage-bot", { anchor: { orphaned: false }, threadResolved: false }), text: "[corbits-code-review]: #abc/0123456789ab\n**P1 · Off by one**" },
+    ];
+    const findingOnly = fakeBitbucket({ threads: threads.slice(-1) });
+    expect(await executeAction(findingOnly.bb, { request: REQUEST, step: step("merge", {}) }, user)).toEqual({ status: "done", result: { merged: true } });
+    const open = fakeBitbucket({ threads });
+    expect(await runAction(open.bb, { request: REQUEST, step: step("merge", {}) }, user)).toEqual({ status: "skipped", reason: "Merge waits for 1 unresolved review thread, opened by maya." });
+    const refused = fakeBitbucket({ threads: "refused" });
+    expect(await runAction(refused.bb, { request: REQUEST, step: step("merge", {}) }, user)).toMatchObject({ status: "skipped", reason: expect.stringContaining("Merge waits: Triage couldn't read the review threads") });
+    expect([...open.writes, ...refused.writes]).toEqual([]);
   });
 });
 

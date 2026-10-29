@@ -134,7 +134,8 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
     ["Waiting for checks to finish:", held.filter((action) => action.ci === "pending")],
     ["Waiting on a maintainer to approve:", held.filter((action) => action.ci !== "pending")],
   ];
-  const lines = groups.filter(([, group]) => group.length > 0).map(([lead, group]) => `${lead} ${doNames(group)}.`);
+  const waiting = actions.flatMap((action) => ("waits" in action ? [action.reason] : []));
+  const lines = [...groups.filter(([, group]) => group.length > 0).map(([lead, group]) => `${lead} ${doNames(group)}.`), ...waiting];
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
 }
 
@@ -186,7 +187,7 @@ export function suggestedDos(it: Item, rendered: Rendered, steps: readonly Step[
   // A degraded verdict is incomplete, a waiting one is not made yet, and a draft or closed pull request is not decided, so nothing is suggested from any.
   const decided = rendered.degraded === null && rendered.waiting === undefined && (it.det.needsJudgment || rendered.verdict === "fail");
   const suggested = actionInput && decided ? stepActions(actionInput, steps) : [];
-  return holdDos(heldApprovals(suggested, approvalHeldBy(rendered.verdict, it.facts.checks), it.facts.checks), it.automatic);
+  return holdDos(heldApprovals(suggested, approvalHeldBy(rendered.verdict, it.facts.checks), it.facts), it.automatic);
 }
 
 /** The verdict on a rendered item: its labels, its Dos, and the comment and labels its mirror writes. */

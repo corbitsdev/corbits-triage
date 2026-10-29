@@ -57,11 +57,15 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
   const reviews: Review[] = [];
-  const pr: { head: string; state: "open" | "closed"; draft: boolean; ci: Ci; dismissible: boolean; unreadFiles: boolean } = { head: "abc0000000000000000000000000000000000000", state: "open", draft: false, ci: "none", dismissible: true, unreadFiles };
+  const pr: { head: string; state: "open" | "closed"; draft: boolean; ci: Ci; dismissible: boolean; unreadFiles: boolean; threads: Array<{ isResolved: boolean; login: string }> } = { head: "abc0000000000000000000000000000000000000", state: "open", draft: false, ci: "none", dismissible: true, unreadFiles, threads: [] };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     requests.push({ method, path });
     if (missing && path.includes("/pulls/8")) return Response.json({ message: "Not Found" }, { status: 404 });
+    if (path === "/graphql") {
+      const nodes = pr.threads.map(({ isResolved, login }) => ({ isResolved, isOutdated: false, opener: { nodes: [{ databaseId: 1, createdAt: "2026-10-29T00:00:00Z", author: { login } }] }, comments: { nodes: [] } }));
+      return Response.json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } } });
+    }
     const base = stacked ? { ref: "parent", repo: { id: 1 } } : { ref: "main", repo: { id: 1 } };
     if (stacked === "merged" && path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix&per_page`)) return Response.json([9, 10, 11, 12, 13, 14].map((number) => ({ number, merged_at: number === 14 ? null : "2026-10-19T00:43:02Z", base: { ref: "fix" } })));
     if (stacked && path.startsWith(`/repos/${REPO}/pulls?state=open&head=acme%3Aparent&`)) return Response.json([{ number: 7, head: { ref: "parent", repo: { id: 1 } } }]);
@@ -71,8 +75,12 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
     if (path.startsWith(`/repos/${REPO}/compare/`)) return Response.json({ ahead_by: 2, commits: [{ sha: "merge1521" }, { sha: pr.head }] });
     if (path.startsWith(`/repos/${REPO}/pulls?state=closed&base=fix`)) return Response.json([{ number: 1521, merge_commit_sha: "merge1521", merged_at: "2026-10-19T00:43:02Z" }, { number: 1490, merge_commit_sha: "elsewhere", merged_at: "2026-10-01T00:00:00Z" }]);
     if (path.startsWith(`/repos/${REPO}/pulls?`)) return Response.json([{ number: 8, title, user: { login: "octocat" }, draft: pr.draft, head: { sha: pr.head } }]);
+    if (method === "PUT" && path === `/repos/${REPO}/pulls/8/merge`) {
+      pr.state = "closed";
+      return Response.json({ merged: true, sha: pr.head });
+    }
     if (path === `/repos/${REPO}/pulls/8`) {
-      return Response.json({ number: 8, title, body, body_html: bodyHtml, state: pr.state, draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
+      return Response.json({ number: 8, title, body, body_html: bodyHtml, state: pr.state, merged: pr.state === "closed", draft: pr.draft, user: { login: "octocat" }, head: { sha: pr.head, ref: "fix", repo: { id: 1 } }, base, mergeable: true, labels: labels.map((name) => ({ name })), requested_reviewers: [{ login: "rev" }] });
     }
     if (path.startsWith(`/repos/${REPO}/pulls/8/commits?`)) return Response.json(commits.map((message, index) => ({ sha: `c${index}`, commit: { message } })));
     if (path.startsWith(`/repos/${REPO}/commits?path=`)) {
@@ -192,13 +200,13 @@ const VERDICT_PATH = { hostSteps: ["markUnready", "facts", "mirror", "execute"],
 // `judgeText` fails focused, so the judge is called again for its file questions; a failed judged rule decides Fail without the verdict question.
 const JUDGE_PATH = { hostSteps: ["markUnready", "facts", "mirror", "execute"], judgeCalls: 2 };
 
-type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; noWait?: true; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
+type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; noWait?: true; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource; events?: TriageEvent[] };
 
-async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, noWait, automatic = ACTION_KINDS, from = "github@acme.test", github, source, ...seed }: TriageOptions = {}) {
+async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, noWait, automatic = ACTION_KINDS, from = "github@acme.test", github, source, events = ["opened"], ...seed }: TriageOptions = {}) {
   const { gh, requests, pr } = github ?? fakeGithub(seed);
   const policy = { enabled: true, ...(source && { source }) };
   const judged: SystemOne[] = [];
-  const request = backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, headSha: pr.head, policy, checkPack, automatic, events: ["opened"], ...(noWait && { noWait }) };
+  const request = backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, headSha: pr.head, policy, checkPack, automatic, events, ...(noWait && { noWait }) };
   const { terminalStatus, outputs } = await runTriage(gh, judged, judgeFails, hubMail(request, from), backlog);
   expect(terminalStatus).toBe("completed");
   const mirrors = ["mirror", "mirrorRules"].filter((id) => id in outputs);
@@ -850,16 +858,39 @@ describe("pr-triage body", () => {
     expect(github.comments[0]!.body).toEndWith("\n\nChanged since the last verdict (Pass at `abc0000`): 2 new commits, merging #1521 into this branch.");
   });
 
-  test("a head that fails requests changes; a later head that passes merges, and the mirror takes the earlier request back", async () => {
+  test("a head that fails requests changes; a later head that passes merges once its review threads are resolved, and the mirror takes the earlier request back", async () => {
     const { github, pack } = requesting();
     const merging = { ...pack, actions: { ...pack.actions, pass: [{ do: "merge" as const }] } };
     await triage(merging, { github });
     github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.ci = "success";
+    github.pr.threads = [{ isResolved: false, login: "maya" }];
+    await triage(merging, { github });
+    expect(github.comments[0]!.body).toContain("Merge waits for 1 unresolved review thread, opened by maya.");
+    expect(github.requests.filter((request) => request.method === "PUT" && request.path.endsWith("/merge"))).toEqual([]);
+    github.pr.threads = [{ isResolved: true, login: "maya" }];
+    await triage(merging, { github });
     await triage(merging, { github });
     const writes = github.requests.filter((request) => request.method === "PUT").map((request) => request.path);
     // The mirror takes the earlier request back before execute merges, so the merge finds the final verdict on the head.
     expect(writes).toEqual([`/repos/${REPO}/pulls/8/reviews/100`, `/repos/${REPO}/pulls/8/reviews/100/dismissals`, `/repos/${REPO}/pulls/8/merge`]);
+  });
+
+  test("resolving the last review thread merges once, though the policy's on: lists neither updated nor the thread, and runs no other action", async () => {
+    const github = fakeGithub();
+    const empty = emptyPack(REPO);
+    const pack: CheckPack = { ...empty, checks: { "max-files-changed": { enabled: true, max: 30 } }, actions: { ...empty.actions, when: ["opened", "checks"], pass: [{ do: "labels", target: { from: "list", labels: ["shipit"] } }, { do: "merge" }] } };
+    github.pr.ci = "success";
+    github.pr.threads = [{ isResolved: false, login: "maya" }];
+    await triage(pack, { github });
+    expect(github.comments[0]!.body).toEndWith("Merge waits for 1 unresolved review thread, opened by maya.");
+    expect(github.labels).toContain("shipit");
+    github.labels.splice(github.labels.indexOf("shipit"), 1);
+    github.pr.threads = [{ isResolved: true, login: "maya" }];
+    await triage(pack, { github, events: ["threads"] });
+    await triage(pack, { github, events: ["threads"] });
+    expect(github.requests.filter((request) => request.method === "PUT").map((request) => request.path)).toEqual([`/repos/${REPO}/pulls/8/merge`]);
+    expect(github.labels).not.toContain("shipit");
   });
 
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {

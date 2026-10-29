@@ -1,7 +1,7 @@
 import type { RepoPolicy } from "@corbits/triage-contracts";
 import { isTriageComment } from "@corbits/github-reads";
 
-const EVENTS = ["pull_request", "pull_request_review", "issue_comment", "check_run", "check_suite"] as const;
+const EVENTS = ["pull_request", "pull_request_review", "pull_request_review_thread", "issue_comment", "check_run", "check_suite"] as const;
 
 export interface PrMail {
   kind: "pr";

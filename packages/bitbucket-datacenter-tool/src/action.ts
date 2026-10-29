@@ -1,6 +1,6 @@
 import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { ciRefusal, mergeableCi, summarizeChecks } from "@corbits/github-reads";
-import { defaultReviewers, getChecks } from "@corbits/bitbucket-datacenter-reads";
+import { defaultReviewers, getChecks, unresolvedThreadsHold } from "@corbits/bitbucket-datacenter-reads";
 import { type } from "arktype";
 import {
   addReviewers,
@@ -135,7 +135,7 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
       onHead(pr.sha, request, step);
       return postOnce(bb, { repo, number, userId: (await user()).id, marker: actionMarker(step.effectId), body: target.body });
     }
-    // Builds and reviews are read again here because a held merge can be approved long after its verdict; Bitbucket's merge checks stay the backstop.
+    // Builds, reviews and review threads are read again here because a held merge can be approved long after its verdict; Bitbucket's merge checks stay the backstop.
     case "merge": {
       onHead(pr.sha, request, step);
       const ci = summarizeChecks(await getChecks(bb, step.headSha));
@@ -143,6 +143,8 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
       const me = await user();
       const requested = pr.reviewers.filter((r) => r.status === "NEEDS_WORK" && r.user.id !== me.id).map((r) => r.user.slug);
       if (requested.length) throw new ActionNotRunnableError(`changes are requested by ${requested.join(", ")}`);
+      const threads = await unresolvedThreadsHold(bb, repo, number, me.slug);
+      if (threads !== undefined) throw new ActionNotRunnableError(threads);
       // Triage's own needs-work is its verdict on this head, which now merges; a "no needs work" merge check would veto it.
       if (statusOf(pr, me) === "NEEDS_WORK") await setStatus(bb, { repo, number, slug: me.slug, status: "UNAPPROVED" });
       const veto = await mergeVeto(bb, repo, number);

@@ -24,7 +24,7 @@ GitHub, Bitbucket DC ──webhook──► Hub ◄──── portal (/api)
   origin carries the portal, the API and the webhooks. Triage adds:
   - **GitHub bridge**: verifies GitHub's HMAC on `/api/hooks/*`, updates the
     tenant's repository list from installation events, and hands pull
-    request, review, comment, `check_run` and `check_suite` events to the
+    request, review, review thread, comment, `check_run` and `check_suite` events to the
     coalescer. A check event does not say whether its pull request is a
     draft or still open, so a window of check events alone reads that once
     at its flush rather than once per delivery. A pull request merged into
@@ -880,6 +880,26 @@ label off that head, so it never stands on a head not yet triaged.
    the role may write, held only because CI is still running on the head, carries
    the CI state that holds it (`ci: "pending"`), which the portal reads as
    running on its own once CI finishes; any other hold waits for a person.
+   A merge also waits for the pull request's review threads. One function
+   per host, `unresolvedThreadsHold` (github-reads: GraphQL `reviewThreads`,
+   neither resolved nor outdated; bitbucket-datacenter-reads: `activities`,
+   inline root comments neither `threadResolved` nor `anchor.orphaned`), says
+   why. It leaves out Triage's own findings, which the code review hold
+   governs: on GitHub a thread opened by a review the App sent with the code
+   review marker (its `pullRequestReview.databaseId`), on Data Center a comment
+   the token user posted starting with the marker. Facts reads it through the host's `review_threads_hold` tool when the
+   policy lists a merge, and evaluate skips the merge with `waits` and that
+   reason, which the comment closes with; the merge write reads it again and
+   refuses as not runnable. Both read every page up to a bound (1,000
+   threads on GitHub, 2,000 activities on Data Center), and a failed read or
+   one past the bound holds the merge. A skipped merge keeps no effect id, so
+   the pass after the last thread is resolved writes it under the same id.
+   GitHub's `pull_request_review_thread` (`resolved`, `unresolved`) and Data
+   Center's `pr:comment:edited` whose text is unchanged (a resolve or reopen,
+   checked against Bitbucket 10.5) wake the pull request as `threads`, which
+   is not a policy event: it runs only the policy's merge steps, whatever
+   `on:` lists, since it releases a hold Triage added itself; every other
+   action waits for an event `on:` lists.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
 `triage-do:<kind>:<owner>/<name>`), after the grant writer has followed that
@@ -1074,8 +1094,7 @@ logged as `finding_threads_unread` and leaves the findings as they were; on Data
 Center, where each comment is its own read, only the comments that failed stay
 unread. On Data
 Center the fields read (`threadResolved`, `threadResolvedDate`, `anchor.orphaned`,
-nested `comments`) follow its REST reference and have not been checked against a
-running instance. The portal shows it
+nested `comments`) were checked against Bitbucket 10.5. The portal shows it
 from `GET …/code-review`; a finding held in the summary, one a person sent from
 the portal that the manager never posts again on that head, or one posted
 before Triage kept its comment is `not-tracked`. Each finding's `open` follows

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { errorText } from "@corbits/common";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
-import { changesSince, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
+import { changesSince, CODE_REVIEW_MARKER, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
 import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type VerdictStatus, type WrittenComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
@@ -285,8 +285,6 @@ export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: Bitbucket
     ...(Object.keys(failed).length > 0 && { failed }),
   };
 }
-
-const CODE_REVIEW_MARKER = "[corbits-code-review]: #";
 
 /** The first line of each comment a code review posts: the head it was sent on, and for an inline one, which finding. */
 function codeReviewMarker(sha: string, finding?: CodeReviewComment): string {

@@ -10,6 +10,7 @@
   },
   "main": "./src/index.ts",
   "dependencies": {
+    "@corbits/common": "workspace:*",
     "@corbits/github-reads": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "arktype": "catalog:"

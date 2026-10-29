@@ -2,7 +2,7 @@ export { getPrTimes, listClosedPrsBefore, listPrTimeline } from "./activities.js
 export { filePath, jsonAll, repoParts, repoPath, type BitbucketFetch } from "./client.js";
 export { getChecks, TRIAGE_BUILD_KEY } from "./builds.js";
 export { changesSince, listPathCommits, listPrCommits, listPrFiles, listPrFilesPage } from "./changes.js";
-export { isTriageComment, listIssueComments } from "./comments.js";
+export { CODE_REVIEW_MARKER, isTriageComment, listIssueComments, unresolvedThreadsHold } from "./comments.js";
 export { createDocsReader, readRepoDocsPage } from "./docs.js";
 export { authorTeams, defaultReviewers } from "./people.js";
 export { getPr, listOpenPrs, readMergeability, readPrDiff, readStack } from "./pull-request.js";

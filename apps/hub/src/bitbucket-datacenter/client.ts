@@ -17,6 +17,7 @@ export const WEBHOOK_EVENTS = [
   "pr:reviewer:unapproved",
   "pr:reviewer:needs_work",
   "pr:comment:added",
+  "pr:comment:edited",
   "pr:merged",
   "pr:declined",
   "pr:deleted",

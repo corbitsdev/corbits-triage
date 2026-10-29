@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
 import { authorFailures, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
@@ -35,7 +35,8 @@ type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: strin
 /** `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant. */
 export type SuggestedDo = Place & { effectId: string; target: ResolvedTarget; held?: true };
 
-export type SuggestedAction = SuggestedDo | (Place & { skipped: true });
+/** `waits` marks a step skipped until the pull request allows it, which the comment names. */
+export type SuggestedAction = SuggestedDo | (Place & { skipped: true; waits?: true });
 
 export interface ActionInput {
   facts: PrFacts;
@@ -50,6 +51,13 @@ export interface ActionInput {
 /** Catch-up runs the policy's actions whatever woke it. */
 export function wakes(pack: CheckPack, facts: PrFacts): boolean {
   return facts.events.includes("catch-up") || facts.events.some((event) => (pack.actions.when as readonly string[]).includes(event));
+}
+
+/** Events that clear a hold Triage adds itself, and the kind of step each releases whatever the policy's `on:` lists. */
+const RELEASES: ReadonlyArray<[TriageEvent, ActionKind]> = [["threads", "merge"]];
+
+function releasedKinds(facts: PrFacts): ActionKind[] {
+  return RELEASES.filter(([event]) => facts.events.includes(event)).map(([, kind]) => kind);
 }
 
 /** GitHub takes team slugs, and only the repository owner's teams can review. */
@@ -223,16 +231,19 @@ function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: 
 }
 
 /**
- * The Dos of `steps` on this head; none when the event does not wake the policy. A step whose conditions do not hold,
- * or cannot be told, is skipped, and one that does nothing is not listed. Suggest only: nothing here writes to GitHub.
+ * The Dos of `steps` on this head; none when the event does not wake the policy, and only the kinds it releases when
+ * it only clears a hold Triage added. A step whose conditions do not hold, or cannot be told, is skipped, and one that
+ * does nothing is not listed. Suggest only: nothing here writes to GitHub.
  */
 export function stepActions(input: ActionInput, steps: readonly Step[]): SuggestedAction[] {
-  if (!wakes(input.pack, input.facts)) return [];
+  const woken = wakes(input.pack, input.facts);
+  const released = releasedKinds(input.facts);
+  if (!woken && released.length === 0) return [];
   const { verdict: list, reason, facts } = input;
   const subject = stepSubject(facts, input.pack);
   const out: SuggestedAction[] = [];
   for (const [index, step] of steps.entries()) {
-    if (step.do === "nothing") continue;
+    if (step.do === "nothing" || (!woken && !released.includes(step.do))) continue;
     const base = { list, index, kind: step.do };
     const holds = whenHolds(step.when, subject);
     if (holds.matches !== true) {
@@ -247,7 +258,7 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
       out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
     }
   }
-  return [...out, ...labelDo(input, reason)];
+  return woken ? [...out, ...labelDo(input, reason)] : out;
 }
 
 /** The Dos of the verdict's list on this head. */
@@ -277,6 +288,11 @@ export function packApproves(pack: CheckPack): boolean {
   return lists(pack, "approve");
 }
 
+/** Only a policy that merges reads the review threads that hold a merge. */
+export function packMerges(pack: CheckPack): boolean {
+  return lists(pack, "merge");
+}
+
 /**
  * Whether anything failed is still the author's to fix in a pack that requests changes; once nothing is, or the pack no
  * longer requests changes, the App's standing requests are taken back. Undefined when there is nothing to take back or decide.
@@ -286,11 +302,16 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
   return changesFor(input).length > 0;
 }
 
-/** An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. */
-export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
+/**
+ * An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. A
+ * merge the review threads hold is skipped before it too, rather than held, so no person can approve it past them and
+ * a later pass writes it under the same effect id once they allow it.
+ */
+export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, { checks: ci, mergeHold }: Pick<PrFacts, "checks" | "mergeHold">): SuggestedAction[] {
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
     if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, ...approval };
+    if (action.kind === "merge" && mergeHold !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, waits: true, reason: mergeHold };
     if (ci === "pending") return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
     if (ci !== "success" && action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
     return action;

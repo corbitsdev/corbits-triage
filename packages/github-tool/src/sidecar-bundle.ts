@@ -21,6 +21,7 @@ import {
   readPrTemplates,
   readRepoDocsPage,
   readStack,
+  unresolvedThreadsHold,
   type GithubFetch,
 } from "@corbits/github-reads";
 import {
@@ -134,6 +135,11 @@ const READ_DEFINITIONS: ToolDefinition[] = [
     name: "github_author_teams",
     description: "Say which of the given teams (@org/slug or slug) the author is an active member of. Teams past the first 20, outside the repository owner's organization, or not confirmable either way are unknown.",
     inputSchema: obj({ repo, author: str, teams: { type: "array", items: str } }),
+  },
+  {
+    name: "github_review_threads_hold",
+    description: "Say why a merge waits on the pull request's review threads: how many are neither resolved nor outdated and who opened them, or that they could not be read. Threads of appLogin's code reviews are left out. No hold when none is unresolved.",
+    inputSchema: obj({ repo, number: { type: "integer" }, appLogin: APP_LOGIN }),
   },
   {
     name: "github_finding_thread_states",
@@ -310,6 +316,8 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
       return codeownersForPr(gh, a.repo, a.number);
     case "github_author_teams":
       return authorTeams(gh, { repo: a.repo, author: a.author, teams: a.teams });
+    case "github_review_threads_hold":
+      return { hold: (await unresolvedThreadsHold(gh, a.repo, a.number, appLoginOf(call))) ?? null };
     case "github_finding_thread_states":
       return { threads: await findingThreadStates(gh, a.repo, a.number, a.ids) };
     case "github_read_file":

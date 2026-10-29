@@ -1,7 +1,6 @@
-import { type } from "arktype";
 import { errorText } from "@corbits/common";
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
-import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch } from "@corbits/github-reads";
+import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, listReviewThreads, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch, type ReviewThread } from "@corbits/github-reads";
 import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
@@ -336,33 +335,6 @@ export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput
   return { reviewId: posted.id as number, sent: true, ...(await reviewThreads(gh, repo, number, posted.id, input.comments, comments.length)) };
 }
 
-const ThreadComment = type({ databaseId: "number", createdAt: "string", author: type({ login: "string" }).or("null") });
-const ThreadsReply = type({
-  data: {
-    repository: {
-      pullRequest: {
-        reviewThreads: {
-          pageInfo: { hasNextPage: "boolean", endCursor: "string | null" },
-          nodes: type({ isResolved: "boolean", isOutdated: "boolean", opener: { nodes: ThreadComment.array() }, comments: { nodes: ThreadComment.array() } }).array(),
-        },
-      },
-    },
-  },
-});
-type ReviewThread = (typeof ThreadsReply.infer)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][number];
-
-// A thread's state needs only the comment that opened it and its newest reply, so the newest page of comments is enough.
-const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) {
-    pageInfo { hasNextPage endCursor }
-    nodes {
-      isResolved isOutdated
-      opener: comments(first: 1) { nodes { databaseId createdAt author { login } } }
-      comments(last: 100) { nodes { databaseId createdAt author { login } } }
-    }
-  } } }
-}`;
-
 /** A thread's state, read off the comment that opened it: a reply counts only when someone other than its author wrote it. */
 function threadRead(thread: ReviewThread): ThreadRead | undefined {
   const [first] = thread.opener.nodes;
@@ -374,22 +346,13 @@ function threadRead(thread: ReviewThread): ThreadRead | undefined {
   return reply ? { id, state: "replied", at: reply.createdAt } : { id, state: "untouched" };
 }
 
-/** The state of each review thread a comment of `ids` opened; only GraphQL tells whether a thread is resolved. */
+/** The state of each review thread a comment of `ids` opened. */
 export async function findingThreadStates(gh: GithubFetch, repo: string, number: number, ids: readonly number[]): Promise<ThreadRead[]> {
-  const [owner, name] = repo.split("/");
   const wanted = new Set(ids);
-  const reads: ThreadRead[] = [];
-  let after: string | null = null;
-  do {
-    const reply = await json(gh, "/graphql", send("POST", { query: THREADS_QUERY, variables: { owner, name, number, after } }));
-    const { reviewThreads } = ThreadsReply.assert(reply).data.repository.pullRequest;
-    for (const thread of reviewThreads.nodes) {
-      const read = threadRead(thread);
-      if (read && wanted.has(read.id)) reads.push(read);
-    }
-    after = reviewThreads.pageInfo.hasNextPage ? reviewThreads.pageInfo.endCursor : null;
-  } while (after !== null);
-  return reads;
+  return (await listReviewThreads(gh, repo, number)).flatMap(function wantedRead(thread) {
+    const read = threadRead(thread);
+    return read && wanted.has(read.id) ? [read] : [];
+  });
 }
 
 export type CreateIssueCommentInput = {
