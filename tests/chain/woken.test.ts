@@ -1,7 +1,8 @@
 // A manager that waits for the judge it mailed, and the judge's report reaching it through the hub.
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
-import { chainStack, WOKEN, isLiveDeployment, sha, pullOf, type Claim, comments, labelled, once } from "./chain.ts";
+import { chainStack, WOKEN, isLiveDeployment, type Claim, once } from "./chain.ts";
+import { sha, pullOf, comments, labelled } from "./github.ts";
 
 const { github, model, pushed, eachRunEvent, until, claimOf, managers, settled, verdictsOf } = chainStack();
 

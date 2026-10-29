@@ -10,7 +10,7 @@ import { createDB } from "@intx/db";
 import { listWorkflowDeployments, listWorkflowRuns, readWorkflowRunEvents } from "@intx/hub-client";
 import { parseTriageState, triageStateName, type PrTriageRow } from "@corbits/triage-contracts";
 import { saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
-import { fakeGithub, OWNER, type Pull, type Write } from "./github.ts";
+import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
 import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
@@ -54,18 +54,6 @@ function decide(id: string, question: Question): Answer {
   if (question.type !== "choice") return { type: "noul", noul: id === "instructed" ? 0.05 : 0.95 };
   const [first, ...rest] = Object.keys(question.criteria as Record<string, string>);
   return { type: "choice", choice: first!, probabilities: { [first!]: 0.96, ...Object.fromEntries(rest.map((option) => [option, 0.04 / rest.length])) }, confidence: 0.96 };
-}
-
-export function sha(seed: string): string {
-  return new Bun.CryptoHasher("sha1").update(seed).digest("hex");
-}
-
-export function pullOf(number: number, head: string): Pull {
-  return {
-    number, title: "fix: widget sizing", body: "Fixes the widget's size.", author: "octocat", head,
-    files: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-export const size = 1;\n+export const size = 2;" }],
-    commits: ["fix: widget sizing"], labels: [], comments: [],
-  };
 }
 
 export type Claim = { status: "live" | "ended"; runId?: string; history: { head: string; runId: string; doneAt: string }[] };
@@ -226,14 +214,6 @@ export function chainStack(env: Record<string, string> = {}) {
     settled,
     verdictsOf,
   };
-}
-
-export function comments(writes: readonly Write[]): string[] {
-  return writes.filter((write) => write.method === "POST" && write.path.endsWith("/comments")).map((write) => String((write.body as { body: string }).body));
-}
-
-export function labelled(writes: readonly Write[]): string[] {
-  return writes.filter((write) => write.method === "POST" && write.path.endsWith("/labels")).flatMap((write) => (write.body as { labels: string[] }).labels);
 }
 
 /** Runs `scenario` once, on the first test that asks for it. */

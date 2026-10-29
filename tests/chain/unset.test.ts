@@ -2,7 +2,8 @@
 import { expect, test } from "bun:test";
 import { POLICY_FILE_PATH, VERDICT_LABELS } from "@corbits/triage-contracts";
 import { deliver } from "./stack.ts";
-import { chainStack, UNSET, MAX_FILES, policy, sha, pullOf, comments, labelled, once } from "./chain.ts";
+import { chainStack, UNSET, MAX_FILES, policy, once } from "./chain.ts";
+import { sha, pullOf, comments, labelled } from "./github.ts";
 
 const chain = chainStack();
 const { github, pushed, claimOf, managers, settled } = chain;

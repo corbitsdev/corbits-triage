@@ -1,8 +1,8 @@
 // A manager the listener mails before its deploy is recorded, which stock holds the mail for.
 import { expect, test } from "bun:test";
-import type { Write } from "./github.ts";
 import { MAIL_HOLD_MS } from "./stack.ts";
-import { chainStack, comments, isLiveDeployment, once, pullOf, SETTLE_MS, sha, UNSTARTED, type Claim } from "./chain.ts";
+import { chainStack, isLiveDeployment, once, SETTLE_MS, UNSTARTED, type Claim } from "./chain.ts";
+import { comments, pullOf, sha, type Write } from "./github.ts";
 
 const stack = chainStack();
 const { github, pushed, eachRunEvent, until, rows, managers, settled } = stack;

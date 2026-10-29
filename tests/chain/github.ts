@@ -24,6 +24,26 @@ export type Pull = {
 };
 export type Write = { method: string; path: string; body: unknown };
 
+export function sha(seed: string): string {
+  return new Bun.CryptoHasher("sha1").update(seed).digest("hex");
+}
+
+export function pullOf(number: number, head: string): Pull {
+  return {
+    number, title: "fix: widget sizing", body: "Fixes the widget's size.", author: "octocat", head,
+    files: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-export const size = 1;\n+export const size = 2;" }],
+    commits: ["fix: widget sizing"], labels: [], comments: [],
+  };
+}
+
+export function comments(writes: readonly Write[]): string[] {
+  return writes.filter((write) => write.method === "POST" && write.path.endsWith("/comments")).map((write) => String((write.body as { body: string }).body));
+}
+
+export function labelled(writes: readonly Write[]): string[] {
+  return writes.filter((write) => write.method === "POST" && write.path.endsWith("/labels")).flatMap((write) => (write.body as { labels: string[] }).labels);
+}
+
 /** A null `policy` is a repository with no policy file. */
 type Repo = { name: string; policy: string | null; pulls: Map<number, Pull>; checks: Map<string, CheckRun[]> };
 

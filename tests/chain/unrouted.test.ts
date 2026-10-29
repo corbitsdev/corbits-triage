@@ -1,7 +1,8 @@
 // A pull request opened while its listener is being replaced.
 import { expect, test } from "bun:test";
 import { TRIAGE_LISTENERS, VERDICT_LABELS } from "@corbits/triage-contracts";
-import { chainStack, UNROUTED, isLiveDeployment, sha, pullOf, comments, labelled, once } from "./chain.ts";
+import { chainStack, UNROUTED, isLiveDeployment, once } from "./chain.ts";
+import { sha, pullOf, comments, labelled } from "./github.ts";
 
 // Longer than the scenario runs, so only the hub's short retry and its pass on a listener starting can mail the head.
 const RECONCILE_INTERVAL_MS = 60 * 60_000;
