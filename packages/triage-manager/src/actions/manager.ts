@@ -209,7 +209,7 @@ const DoneInput = type({
   "reviewScope?": { output: { "skipped?": "string" } },
   "mirrorRules?": Output,
   "executeRules?": Output,
-  "reviewMailed?": { output: { "reviewer?": Reviewer } },
+  "reviewMailed?": { output: { reviewer: Reviewer } },
   "earlyReviewMailed?": { output: { "reviewer?": Reviewer } },
   "judgeMailed?": { output: { "reviewer?": Reviewer } },
   "postReview?": { output: { "threads?": { runId: "string", ids: "(number | null)[]" }, "unread?": "string" } },
@@ -263,9 +263,9 @@ function storable(reviewer: Reviewer): boolean {
   return reviewer.result === undefined || Buffer.byteLength(JSON.stringify(reviewer.result)) <= MAX_STORED_BYTES;
 }
 
-/** A result a later pass on `head` posts as it is: a decided verdict, or a code review. */
+/** A result a later pass on `head` keeps as it is: a decided verdict, or a code review's, which it posts, or its failure. */
 function lasting(reviewer: Reviewer, head: string): boolean {
-  if (reviewer.kind === "code-review") return !(CodeReviewOutput(reviewer.result) instanceof type.errors);
+  if (reviewer.kind === "code-review") return true;
   const verdict = JudgeVerdict(reviewer.result);
   return reviewer.kind === "judge" && !(verdict instanceof type.errors) && decided(verdict, head);
 }
@@ -273,8 +273,8 @@ function lasting(reviewer: Reviewer, head: string): boolean {
 /**
  * The reviewers to wait for. A result stays on its reviewer while another of this head is still out, so a judge that
  * reported before code review is not lost. Once nothing is waiting, only the lasting results of the pass's head stay, so
- * a later pass on it posts them and deploys no other; a degraded, undecided, failed or late one is dropped, so the next
- * event deploys its reviewer again. A result too large to store is dropped. Plus one mailed now.
+ * a later pass on it posts them and deploys no other; a judge's degraded, undecided, failed or late one is dropped, so
+ * the next event deploys the judge again. A result too large to store is dropped. Plus one mailed now.
  */
 function reviewersAfter(take: TakeOutput, mailed: readonly Reviewer[]): Reviewer[] {
   const { head } = take;

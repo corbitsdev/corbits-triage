@@ -105,6 +105,44 @@ describe("triage comment", () => {
     expect(comments).toEqual([other, { id: 100, user: APP, body: "<!-- corbits-triage -->\nOurs" }]);
   });
 
+  test("progress over CI progress written over a verdict writes, though the verdict and policy are the same", async () => {
+    const verdict = `<!-- corbits-triage ${JSON.stringify({ head: "abc123", policy: null, verdict: "pass", shows: "verdict" })} -->\n**Triage: Pass**`;
+    const progress = { ...MIRROR, onHead: "abc123", close: false };
+    const { gh, comments } = fakeGithub([{ id: 42, user: APP, body: verdict }]);
+    await mirror(gh, { ...progress, comment: "**Triage: In progress**\n\nwaiting for CI" }, login);
+    expect(await mirror(gh, { ...progress, comment: "**Triage: In progress**\n\nwaiting for code review", keepVerdict: { verdict: "pass", policy: null } }, login)).toMatchObject({ commentId: 42, updated: true });
+    expect(comments[0]!.body).toEndWith("waiting for code review");
+  });
+
+  test.each([
+    ["a comment from before the marker said what it shows is read as its verdict and kept", {}, true],
+    ["a comment that shows progress is written over", { shows: "progress" }, false],
+    ["a comment that shows its verdict is kept", { shows: "verdict" }, true],
+  ])("matching progress: %s", async (_name, shows, kept) => {
+    const body = `<!-- corbits-triage ${JSON.stringify({ head: "abc123", policy: null, verdict: "pass", ...shows })} -->\n**Triage: Pass**`;
+    const { gh, comments } = fakeGithub([{ id: 42, user: APP, body }]);
+    await mirror(gh, { ...MIRROR, comment: "**Triage: In progress**", onHead: "abc123", keepVerdict: { verdict: "pass", policy: null }, close: false }, login);
+    expect(comments[0]!.body === body).toBe(kept);
+  });
+
+  test("progress over a verdict made under another policy writes, though the verdict is the same", async () => {
+    const header = { head: "abc123", policy: { repo: { id: "art_policy", version: 1 } }, verdict: "fail", shows: "verdict" };
+    const { gh, comments } = fakeGithub([{ id: 42, user: APP, body: `<!-- corbits-triage ${JSON.stringify(header)} -->\n**Triage: Fail**` }]);
+    const keepVerdict = { verdict: "fail", policy: { repo: { id: "art_policy", version: 2 } } };
+    expect(await mirror(gh, { ...MIRROR, comment: "**Triage: In progress**", onHead: "abc123", keepVerdict, close: false }, login)).toMatchObject({ commentId: 42, updated: true });
+    expect(comments[0]!.body).toEndWith("\n**Triage: In progress**");
+  });
+
+  test("progress keeps a verdict on the head only while it is the pass's verdict", async () => {
+    const verdict = `<!-- corbits-triage ${JSON.stringify({ head: "abc123", policy: null, verdict: "fail", shows: "verdict" })} -->\n**Triage: Fail**`;
+    const progress = { ...MIRROR, comment: "**Triage: In progress**", onHead: "abc123", close: false };
+    const { gh, comments } = fakeGithub([{ id: 42, user: APP, body: verdict }]);
+    expect(await mirror(gh, { ...progress, keepVerdict: { verdict: "fail", policy: null } }, login)).toMatchObject({ commentId: 42, updated: false, kept: "verdict" });
+    expect(comments[0]!.body).toBe(verdict);
+    expect(await mirror(gh, { ...progress, keepVerdict: { verdict: "pass", policy: null } }, login)).toMatchObject({ commentId: 42, updated: true });
+    expect(comments[0]!.body).toEndWith("\n**Triage: In progress**");
+  });
+
   test("a refused edit of its own comment throws and posts nothing", async () => {
     const ours = { id: 42, user: APP, body: "<!-- corbits-triage -->\nOld" };
     const { gh, requests } = recorder(function respond(path, init) {
@@ -184,7 +222,7 @@ function timedGithub(state = "open", seed: TimedComment[] = []) {
 const POLICY_V1 = { repo: { id: "policy-1", version: 1 } };
 const POLICY_V2 = { repo: { id: "policy-1", version: 2 } };
 const PASSED = { repo: "acme/widgets", number: 8, labels: ["Triage: Ready"], owned: ["Triage: Ready", "Triage: Not Ready"], comment: "Passes.", close: false, header: { head: "abc", policy: POLICY_V1, verdict: "pass" } };
-const PASSED_BODY = `<!-- corbits-triage {"head":"abc","policy":{"repo":{"id":"policy-1","version":1}},"verdict":"pass"} -->\nPasses.`;
+const PASSED_BODY = `<!-- corbits-triage {"head":"abc","policy":{"repo":{"id":"policy-1","version":1}},"verdict":"pass","shows":"verdict"} -->\nPasses.`;
 
 describe("triage comment on a rerun", () => {
   test("the same head, policy, verdict and text writes nothing, not even an edit, even after the author spoke, and says since when", async () => {
@@ -217,8 +255,8 @@ describe("triage comment on a rerun", () => {
     await mirror(github.gh, failed, login);
     expect(github.writes()).toHaveLength(before);
     expect(github.comments.map((comment) => comment.body)).toEqual([
-      `<!-- corbits-triage-superseded {"head":"abc","policy":{"repo":{"id":"policy-1","version":1}},"verdict":"pass"} -->\nSuperseded by the comment below.`,
-      `<!-- corbits-triage {"head":"abc","policy":{"repo":{"id":"policy-1","version":2}},"verdict":"fail"} -->\nThis supersedes the comment above because the rules changed: repository policy version 1 → version 2.\n\nFails: CI.`,
+      `<!-- corbits-triage-superseded {"head":"abc","policy":{"repo":{"id":"policy-1","version":1}},"verdict":"pass","shows":"verdict"} -->\nSuperseded by the comment below.`,
+      `<!-- corbits-triage {"head":"abc","policy":{"repo":{"id":"policy-1","version":2}},"verdict":"fail","shows":"verdict"} -->\nThis supersedes the comment above because the rules changed: repository policy version 1 → version 2.\n\nFails: CI.`,
     ]);
   });
 

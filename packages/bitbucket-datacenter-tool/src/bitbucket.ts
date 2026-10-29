@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { errorText } from "@corbits/common";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, CODE_REVIEW_MARKER, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type VerdictStatus, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type VerdictStatus, type WrittenComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
 
@@ -150,14 +150,14 @@ function markedComment(comment: Comment): MarkedComment {
  * Only the token user's comments are read: an admin token could edit anyone's, and a copied marker must never decide
  * what Triage writes. Without a header the current comment is edited whatever it said before, keeping its verdict's header.
  */
-async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; number: number; body: string; header?: TriageHeader; branch: string | undefined }, user: TokenUser): Promise<WrittenComment> {
+async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; number: number; body: string; header?: TriageHeader; branch: string | undefined; keepVerdictOn?: KeptVerdict }, user: TokenUser): Promise<WrittenComment> {
   const { repo, number, header, branch } = input;
   const own = marked(await listComments(bb, repo, number), user);
   const host = { ...commentHost(bb, repo, number, new Map(own.map((c) => [c.id, c.version]))), changesSince: (from: string, to: string) => changesSince(bb, repo, branch, from, to) };
   const comments = own.map(markedComment);
   if (header) return writeHeadedComment(host, LINK_REFERENCE_MARKERS, comments, header, input.body);
   const current = comments.filter((c) => !LINK_REFERENCE_MARKERS.isSuperseded(c.body));
-  return writeUnheadedComment(host, LINK_REFERENCE_MARKERS, LINK_REFERENCE_MARKER, current, input.body);
+  return writeUnheadedComment(host, LINK_REFERENCE_MARKERS, LINK_REFERENCE_MARKER, current, input.body, input.keepVerdictOn);
 }
 
 async function deleteTriageComments(bb: BitbucketFetch, repo: string, number: number, user: TokenUser) {
@@ -225,6 +225,8 @@ export interface MirrorInput {
   statusHead?: string;
   /** Writes nothing once the pull request has moved past this head. */
   onHead?: string;
+  /** The pass's verdict and policy: a comment that already shows them for `onHead` is kept rather than written over. */
+  keepVerdict?: Omit<KeptVerdict, "head">;
   /** While this is the head, which may not be approved, the token user's approval is taken back. */
   notReadyHead?: string;
   /** While this is the head, which leaves the author nothing to fix, the token user's needs-work is taken back. */
@@ -250,6 +252,7 @@ async function takeBack(bb: BitbucketFetch, i: MirrorInput, pr: PullRequest, me:
 export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: BitbucketUser) {
   const { repo, number, status } = i;
   if (status && i.statusHead === undefined) throw new Error("a status needs the head it is for");
+  if (i.keepVerdict && i.onHead === undefined) throw new Error("keepVerdict needs the head it keeps a verdict on");
   const pr = await readPr(bb, repo, number);
   if (pr.state !== "OPEN") return { commentId: null, updated: false, sha: pr.sha, skipped: NOT_OPEN };
   if (i.onHead !== undefined && i.onHead !== pr.sha) return { commentId: null, updated: false, sha: pr.sha, skipped: HEAD_MOVED };
@@ -264,7 +267,7 @@ export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: Bitbucket
   }
   async function writeComment() {
     if (i.comment === "") await deleteTriageComments(bb, repo, number, await user());
-    return i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header, branch: pr.branch }, await user()) : null;
+    return i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header, branch: pr.branch, ...(i.keepVerdict && { keepVerdictOn: { head: i.onHead!, ...i.keepVerdict } }) }, await user()) : null;
   }
   async function writeStatus() {
     return status && setVerdictBuild(bb, i.statusHead!, status, posted ? commentUrl(pr, posted.commentId) : pr.url);
@@ -280,6 +283,7 @@ export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: Bitbucket
     updated: posted?.updated ?? false,
     sha: pr.sha,
     ...(posted?.unchanged && { unchanged: posted.unchanged }),
+    ...(posted?.kept && { kept: posted.kept }),
     ...(build && { build: build.build, buildWritten: build.written }),
     ...(dismissed && { dismissed }),
     ...(Object.keys(failed).length > 0 && { failed }),

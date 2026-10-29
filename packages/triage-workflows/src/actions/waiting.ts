@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABEL, WAITING_STATUS, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABEL, WAITING_STATUS, type KeptVerdict, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import { progressComment, type Awaits, type MarkArgs, type WaitingMark } from "../logic/render.js";
 
 /** `mark` is absent when there is nothing to take off, so nothing is written either. */
@@ -34,12 +34,15 @@ export function waitingMark(source: RepoSource, { repo, number, headSha }: { rep
     const marked = mark("waiting", source, pull, labels, ci, appLogin);
     return { ...marked, args: { ...marked.args, ...comment } };
   }
-  return "comment" in comment ? progressMark(source, pull, ["ci"], appLogin) : undefined;
+  return "comment" in comment ? progressMark(source, pull, ["ci"], appLogin, undefined) : undefined;
 }
 
-/** The in-progress comment alone on `pull`'s head, written once for each set of what it waits for. */
-export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Awaits[], appLogin: string | undefined): WaitingMark {
-  const args = { ...pull, labels: [], owned: [], comment: progressComment(awaits), ...(appLogin && { appLogin }) };
+/**
+ * The in-progress comment alone on `pull`'s head, written once for each set of what it waits for. With `keepVerdict`,
+ * the host keeps that verdict, under that policy, where it is already posted on the head rather than writing this over it.
+ */
+export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Awaits[], appLogin: string | undefined, keepVerdict: Omit<KeptVerdict, "head"> | undefined): WaitingMark {
+  const args = { ...pull, labels: [], owned: [], comment: progressComment(awaits), ...(keepVerdict && { keepVerdict }), ...(appLogin && { appLogin }) };
   return { effectId: `progress:${pull.repo.replace("/", "--")}:${pull.number}:${pull.onHead}:${awaits.join("+")}`, repoSource: source, args };
 }
 

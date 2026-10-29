@@ -602,7 +602,21 @@ any other tenant or an unknown sender.
   checks could still change, a degraded one or one over 256 KiB still goes up
   on the pass that collects it, and a failure or a missed deadline leaves the
   machine verdict to go up alone; none of them is kept, so the next event
-  deploys the judge again. A judge the release does not publish posts nothing.
+  deploys the judge again. The in-progress comment for code review that
+  follows the pass's verdict is written with `keepVerdict` set to that
+  verdict and its policy ref, so the host's mirror leaves a comment whose
+  marker shows the same verdict and policy for that head as it is and reports
+  `kept: "verdict"`. The marker says what the comment shows: a verdict
+  write sets `shows: "verdict"`, and a progress comment keeps the header of
+  the verdict it replaced, for the next verdict's note on what changed since,
+  with `shows: "progress"`, so it never counts as showing that verdict. A
+  comment written before the field is read as showing its verdict. While a judge is
+  out on an automatic pass, its progress is written with `keepVerdict` set to
+  the machine verdict, the one `verdict` would post were the judge to fail,
+  made from the rules alone with no model call, so a verdict the rules still
+  give stays until the judge reports, and one they no longer give is replaced; a verdict the rules no longer give, or one made under
+  another policy, is replaced as before, and CI running again on the
+  head or a Review again shows progress over a verdict. A judge the release does not publish posts nothing.
   When the policy turns code review on, the verdict's rules let it past, the
   hub read the head's review request and the release publishes a code review,
   a pass deploys it the same way (without one it declares no code-review
@@ -624,8 +638,10 @@ any other tenant or an unknown sender.
   decided verdict, so a later pass on that head whose rules still let code
   review past posts it with the verdict and deploys no other; a review that
   could not be mailed, reported a failure or ran past its deadline leaves the
-  verdict to go up alone and is deployed again on the next event. Each
-  reviewer keeps its head and deadline on the claim, so whichever manager
+  verdict to go up alone and stays on its reviewer as failed, so a later pass
+  on that head keeps the verdict and deploys no other until the head changes
+  or a Review again asks for one. Each reviewer keeps its head and deadline on
+  the claim, so whichever manager
   takes the next pass on that head sees a deadline that passed with no
   report. A pass after one that left reviewers out first reads each one's
   run through the stock run read, before take, so a reviewer that reported

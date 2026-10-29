@@ -78,6 +78,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
 ];
 
 const ARTIFACT_REF = obj({ id: str, version: { type: "number" } });
+const POLICY_REF = { type: ["object", "null"], properties: { repo: ARTIFACT_REF }, required: ["repo"] };
 
 const MIRROR_INPUT = obj({
   repo,
@@ -88,7 +89,7 @@ const MIRROR_INPUT = obj({
   header: {
     ...obj({
       head: str,
-      policy: { type: ["object", "null"], properties: { repo: ARTIFACT_REF }, required: ["repo"] },
+      policy: POLICY_REF,
       verdict: str,
     }),
     description: "What the comment is written for; an unchanged one is not written again",
@@ -101,6 +102,7 @@ const MIRROR_INPUT = obj({
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
+  keepVerdict: { ...obj({ verdict: str, policy: POLICY_REF }), description: "The pass's verdict and policy: a comment that already shows them for onHead is kept rather than written over" },
 }, ["repo", "number", "labels"]);
 
 const MIRROR_DESCRIPTION =
@@ -187,7 +189,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return readWindow(bb, reads, a);
     case "bitbucket_datacenter_mirror":
     case "bitbucket_datacenter_mirror_auto":
-      return mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, status: a.status, statusHead: a.statusHead, onHead: a.onHead, notReadyHead: a.notReadyHead, fixedHead: a.fixedHead }, user);
+      return mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, status: a.status, statusHead: a.statusHead, onHead: a.onHead, keepVerdict: a.keepVerdict, notReadyHead: a.notReadyHead, fixedHead: a.fixedHead }, user);
     case "bitbucket_datacenter_execute_action_auto":
       return runAction(bb, a, user);
     case "bitbucket_datacenter_send_code_review":

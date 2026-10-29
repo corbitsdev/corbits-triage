@@ -93,8 +93,45 @@ describe("mirror", () => {
     expect(first).toMatchObject({ commentId: 11, updated: false });
     expect(second).toMatchObject({ commentId: 11, updated: true });
     expect(third).toMatchObject({ commentId: 11, updated: false, unchanged: expect.stringContaining("unchanged since") });
-    expect(fake.comments.find((c) => c.id === 11)!.text).toBe(`[corbits-triage]: #${encodeURIComponent(JSON.stringify(HEADER))}\nStill pass`);
+    expect(fake.comments.find((c) => c.id === 11)!.text).toBe(`[corbits-triage]: #${encodeURIComponent(JSON.stringify({ ...HEADER, shows: "verdict" }))}\nStill pass`);
     expect(fake.comments.find((c) => c.id === 2)!.text).toBe("[corbits-triage]: #copied\nNot ours");
+  });
+
+  test("progress over CI progress written over a verdict writes, though the verdict and policy are the same", async () => {
+    const fake = fakeBitbucket();
+    await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    await mirror(fake.bb, { ...REQUEST, comment: "In progress: CI", onHead: "abc" }, user);
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "In progress: code review", onHead: "abc", keepVerdict: { verdict: "pass", policy: null } }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(fake.comments[0]!.text).toEndWith("\nIn progress: code review");
+  });
+
+  test.each([
+    ["a comment from before the marker said what it shows is read as its verdict and kept", {}, true],
+    ["a comment that shows progress is written over", { shows: "progress" }, false],
+    ["a comment that shows its verdict is kept", { shows: "verdict" }, true],
+  ])("matching progress: %s", async (_name, shows, kept) => {
+    const text = `[corbits-triage]: #${encodeURIComponent(JSON.stringify({ ...HEADER, ...shows }))}\nPass`;
+    const fake = fakeBitbucket({ comments: [{ id: 12, version: 0, text, author: BOT }] });
+    await mirror(fake.bb, { ...REQUEST, comment: "In progress", onHead: "abc", keepVerdict: { verdict: "pass", policy: null } }, user);
+    expect(fake.comments[0]!.text === text).toBe(kept);
+  });
+
+  test("progress over a verdict made under another policy writes, though the verdict is the same", async () => {
+    const fake = fakeBitbucket();
+    await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    const keepVerdict = { verdict: "pass", policy: { repo: { id: "art_policy", version: 2 } } };
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "In progress", onHead: "abc", keepVerdict }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(fake.comments[0]!.text).toEndWith("\nIn progress");
+  });
+
+  test("progress keeps a verdict on the head only while it is the pass's verdict", async () => {
+    const fake = fakeBitbucket();
+    await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    const progress = { ...REQUEST, comment: "In progress", onHead: "abc" };
+    expect(await mirror(fake.bb, { ...progress, keepVerdict: { verdict: "pass", policy: null } }, user)).toMatchObject({ commentId: 10, updated: false, kept: "verdict" });
+    expect(fake.comments[0]!.text).toEndWith("\nPass");
+    expect(await mirror(fake.bb, { ...progress, keepVerdict: { verdict: "fail", policy: null } }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(fake.comments[0]!.text).toEndWith("\nIn progress");
   });
 
   test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun", async () => {

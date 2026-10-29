@@ -10,7 +10,8 @@ import type { UnreadyOutput } from "./waiting.js";
 
 const MIRRORED_KINDS: readonly ActionKind[] = ["comment", "labels", "approve", "request-changes"];
 
-export type MirrorOutcome = { call: string; ok: boolean; error?: string; changeRequestsKept?: string; unchanged?: string; skipped?: string };
+/** `kept` when the host kept a verdict already on the head rather than writing a progress comment over it. */
+export type MirrorOutcome = { call: string; ok: boolean; error?: string; changeRequestsKept?: string; unchanged?: string; skipped?: string; kept?: "verdict" };
 /** Why a verdict was not posted: it could not be decided, it waits on the host's checks, it carries nothing to post, or the pr-triage role is granted no write. */
 export type NotPostedReason = "stale" | "waiting" | "no_request" | "no_grants";
 export type MirrorSkip = { call: string; skipped: true; reason: NotPostedReason };
@@ -62,15 +63,16 @@ function errorOf(r: ToolResult, failed: unknown): string | undefined {
 }
 
 function outcome(r: ToolResult): MirrorOutcome {
-  const { changeRequestsKept: kept, unchanged, skipped, failed } = data<{ changeRequestsKept?: unknown; unchanged?: unknown; skipped?: unknown; failed?: unknown }>(r) ?? {};
+  const { changeRequestsKept, unchanged, skipped, failed, kept: verdictKept } = data<{ changeRequestsKept?: unknown; unchanged?: unknown; skipped?: unknown; failed?: unknown; kept?: unknown }>(r) ?? {};
   const error = errorOf(r, failed);
   return {
     call: r.callId,
     ok: error === undefined,
     ...(error !== undefined && { error }),
-    ...(typeof kept === "string" ? { changeRequestsKept: kept } : {}),
+    ...(typeof changeRequestsKept === "string" ? { changeRequestsKept } : {}),
     ...(typeof unchanged === "string" ? { unchanged } : {}),
     ...(typeof skipped === "string" ? { skipped } : {}),
+    ...(verdictKept === "verdict" && { kept: verdictKept }),
   };
 }
 

@@ -599,6 +599,10 @@ export async function modelStack(repo: string, { pack, automatic, review }: { pa
       const unattributed = running.filter((id) => managed.get(id) === undefined && deployedWhile.get(id) === number);
       return { live: running.filter((id) => managed.get(id) === number), unattributed, lost, failed: failures, waited: waited.filter((id) => reviews.get(id) === number), exhausted: exhausted.filter(named).map((mail) => mail.to), mostTakes: Math.max(0, ...[...takes.values()].filter((taken) => taken.pull === number).map((taken) => taken.count)) };
     },
+    /** The code review runs deployed for pull request `number`. */
+    reviewRuns(number: number): string[] {
+      return [...reviews].filter(([, pull]) => pull === number).map(([id]) => id);
+    },
     /** The code review runs a manager read as ended, so a check of them can tell it played some. */
     reviewsRead(): string[] {
       return [...seen];

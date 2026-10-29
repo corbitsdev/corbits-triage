@@ -1,7 +1,7 @@
 // The manager's pass loop. Each fn is pure: it reads a finished pass's step outputs, keyed by step id.
 import { asRecord } from "@corbits/common";
 
-const DONES = ["done", "donePosted", "doneAwaiting", "doneReviewing", "doneJudging", "doneJudgingReview"];
+const DONES = ["done", "donePosted", "doneUnmailed", "doneAwaiting", "doneReviewOut", "doneReviewing", "doneJudging", "doneJudgingReview"];
 
 /** The pass's done, on whichever branch it ran. The loop reads a pass's outputs from its log, where each done it skipped holds the gate's skip marker. */
 function doneOf(output: unknown): Record<string, unknown> | undefined {

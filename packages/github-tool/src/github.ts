@@ -1,7 +1,7 @@
 import { errorText } from "@corbits/common";
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, listReviewThreads, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch, type ReviewThread } from "@corbits/github-reads";
-import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -24,6 +24,8 @@ export interface MirrorInput {
   header?: TriageHeader;
   /** Writes nothing once the pull request has moved past this head. */
   onHead?: string;
+  /** The pass's verdict and policy: a comment that already shows them for `onHead` is kept rather than written over. */
+  keepVerdict?: Omit<KeptVerdict, "head">;
   close: boolean;
 }
 
@@ -49,24 +51,26 @@ const HEAD_MOVED = "the pull request has moved past the head";
 /** `login` names the App's bot account, whose comments alone are read back. */
 export async function mirror(gh: GithubFetch, i: MirrorInput, login: string) {
   const { repo, number } = i;
+  if (i.keepVerdict && i.onHead === undefined) throw new Error("keepVerdict needs the head it keeps a verdict on");
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
   // A closed or merged pull request is history; a close Do reads it open before it comes here.
   if (pr.state !== "open") return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: NOT_OPEN };
   if (i.onHead !== undefined && i.onHead !== pr.head.sha) return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: HEAD_MOVED };
   // An empty comment means nothing is asked of the author, so an earlier one would be stale instructions.
   if (i.comment === "") await deleteTriageComments(gh, repo, number, login);
-  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined }, login) : null;
+  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined, ...(i.keepVerdict && { keepVerdictOn: { head: i.onHead!, ...i.keepVerdict } }) }, login) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   const kept = new Set((i.keep ?? []).map(lowercase));
   if (!current.some((name) => kept.has(lowercase(name)))) await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
-  return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }) };
+  return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }), ...(posted?.kept && { kept: posted.kept }) };
 }
 
 export type TriageCommentInput = {
   repo: string;
   number: number;
   body: string;
+  keepVerdictOn?: KeptVerdict;
 };
 
 type IssueCommentRow = { id: number; body?: unknown; user?: { login?: string; type?: string }; updated_at?: string };
@@ -115,7 +119,7 @@ function issueCommentHost(gh: GithubFetch, repo: string, number: number): Commen
 /** `login` names the App's bot account, whose comments alone are edited. */
 export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput, login: string): Promise<WrittenComment> {
   const current = marked(await issueComments(gh, input.repo, input.number), login).filter((c) => !HTML_MARKERS.isSuperseded(c.body)).map(markedComment);
-  return writeUnheadedComment(issueCommentHost(gh, input.repo, input.number), HTML_MARKERS, TRIAGE_COMMENT_MARKER, current, input.body);
+  return writeUnheadedComment(issueCommentHost(gh, input.repo, input.number), HTML_MARKERS, TRIAGE_COMMENT_MARKER, current, input.body, input.keepVerdictOn);
 }
 
 /**

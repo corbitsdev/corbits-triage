@@ -4,7 +4,7 @@ import { afterAll, expect, mock, setDefaultTimeout, test } from "bun:test";
 import { emptyPack } from "@corbits/triage-contracts";
 import { OWNER } from "../chain/github.ts";
 import { LETTERS, open, play, settle, walk, type Letter } from "./events.ts";
-import { broken } from "./rules.ts";
+import { broken, verdictKept } from "./rules.ts";
 import { MANAGER_RELEASE, modelStack, REVIEW_RELEASE } from "./stack.ts";
 
 /** Every sequence of up to this many events after the open is played and checked; one with an event that changes nothing is not extended. */
@@ -82,6 +82,20 @@ test.each([
 ])(`with code review on and its run %s, every sequence up to ${REVIEW_LENGTH} event after an open keeps the rules`, async (_fault, model) => {
   expect(await everySequence(REVIEW_LENGTH, model)).toEqual([]);
   expect(model.reviewsRead()).not.toEqual([]);
+});
+
+// The edit stands in for any mail on the same head after its verdict, as the hub's requeue once the base branch moved.
+test.each([
+  ["failing before it is ready", neverReady],
+  ["dying after it takes its mail", diesAfterMail],
+])("with code review on and its run %s, a mail on the head after its verdict keeps the verdict and deploys no other review", async (_fault, model) => {
+  const missed = model.github.misses.length;
+  const pull = await open(model, ++pulls);
+  await settle(model, pull);
+  expect(await play(model, pull, "edit")).toBe(true);
+  await settle(model, pull);
+  expect([...(await broken(model, pull, missed)), ...verdictKept(model, pull)]).toEqual([]);
+  expect(model.reviewRuns(pull.number)).toHaveLength(1);
 });
 
 test(`${WALKS} seeded walks of ${WALK_LENGTH} events keep the rules`, async () => {

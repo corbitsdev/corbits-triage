@@ -32,6 +32,24 @@ function oneVerdict(stack: Stack, pull: Played): string[] {
 }
 
 /**
+ * R1 on a pull request that kept its first head: once a verdict is up on it, no later write turns it back into a progress
+ * comment. Only sequences that play no Review again are checked with it, since one rightly shows code review in progress
+ * again on the same head.
+ */
+export function verdictKept(stack: Stack, pull: Played): string[] {
+  if (pull.heads.length !== 1) throw new Error(`verdictKept checks a pull request on one head, not ${pull.heads.length}`);
+  let posted = false;
+  for (const { body } of stack.writes(pull.number)) {
+    const text = (body as { body?: unknown } | null)?.body;
+    if (typeof text !== "string" || !isTriageComment(text)) continue;
+    const title = text.split("\n")[1]!;
+    if (Object.values(VERDICT_TITLES).includes(title)) posted = true;
+    else if (posted) return [`R1: the verdict on ${pull.heads[0]} was replaced by ${title}`];
+  }
+  return [];
+}
+
+/**
  * R3, over every write the pull request received, whichever pass made it: a Triage comment is created only while none
  * is current, so never twice unless the one before was superseded, and no label is added while it is on.
  */

@@ -155,6 +155,8 @@ const READ_DEFINITIONS: ToolDefinition[] = [
 
 const ARTIFACT_REF = obj({ id: str, version: { type: "number" } });
 
+const POLICY_REF = { type: ["object", "null"], properties: { repo: ARTIFACT_REF }, required: ["repo"] };
+
 const MIRROR_FIELDS = {
   repo,
   number: { type: "integer" },
@@ -165,7 +167,7 @@ const MIRROR_FIELDS = {
   header: {
     ...obj({
       head: str,
-      policy: { type: ["object", "null"], properties: { repo: ARTIFACT_REF }, required: ["repo"] },
+      policy: POLICY_REF,
       verdict: str,
     }),
     description: "What the comment is written for; an unchanged one is not written again",
@@ -173,6 +175,7 @@ const MIRROR_FIELDS = {
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
+  keepVerdict: { ...obj({ verdict: str, policy: POLICY_REF }), description: "The pass's verdict and policy: a comment that already shows them for onHead is kept rather than written over" },
 };
 const MIRROR_REQUIRED = ["repo", "number", "labels"];
 const MIRROR_INPUT = obj({ ...MIRROR_FIELDS, appLogin: APP_LOGIN }, [...MIRROR_REQUIRED, "appLogin"]);
@@ -334,6 +337,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
         comment: a.comment,
         header: a.header,
         onHead: a.onHead,
+        keepVerdict: a.keepVerdict,
         close: false,
       }, login);
       if ("skipped" in mirrored) return mirrored;
