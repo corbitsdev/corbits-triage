@@ -391,6 +391,8 @@ actions:
   pass:
     - do: approve
       when:
+        findings:
+          above: P2
         author:
           - users:
               - thegreataxios

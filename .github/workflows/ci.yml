@@ -121,7 +121,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: corbitsdev/corbits-triage/packages/policy-check-action@28a902e9a6e2f7ec53c581425b72d97c6800fc89
+      - uses: corbitsdev/corbits-triage/packages/policy-check-action@fadfc025e385b9c3e796d94c2c66a4435b4df12f
 
   publish:
     needs: [lint, typecheck, test, chain]
