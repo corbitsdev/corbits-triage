@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { projectQueue, type OpenPulls, type PullTriage } from "./hub-api.ts";
-import { knownItems, openItems, withPull, type Handled } from "./open-pulls.ts";
+import { knownItems, openItems, openOnEnabledRepo, withPull, type Handled } from "./open-pulls.ts";
 
 const KEY = "acme/widgets#8";
 
@@ -76,5 +76,14 @@ describe("answered reviews", () => {
     const answered = latest("run-3", "2026-10-01T01:00:00.000Z", "success", { reviewAnswered: true });
     expect(projectQueue([reviewed], [], open("a"))[0]?.reviewAnswered).toBe(false);
     expect(projectQueue([answered], [], open("a"))[0]?.reviewAnswered).toBe(true);
+  });
+});
+
+describe("pull page", () => {
+  test("a pull request listed open in a repository enabled only on Bitbucket Data Center needs no read of its own", () => {
+    const listing = { repos: [{ repo: "acme/widgets", source: "bitbucket-datacenter", prs: open("a").repos[0]!.prs }] } as OpenPulls;
+    const bitbucket = { name: "acme/widgets", connected: true, source: "bitbucket-datacenter" as const, enabled: true };
+    expect(openOnEnabledRepo(listing, [bitbucket], "acme/widgets", 8)).toBe(true);
+    expect(openOnEnabledRepo(listing, [{ ...bitbucket, enabled: false }, { ...bitbucket, source: "github" as const }], "acme/widgets", 8)).toBe(false);
   });
 });

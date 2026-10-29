@@ -15,8 +15,8 @@ function triageVerdictsQuery(tenantId: string | undefined) {
   return queryOptions({ queryKey: [TRIAGE_VERDICTS_QUERY_KEY, tenantId], queryFn, staleTime: VERDICTS_REFRESH_MS, refetchInterval: VERDICTS_REFRESH_MS });
 }
 
-function pullTriageQuery(tenantId: string | undefined, repo: string, number: number | null) {
-  const queryFn = tenantId === undefined || number === null ? skipToken : async function loadPull() {
+function pullTriageQuery(tenantId: string | undefined, repo: string | null, number: number | null) {
+  const queryFn = tenantId === undefined || repo === null || number === null ? skipToken : async function loadPull() {
     return loadTriageVerdicts(createHubTransport(), tenantId, { repo, number });
   };
   return queryOptions({ queryKey: [TRIAGE_VERDICTS_QUERY_KEY, tenantId, repo, number], queryFn, staleTime: VERDICTS_REFRESH_MS, refetchInterval: VERDICTS_REFRESH_MS });
@@ -35,7 +35,7 @@ export function useTriageVerdicts(): { data: TriageVerdicts | undefined; pending
   return { data: verdicts.data, pending: verdicts.isLoading, denied, error: denied ? null : verdicts.error };
 }
 
-export function usePullTriage(repo: string, number: number | null, enabled: boolean): TriageVerdicts | undefined {
+export function usePullTriage(repo: string | null, number: number | null, enabled: boolean): TriageVerdicts | undefined {
   const { snapshot } = usePortal();
   return useQuery({ ...pullTriageQuery(snapshot?.workspace.tenantId, repo, number), enabled }).data;
 }
