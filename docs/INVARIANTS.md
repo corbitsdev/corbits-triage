@@ -11,7 +11,7 @@ request that changes how Triage keeps a rule names the rule.
 - **R4** Unreadable input never passes or approves. No automated check yet.
 - **R5** Nothing is left running after the final post. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles, none of its managers is live, no live manager was deployed for no single pull request, and no mail for it was lost to a run that had ended. Settling delivers every queued mail, so no mail is left waiting by construction.
 - **R6** An older run never overwrites a newer head's comment, label, status or approval. No automated check yet.
-- **R7** A pull request waiting on CI or a reviewer always gets its verdict. No automated check yet; R1's check covers a head waiting on CI.
+- **R7** A pull request waiting on CI or a reviewer always gets its verdict. Checked by `tests/model/rules.postgres.test.ts`: R1's check covers a head waiting on CI, and with code review on, no manager waits on a code review run that has ended before it was ready.
 - **R8** GitHub and Bitbucket Data Center behave the same except where documented. No automated check yet.
 - **R9** Every reader of the policy agrees on what it says. No automated check yet.
 - **R10** The portal shows only what the hub says. No automated check yet.
@@ -33,6 +33,7 @@ sequence of none to two of them after the open is played and checked, 121 in all
 changes nothing is extended; then 300 seeded random walks of ten. A pull request settles once it is ready for
 review, CI on its head has finished and every mail has been delivered. A failure names its
 sequence, and a walk's seed, so it replays; a run that ends other than completed, or a sequence that throws, fails too.
+Every sequence of none or one event is played again with code review on, its run failing before it is ready.
 
 Stand-ins, and what they leave out:
 
@@ -48,13 +49,17 @@ Stand-ins, and what they leave out:
   rule that a draft's webhooks are dropped is played by the test.
 - The intake's hooks are fixed: the listener is always routable, no pull request is paused, the App's login is fixed,
   and code review and backlog reads are not served.
+- Code review's deploy records the run failed at once, as one whose sandbox never connects; a read of it after one that
+  showed it ended is refused and reported, so a manager that keeps waiting fails its mail without waiting out the
+  review's deadline. No code review runs or reports.
 - Runs use the real clock, so CI's start grace, the manager's poll and its lifetime are not played.
-- The policy is deterministic only, with no judge, no code review and no model.
+- The policy is deterministic only, with no judge and no model.
 
 ## Not covered by the model check
 
 - Interleaving inside a pass: a push or a second manager while a pass runs, and contention for the claim.
 - The cancellation window, `mailAccept` and the listener's `onTrigger` admission, and the real coalescer.
 - A fake clock for CI and lifetime timers.
-- Judge and code review stand-ins, and so R2.
+- A judge stand-in, a code review that runs and reports, and so R2.
+- A code review run that ends after it is ready: the manager still waits for its report until the review's deadline.
 - Every sequence of three events and more, which takes longer than CI allows on one shard; the seeded walks reach some.

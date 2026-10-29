@@ -574,8 +574,9 @@ any other tenant or an unknown sender.
   manager waits for them no longer) and `release.json` publishes a judge for the
   host, a pass deploys it under `workflow:*` `create` and `read` on exactly
   the judge's asset, which the definition declares when its module loads with
-  that release, mails it the rules output until the judge's one-hour deadline,
-  and posts only the in-progress comment. While those checks run, the judge is held and the pass
+  that release, mails it the rules output once its run is ready, giving up
+  as soon as the run ends first or at the judge's one-hour deadline, and
+  posts only the in-progress comment. While those checks run, the judge is held and the pass
   marks the head waiting, as a pass of deterministic rules does. The pass that
   collects the judge's report posts and executes its verdict, once that
   verdict names the pass's pull request, head and host: its judgement as the
@@ -595,8 +596,9 @@ any other tenant or an unknown sender.
   When the policy turns code review on, the verdict's rules let it past, the
   hub read the head's review request and the release publishes a code review,
   a pass deploys it the same way (without one it declares no code-review
-  asset, and the verdict goes up alone), mails it the request until the
-  review's one-hour deadline, and still posts only the in-progress comment
+  asset, and the verdict goes up alone), mails it the request once its run
+  is ready, giving up as soon as the run ends first or at the review's
+  one-hour deadline, and still posts only the in-progress comment
   while that review is out. A pass that mails the judge deploys code review with it when the
   block runs whatever the rules say (`when.rules: any`), since under `pass`
   the judge's rules could still shut the gate, unless `when.triage` leaves
@@ -706,8 +708,9 @@ any other tenant or an unknown sender.
 - A run sends mail only through an agent step's transport, so the listener
   and the manager mail through one agent whose
   director makes no model call: it runs its one tool, which waits for a
-  just-deployed run to reach a sidecar until a deadline and then mails it as
-  the sending run.
+  just-deployed run to publish its public key and then mails it as the
+  sending run, giving up as soon as the hub shows the run ended or at a
+  deadline.
 
 ## Triage pipeline
 

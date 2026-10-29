@@ -1,6 +1,7 @@
 // A run sends mail only through an agent step's transport. The mail agent's director makes no model call: it runs its
 // one tool on the step's input and replies with the tool's result.
 import { defineAgent, defineDirector, defineTool, type AgentDefinition, type BaseEnv, type ToolBundle } from "@intx/agent";
+import { WorkflowRunResponse } from "@intx/types";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import type { ReactorDirector } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
@@ -17,7 +18,7 @@ const READY_POLL_MS = 2_000;
 export const MailInput = type({ tenantId: "string > 0", to: "string > 0", content: "string > 0", "readyBy?": "string.date.iso" });
 export type MailInput = typeof MailInput.infer;
 
-const Run = type({ "sidecarId?": "string | null", "publicKey?": "string | null" });
+const Run = WorkflowRunResponse.pick("status", "publicKey");
 
 interface MailEnv extends BaseEnv {
   capabilities: RuntimeCapabilities;
@@ -27,7 +28,10 @@ interface MailEnv extends BaseEnv {
   };
 }
 
-/** Waits until the hub shows the run published a non-empty public key, the deploy ack. Stock never writes sidecarId. */
+/**
+ * Waits until the hub shows the run published a non-empty public key, the deploy ack, and stops at once when it shows
+ * the run ended, even with its key published. Stock never writes sidecarId.
+ */
 async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: string, signal: AbortSignal): Promise<void> {
   const hub = await env.capabilities.resolve("credentials").resolve(HUB_CREDENTIAL_HANDLE);
   if (hub.kind !== "http") throw new Error(`${HUB_CREDENTIAL_HANDLE} is ${hub.kind}, not http`);
@@ -36,6 +40,7 @@ async function untilReady(env: MailEnv, { tenantId, to }: MailInput, readyBy: st
     if (!response.ok) throw new Error(`reading run ${to} answered ${response.status}: ${await response.text()}`);
     const run = Run(await response.json());
     if (run instanceof type.errors) throw new Error(`run ${to}: ${run.summary}`);
+    if (run.status === "error" || run.status === "stopped") throw new Error(`run ${to} ended (${run.status}) before it was mailed`);
     if (run.publicKey) return;
     await sleep(READY_POLL_MS, undefined, { signal });
   }

@@ -89,7 +89,8 @@ const DeployInput = type({ payload: "unknown", take: { output: TakeOutput }, rul
 
 /**
  * Deploys the judge from the host's published release. It is mailed the rules output, and reports its verdict to the
- * hub, which wakes the pull request's manager. The mail waits for the new run until the judge's deadline.
+ * hub, which wakes the pull request's manager. The mail waits for the new run to publish its public key, giving up when
+ * the run ends first or at the judge's deadline.
  */
 export async function deployJudge(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ reviewer: Reviewer; mail: MailInput }> {
   const parsed = DeployInput(input);
@@ -110,8 +111,8 @@ export async function deployJudge(input: unknown, ctx: EffectContext, _signal: A
 const MailedInput = type({ deployJudge: { output: { reviewer: Reviewer } }, mailJudge: { output: { reply: "string" } } });
 
 /**
- * The judge becomes a reviewer to wait for once its mail went. A mail that failed by its deadline leaves the pass to
- * post the verdict without a judge.
+ * The judge becomes a reviewer to wait for once its mail went. A mail that failed, because the run ended before it was
+ * ready or its deadline passed, leaves the pass to post the verdict without a judge.
  */
 export async function judgeMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
   const parsed = MailedInput(input);
