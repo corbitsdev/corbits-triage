@@ -605,8 +605,10 @@ any other tenant or an unknown sender.
   deploys the judge again. The in-progress comment for code review that
   follows the pass's verdict is written with `keepVerdict` set to that
   verdict and its policy ref, so the host's mirror leaves a comment whose
-  marker holds the same verdict and policy for that head as it is and reports
-  `kept: "verdict"`; a verdict the rules no longer give, or one made under
+  marker shows the same verdict and policy for that head as it is and reports
+  `kept: "verdict"`. A progress comment keeps the header of the verdict it
+  replaced, for the next verdict's note on what changed since, marked
+  `progress`, so it never counts as showing that verdict; a verdict the rules no longer give, or one made under
   another policy, is replaced as before, and CI running again on the
   head or a Review again shows progress over a verdict. A judge the release does not publish posts nothing.
   When the policy turns code review on, the verdict's rules let it past, the

@@ -105,6 +105,15 @@ describe("triage comment", () => {
     expect(comments).toEqual([other, { id: 100, user: APP, body: "<!-- corbits-triage -->\nOurs" }]);
   });
 
+  test("progress over CI progress written over a verdict writes, though the verdict and policy are the same", async () => {
+    const verdict = `<!-- corbits-triage ${JSON.stringify({ head: "abc123", policy: null, verdict: "pass" })} -->\n**Triage: Pass**`;
+    const progress = { ...MIRROR, onHead: "abc123", close: false };
+    const { gh, comments } = fakeGithub([{ id: 42, user: APP, body: verdict }]);
+    await mirror(gh, { ...progress, comment: "**Triage: In progress**\n\nwaiting for CI" }, login);
+    expect(await mirror(gh, { ...progress, comment: "**Triage: In progress**\n\nwaiting for code review", keepVerdict: { verdict: "pass", policy: null } }, login)).toMatchObject({ commentId: 42, updated: true });
+    expect(comments[0]!.body).toEndWith("waiting for code review");
+  });
+
   test("progress over a verdict made under another policy writes, though the verdict is the same", async () => {
     const header = { head: "abc123", policy: { repo: { id: "art_policy", version: 1 } }, verdict: "fail" };
     const { gh, comments } = fakeGithub([{ id: 42, user: APP, body: `<!-- corbits-triage ${JSON.stringify(header)} -->\n**Triage: Fail**` }]);

@@ -297,7 +297,7 @@ describe("triage-manager", () => {
     }
     const waiting = commented([{ name: "build", status: "in_progress", conclusion: null }]);
     await runMail(github, wake(), waiting.host, fakeHub({ takes: [PASS], dones: [ENDED] }).hub);
-    expect(comment.body).toStartWith(`<!-- corbits-triage ${JSON.stringify({ head: before, policy: null, verdict: "pass" })} -->\n**Triage: In progress**`);
+    expect(comment.body).toStartWith(`<!-- corbits-triage ${JSON.stringify({ head: before, policy: null, verdict: "pass", progress: true })} -->\n**Triage: In progress**`);
 
     const failed = commented([{ name: "build", status: "completed", conclusion: "failure" }]);
     await runMail(github, wake(), failed.host, fakeHub({ takes: [PASS], dones: [ENDED] }).hub);

@@ -97,6 +97,14 @@ describe("mirror", () => {
     expect(fake.comments.find((c) => c.id === 2)!.text).toBe("[corbits-triage]: #copied\nNot ours");
   });
 
+  test("progress over CI progress written over a verdict writes, though the verdict and policy are the same", async () => {
+    const fake = fakeBitbucket();
+    await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    await mirror(fake.bb, { ...REQUEST, comment: "In progress: CI", onHead: "abc" }, user);
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "In progress: code review", onHead: "abc", keepVerdict: { verdict: "pass", policy: null } }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(fake.comments[0]!.text).toEndWith("\nIn progress: code review");
+  });
+
   test("progress over a verdict made under another policy writes, though the verdict is the same", async () => {
     const fake = fakeBitbucket();
     await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
