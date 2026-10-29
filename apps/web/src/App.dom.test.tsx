@@ -277,7 +277,7 @@ async function workspaceUnread(): Promise<PortalSnapshot> {
     throw new Error(`unexpected ${method} ${path}`);
   }
   const transport = { fetch, subscribe: () => () => {} } as unknown as Transport;
-  return loadPortal(transport, { kind: "member", workspace: connectedSnapshot.workspace, workspaces: [{ tenantId: "tenant", name: "Acme", slug: "acme" }], invitations: [] });
+  return loadPortal(transport, { kind: "member", workspace: connectedSnapshot.workspace, tenantName: "Acme", workspaces: [], invitations: [] });
 }
 
 test("a workspace that could not be read says so with Try again, instead of showing no repositories", async () => {
@@ -288,6 +288,7 @@ test("a workspace that could not be read says so with Try again, instead of show
   expect(document.querySelector(".page-notice")?.textContent).toContain("Couldn't read your workspace.");
   expect(document.querySelector("[role=alert]")?.textContent).toBe("The hub is unavailable.");
   expect(document.querySelector(".ws-name")?.textContent).toBe("Acme");
+  expect(document.querySelector(".nav-a .n")).toBeNull();
 });
 
 test("a retry that still cannot read the workspace says so", async () => {
