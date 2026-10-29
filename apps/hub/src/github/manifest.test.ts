@@ -51,7 +51,7 @@ async function signedInSession() {
 }
 
 async function activeMember() {
-  return { id: "prn_one" };
+  return { id: "prn_one", status: "active" };
 }
 
 async function deny(): Promise<boolean> {

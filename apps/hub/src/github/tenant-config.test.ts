@@ -17,7 +17,7 @@ const untouchable = new Proxy({}, {
 }) as never;
 
 function memberDb(principalId: string | undefined) {
-  return { query: { principal: { async findFirst() { return principalId && { id: principalId }; } } } } as never;
+  return { query: { principal: { async findFirst() { return principalId && { id: principalId, status: "active" }; } } } } as never;
 }
 
 async function signedIn(headers: Headers) {

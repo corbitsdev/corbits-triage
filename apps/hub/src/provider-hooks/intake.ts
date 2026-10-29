@@ -32,10 +32,6 @@ export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coa
 
 type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord; ns: CorbitsTriageNs };
 
-function json(status: number, body: unknown): Response {
-  return Response.json(body, { status });
-}
-
 function repoOf(intake: HookIntake): string {
   if (intake.kind === "pr") return intake.mail.repo;
   if (intake.kind === "base-move") return intake.move.repo;
@@ -48,12 +44,12 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
   function failed(at: Delivery, status: number, error: string, cause: unknown): Response {
     d.cache.forget(`${at.hook.credentialId}:${at.delivery}`);
     log({ level: "error", msg: error, delivery: at.delivery, event: at.event, repo: at.record.name, error: errorText(cause) });
-    return json(status, { error });
+    return Response.json({ error }, { status });
   }
 
   function ignored(at: Delivery, reason: string, extra: Record<string, unknown> = {}): Response {
     log({ level: "info", msg: "ignored", delivery: at.delivery, event: at.event, repo: at.record.name, hook: at.hook.credentialId, reason, ...extra });
-    return json(202, { status: "ignored" });
+    return Response.json({ status: "ignored" }, { status: 202 });
   }
 
   async function policyPush(at: Delivery, { repo }: PolicyPush): Promise<Response> {
@@ -66,7 +62,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     }
     if (!read) return ignored(at, "unconfigured_repo");
     log({ level: "info", msg: "policy_file_pushed", delivery: at.delivery, event: at.event, repo, status: read.status, hook: at.hook.credentialId });
-    return json(202, { status: "accepted" });
+    return Response.json({ status: "accepted" }, { status: 202 });
   }
 
   /** A moved base branch can change every other open pull request's conflicts, so they are triaged again; the merged one is not. */
@@ -78,7 +74,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       return failed(at, 500, "triage_state_unavailable", err);
     }
     log({ level: "info", msg: "base_moved", delivery: at.delivery, event: at.event, repo, merged, due, hook: at.hook.credentialId });
-    return json(202, { status: "accepted" });
+    return Response.json({ status: "accepted" }, { status: 202 });
   }
 
   async function pullRequest(at: Delivery, mail: PrMail, provider: ProviderHook): Promise<Response> {
@@ -96,11 +92,11 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     }
     if (!stored) {
       log({ level: "info", msg: "needs_setup", delivery: at.delivery, event: at.event, repo: at.record.name, hook: at.hook.credentialId });
-      return json(202, { status: "needs-setup" });
+      return Response.json({ status: "needs-setup" }, { status: 202 });
     }
     if ("pack" in stored && !hasEnabledRules(stored.pack)) {
       log({ level: "info", msg: "triage_skipped_no_rules", delivery: at.delivery, event: at.event, repo: at.record.name, pr: mail.prNumber, headSha: mail.headSha, hook: at.hook.credentialId });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     let accepted: Accepted;
     try {
@@ -120,7 +116,7 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       return failed(at, 500, "triage_state_unavailable", err);
     }
     log({ level: "info", msg: accepted, delivery: at.delivery, event: at.event, action: mail.action, repo: mail.repo, pr: mail.prNumber, headSha: mail.headSha, workflow: at.hook.workflow });
-    return json(202, { status: accepted });
+    return Response.json({ status: accepted }, { status: 202 });
   }
 
   return async function handleProviderHook(req: Request, provider: ProviderHook, tenantId: string): Promise<Response> {
@@ -128,25 +124,25 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     try {
       hook = await loadBridgeHook(d.db, d.cipher, provider.credential, tenantId);
     } catch {
-      return json(500, { error: "vault_error" });
+      return Response.json({ error: "vault_error" }, { status: 500 });
     }
-    if (!hook) return json(404, { error: "unknown_hook" });
+    if (!hook) return Response.json({ error: "unknown_hook" }, { status: 404 });
     const body = await readCappedBody(req);
     if (body === null) {
       log({ level: "warn", msg: "payload_too_large", hook: hook.credentialId });
-      return json(413, { error: "payload_too_large" });
+      return Response.json({ error: "payload_too_large" }, { status: 413 });
     }
     const delivery = req.headers.get(provider.headers.delivery);
     const event = req.headers.get(provider.headers.event);
     if (!verifyXHubSignature(hook.secret, req.headers.get(provider.headers.signature), body)) {
       log({ level: "warn", msg: "bad_signature", delivery, hook: hook.credentialId });
-      return json(401, { error: "invalid_signature" });
+      return Response.json({ error: "invalid_signature" }, { status: 401 });
     }
-    if (!delivery || !event) return json(400, { error: "missing_headers" });
+    if (!delivery || !event) return Response.json({ error: "missing_headers" }, { status: 400 });
     const key = `${hook.credentialId}:${delivery}`;
     if (d.cache.check(key)) {
       log({ level: "info", msg: "duplicate", delivery, event, hook: hook.credentialId });
-      return json(200, { status: "duplicate" });
+      return Response.json({ status: "duplicate" }, { status: 200 });
     }
     let payload: unknown;
     try {
@@ -156,26 +152,26 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     }
     if (!isRecord(payload)) {
       d.cache.forget(key);
-      return json(400, { error: "invalid_json" });
+      return Response.json({ error: "invalid_json" }, { status: 400 });
     }
     const intake = provider.normalize(event, delivery, payload);
     if (!intake) {
       log({ level: "info", msg: "ignored", delivery, event, hook: hook.credentialId });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     let tenantConfig: unknown;
     try {
       tenantConfig = await tenantConfigOf(d, hook.tenantId);
     } catch {
       d.cache.forget(key);
-      return json(500, { error: "tenant_config_unavailable" });
+      return Response.json({ error: "tenant_config_unavailable" }, { status: 500 });
     }
     const repo = repoOf(intake);
     const ns = triageNs(tenantConfig);
     const record = repoRecords(ns).find((row) => sourceOf(row) === provider.source && row.name === repo && row.connected);
     if (!record) {
       log({ level: "info", msg: "unknown_repo", delivery, event, repo, hook: hook.credentialId });
-      return json(404, { error: "unknown_repo" });
+      return Response.json({ error: "unknown_repo" }, { status: 404 });
     }
     d.heard(hook.tenantId, provider.source, repo);
     const at = { hook, delivery, event, record, ns };
