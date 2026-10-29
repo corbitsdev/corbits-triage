@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@corbits/react-ui";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { errorText } from "@corbits/common";
+import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query";
 import { Toaster } from "@corbits/react-ui/ui/toast";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { INVITE_PATH, PortalProvider, usePortal } from "./lib/portal.tsx";
@@ -114,6 +115,30 @@ function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
   );
 }
 
+function stillUnread(cause: Error, shown: string): string {
+  const text = errorText(cause);
+  if (text === shown) return "Still couldn't read your keys.";
+  return `Still couldn't read your keys: ${text}`;
+}
+
+function KeysUnreadNotice({ message }: { message: string }) {
+  const { refreshNow } = usePortal();
+  const retry = useMutation({
+    mutationFn: async function retryKeys() {
+      const next = await refreshNow();
+      if (next?.credentialsError) throw new Error(next.credentialsError);
+    },
+  });
+  return (
+    <main className="page-notice" id="main">
+      <p>Couldn't read your workspace's keys.</p>
+      <p role="alert" className="field-error">{message}</p>
+      <Button type="button" variant="outline" size="sm" disabled={retry.isPending} onClick={() => retry.mutate()}>{retry.isPending ? "Trying again…" : "Try again"}</Button>
+      {retry.error && <p role="alert" className="field-error">{stillUnread(retry.error, message)}</p>}
+    </main>
+  );
+}
+
 function InvitationGate({ invitations }: { invitations: WorkspaceOption[] }) {
   const signOut = useSignOutAfterSending();
   return (
@@ -151,6 +176,8 @@ function Gate() {
   if (snapshot.denied.repos || snapshot.denied.credentials || snapshot.denied.models) {
     return <DeniedGate snapshot={snapshot} />;
   }
+  // Without the keys, whether the workspace is connected is unknown, so it is never sent back to onboarding.
+  if (snapshot.credentialsError) return <Layout><KeysUnreadNotice message={snapshot.credentialsError} /></Layout>;
   if (!connected || path === "/connect") return <Connect />;
 
   if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;

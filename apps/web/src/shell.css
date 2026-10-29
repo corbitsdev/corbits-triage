@@ -141,6 +141,11 @@
 .audit td.detail { white-space: normal; overflow-wrap: anywhere; color: var(--ink-mute); }
 @media (max-width: 720px) { .audit { padding: 24px 16px 64px; } }
 
+/* Page notice: stands in for every page while the workspace cannot be read */
+.page-notice { flex: 1; padding: 40px; display: grid; gap: 12px; align-content: start; justify-items: start; font-size: 14px; color: var(--ink-mute); }
+.page-notice p { margin: 0; }
+@media (max-width: 720px) { .page-notice { padding: 24px 16px; } }
+
 /* Inbox: list and pane as two inset panels */
 .inbox { min-width: 0; min-height: 0; padding: 12px 12px 12px 0; display: grid; grid-template-columns: clamp(420px, 36vw, 500px) minmax(0, 1fr); gap: 12px; outline: none; }
 

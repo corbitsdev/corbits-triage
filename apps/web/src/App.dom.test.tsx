@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import App from "./App.tsx";
@@ -11,7 +11,7 @@ function Passthrough({ children }: { children: ReactNode }) {
   return children;
 }
 
-const snapshot: PortalSnapshot = {
+const connectedSnapshot: PortalSnapshot = {
   workspace: { tenantId: "tenant", principalId: "principal", userId: "user" },
   tenantName: "Acme",
   workspaces: [],
@@ -86,11 +86,31 @@ mock.module("./lib/session.tsx", () => ({
 
 mock.module("./lib/user-cache.tsx", () => ({ UserQueryCache: Passthrough }));
 
+let snapshot = connectedSnapshot;
+let connected = true;
+let refreshes = 0;
+let finishRefresh: () => void = function noRefresh() {};
+let failRefresh: (cause: Error) => void = function noRefresh() {};
+
+beforeEach(function connect() {
+  snapshot = connectedSnapshot;
+  connected = true;
+  refreshes = 0;
+});
+
+function refreshNow() {
+  refreshes += 1;
+  return new Promise<PortalSnapshot>((resolve, reject) => {
+    finishRefresh = () => resolve(snapshot);
+    failRefresh = reject;
+  });
+}
+
 mock.module("./lib/portal.tsx", () => ({
   ...portal,
   PortalProvider: Passthrough,
   usePortal() {
-    return { configured: true, loading: false, connected: true, readOnly: false, snapshot, invitations: [], unverified: false, loadError: "", warn() {}, notify() {} };
+    return { configured: true, loading: false, connected, readOnly: false, snapshot, invitations: [], unverified: false, loadError: "", warn() {}, notify() {}, refreshNow };
   },
 }));
 
@@ -195,4 +215,61 @@ test("Triage reads no policy when the workspace has no Triage role to allow acti
 
   expect(document.querySelector("h1")?.textContent).toBe("Triage");
   expect(requested.filter((url) => url.includes("/policy"))).toEqual([]);
+});
+
+test("a connected workspace whose keys could not be read sees a notice with Try again, not onboarding", async () => {
+  snapshot = { ...connectedSnapshot, credentialsError: "The hub is unavailable." };
+  connected = false;
+  renderAt("/");
+
+  expect(document.querySelector(".page-notice")?.textContent).toContain("Couldn't read your workspace's keys.");
+  expect(document.querySelector("[role=alert]")?.textContent).toBe("The hub is unavailable.");
+  expect(document.querySelector("#setup-title")).toBeNull();
+  await act(async () => {
+    [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(refreshes).toBe(1);
+  const pending = [...document.querySelectorAll("button")].find((button) => button.textContent === "Trying again…");
+  expect(pending?.disabled).toBe(true);
+  await act(async () => {
+    finishRefresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect([...document.querySelectorAll("button")].some((button) => button.textContent === "Try again")).toBe(true);
+});
+
+async function retryKeys(settle: () => void) {
+  snapshot = { ...connectedSnapshot, credentialsError: "The hub is unavailable." };
+  connected = false;
+  renderAt("/");
+  await act(async () => {
+    [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    settle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+test("a retry that still cannot read the keys says so and offers Try again again", async () => {
+  await retryKeys(() => finishRefresh());
+
+  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys.");
+  expect([...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.disabled).toBe(false);
+});
+
+test("a retry that cannot reach the service says so", async () => {
+  await retryKeys(() => failRefresh(new Error("Could not reach the service.")));
+
+  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys: Could not reach the service.");
+});
+
+test("a workspace with no keys stored is sent to onboarding", () => {
+  snapshot = { ...connectedSnapshot, repos: [] };
+  connected = false;
+  renderAt("/");
+
+  expect(document.querySelector("#setup-title")?.textContent).toBe("Set up Triage");
 });

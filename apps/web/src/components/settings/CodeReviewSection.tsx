@@ -101,7 +101,6 @@ export function CodeReviewSection({ snapshot }: { snapshot: PortalSnapshot }) {
             keys={anthropicSecrets(snapshot.credentials).filter(isActiveCredential)}
             denied={snapshot.denied.credentials}
             remove={removeAnthropic}
-            error={snapshot.credentialsError}
             editor={(onSaved) => <AnthropicKeyForm layout="row" submitLabel="Save key" onCancel={null} onSaved={onSaved} />}
           />
         </div>
