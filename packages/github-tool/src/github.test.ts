@@ -114,6 +114,22 @@ describe("triage comment", () => {
     expect(comments[0]!.body).toEndWith("waiting for code review");
   });
 
+  test("a verdict written before verdicts said what they show gains the marker when re-posted, and is then kept; a legacy progress comment is not", async () => {
+    const legacy = `<!-- corbits-triage {"head":"abc","policy":{"repo":{"id":"policy-1","version":1}},"verdict":"pass"} -->\nPasses.`;
+    const github = timedGithub("open", [{ id: 100, user: APP, body: legacy, updated_at: "2026-10-12T00:00:00.000Z" }]);
+    expect(await mirror(github.gh, PASSED, login)).toMatchObject({ commentId: 100, updated: true });
+    expect(github.comments[0]!.body).toBe(PASSED_BODY);
+    const { header: _header, ...unheaded } = PASSED;
+    const progress = { ...unheaded, comment: "**Triage: In progress**", onHead: "abc", keepVerdict: { verdict: "pass", policy: POLICY_V1 } };
+    expect(await mirror(github.gh, progress, login)).toMatchObject({ commentId: 100, kept: "verdict" });
+
+    const stale = `<!-- corbits-triage {"head":"abc","policy":{"repo":{"id":"policy-1","version":1}},"verdict":"pass"} -->\n**Triage: In progress**`;
+    const another = timedGithub("open", [{ id: 100, user: APP, body: stale, updated_at: "2026-10-12T00:00:00.000Z" }]);
+    await mirror(another.gh, PASSED, login);
+    expect(another.comments[0]!.body).toBe(PASSED_BODY);
+    expect(another.writes().filter((write) => write.method === "PATCH")).toHaveLength(1);
+  });
+
   test("a comment written before verdicts said what they show is never kept, whatever it shows", async () => {
     const legacy = `<!-- corbits-triage ${JSON.stringify({ head: "abc123", policy: null, verdict: "pass" })} -->\n**Triage: In progress**`;
     const { gh, comments } = fakeGithub([{ id: 42, user: APP, body: legacy }]);

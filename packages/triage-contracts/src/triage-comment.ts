@@ -188,8 +188,9 @@ export async function writeUnheadedComment(host: CommentHost, markers: MarkerFor
 }
 
 /**
- * Writes nothing when Triage's own comment already says this for this head, policy versions and verdict; supersedes it
- * when only the rules changed the verdict on the same head; otherwise edits it in place. `own` holds only comments
+ * Writes nothing when Triage's own comment already says this for this head, policy versions and verdict, but its marker
+ * when that does not yet say it shows the verdict; supersedes it when only the rules changed the verdict on the same
+ * head; otherwise edits it in place. `own` holds only comments
  * Triage itself wrote, so a copied marker never decides what Triage writes. The earlier comment is marked superseded
  * before the new one is posted, so a retry never leaves two current comments.
  */
@@ -201,7 +202,13 @@ export async function writeHeadedComment(host: CommentHost, markers: MarkerForma
   const shown = note ? `${text}\n\n${note}` : text;
   const noted: TriageHeader = { ...header, ...(note && { changed: note }), shows: "verdict" };
   const since = latest && unchangedSince(markers, latest, header, shown);
-  if (latest && since) return { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
+  if (latest && since) {
+    const unchanged = { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
+    if (before?.shows === "verdict") return unchanged;
+    // A verdict written before `shows` existed gets the full marker in place, its text kept, so a later progress keeps it.
+    const upgraded = await host.edit(latest.id, `${markers.current(noted)}\n${latest.body.slice(latest.body.indexOf("\n") + 1)}`);
+    return upgraded === undefined ? unchanged : { commentId: upgraded, updated: true };
+  }
   const superseded = before !== undefined && supersedes(before, header)
     && await host.edit(latest!.id, `${markers.superseded(before)}\nSuperseded by the comment below.`) !== undefined;
   const earlier = earlierHeader(markers, own, current, superseded);

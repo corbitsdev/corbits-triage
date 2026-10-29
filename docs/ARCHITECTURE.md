@@ -609,7 +609,9 @@ any other tenant or an unknown sender.
   `kept: "verdict"`. A verdict write marks its header `shows: "verdict"`; a
   progress comment keeps the header of the verdict it replaced, for the next
   verdict's note on what changed since, without it, so neither a progress
-  comment nor one written before the field counts as showing that verdict. While a judge is
+  comment nor one written before the field counts as showing that verdict;
+  re-posting the same verdict over an older comment that shows it adds the
+  field to its marker in one edit. While a judge is
   out on an automatic pass, its progress is written with `keepVerdict` set to
   the machine verdict, the one `verdict` would post were the judge to fail,
   made from the rules alone with no model call, so a verdict the rules still

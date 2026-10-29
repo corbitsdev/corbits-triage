@@ -105,6 +105,19 @@ describe("mirror", () => {
     expect(fake.comments[0]!.text).toEndWith("\nIn progress: code review");
   });
 
+  test("a verdict written before verdicts said what they show gains the marker when re-posted, and is then kept; a legacy progress comment is not", async () => {
+    const legacyMarker = `[corbits-triage]: #${encodeURIComponent(JSON.stringify(HEADER))}`;
+    const fake = fakeBitbucket({ comments: [{ id: 12, version: 0, text: `${legacyMarker}\nPass`, author: BOT }] });
+    expect(await mirror(fake.bb, { ...REQUEST, header: HEADER }, user)).toMatchObject({ commentId: 12, updated: true });
+    expect(fake.comments[0]!.text).toBe(`[corbits-triage]: #${encodeURIComponent(JSON.stringify({ ...HEADER, shows: "verdict" }))}\nPass`);
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "In progress", onHead: "abc", keepVerdict: { verdict: "pass", policy: null } }, user)).toMatchObject({ commentId: 12, kept: "verdict" });
+
+    const stale = fakeBitbucket({ comments: [{ id: 12, version: 0, text: `${legacyMarker}\nIn progress`, author: BOT }] });
+    await mirror(stale.bb, { ...REQUEST, header: HEADER }, user);
+    expect(stale.comments[0]!.text).toBe(`[corbits-triage]: #${encodeURIComponent(JSON.stringify({ ...HEADER, shows: "verdict" }))}\nPass`);
+    expect(stale.writes.filter((write) => write.method === "PUT" && write.path.includes("/comments/"))).toHaveLength(1);
+  });
+
   test("a comment written before verdicts said what they show is never kept, whatever it shows", async () => {
     const legacy = { id: 12, version: 0, text: `[corbits-triage]: #${encodeURIComponent(JSON.stringify(HEADER))}\nIn progress`, author: BOT };
     const fake = fakeBitbucket({ comments: [legacy] });
