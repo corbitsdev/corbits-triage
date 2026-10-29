@@ -34,14 +34,14 @@ export function waitingMark(source: RepoSource, { repo, number, headSha }: { rep
     const marked = mark("waiting", source, pull, labels, ci, appLogin);
     return { ...marked, args: { ...marked.args, ...comment } };
   }
-  return "comment" in comment ? progressMark(source, pull, ["ci"], appLogin, false) : undefined;
+  return "comment" in comment ? progressMark(source, pull, ["ci"], appLogin, undefined) : undefined;
 }
 
 /**
- * The in-progress comment alone on `pull`'s head, written once for each set of what it waits for. With `keepVerdict`
- * the host keeps a verdict already posted on the head rather than writing this over it.
+ * The in-progress comment alone on `pull`'s head, written once for each set of what it waits for. With `keepVerdict`,
+ * the host keeps that verdict where it is already posted on the head rather than writing this over it.
  */
-export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Awaits[], appLogin: string | undefined, keepVerdict: boolean): WaitingMark {
+export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Awaits[], appLogin: string | undefined, keepVerdict: string | undefined): WaitingMark {
   const args = { ...pull, labels: [], owned: [], comment: progressComment(awaits), ...(keepVerdict && { keepVerdict }), ...(appLogin && { appLogin }) };
   return { effectId: `progress:${pull.repo.replace("/", "--")}:${pull.number}:${pull.onHead}:${awaits.join("+")}`, repoSource: source, args };
 }

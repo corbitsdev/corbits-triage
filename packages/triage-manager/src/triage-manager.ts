@@ -38,9 +38,9 @@ function hubAction(handler: string, input: Selector, after: readonly string[]) {
   return action({ handler, input, after, credentials: [HUB_CREDENTIAL_HANDLE], effect: { requires: [HUB_WRITE] } });
 }
 
-/** The in-progress comment of a pass that ends waiting for a reviewer, before its done. */
-function progressAction(sources: Sources, mailed: readonly string[], after: readonly string[]) {
-  return action({ handler: "progress", input: { merge: [MAIL, stepsOf("take", "rules", ...mailed)] }, after, credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } });
+/** The in-progress comment of a pass that ends waiting for a reviewer, before its done; `read` are the steps it reads past take and rules. */
+function progressAction(sources: Sources, read: readonly string[], after: readonly string[]) {
+  return action({ handler: "progress", input: { merge: [MAIL, stepsOf("take", "rules", ...read)] }, after, credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } });
 }
 
 /**
@@ -59,7 +59,8 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
     reviewMailed: action({ handler: "reviewMailed", input: stepsOf("deployReview", "mailReview"), after: ["mailReview"] }),
     reviewSent: gate({ when: { from: "steps.reviewMailed.output.post" }, then: "mirrorRules", else: "progressReviewing", after: ["reviewMailed"] }),
-    progressReviewing: progressAction(sources, ["reviewMailed"], ["reviewSent"]),
+    // The only progress that follows the pass's verdict, which it keeps where that is already posted on the head.
+    progressReviewing: progressAction(sources, ["cleared", "reviewMailed"], ["reviewSent"]),
     // A pass that mailed its review records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
     doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "reviewMailed")] }, ["progressReviewing"]),
     posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "progressAwaiting", after: ["reviewing"] }),

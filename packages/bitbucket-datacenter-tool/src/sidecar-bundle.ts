@@ -101,7 +101,7 @@ const MIRROR_INPUT = obj({
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
-  keepVerdict: { type: "boolean", description: "Keep a comment that already holds a verdict for onHead rather than writing comment over it" },
+  keepVerdict: { ...str, description: "The pass's verdict: a comment that already holds it for onHead is kept rather than written over" },
 }, ["repo", "number", "labels"]);
 
 const MIRROR_DESCRIPTION =

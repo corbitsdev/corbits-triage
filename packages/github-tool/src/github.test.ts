@@ -105,13 +105,13 @@ describe("triage comment", () => {
     expect(comments).toEqual([other, { id: 100, user: APP, body: "<!-- corbits-triage -->\nOurs" }]);
   });
 
-  test("progress with keepVerdict keeps a verdict on the head, and writes over one without it", async () => {
-    const verdict = `<!-- corbits-triage ${JSON.stringify({ head: "abc123", policy: null, verdict: "pass" })} -->\n**Triage: Pass**`;
+  test("progress keeps a verdict on the head only while it is the pass's verdict", async () => {
+    const verdict = `<!-- corbits-triage ${JSON.stringify({ head: "abc123", policy: null, verdict: "fail" })} -->\n**Triage: Fail**`;
     const progress = { ...MIRROR, comment: "**Triage: In progress**", onHead: "abc123", close: false };
     const { gh, comments } = fakeGithub([{ id: 42, user: APP, body: verdict }]);
-    expect(await mirror(gh, { ...progress, keepVerdict: true }, login)).toMatchObject({ commentId: 42, updated: false, kept: "verdict" });
+    expect(await mirror(gh, { ...progress, keepVerdict: "fail" }, login)).toMatchObject({ commentId: 42, updated: false, kept: "verdict" });
     expect(comments[0]!.body).toBe(verdict);
-    expect(await mirror(gh, progress, login)).toMatchObject({ commentId: 42, updated: true });
+    expect(await mirror(gh, { ...progress, keepVerdict: "pass" }, login)).toMatchObject({ commentId: 42, updated: true });
     expect(comments[0]!.body).toEndWith("\n**Triage: In progress**");
   });
 

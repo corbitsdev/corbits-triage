@@ -1,7 +1,7 @@
 import { errorText } from "@corbits/common";
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, listReviewThreads, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch, type ReviewThread } from "@corbits/github-reads";
-import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -24,8 +24,8 @@ export interface MirrorInput {
   header?: TriageHeader;
   /** Writes nothing once the pull request has moved past this head. */
   onHead?: string;
-  /** Keeps a comment that already holds a verdict for `onHead` rather than writing this one over it. */
-  keepVerdict?: boolean;
+  /** The pass's verdict: a comment that already holds it for `onHead` is kept rather than written over. */
+  keepVerdict?: string;
   close: boolean;
 }
 
@@ -58,7 +58,7 @@ export async function mirror(gh: GithubFetch, i: MirrorInput, login: string) {
   if (i.onHead !== undefined && i.onHead !== pr.head.sha) return { commentId: null, updated: false, closed: false, sha: pr.head.sha, skipped: HEAD_MOVED };
   // An empty comment means nothing is asked of the author, so an earlier one would be stale instructions.
   if (i.comment === "") await deleteTriageComments(gh, repo, number, login);
-  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined, ...(i.keepVerdict && { keepVerdictOn: i.onHead }) }, login) : null;
+  const posted = i.comment ? await writeTriageComment(gh, { repo, number, body: i.comment, header: i.header, branch: pr.head.repo?.id === pr.base.repo.id ? pr.head.ref : undefined, ...(i.keepVerdict && { keepVerdictOn: { head: i.onHead!, verdict: i.keepVerdict } }) }, login) : null;
   const current: string[] = pr.labels.map((label: { name: string }) => label.name);
   const kept = new Set((i.keep ?? []).map(lowercase));
   if (!current.some((name) => kept.has(lowercase(name)))) await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
@@ -70,7 +70,7 @@ export type TriageCommentInput = {
   repo: string;
   number: number;
   body: string;
-  keepVerdictOn?: string;
+  keepVerdictOn?: KeptVerdict;
 };
 
 type IssueCommentRow = { id: number; body?: unknown; user?: { login?: string; type?: string }; updated_at?: string };

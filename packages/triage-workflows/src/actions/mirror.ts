@@ -63,13 +63,13 @@ function errorOf(r: ToolResult, failed: unknown): string | undefined {
 }
 
 function outcome(r: ToolResult): MirrorOutcome {
-  const { changeRequestsKept: kept, unchanged, skipped, failed, kept: verdictKept } = data<{ changeRequestsKept?: unknown; unchanged?: unknown; skipped?: unknown; failed?: unknown; kept?: unknown }>(r) ?? {};
+  const { changeRequestsKept, unchanged, skipped, failed, kept: verdictKept } = data<{ changeRequestsKept?: unknown; unchanged?: unknown; skipped?: unknown; failed?: unknown; kept?: unknown }>(r) ?? {};
   const error = errorOf(r, failed);
   return {
     call: r.callId,
     ok: error === undefined,
     ...(error !== undefined && { error }),
-    ...(typeof kept === "string" ? { changeRequestsKept: kept } : {}),
+    ...(typeof changeRequestsKept === "string" ? { changeRequestsKept } : {}),
     ...(typeof unchanged === "string" ? { unchanged } : {}),
     ...(typeof skipped === "string" ? { skipped } : {}),
     ...(verdictKept === "verdict" && { kept: verdictKept }),
