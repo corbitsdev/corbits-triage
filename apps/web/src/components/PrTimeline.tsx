@@ -32,7 +32,7 @@ function VerdictRow({ verdict, pack }: { verdict: TimelineEntry; pack: CheckPack
 
 export function PrTimeline({ item }: { item: PrItem }) {
   const timeline = usePrTimeline(item.repo, item.number);
-  const pack = useRepoPack(item.repo);
+  const pack = useRepoPack(item.repo, item.source);
   const entries = timeline.data?.entries ?? [];
   const trend = entries.flatMap((verdict) => (verdict.settled && verdict.readiness !== null ? [verdict.readiness] : []));
 

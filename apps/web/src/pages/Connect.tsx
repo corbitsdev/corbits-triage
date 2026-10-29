@@ -21,7 +21,8 @@ import {
 import { useGithubSync } from "../lib/github-sync.ts";
 import { counted } from "../lib/plural.ts";
 import { usePortal } from "../lib/portal.tsx";
-import { hostedRepos, sameRepo } from "../lib/repo-rows.ts";
+import { sameRepo } from "../lib/repo-id.ts";
+import { hostedRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { CopyField } from "../components/CopyField.tsx";
 import { BitbucketDatacenterSource } from "../components/settings/BitbucketDatacenterSource.tsx";

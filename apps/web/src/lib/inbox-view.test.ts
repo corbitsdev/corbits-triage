@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { triageStopped } from "@corbits/triage-contracts";
 import type { CheckResult, PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
+import { repoKey } from "./repo-id.ts";
 import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, primaryAction, readyToMerge, stoppedNotes, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
 
-const READY = new Set(["acme/widgets"]);
+const READY = new Set([repoKey({ name: "acme/widgets" })]);
 
 function item(overrides: Partial<PrItem>): PrItem {
   const base: PrItem = {

@@ -8,6 +8,7 @@ import { deleteGrant, type HubGrant, type PortalSnapshot, type RepoRecord } from
 import { createHubTransport } from "../../lib/hub-transport.ts";
 import { DO_NAMES } from "../../lib/pack-prose.ts";
 import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
+import { repoKey } from "../../lib/repo-id.ts";
 import { useAllowed, useGrants, useRoles } from "../../lib/tenant-entities.ts";
 import { MergeCaution } from "../repo-panel/MergeCaution.tsx";
 
@@ -90,7 +91,7 @@ export function TriageAutomation({ snapshot }: { snapshot: PortalSnapshot }) {
       <div className="source-body">
         <div className="sentences">
           {repos.length === 0 ? <div className="sentence"><span className="txt">No repository is enabled yet.</span></div> : null}
-          {repos.map((repo) => <AutomationRow key={`${repo.source}:${repo.name}`} tenantId={snapshot.workspace.tenantId} repo={repo} grants={held} ask={ask} disabled={readOnly} />)}
+          {repos.map((repo) => <AutomationRow key={repoKey(repo)} tenantId={snapshot.workspace.tenantId} repo={repo} grants={held} ask={ask} disabled={readOnly} />)}
         </div>
       </div>
     </div>

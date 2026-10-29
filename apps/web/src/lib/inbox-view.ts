@@ -1,6 +1,7 @@
 import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, triageStopped, type AuthorKind, type AwaitedStage } from "@corbits/triage-contracts";
 import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
 import { holdsActionForYou, mergesOnItsOwn, pendingDos, triageActed } from "./pending-dos.ts";
+import { repoKey } from "./repo-id.ts";
 import { priorityRank } from "./triage-view.ts";
 
 export type InboxAction = "decide" | "review" | "unblock" | "merge" | "failed";
@@ -233,10 +234,14 @@ export function actionMode(item: PrItem): ActionMode | null {
   return { mode: nextStepIsYours(item) ? "person" : "automatic", ...acted };
 }
 
+function itemRepoKey(item: PrItem): string {
+  return repoKey({ name: item.repo, source: item.source });
+}
+
 /** Triage decides nothing in a repository whose policy cannot run, so its pull requests waiting on Triage wait on its setup instead. */
 export function waitsOnIn(entry: OpenItem, needsSetup: ReadonlySet<string>): WaitsOn {
   const waits = waitsOn(entry.item, entry.handled);
-  return waits === "triage" && needsSetup.has(entry.item.repo) ? "setup" : waits;
+  return waits === "triage" && needsSetup.has(itemRepoKey(entry.item)) ? "setup" : waits;
 }
 
 export function primaryLabel(action: PrimaryAction): string {
@@ -263,7 +268,7 @@ export function groupInbox(items: PrItem[], ready: ReadonlySet<string>): InboxVi
   const groups = INBOX_ACTION_ORDER
     .map((action) => ({ action, label: INBOX_ACTION_LABEL[action], items: sorted.filter((item) => inNeedsYou(item) && listedAction(item) === action) }))
     .filter((group) => group.items.length > 0);
-  return { groups, awaiting: items.filter((item) => ready.has(item.repo) && !triageStoppedOn(item) && (inboxAction(item) === null || progressText(item) !== null)).length };
+  return { groups, awaiting: items.filter((item) => ready.has(itemRepoKey(item)) && !triageStoppedOn(item) && (inboxAction(item) === null || progressText(item) !== null)).length };
 }
 
 export function awaitingText(count: number): string {
@@ -332,7 +337,7 @@ export type OpenItem = { item: PrItem; handled: HandledMark | null };
 
 /** A pending approval or held action still needs a person after its repository's triage is turned off. */
 export function allOpen(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
-  return open.filter((entry) => enabled.has(entry.item.repo) || awaitsYourDecision(entry.item));
+  return open.filter((entry) => enabled.has(itemRepoKey(entry.item)) || awaitsYourDecision(entry.item));
 }
 
 function needsYouEntry(entry: OpenItem): boolean {

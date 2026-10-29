@@ -4,7 +4,7 @@ import { exportPolicyFile, loadPolicyUpgrades, patchPolicyFile } from "./hub-api
 import { createHubTransport } from "./hub-transport.ts";
 import { POLICY_FILE_QUERY_KEY } from "./policy-file.ts";
 import { usePortal } from "./portal.tsx";
-import { sameRepo, type RepoId } from "./repo-rows.ts";
+import { sameRepo, type RepoId } from "./repo-id.ts";
 
 export type PolicyUpgradeRow = PolicyUpgrades["repos"][number];
 

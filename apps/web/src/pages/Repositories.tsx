@@ -18,6 +18,7 @@ import { rowFor, upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.
 import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
+import { repoKey } from "../lib/repo-id.ts";
 import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { relativeTime } from "../lib/triage-view.ts";
@@ -75,8 +76,7 @@ export default function Repositories() {
   const items = useQueueItems();
   const loading = useQueueLoading();
   const { data: openPulls, error: pullsError } = useOpenPulls();
-  const names = useMemo(() => repos.map((repo) => repo.name), [repos]);
-  const packs = useCheckPacks(names);
+  const packs = useCheckPacks(repos);
   const upgrades = usePolicyUpgrades();
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const active = useMemo(() => hostedRepos(verdicts.data?.active ?? []), [verdicts.data]);
@@ -135,7 +135,7 @@ export default function Repositories() {
     const label = found && upgradeLabel(found);
     if (found?.pull && !found.pullUnread) return <span className="hl wait"><span className="dot" />{label}</span>;
     if (label) return <HealthMark health={{ tone: "warn", label }} />;
-    if (packs.get(row.name)?.pending) return null;
+    if (packs.get(repoKey(row))?.pending) return null;
     return row.health.tone === "warn" ? <HealthMark health={row.health} /> : live(<HealthMark health={row.health} />);
   }
 
@@ -154,7 +154,7 @@ export default function Repositories() {
         </td>
         <td className="c-n mono">{pulls && live(pulls.open)}</td>
         <td className="c-n mono">{"error" in row.pulls ? <span title={row.pulls.error}>{hostName(row.source)} error</span> : live(row.pulls.needsYou)}</td>
-        <td className="c-checks">{checksLabel(packs.get(row.name))}</td>
+        <td className="c-checks">{checksLabel(packs.get(repoKey(row)))}</td>
         <td className="c-own" title={pulls?.owners.join(", ")}>{pulls && live(ownersLabel(pulls.owners))}</td>
         <td className="c-act">{pulls && live(pulls.lastActivity ? relativeTime(pulls.lastActivity) : "None")}</td>
         <td className="c-health">{healthOf(row)}</td>
@@ -210,7 +210,7 @@ export default function Repositories() {
           )}
         </main>
       </section>
-      {selectedConfig && selectedRow ? <RepoPanel key={selectedRow.href} repo={selectedConfig} row={selectedRow} live={!loading && !packs.get(selectedRow.name)?.pending} stats={stats} onClose={closePanel} /> : null}
+      {selectedConfig && selectedRow ? <RepoPanel key={selectedRow.href} repo={selectedConfig} row={selectedRow} live={!loading && !packs.get(repoKey(selectedRow))?.pending} stats={stats} onClose={closePanel} /> : null}
     </div>
   );
 }

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { skipToken, useIsRestoring, useQuery, useQueryClient, type Query, type UseQueryResult } from "@tanstack/react-query";
-import { projectQueue, type PrItem, type PullTriage } from "./hub-api.ts";
+import { projectQueue, type OpenPulls, type PrItem, type PullTriage, type RepoRecord } from "./hub-api.ts";
 import { repoOf, type HandledKind, type HandledMark, type OpenItem } from "./inbox-view.ts";
 import { loadOpenPulls } from "./github-manifest.ts";
 import { useDecidedDoKeys } from "./held-dos.ts";
 import { useMergeBlocks } from "./merge-states.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
 import { usePortal } from "./portal.tsx";
+import { repoKey } from "./repo-id.ts";
 import { triageEnabledRepos } from "./repo-rows.ts";
 import { useApprovals, useApprovalsFirstLoad } from "./tenant-entities.ts";
 import { usePullTriage, useTriageVerdicts } from "./triage-verdicts.ts";
@@ -200,15 +201,20 @@ function usePullRequestItems(pulls: PullTriage[] = NO_PULLS): PrItem[] {
   return useMergeBlocks(projected);
 }
 
+/** Whether the open pull request listing carries the pull request, in a repository enabled on that listing's host. */
+export function openOnEnabledRepo(openPulls: OpenPulls | undefined, repos: RepoRecord[], repo: string, number: number): boolean {
+  const row = openPulls?.repos.find((listed) => listed.repo === repo && listed.prs.some((pr) => pr.number === number));
+  return row !== undefined && triageEnabledRepos(repos).has(repoKey({ name: row.repo, source: row.source }));
+}
+
 export function usePullPageItems(repo: string | null, number: number | null): PrItem[] {
   const verdicts = useTriageVerdicts();
   const openPulls = useOpenPulls();
   const named = (pull: { repo: string; number: number }) => pull.repo === repo && pull.number === number;
   const listed = verdicts.data?.pulls.some(named) === true;
-  const open = openPulls.data?.repos.some((row) => row.repo === repo && row.prs.some((pr) => pr.number === number)) === true;
   const { snapshot } = usePortal();
-  const enabled = repo !== null && triageEnabledRepos(snapshot?.repos ?? []).has(repo);
-  const single = usePullTriage(repo ?? "", number, repo !== null && verdicts.data !== undefined && !listed && !(open && enabled));
+  const open = repo !== null && number !== null && snapshot !== null && openOnEnabledRepo(openPulls.data, snapshot.repos, repo, number);
+  const single = usePullTriage(repo, number, repo !== null && verdicts.data !== undefined && !listed && !open);
   return usePullRequestItems(single?.pulls);
 }
 
