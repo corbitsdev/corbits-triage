@@ -326,7 +326,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   /** The head of the open policy pull request, asked of the host. */
   async function pullHead(tenantId: string, record: RepoRecord): Promise<string | undefined> {
-    if (sourceOf(record) === "github") return (await github.openPolicyPull(await repoGithub(tenantId, record), record.name))?.headSha;
+    if (sourceOf(record) === "github") return (await openPull(tenantId, record))?.headSha;
     return bitbucketPull.openPolicyPullHead(await repoBitbucket(tenantId), record.name);
   }
 
