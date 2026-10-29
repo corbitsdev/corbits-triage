@@ -54,6 +54,8 @@ let model: ReturnType<typeof Bun.serve>;
 const fetched: string[] = [];
 /** How many of the diff finder's next answers are prose with no findings list. */
 let diffFinderProse = 0;
+/** Whether the diff finder greps the patch files for every line instead of reading them. */
+let diffFinderGreps = false;
 /** Whether the repository finder answers in prose once it has read. */
 let repoFinderProse = false;
 /** Whether every plan model call is refused, with an error the client does not retry itself. */
@@ -119,6 +121,7 @@ function answer(body: MessagesRequest) {
     return [{ type: "tool_use", id: "verify", name: "read_file", input: { path: sent.includes(OUTSIDE.title) ? OUTSIDE.path : "src/a.ts" } }];
   }
   if (sent.includes("Verify this finding.")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
+  if (diffFinder && diffFinderGreps && !sent.includes("tool_result")) return [{ type: "tool_use", id: "grep-diff", name: "grep", input: { pattern: ".", glob: ".corbits/diff/*.patch" } }];
   if (diffFinder && !sent.includes("tool_result")) {
     return [
       { type: "tool_use", id: "index", name: "read_file", input: { path: DIFF_INDEX } },
@@ -235,6 +238,18 @@ test("the finders read the diff and the head the checkout action put on the side
   const second = await review(join(dir, "data"));
   expect(second.run.terminalStatus).toBe("completed");
   expect(fetched.filter((path) => path.includes("/tarball/"))).toHaveLength(1);
+});
+
+test("a review whose finders grepped the diff rather than reading it is not complete", async () => {
+  diffFinderGreps = true;
+  try {
+    const { run, results } = await review(join(dir, "data"));
+    expect(run.terminalStatus).toBe("completed");
+    expect(results.find((r) => r.callId === "grep-diff")).toMatchObject({ content: { matches: Array.from({ length: 8 }, (_, i) => ({ path: PATCH, line: i + 1 })) } });
+    expect(run.outputs["review"]).toMatchObject({ complete: false, comments: [{ path: "src/a.ts", start: 2 }] });
+  } finally {
+    diffFinderGreps = false;
+  }
 });
 
 test("a finder answer with no findings list fails its step, which asks again rather than reading as a clean review", async () => {

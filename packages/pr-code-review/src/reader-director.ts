@@ -7,7 +7,7 @@ import { BUDGET_EXHAUSTED, budgetOf, checkoutOf, checkoutPath, isCheckedOut } fr
 import { MODEL_FAILED, NO_CHECKOUT, NO_VERDICT, UNREADABLE } from "./failures.js";
 import { Verdict } from "./actions/review.js";
 import { firstObject, parseFindings } from "./findings.js";
-import { addRead, citesLineRead, linesShown, type LinesRead } from "./lines-read.js";
+import { addRead, addWindow, citesLineRead, linesShown, type LinesRead } from "./lines-read.js";
 import { shownTag } from "./diff-parts.js";
 import { TOOL_PROMPTS } from "./prompts.js";
 import { packageName } from "./package-name.js";
@@ -69,7 +69,7 @@ function verdictOf(json: unknown): Verdict | undefined {
  * tools, which earlier thinking blocks are bound to, so once the input's budget of billable tokens is spent each
  * further tool call is answered with BUDGET_SPENT; after REFUSED_ROUNDS such rounds the model's latest text is the
  * reply. A findings reply whose calls were refused, or with no findings list once the budget is spent, starts with
- * BUDGET_EXHAUSTED; one that read a checkout ends with the lines of each diff patch file it was shown. A plan reply is the first plan in the model's text, or its text once a call was refused or the budget
+ * BUDGET_EXHAUSTED; one that read a checkout ends with the lines of each diff patch file read_file showed it. A plan reply is the first plan in the model's text, or its text once a call was refused or the budget
  * is spent. A verdict reply is the first verdict and reason in the model's text; a real or not_real one that
  * cites, as path:line, no line the input's diff hunks or the model's reads showed is unsure, its reason led by UNCITED.
  * Once a call was refused, only a not_real that cites one stands, and any other verdict, or none, is unsure; so is no
@@ -85,6 +85,8 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
   let refusedRounds = 0;
   let pending = 0;
   let linesRead: LinesRead = new Map();
+  // Only read_file windows show a patch file's lines in full; grep's matches never count toward reading the diff whole.
+  const windowsRead: LinesRead = new Map();
 
   function read() {
     return caps.infer({ systemPrompt, tools: REPO_READ_DEFINITIONS });
@@ -93,7 +95,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
   function reply(text: string) {
     if (answer === "verdict") return verdictReply(text);
     if (answer === "plan") return planReply(text);
-    return caps.reply(`${findingsText(text)}${root === "" ? "" : shownTag(linesRead)}`);
+    return caps.reply(`${findingsText(text)}${root === "" ? "" : shownTag(windowsRead)}`);
   }
 
   function findingsText(text: string): string {
@@ -162,6 +164,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
 
   function onToolDone(result: ToolResult) {
     addRead(linesRead, result);
+    addWindow(windowsRead, result);
     if (--pending > 0) return [];
     return read();
   }

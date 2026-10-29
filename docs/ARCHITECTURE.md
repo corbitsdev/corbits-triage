@@ -925,10 +925,11 @@ path and read the patches with the repository reads on their token budget
 (`budgets.repoFinder` for the repository finder, 400,000 billable tokens each by
 default). `read_file` clips each line at 500 characters, so a longer diff line
 is read only up to the clip, and counts as shown. Each finder's reader reports
-the lines of each patch file it was shown, by `read_file` or `grep`; the review
-is `complete` only when the two finders between them were shown every line of
-every patch file and neither spent its budget. A review that is not complete
-holds approve and merge, as one that stopped early does. The consolidate step reads each finding's lines at the head and reports
+the lines of each patch file `read_file` showed it, never `grep`'s matches;
+the review is `complete` only when the two finders between them were shown
+every line of every patch file and neither spent its budget. A review that is
+not complete holds approve and merge, as one that stopped early does, and the
+portal and the posted review say so in INCOMPLETE_NOTE's one sentence. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file". The check step verifies every

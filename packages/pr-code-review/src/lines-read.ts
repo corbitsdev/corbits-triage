@@ -28,17 +28,21 @@ export function linesShown(content: string): LinesRead {
   return read;
 }
 
+/** Adds the lines a read_file window showed; whether the result was one. */
+export function addWindow(read: LinesRead, result: ToolResult): boolean {
+  if (result.isError) return false;
+  const window = FileWindow(result.content);
+  if (window instanceof type.errors) return false;
+  for (const row of window.text.split("\n")) {
+    const line = Number(row.slice(0, row.indexOf("\t")));
+    if (Number.isInteger(line) && line > 0) see(read, window.path, line);
+  }
+  return true;
+}
+
 /** Adds the lines a read_file window or grep matches showed. */
 export function addRead(read: LinesRead, result: ToolResult) {
-  if (result.isError) return;
-  const window = FileWindow(result.content);
-  if (!(window instanceof type.errors)) {
-    for (const row of window.text.split("\n")) {
-      const line = Number(row.slice(0, row.indexOf("\t")));
-      if (Number.isInteger(line) && line > 0) see(read, window.path, line);
-    }
-    return;
-  }
+  if (result.isError || addWindow(read, result)) return;
   const grep = GrepMatches(result.content);
   if (!(grep instanceof type.errors)) for (const match of grep.matches) see(read, match.path, match.line);
 }

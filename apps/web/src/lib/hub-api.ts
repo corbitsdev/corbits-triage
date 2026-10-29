@@ -796,6 +796,8 @@ export type CodeReviewRun = {
   summary?: string;
   comments?: CodeReviewComment[];
   budgetExhausted?: boolean;
+  /** Whether its finders between them read every line of the diff; a finished review without it is not complete. */
+  complete?: boolean;
 };
 
 /**

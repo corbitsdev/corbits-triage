@@ -3,6 +3,9 @@ import { type } from "arktype";
 /** Shown beside a review whose reader reached its limit for reading the repository before it finished. */
 export const BUDGET_EXHAUSTED_NOTE = "Stopped early: the reviewer reached its limit for reading the repository.";
 
+/** Shown beside a review that is not complete. */
+export const INCOMPLETE_NOTE = "This review did not read the whole change; approve and merge are held until a review does.";
+
 /** Shown with a finding none of whose file's lines could be read. */
 export const UNVERIFIED_FINDING = "Not checked against the file";
 
