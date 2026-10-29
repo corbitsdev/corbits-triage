@@ -418,6 +418,7 @@
       "name": "@corbits/model-test",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@corbits/github-reads": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-manager": "workspace:*",

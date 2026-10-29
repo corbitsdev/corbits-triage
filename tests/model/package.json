@@ -5,6 +5,7 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "dependencies": {
+    "@corbits/common": "workspace:*",
     "@corbits/github-reads": "workspace:*",
     "@corbits/triage-contracts": "workspace:*",
     "@corbits/triage-manager": "workspace:*",

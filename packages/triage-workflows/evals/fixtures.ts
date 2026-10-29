@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { errorText } from "@corbits/common";
 import { isDocPath } from "../../triage-contracts/src/paths.js";
 import type { FileRow, Labels, Snapshot } from "./cases.js";
 
@@ -60,7 +61,7 @@ function measured(key: string, repo: string, baseSha: string, headSha: string) {
   try {
     compare = ghJson<any>(`repos/${repo}/compare/${range}?per_page=100`);
   } catch (err) {
-    throw new Error(`${key} cannot be compared at ${range}, the shas it was measured at: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`${key} cannot be compared at ${range}, the shas it was measured at: ${errorText(err)}`);
   }
   if (compare.commits.length !== compare.total_commits || compare.files.length >= 300) throw new Error(`${key}: the comparison at ${range} is truncated`);
   return compare;
