@@ -1,13 +1,17 @@
-import { rename, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { join, posix } from "node:path";
 import { checkout as bitbucketCheckout } from "@corbits/bitbucket-datacenter-tool";
 import { checkout as githubCheckout } from "@corbits/github-tool";
 import { checkoutsUnder, checkTarget, sidecarDataDir } from "@corbits/repo-read-tool";
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import { type } from "arktype";
+import { DIFF_DIR, DIFF_INDEX, indexedFiles, indexText } from "../diff-parts.js";
 
 export const Checkout = type({ source: "'github' | 'bitbucket-datacenter'", repo: "string", sha: /^[0-9a-f]{40}$/ });
 export type Checkout = typeof Checkout.infer;
+
+/** The checkout action's input: the head, and the pull request's diff it writes beside the checkout. */
+const CheckoutInput = Checkout.and({ diff: "string" });
 
 export const READ_FILE_TOOL = { github: "github_read_file", "bitbucket-datacenter": "bitbucket_datacenter_read_file" } as const;
 
@@ -52,21 +56,59 @@ async function download(host: HostFetch, { source, repo, sha }: Checkout, path: 
   }
 }
 
-/** The checkout action over the sidecar data dir `dataDir` names: the head's folder, downloaded through the host's credential unless already there. */
+/** The host as the credential bound for `source` reaches it. */
+async function hostOf(credentials: PerformScope["credentials"], source: Checkout["source"]): Promise<HostFetch> {
+  const mediated = await credentials.resolve(source);
+  if (mediated.kind !== "http") throw new Error(`${source} credential must be http, got ${mediated.kind}`);
+  return function host(hostPath: string, init?: RequestInit) {
+    return mediated.fetch(hostPath, init);
+  };
+}
+
+/**
+ * Where the checkout action writes the diff of the checkout at `path`: beside it, never inside the tree the pull request
+ * controls, which could hold a link or file in its way. The read tools show it at DIFF_DIR.
+ */
+export function diffDirOf(path: string): string {
+  return `${path}.diff`;
+}
+
+/** The folder at `dir` made afresh, replacing one an earlier run left; anything else there fails the action. */
+async function freshDir(dir: string) {
+  try {
+    if (!(await lstat(dir)).isDirectory()) throw new Error(`${dir} exists and is not a folder`);
+    await rm(dir, { recursive: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  await mkdir(dir);
+}
+
+/** Writes each changed file's patch parts and the index naming them beside the checkout at `path`. */
+async function writeDiff(path: string, diff: string) {
+  const files = indexedFiles(diff);
+  const dir = diffDirOf(path);
+  await freshDir(dir);
+  function inDir(shown: string) {
+    return join(dir, posix.relative(DIFF_DIR, shown));
+  }
+  for (const part of files.flatMap((file) => file.parts)) await writeFile(inDir(part.path), part.text, { flag: "wx" });
+  await writeFile(inDir(DIFF_INDEX), indexText(files), { flag: "wx" });
+}
+
+/**
+ * The checkout action over the sidecar data dir `dataDir` names: the head's folder, downloaded through the host's
+ * credential unless already there, with the pull request's whole diff written beside it (diffDirOf).
+ */
 export function checkoutUnder(dataDir: () => string) {
   return async function checkout(input: unknown, ctx: EffectContext): Promise<{ path: string }> {
-    const parsed = Checkout(input);
+    const parsed = CheckoutInput(input);
     if (parsed instanceof type.errors) throw new Error(`checkout: invalid input: ${parsed.summary}`);
-    const target: Checkout = parsed;
+    const { diff, ...target } = parsed;
     const path = checkoutPath(dataDir(), target);
     async function run({ credentials }: PerformScope) {
-      if (await isCheckedOut(path)) return { path };
-      const mediated = await credentials.resolve(target.source);
-      if (mediated.kind !== "http") throw new Error(`${target.source} credential must be http, got ${mediated.kind}`);
-      function host(hostPath: string, init?: RequestInit) {
-        return mediated.fetch(hostPath, init);
-      }
-      await download(host, target, path);
+      if (!(await isCheckedOut(path))) await download(await hostOf(credentials, target.source), target, path);
+      await writeDiff(path, diff);
       return { path };
     }
     return (await ctx.perform({ effectId: "checkout", capability: READ_REPOSITORY, run })) as { path: string };

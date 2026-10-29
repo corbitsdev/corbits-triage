@@ -25,6 +25,7 @@ const REVIEW = {
   summary: "Adds total(), which skips the first element.",
   comments: [{ path: "src/total.ts", start: 3, end: 3, title: "total() skips the first element", body: "The loop starts at 1.", priority: 1, quoted: "for (let i = 1; i < xs.length; i++) sum += xs[i];", unverified: true as const }],
   budgetExhausted: true,
+  complete: false,
 };
 
 const OUTPUT = { ...REVIEW, comments: REVIEW.comments.map((comment) => ({ ...comment, agreement: { finders: 1, reports: 1 } })) };

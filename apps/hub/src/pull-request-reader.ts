@@ -1,41 +1,17 @@
 // Reads a pull request as its host shows it, alone or with its diff, and builds the code review request a manager's
-// review reads: the diff cut to the limit and hashed whole, so a later head with the same diff can take a review over
-// (code-review-runs.ts).
+// review reads: the whole diff, hashed so a later head with the same diff can take a review over (code-review-runs.ts).
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readPr, readPrDiff, type GithubFetch } from "@corbits/github-reads";
 import { shownBody, visibleText, type RepoSource } from "@corbits/triage-contracts";
 import type { TenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { filesFrom } from "@corbits/common/diff-files";
 import { diffHash } from "@corbits/common/diff-hash";
 import { forInstallation } from "./github/open-pulls.js";
 import { sourceOf, type RepoRecord } from "./github/tenant-config.js";
-
-/**
- * The most diff text one review reads, about 25k tokens, which keeps a review near its measured cost; past it the diff
- * is cut at a line boundary and the review names the files it left unread.
- */
-const DIFF_LIMIT = 100_000;
 
 /** `labels` only where the host has them. */
 export type PullRequestHead = { title: string; description: string; headSha: string; draft: boolean; open: boolean; labels?: string[] };
 
 export type PullRequestToReview = PullRequestHead & { diff: string };
-
-function lineCount(text: string): number {
-  return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
-}
-
-/**
- * The diff whole, or its first lines that fit in `limit`, with how many of how many lines it keeps and, when every path
- * can be read, the files it cuts part-way or leaves out.
- */
-export function cutDiff(diff: string, limit = DIFF_LIMIT): { diff: string; cut?: { lines: number; of: number; unread?: string[] } } {
-  if (diff.length <= limit) return { diff };
-  const end = diff.lastIndexOf("\n", limit);
-  const kept = end < 0 ? diff.slice(0, limit) : diff.slice(0, end + 1);
-  const unread = filesFrom(diff, kept.length);
-  return { diff: kept, cut: { lines: lineCount(kept), of: lineCount(diff), ...(unread && { unread }) } };
-}
 
 type PullRequestReaderDeps = {
   tenantGithub: (tenantId: string) => Promise<GithubFetch | undefined>;
@@ -98,23 +74,20 @@ type ReviewRequest = {
   diff: string;
   diffHash?: string;
   checkout: { source: RepoSource; repo: string; sha: string };
-  cut?: ReturnType<typeof cutDiff>["cut"];
 };
 
-/** The review of the pull request as read, its diff cut to the limit and hashed whole. */
+/** The review of the pull request as read, its whole diff and its hash. */
 export function reviewRequestOf(record: Pick<RepoRecord, "name" | "source">, number: number, pull: PullRequestToReview): ReviewRequest {
   // A host that ignores the diff media type answers JSON, which would be reviewed as if it were the change.
   if (pull.diff !== "" && !pull.diff.startsWith("diff ")) throw new Error(`${record.name}#${number}: the host returned no unified diff`);
-  const { diff, cut } = cutDiff(pull.diff);
   const hash = diffHash(pull.diff);
   return {
     kind: "code-review",
     number,
     title: pull.title,
     description: pull.description,
-    diff,
+    diff: pull.diff,
     ...(hash && { diffHash: hash }),
     checkout: { source: sourceOf(record), repo: record.name, sha: pull.headSha },
-    ...(cut && { cut }),
   };
 }

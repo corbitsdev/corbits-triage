@@ -903,11 +903,9 @@ review
 (`CODE_REVIEW_PROVIDERS` in `triage-contracts`, which lists Anthropic). The
 manager deploys the code review workflow in a sandbox and posts its result. The
 hub attaches the review request to a pull request mail whose `codeReview` is on, which the policy
-file's `code-review` block or Review again sets, with the host's unified diff
-cut at a line boundary past 100,000 characters; on GitHub a diff too large for the diff API
-is built from the files' patches. The files a cut leaves unread, read from the
-diff's headers, ride as `cut.unread` and never reach a prompt; the review sent
-to GitHub lists them. The title and description are read as the facts step
+file's `code-review` block or Review again sets, with the host's whole unified
+diff; on GitHub a diff too large for the diff API is built from the files'
+patches. The title and description are read as the facts step
 reads them (`shownBody` and `visibleText` in `@corbits/triage-contracts`), so
 hidden text never reaches the review. `…/run` (Review again) records a pull
 request mail for the current head with code review on for everyone, on any
@@ -915,9 +913,28 @@ verdict and whatever the rules say, and names it with an `again` id. The
 manager deploys one more review of a head for each `again` it has not
 reviewed, even where an earlier review of the head settled.
 Code review only reads: a checkout action downloads the head through the host
-credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>`, and
-its tools are the host read bundle and repository reads confined to that
-folder. The consolidate step reads each finding's lines at the head and reports
+credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>` and
+writes the whole diff beside it in `<sha>.diff`, a folder made afresh outside
+the tree the pull request controls (a link or file in the way fails the
+action). Its tools are the host read bundle and repository reads confined to
+the checkout, which show the diff folder at `/diff` to `read_file` and `list`
+only; no repository path is absolute, and grep never searches it. Each changed
+file's patch is its own file there, split into numbered parts of at most
+1,500,000 bytes, at a line end where one fits and inside a longer line
+otherwise, so the read tools' 2,000,000-byte limit never refuses one; a deleted
+file has none. `/diff/index.jsonl` lists every changed file
+with its path, status (added, modified, deleted or renamed), line count and
+patch files. No prompt carries the diff: plan and both finders get the index's
+path and read the patches with the repository reads on their token budget
+(`budgets.repoFinder` for the repository finder, 400,000 billable tokens each by
+default). `read_file` clips each line at 500 characters, so a longer diff line
+is read only up to the clip, and counts as shown; a line cut across parts is
+a line of each part, shown once each is read. Each finder's reader reports
+the lines of each patch file `read_file` showed it, never `grep`'s matches;
+the review is `complete` only when the two finders between them were shown
+every line of every patch file and neither spent its budget. A review that is
+not complete holds approve and merge, as one that stopped early does, and the
+portal and the posted review say so in INCOMPLETE_NOTE's one sentence. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file". The check step verifies every

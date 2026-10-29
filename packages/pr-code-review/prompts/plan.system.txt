@@ -15,3 +15,8 @@ List the symbols or paths outside the diff the change depends on: callers of cha
 <style>
 Be short and concrete. Name functions, fields and values from the diff. Say where to look and what to check.
 </style>
+
+<output>
+Answer with JSON only, in this shape:
+{"areas": [{"path": "src/file.ts", "why": "why it is risky", "what_to_check": "what exactly to check"}], "outside_diff": [{"symbol_or_path": "parseConfig", "why": "why a reviewer must read it"}]}
+</output>

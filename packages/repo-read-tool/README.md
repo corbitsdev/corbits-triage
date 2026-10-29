@@ -1,7 +1,8 @@
 # @corbits/repo-read-tool
 
 Read-only sidecar tools confined to a repository checkout: `read_file`, `grep` and `list`, refusing any root outside
-`<SIDECAR_DATA_DIR>/checkouts` and any `..`, absolute path or symlink out of it. The host tool packages and
+`<SIDECAR_DATA_DIR>/checkouts` and any `..`, absolute path or symlink out of it. A call may also name a `diffRoot`,
+another folder under the checkouts, which `read_file` and `list` show at `/diff`; grep never searches it. The host tool packages and
 `@corbits/pr-code-review` use it.
 
 ## Use

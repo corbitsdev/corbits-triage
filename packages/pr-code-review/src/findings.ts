@@ -1,3 +1,5 @@
+import { diffFiles } from "@corbits/common/diff-files";
+
 /** A line range of the head side of a file. */
 export interface Site {
   path: string;
@@ -131,9 +133,9 @@ export function quotedLine(finding: Finding): string | undefined {
   return finding.code?.split("\n").find((row) => row.trim() !== "")?.trim();
 }
 
-/** Every file the diff adds, changes or deletes, by its head-side path, or its base-side path when deleted. */
+/** Every file the diff adds, changes or deletes, by its head-side path, or its base-side path marked deleted. */
 export function changedFiles(diff: string): string[] {
-  return [...new Set([...diff.matchAll(/^(?:\+\+\+ b\/|--- a\/)(.+)$/gm)].map((match) => match[1]!))];
+  return diffFiles(diff).map(({ path, status }) => (status === "deleted" ? `${path} (deleted)` : path));
 }
 
 /** Whether two paths name the same file, one possibly given relative to a subdirectory of the other's root. */

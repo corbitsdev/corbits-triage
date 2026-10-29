@@ -282,7 +282,7 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   expect(sentReviews).toEqual([{
     commit_id: HEAD,
     event: "COMMENT",
-    body: "Fixes the widget.\n\nStopped early: the reviewer reached its limit for reading the repository.\n\n**Stale import** · `src/other.ts:5`\n\nRemove it.\n\n<!-- corbits-code-review -->",
+    body: "Fixes the widget.\n\nStopped early: the reviewer reached its limit for reading the repository.\n\nThis review did not read the whole change; approve and merge are held until a review does.\n\n**Stale import** · `src/other.ts:5`\n\nRemove it.\n\n<!-- corbits-code-review -->",
     comments: [{ path: "src/widget.ts", line: 1, side: "RIGHT", body: "**P1 · Unchecked input**\n\nValidate it first.\n\nAlso lines 2–3." }],
   }]);
 
@@ -297,21 +297,11 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   expect(outdated.status).toBe(409);
   expect(await outdated.json()).toMatchObject({ error: { code: "code_review_outdated" } });
 
-  completed = { ...FINISHED, headSha: "newer", summary: "", comments: [], budgetExhausted: false };
+  completed = { ...FINISHED, headSha: "newer", summary: "", comments: [], budgetExhausted: false, complete: true };
   expect(await (await prActions({ ...send, headSha: "newer" }, member("usr_approver"))).json()).toMatchObject({ error: { code: "code_review_empty" } });
   completed = null;
   expect(await (await prActions(send, member("usr_approver"))).json()).toMatchObject({ error: { code: "no_code_review" } });
   expect(sentReviews).toHaveLength(1);
-
-  sentReviews.length = 0;
-  completed = { ...FINISHED, comments: [], budgetExhausted: false, cut: { lines: 6, of: 40, unread: ["src/b.ts", "src/`c`.ts", "@team\n**x**.md"] } };
-  expect(await (await prActions(send, member("usr_approver"))).json()).toEqual({ reviewId: 1, sent: true });
-  expect(sentReviews.map((review) => review.body)).toEqual(["Fixes the widget.\n\nNot reviewed in full: 3 files, over the size limit.\n- `src/b.ts`\n- ``src/`c`.ts``\n- `@team **x**.md`\n\n<!-- corbits-code-review -->"]);
-
-  sentReviews.length = 0;
-  completed = { ...FINISHED, summary: "", comments: [], budgetExhausted: false, cut: { lines: 6, of: 40 } };
-  expect(await (await prActions(send, member("usr_approver"))).json()).toEqual({ reviewId: 1, sent: true });
-  expect(sentReviews.map((review) => review.body)).toEqual(["Some files were not reviewed: the diff was over the size limit.\n\n<!-- corbits-code-review -->"]);
 
   sentReviews.length = 0;
   completed = { ...FINISHED, headSha: "older" };

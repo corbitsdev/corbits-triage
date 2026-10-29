@@ -22,7 +22,7 @@ const handle = createDB({ ...TEST_DB, schema: testSchema });
 const grants = createGrantStore(handle.db);
 const posted: string[] = [];
 
-const COMPLETED = { status: "completed" as const, headSha: "abc", startedAt: "2026-10-22T00:00:00.000Z", summary: "Looks fine.", budgetExhausted: false, comments: [] };
+const COMPLETED = { status: "completed" as const, headSha: "abc", startedAt: "2026-10-22T00:00:00.000Z", summary: "Looks fine.", budgetExhausted: false, complete: true, comments: [] };
 
 // Shapes recorded from Bitbucket Data Center 10.5, trimmed to the fields read.
 async function bitbucket(path: string, init?: RequestInit): Promise<Response> {

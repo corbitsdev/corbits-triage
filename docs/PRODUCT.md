@@ -434,8 +434,8 @@ reviewed commit is billed to that Anthropic account. A commit is reviewed once
 the rules that fail a pull request without the decision model have passed, or
 whatever they say with `when: { rules: any }`; drafts are not reviewed.
 **Review again** reviews the current commit once more, whatever the file says.
-A diff over 100,000 characters is cut; the review says how much it read and
-names the files it left out.
+The review reads the whole diff, however large; a review that could not is
+marked incomplete and holds approve and merge.
 
 Each review checks out the pull request's code, so it runs in an isolated
 place of its own; while the server has none, the repository page links

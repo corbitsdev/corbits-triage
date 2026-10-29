@@ -1,4 +1,4 @@
-import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, notReviewedNote, render, SOME_NOT_REVIEWED_NOTE, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, INCOMPLETE_NOTE, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
@@ -959,18 +959,7 @@ export function summarize(results: Array<RenderOutput | null>): BacklogSummary {
   return { total: results.length, classified: done.length, coverage: `${done.length}/${results.length}`, byState };
 }
 
-/** Unread files listed in a posted review; the rest are counted. */
-const POSTED_UNREAD = 20;
-
-function cutNotes({ cut }: Pick<CodeReviewOutput, "cut">): string[] {
-  if (!cut) return [];
-  if (!cut.unread) return [SOME_NOT_REVIEWED_NOTE];
-  const listed = cut.unread.slice(0, POSTED_UNREAD).map((path) => `- ${inlineCode(path)}`);
-  const more = cut.unread.length > POSTED_UNREAD ? [`- and ${cut.unread.length - POSTED_UNREAD} more`] : [];
-  return [[notReviewedNote(cut.unread.length), ...listed, ...more].join("\n")];
-}
-
-/** A code review's posted body: the model's summary, then a fixed line per condition: it stopped early, or its diff was cut. */
-export function codeReviewSummary(review: Pick<CodeReviewOutput, "summary" | "budgetExhausted" | "cut">): string {
-  return [review.summary, ...(review.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...cutNotes(review)].filter(Boolean).join("\n\n");
+/** A code review's posted body: the model's summary, then a fixed line per condition: it stopped early, or it is not complete. */
+export function codeReviewSummary(review: Pick<CodeReviewOutput, "summary" | "budgetExhausted" | "complete">): string {
+  return [review.summary, ...(review.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...(review.complete === true ? [] : [INCOMPLETE_NOTE])].filter(Boolean).join("\n\n");
 }
