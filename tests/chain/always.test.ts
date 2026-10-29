@@ -1,8 +1,8 @@
 // A held Do the inbox's "Always request review for this repository" lets Triage do on its own.
 import { expect, test } from "bun:test";
 import { allowTriageAutomation, approveHeldDo } from "../../apps/web/src/lib/hub-api.ts";
-import type { Write } from "./github.ts";
-import { chainStack, ALWAYS, sha, pullOf, once } from "./chain.ts";
+import { chainStack, ALWAYS, once } from "./chain.ts";
+import { sha, pullOf, type Write } from "./github.ts";
 
 const chain = chainStack();
 const { github, pushed, until, settled, verdictsOf } = chain;

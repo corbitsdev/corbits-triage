@@ -2,7 +2,8 @@
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
 import { deliver } from "./stack.ts";
-import { chainStack, WAITING, isLiveDeployment, sha, pullOf, comments, labelled, once } from "./chain.ts";
+import { chainStack, WAITING, isLiveDeployment, once } from "./chain.ts";
+import { sha, pullOf, comments, labelled } from "./github.ts";
 
 const chain = chainStack();
 const { github, model, pushed, until, managers, settled, verdictsOf } = chain;

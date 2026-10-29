@@ -1,6 +1,7 @@
 // Pushes while the manager is up and after it stopped.
 import { expect, test } from "bun:test";
-import { chainStack, PUSHED, sha, pullOf, once } from "./chain.ts";
+import { chainStack, PUSHED, once } from "./chain.ts";
+import { sha, pullOf } from "./github.ts";
 
 const { github, pushed, until, rows, claimOf, managers, settled } = chainStack();
 

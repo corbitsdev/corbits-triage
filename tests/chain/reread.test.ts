@@ -2,7 +2,8 @@
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
 import { TIMINGS } from "./stack.ts";
-import { chainStack, REREAD, SETTLE_MS, isLiveDeployment, sha, pullOf, once } from "./chain.ts";
+import { chainStack, REREAD, SETTLE_MS, isLiveDeployment, once } from "./chain.ts";
+import { sha, pullOf } from "./github.ts";
 
 const { github, pushed, until, managers, settled, verdictsOf } = chainStack();
 
