@@ -57,7 +57,7 @@ function HeldRow({ choice, wanted, disabled, onApprove }: HeldRowProps) {
   const { pending } = choice;
   const holdsDo = useHoldsDo(pending.kind, pending.ref.repo);
   const createsGrants = useAllowed("grant:*", "create");
-  const offer = heldOffer(pending, { holdsDo, createsGrants, wanted });
+  const offer = heldOffer(pending, { holdsDo, createsGrants, wanted, onPrimary: choice.primary });
   return (
     <li>
       <span className="held-what">

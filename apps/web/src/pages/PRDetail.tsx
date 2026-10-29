@@ -332,7 +332,7 @@ export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
   const holdsMerge = useHoldsDo("merge", item.repo);
   if (mode === null) return null;
   const dos = closed || mode.mode !== "waiting" ? [] : pendingDos(item);
-  const heldMerge = dos.some((pending) => pending.kind === "merge" && heldOffer(pending, { holdsDo: holdsMerge, createsGrants: false, wanted: [] }).doIt);
+  const heldMerge = dos.some((pending) => pending.kind === "merge" && heldOffer(pending, { holdsDo: holdsMerge, createsGrants: false, wanted: [], onPrimary: false }).doIt);
   return (
     <PrActionCard mode={mode} dos={dos} disabled={closed || !item.number || item.running || locked} canMerge={canMerge} onApprove={onApproveDo} onSkip={onSkipDo}>
       <PostingControls {...controls} heldMerge={heldMerge} />

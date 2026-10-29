@@ -357,14 +357,14 @@ export function paneBar(gate: PaneGate, base: string | null, author: string | nu
   return { primary, rest, dos: dos.filter((pending) => !taken.includes(pending)) };
 }
 
-/** `entry` is the bar's button that carries the held action out, null for one with no button. */
-export type HeldChoice = { pending: PendingDo; entry: BarEntry | null };
+/** `entry` is the bar's button that carries the held action out, null for one with no button; `primary` when that is the primary. */
+export type HeldChoice = { pending: PendingDo; entry: BarEntry | null; primary: boolean };
 
 /** Every held action on the bar, the primary's included, so each can be read with its reason and hidden. */
 export function heldChoices(bar: PaneBar): HeldChoice[] {
   const entries: BarEntry[] = bar.primary === null ? bar.rest : [bar.primary, ...bar.rest];
-  const carried = entries.flatMap((entry) => entry.held === null ? [] : [{ pending: entry.held, entry }]);
-  return [...carried, ...bar.dos.map((pending) => ({ pending, entry: null }))];
+  const carried = entries.flatMap((entry) => entry.held === null ? [] : [{ pending: entry.held, entry, primary: entry === bar.primary }]);
+  return [...carried, ...bar.dos.map((pending) => ({ pending, entry: null, primary: false }))];
 }
 
 /** A held action as the line under the status says it: when it will run on its own, or what Triage would do once you let it. */

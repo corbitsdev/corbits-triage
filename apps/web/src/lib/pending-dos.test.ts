@@ -130,7 +130,7 @@ describe("pendingDos", () => {
 describe("heldOffer", () => {
   test("Running it once needs the Do's grant; Always also needs grant create and a kind the policy names, never shows for a kind the verdict always holds, and neither shows while it waits for CI", () => {
     const wanted = ["request-review", "merge", "close"] as const;
-    const both = { holdsDo: true, createsGrants: true, wanted };
+    const both = { holdsDo: true, createsGrants: true, wanted, onPrimary: false };
     expect(heldOffer({ list: "fail", kind: "request-review", until: null }, both)).toEqual({ doIt: true, always: true });
     expect(heldOffer({ list: "fail", kind: "request-review", until: null }, { ...both, createsGrants: false })).toEqual({ doIt: true, always: false });
     expect(heldOffer({ list: "fail", kind: "request-review", until: null }, { ...both, holdsDo: false })).toEqual({ doIt: false, always: false });
@@ -140,6 +140,11 @@ describe("heldOffer", () => {
     expect(heldOffer({ list: "unsure", kind: "close", until: null }, both)).toEqual({ doIt: true, always: false });
     expect(heldOffer({ list: "fail", kind: "close", until: null }, both)).toEqual({ doIt: true, always: true });
     expect(heldOffer({ list: "pass", kind: "merge", until: "CI finishes" }, both)).toEqual({ doIt: false, always: false });
+  });
+
+  test("one the pane's primary button already carries out has no button of its own, but may still be left to Triage", () => {
+    const access = { holdsDo: true, createsGrants: true, wanted: ["merge"] as const, onPrimary: true };
+    expect(heldOffer({ list: "pass", kind: "merge", until: null }, access)).toEqual({ doIt: false, always: true });
   });
 });
 

@@ -22,7 +22,7 @@ type HeldDoProps = { pending: PendingDo; disabled: boolean; canMerge: boolean; o
 
 /** A held action, with its own button only for one who may run it and only while it waits on a person rather than CI. */
 function HeldDo({ pending, disabled, canMerge, onApprove, onSkip }: HeldDoProps) {
-  const offer = heldOffer(pending, { holdsDo: useHoldsDo(pending.kind, pending.ref.repo), createsGrants: false, wanted: [] });
+  const offer = heldOffer(pending, { holdsDo: useHoldsDo(pending.kind, pending.ref.repo), createsGrants: false, wanted: [], onPrimary: false });
   return (
     <div className="suggest">
       <h2>{heldText(pending)}</h2>

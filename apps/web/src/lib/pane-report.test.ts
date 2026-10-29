@@ -232,11 +232,11 @@ describe("paneBar", () => {
   test("a held action the primary carries out is still listed, so it can be read and hidden", () => {
     const merge = barOf(item({ state: "ready", verdict: "pass", actions: [{ ...held("e1", "merge", {}), list: "pass" }] }));
     expect(merge.primary).toMatchObject({ kind: "merge", held: { key: "e1" } });
-    expect(heldChoices(merge)).toMatchObject([{ pending: { key: "e1" }, entry: { kind: "merge" } }]);
+    expect(heldChoices(merge)).toMatchObject([{ pending: { key: "e1" }, entry: { kind: "merge" }, primary: true }]);
 
     const approve = barOf(item({ state: "awaiting-review", actions: [held("e2", "approve", {})] }));
     expect(approve.primary).toMatchObject({ kind: "approve", held: { key: "e2" } });
-    expect(heldChoices(approve)).toMatchObject([{ pending: { key: "e2" }, entry: { kind: "approve" } }]);
+    expect(heldChoices(approve)).toMatchObject([{ pending: { key: "e2" }, entry: { kind: "approve" }, primary: true }]);
   });
 });
 
