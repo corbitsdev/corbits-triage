@@ -59,11 +59,14 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
     reviewMailed: action({ handler: "reviewMailed", input: stepsOf("deployReview", "mailReview"), after: ["mailReview"] }),
     reviewSent: gate({ when: { from: "steps.reviewMailed.output.post" }, then: "mirrorRules", else: "progressReviewing", after: ["reviewMailed"] }),
-    // The only progress that follows the pass's verdict, which it keeps where that is already posted on the head.
+    // Progress that follows the pass's verdict keeps it where that is already posted on the head.
     progressReviewing: progressAction(sources, ["cleared", "reviewMailed"], ["reviewSent"]),
     // A pass that mailed its review records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
     doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "reviewMailed")] }, ["progressReviewing"]),
-    posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "progressAwaiting", after: ["reviewing"] }),
+    posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "progressReviewOut", after: ["reviewing"] }),
+    // A code reviewer already out on the head: the pass's verdict is kept where it is already posted on the head.
+    progressReviewOut: progressAction(sources, ["cleared"], ["posting"]),
+    doneReviewOut: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules")] }, ["progressReviewOut"]),
     postReview: action({ handler: "postReview", input: { merge: [MAIL, stepsOf("take", "reviewScope")] }, after: ["mirrorRules"], credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } }),
   };
 }
@@ -141,7 +144,8 @@ function passOf(id: string, sources: Sources) {
       unmailed: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "doneUnmailed", else: "donePosted", after: ["executeRules"] }),
       doneUnmailed: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "cleared", "reviewScope", "reviewMailed", "mirrorRules", "postReview", "executeRules")] }, ["unmailed"]),
       donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "cleared", "reviewScope", "mirrorRules", "postReview", "executeRules")] }, ["unmailed"]),
-      progressAwaiting: progressAction(sources, [], ["judgeWait", "posting"]),
+      // The judge is out and the pass has no verdict of its own yet.
+      progressAwaiting: progressAction(sources, [], ["judgeWait"]),
       doneAwaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules")] }, ["progressAwaiting"]),
       done: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals")] }, ["ran", "triaged"]),
     },

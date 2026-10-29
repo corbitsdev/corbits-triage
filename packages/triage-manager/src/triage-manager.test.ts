@@ -779,6 +779,31 @@ describe("triage-manager with code review", () => {
     expect(hub.calls.at(-2)).toEqual(DONE_GAVE_UP);
   });
 
+  test("a pass while a code reviewer is out on the head keeps a verdict its rules still give, and writes progress over any other", async () => {
+    const comment = { id: 1, user: { login: REQUEST["appLogin"] }, body: "" };
+    const { host } = githubHost();
+    async function withComment(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+      const url = new URL(input instanceof Request ? input.url : input);
+      const method = init?.method ?? "GET";
+      if (url.pathname === `/repos/${PR.repo}/issues/${PR.number}/comments` && method === "GET") return Response.json(comment.body ? [comment] : []);
+      if (url.pathname === `/repos/${PR.repo}/issues/${PR.number}/comments` && method === "POST") comment.body = (JSON.parse(String(init!.body)) as { body: string }).body;
+      if (url.pathname === `/repos/${PR.repo}/issues/comments/1` && method === "PATCH") comment.body = (JSON.parse(String(init!.body)) as { body: string }).body;
+      return host(input, init);
+    }
+    await runMail(reviewed, wake(), withComment, fakeHub({ takes: [{ ...PASS, request: hubRequest(RULES, CODE_REVIEW) }], dones: [ENDED] }).hub);
+    const posted = comment.body;
+    expect(posted).toContain("**Triage: Pass**");
+
+    const out = { ...PASS, request: ON, reviewers: [reviewer()] };
+    const { ran } = await runMail(reviewed, wake(), withComment, fakeHub({ takes: [out], dones: [ENDED] }).hub);
+    expect(ran).toContain("progressReviewOut");
+    expect(comment.body).toBe(posted);
+
+    comment.body = posted.replace('"verdict":"pass"', '"verdict":"fail"');
+    await runMail(reviewed, wake(), withComment, fakeHub({ takes: [out], dones: [ENDED] }).hub);
+    expect(comment.body).toContain("**Triage: In progress**");
+  });
+
   const POLICY = { repo: { id: "art_policy", version: 1 } };
   test.each([
     ["an automatic pass keeps the verdict its rules still give", "pass", POLICY, {}, [], false],
