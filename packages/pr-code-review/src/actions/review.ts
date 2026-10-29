@@ -4,7 +4,8 @@ import { isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts"
 import { changedFiles, parseFindings, samePath, type Finding, type Site } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
-import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, DIFF_PATH, repositoryTag } from "./checkout.js";
+import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
+import { DIFF_INDEX, indexedFiles, readWhole, shownIn } from "../diff-parts.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
 
@@ -72,6 +73,8 @@ interface Candidates {
   found: Candidate[];
   kept: Candidate[];
   budgetExhausted: boolean;
+  /** Whether the finders between them were shown every line of the diff and neither spent its budget. */
+  complete: boolean;
   consolidate: string;
   inference: StepInference;
 }
@@ -102,6 +105,7 @@ interface Judged extends Verdict {
 
 interface WriteInput {
   budgetExhausted: boolean;
+  complete: boolean;
   findings: Reported[];
   dropped: Judged[];
   text: string;
@@ -135,13 +139,9 @@ function aboutPullRequest(request: ReviewRequest): string {
   return `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n</pull_request>`;
 }
 
-/**
- * The checkout and token budget a step reads under, the pull request, the files it changes with deletions marked, and
- * where in the checkout its whole diff is.
- */
+/** The checkout and token budget a step reads under, the pull request, and the index of its diff in the checkout. */
 function pullRequest(request: ReviewRequest, budget: number): string {
-  const files = `<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>`;
-  return `${repositoryTag(request.checkout)}${budgetTag(budget)}${aboutPullRequest(request)}\n\n${files}\n\n<diff path="${DIFF_PATH}"/>`;
+  return `${repositoryTag(request.checkout)}${budgetTag(budget)}${aboutPullRequest(request)}\n\n<diff index="${DIFF_INDEX}"/>`;
 }
 
 /** A request the PR workflow's scope step handed over, rather than a trigger mail. */
@@ -229,13 +229,18 @@ function consolidateMessage(request: ReviewRequest, kept: readonly Candidate[]):
   return `${repositoryTag(request.checkout)}${aboutPullRequest(request)}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nGroup the findings by the defect they describe.`;
 }
 
-/** Both finders' findings, those left once exact duplicates are folded together, whether either finder's budget ran out, and the consolidate step's message. */
+/**
+ * Both finders' findings, those left once exact duplicates are folded together, whether either finder's budget ran out,
+ * whether the review is complete, and the consolidate step's message.
+ */
 export async function candidates(steps: Steps): Promise<Candidates> {
   const { request, inference } = stepOutput(steps, "reviewInput");
+  const replies = [replyOf(stepOutput(steps, "findDiff")), replyOf(stepOutput(steps, "findRepo"))];
   const found = [...findingsOf(stepOutput(steps, "findDiff"), "diff"), ...findingsOf(stepOutput(steps, "findRepo"), "repo")];
   const kept = withoutDuplicates(found);
-  const budgetExhausted = (["findDiff", "findRepo"] as const).some((id) => replyOf(stepOutput(steps, id)).startsWith(BUDGET_EXHAUSTED));
-  return { found, kept, budgetExhausted, consolidate: consolidateMessage(request, kept), inference: inference.consolidate };
+  const budgetExhausted = replies.some((reply) => reply.startsWith(BUDGET_EXHAUSTED));
+  const complete = !budgetExhausted && readWhole(indexedFiles(request.diff), replies.map(shownIn));
+  return { found, kept, budgetExhausted, complete, consolidate: consolidateMessage(request, kept), inference: inference.consolidate };
 }
 
 /** The consolidate step's groups, with every candidate it left out or repeated in a group of its own. */
@@ -332,7 +337,7 @@ function posted({ finding, verdict }: Judged): boolean {
 /** The findings to report, those left out with the check's verdict and reason, and the write step's user message. */
 export async function writeInput(steps: Steps): Promise<WriteInput> {
   const { request, inference } = stepOutput(steps, "reviewInput");
-  const { budgetExhausted } = stepOutput(steps, "candidates");
+  const { budgetExhausted, complete } = stepOutput(steps, "candidates");
   const { findings: checked } = stepOutput(steps, "checks");
   const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
   const judged = checked.map((finding, i) => ({ finding, ...(verdicts[i] ?? UNCHECKED) }));
@@ -341,7 +346,7 @@ export async function writeInput(steps: Steps): Promise<WriteInput> {
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nWrite the review.`;
-  return { budgetExhausted, findings, dropped, text, inference: inference.write };
+  return { budgetExhausted, complete, findings, dropped, text, inference: inference.write };
 }
 
 interface Written {
@@ -363,12 +368,12 @@ function commentOf(finding: Reported, { title, body }: { title: string; body: st
 
 /**
  * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes, its
- * agreement and whether its lines went unread, whether it stopped early, and each finding it left out, in its
+ * agreement and whether its lines went unread, whether it stopped early, whether it is complete, and each finding it left out, in its
  * finder's words with the check's verdict and reason. A finding the write step left without a comment gets one in its
  * finder's words.
  */
 export async function review(steps: Steps) {
-  const { findings, dropped, budgetExhausted } = stepOutput(steps, "writeInput");
+  const { findings, dropped, budgetExhausted, complete } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
     return commentOf(finding, written.comments.find((c) => c.finding === index) ?? ownWords(finding));
@@ -376,5 +381,5 @@ export async function review(steps: Steps) {
   function droppedOf({ finding, verdict, reason }: Judged) {
     return { ...commentOf(finding, ownWords(finding)), verdict, reason };
   }
-  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted };
+  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, complete };
 }

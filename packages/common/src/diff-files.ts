@@ -83,13 +83,24 @@ function sections(diff: string): string[] {
   return starts.map((start, i) => diff.slice(start, starts[i + 1]));
 }
 
-/** Each file the diff changes, by its head-side path or its base-side path when deleted; throws when a file's path cannot be read. */
-export function diffFiles(diff: string): { path: string; deleted: boolean }[] {
+export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed";
+
+function statusOf(meta: readonly string[]): DiffFileStatus {
+  if (lineValue(meta, "+++ ") === "/dev/null" || meta.some((line) => line.startsWith("deleted file mode "))) return "deleted";
+  if (lineValue(meta, "--- ") === "/dev/null" || meta.some((line) => line.startsWith("new file mode "))) return "added";
+  if (lineValue(meta, "rename to ") !== undefined) return "renamed";
+  return "modified";
+}
+
+/**
+ * Each file the diff changes, by its head-side path or its base-side path when deleted, with its status and its part of
+ * the diff; throws when a file's path cannot be read.
+ */
+export function diffFiles(diff: string): { path: string; status: DiffFileStatus; patch: string }[] {
   return sections(diff).map(function fileOf(section) {
     const path = sectionPath(section);
     if (path === undefined) throw new Error(`unreadable diff header: ${section.split("\n")[0]}`);
-    const meta = metaOf(section);
-    return { path, deleted: lineValue(meta, "+++ ") === "/dev/null" || meta.some((line) => line.startsWith("deleted file mode ")) };
+    return { path, status: statusOf(metaOf(section)), patch: section };
   });
 }
 

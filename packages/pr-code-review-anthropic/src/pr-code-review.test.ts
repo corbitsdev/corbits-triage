@@ -6,7 +6,8 @@ import { join } from "node:path";
 import type { InferenceEvent } from "@intx/types/inference-events";
 import type { ToolResult } from "@intx/types/runtime";
 import { projectLiveToInert, type StepInvokeRequest, type WorkflowAuthorizeFn } from "@intx/workflow";
-import { checkoutUnder, DIFF_PATH } from "@corbits/pr-code-review/actions/checkout";
+import { checkoutUnder } from "@corbits/pr-code-review/actions/checkout";
+import { DIFF_INDEX } from "@corbits/pr-code-review/diff-parts";
 import { codeReviewAgents, credentialBindingsFor } from "@corbits/pr-code-review/agents";
 import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
 import { CHECK_UNFINISHED, UNCITED } from "@corbits/pr-code-review/reader-director";
@@ -37,6 +38,8 @@ const REPO = "acme/widgets";
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const FILE = "export function add(a: number, b: number) {\n  return a - b;\n}\n";
 const DIFF = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,3 +1,3 @@\n export function add(a: number, b: number) {\n-  return a + b;\n+  return a - b;\n }\n";
+/** The one patch file the checkout holds the diff in. */
+const PATCH = ".corbits/diff/0001.patch";
 const FINDING = { path: "src/a.ts", start: 2, end: 2, priority: 1, confidence: 0.9, title: "add subtracts", why: "it uses -", trigger: "add(1, 1)", code: "  return a - b;" };
 /** A candidate the check step answers not real. */
 const PLANTED = { path: "src/a.ts", start: 1, end: 1, priority: 2, confidence: 0.6, title: "add is not exported", why: "callers cannot import it", trigger: "import { add }", code: "export function add(a: number, b: number) {" };
@@ -116,7 +119,12 @@ function answer(body: MessagesRequest) {
     return [{ type: "tool_use", id: "verify", name: "read_file", input: { path: sent.includes(OUTSIDE.title) ? OUTSIDE.path : "src/a.ts" } }];
   }
   if (sent.includes("Verify this finding.")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
-  if (diffFinder && !sent.includes("tool_result")) return [{ type: "tool_use", id: "diff", name: "read_file", input: { path: DIFF_PATH } }];
+  if (diffFinder && !sent.includes("tool_result")) {
+    return [
+      { type: "tool_use", id: "index", name: "read_file", input: { path: DIFF_INDEX } },
+      { type: "tool_use", id: "diff", name: "read_file", input: { path: PATCH } },
+    ];
+  }
   if (repoFinder && !sent.includes("tool_result")) {
     return [
       { type: "tool_use", id: "read", name: "read_file", input: { path: "src/a.ts" } },
@@ -217,11 +225,12 @@ test("the finders read the diff and the head the checkout action put on the side
   expect(first.run.outputs["checkout"]).toEqual({ path: join(dir, "data/checkouts/github/acme/widgets", SHA) });
   expect(first.run.outputs["lint"]).toEqual({ status: "skipped", reason: "no lint config" });
   const results = Object.fromEntries(first.results.map((r) => [r.callId, r]));
-  expect(results["diff"]).toMatchObject({ content: { path: DIFF_PATH, text: expect.stringContaining("+  return a - b;") } });
+  expect(results["index"]).toMatchObject({ content: { text: `1\t${JSON.stringify({ path: "src/a.ts", status: "modified", lines: 8, patches: [PATCH] })}\n2\t` } });
+  expect(results["diff"]).toMatchObject({ content: { path: PATCH, text: expect.stringContaining("+  return a - b;") } });
   expect(results["read"]).toMatchObject({ content: { path: "src/a.ts", text: "1\texport function add(a: number, b: number) {\n2\t  return a - b;\n3\t}\n4\t" } });
-  expect(results["grep"]).toMatchObject({ content: { matches: [{ path: DIFF_PATH, line: 5 }, { path: "src/a.ts", line: 1 }] } });
+  expect(results["grep"]).toMatchObject({ content: { matches: [{ path: PATCH, line: 5 }, { path: "src/a.ts", line: 1 }] } });
   expect(results["escape"]).toMatchObject({ content: `${join(dir, "head/src/a.ts")} is outside the repository`, isError: true });
-  expect(first.run.outputs["review"]).toMatchObject({ summary: "One defect.", comments: [{ path: "src/a.ts", start: 2, title: "add subtracts", agreement: { finders: 2 } }] });
+  expect(first.run.outputs["review"]).toMatchObject({ summary: "One defect.", complete: true, comments: [{ path: "src/a.ts", start: 2, title: "add subtracts", agreement: { finders: 2 } }] });
 
   const second = await review(join(dir, "data"));
   expect(second.run.terminalStatus).toBe("completed");

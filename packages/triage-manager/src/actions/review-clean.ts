@@ -24,10 +24,10 @@ function severityAt({ priority = 0 }: Finding): number {
 
 type Unclean = { held: string } | { found: number };
 
-/** Why the review is not clean: none reported, or it stopped before reading the whole change; or how many findings are at or above `below`. */
+/** Why the review is not clean: none reported, or it did not read the whole change; or how many findings are at or above `below`. */
 function uncleanBy(review: CodeReviewOutput | undefined, below: (typeof SEVERITIES)[number] | undefined): Unclean | undefined {
   if (!review) return { held: "Code review did not report on this head." };
-  if (review.budgetExhausted) return { held: "Code review did not read the whole change on this head." };
+  if (review.budgetExhausted || review.complete !== true) return { held: "Code review did not read the whole change on this head." };
   const floor = below === undefined ? 0 : SEVERITIES.indexOf(below);
   const found = review.comments.filter((finding) => severityAt(finding) >= floor).length;
   return found > 0 ? { found } : undefined;

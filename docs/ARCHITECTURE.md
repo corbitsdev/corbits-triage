@@ -914,12 +914,21 @@ manager deploys one more review of a head for each `again` it has not
 reviewed, even where an earlier review of the head settled.
 Code review only reads: a checkout action downloads the head through the host
 credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>` and
-writes the whole diff into it at `.corbits/diff.patch`, and its tools are the
-host read bundle and repository reads confined to that folder. No prompt
-carries the diff: plan and both finders get its path and the changed files,
-deletions marked, and read it with the repository reads on their token budget
+writes the whole diff into it under `.corbits/diff/`, and its tools are the
+host read bundle and repository reads confined to that folder. Each changed
+file's patch is its own file there, split at line ends into numbered parts of at
+most 1,500,000 bytes, so the read tools' 2,000,000-byte limit never refuses one;
+a deleted file has none. `.corbits/diff/index.jsonl` lists every changed file
+with its path, status (added, modified, deleted or renamed), line count and
+patch files. No prompt carries the diff: plan and both finders get the index's
+path and read the patches with the repository reads on their token budget
 (`budgets.repoFinder` for the repository finder, 400,000 billable tokens each by
-default). The consolidate step reads each finding's lines at the head and reports
+default). `read_file` clips each line at 500 characters, so a longer diff line
+is read only up to the clip, and counts as shown. Each finder's reader reports
+the lines of each patch file it was shown, by `read_file` or `grep`; the review
+is `complete` only when the two finders between them were shown every line of
+every patch file and neither spent its budget. A review that is not complete
+holds approve and merge, as one that stopped early does. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file". The check step verifies every

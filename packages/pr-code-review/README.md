@@ -19,18 +19,21 @@ prompt carries it, and the steps read it from the checkout.
 
 ### Process
 
-1. **checkout** puts the head in a folder on the sidecar and writes the whole diff into it at `.corbits/diff.patch`.
-   **plan** then reads the diff there within a token budget (400,000 billable tokens) and names the risky changed areas
+1. **checkout** puts the head in a folder on the sidecar and writes the whole diff into it under `.corbits/diff/`: one
+   patch per changed file, split into numbered parts past 1,500,000 bytes, none for a deleted file, and
+   `index.jsonl` listing each file's path, status, line count and patch files.
+   **plan** then reads the index and patches there within a token budget (400,000 billable tokens) and names the risky changed areas
    and the code outside the diff they depend on. Each review runs in a deployment of its own; releasing it when the run ends,
    failed or not, removes the sidecar and the checkout with it.
    **lint** then runs the sidecar's pinned oxlint with the repository's `.oxlintrc.json` over the changed files and
    keeps hits on added lines; only its data keys are kept, a config with any other key is refused unrun, and with none
    it is `skipped`. It answers `complete` with findings (`ToolFinding` in `src/findings.ts`), `skipped` or
    `incomplete`; a failure is never an empty list.
-2. **findDiff** reads the diff from the folder within a token budget (400,000 billable tokens); **findRepo** reads it
-   and the rest of the folder within `budgets.repoFinder`. They run in parallel, each given the changed files with
-   deletions marked so it skips them. An answer with no findings list fails the finder's step; a finder that spent its
-   budget before answering found nothing and the review says it stopped early.
+2. **findDiff** reads the patches from the folder within a token budget (400,000 billable tokens); **findRepo** reads
+   them and the rest of the folder within `budgets.repoFinder`. They run in parallel, each given the index's path. An
+   answer with no findings list fails the finder's step; a finder that spent its budget before answering found nothing
+   and the review says it stopped early. Each finder's reply ends with the lines of each patch file it was shown, and
+   the review is `complete` only when the two between them were shown every line and neither spent its budget.
 3. **candidates** folds exact duplicates (same file, same lines, same title ignoring case and spacing, or,
    when neither has a title, the same explanation and the same quoted line wherever both quote one) and remembers
    which finders reported each finding.

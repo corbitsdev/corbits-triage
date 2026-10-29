@@ -1,19 +1,17 @@
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { checkout as bitbucketCheckout } from "@corbits/bitbucket-datacenter-tool";
 import { checkout as githubCheckout } from "@corbits/github-tool";
 import { checkoutsUnder, checkTarget, sidecarDataDir } from "@corbits/repo-read-tool";
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import { type } from "arktype";
+import { DIFF_DIR, DIFF_INDEX, indexedFiles, indexText } from "../diff-parts.js";
 
 export const Checkout = type({ source: "'github' | 'bitbucket-datacenter'", repo: "string", sha: /^[0-9a-f]{40}$/ });
 export type Checkout = typeof Checkout.infer;
 
-/** The checkout action's input: the head, and the pull request's diff it writes into the checkout at DIFF_PATH. */
+/** The checkout action's input: the head, and the pull request's diff it writes into the checkout under DIFF_DIR. */
 const CheckoutInput = Checkout.and({ diff: "string" });
-
-/** Where the review's steps read the pull request's whole diff, relative to the checkout's root. */
-export const DIFF_PATH = ".corbits/diff.patch";
 
 export const READ_FILE_TOOL = { github: "github_read_file", "bitbucket-datacenter": "bitbucket_datacenter_read_file" } as const;
 
@@ -67,15 +65,19 @@ async function hostOf(credentials: PerformScope["credentials"], source: Checkout
   };
 }
 
+/** Writes each changed file's patch parts and the index naming them, replacing what an earlier run wrote. */
 async function writeDiff(path: string, diff: string) {
-  const file = join(path, DIFF_PATH);
-  await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, diff);
+  const files = indexedFiles(diff);
+  const dir = join(path, DIFF_DIR);
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  for (const part of files.flatMap((file) => file.parts)) await writeFile(join(path, part.path), part.text);
+  await writeFile(join(path, DIFF_INDEX), indexText(files));
 }
 
 /**
  * The checkout action over the sidecar data dir `dataDir` names: the head's folder, downloaded through the host's
- * credential unless already there, with the pull request's whole diff written into it at DIFF_PATH.
+ * credential unless already there, with the pull request's whole diff written into it under DIFF_DIR.
  */
 export function checkoutUnder(dataDir: () => string) {
   return async function checkout(input: unknown, ctx: EffectContext): Promise<{ path: string }> {

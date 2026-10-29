@@ -135,7 +135,7 @@ export function quotedLine(finding: Finding): string | undefined {
 
 /** Every file the diff adds, changes or deletes, by its head-side path, or its base-side path marked deleted. */
 export function changedFiles(diff: string): string[] {
-  return diffFiles(diff).map(({ path, deleted }) => (deleted ? `${path} (deleted)` : path));
+  return diffFiles(diff).map(({ path, status }) => (status === "deleted" ? `${path} (deleted)` : path));
 }
 
 /** Whether two paths name the same file, one possibly given relative to a subdirectory of the other's root. */

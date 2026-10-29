@@ -17,10 +17,11 @@ export type CodeReviewComment = typeof CodeReviewComment.infer;
 const CodeReviewDropped = CodeReviewComment.and({ verdict: "'not_real' | 'unsure'", reason: "string" });
 
 /**
- * What a code review run answers: its summary, its findings, the findings its check dropped and whether its reader
- * stopped early.
+ * What a code review run answers: its summary, its findings, the findings its check dropped, whether its reader
+ * stopped early, and `complete` when its finders between them were shown every line of the diff without either
+ * spending its budget. A review without it, as one recorded before it was reported, is not complete.
  */
-export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean" });
+export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean", "complete?": "boolean" });
 export type CodeReviewOutput = typeof CodeReviewOutput.infer;
 
 /** A finding's title as people read it, after its priority when it has one. */
