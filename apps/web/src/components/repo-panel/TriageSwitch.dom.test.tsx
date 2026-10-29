@@ -108,6 +108,19 @@ function hubFetch(bitbucket: BitbucketListing): void {
   } as unknown as typeof fetch;
 }
 
+/** Waits until no query is fetching across two flushes, so a query a finished one enables has started and settled too; still fetching after a second fails the test. */
+async function settle(client: QueryClient) {
+  const deadline = Date.now() + 1000;
+  let idleFlushes = 0;
+  while (idleFlushes < 2) {
+    if (Date.now() > deadline) throw new Error("Queries were still fetching after a second.");
+    await act(async function flushQueries() {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    idleFlushes = client.isFetching() === 0 ? idleFlushes + 1 : 0;
+  }
+}
+
 async function mount(node: ReactNode, bitbucket: BitbucketListing = null) {
   hubFetch(bitbucket);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -118,9 +131,7 @@ async function mount(node: ReactNode, bitbucket: BitbucketListing = null) {
     root?.render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
     await Promise.resolve();
   });
-  await act(async function settleQueries() {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  });
+  await settle(client);
 }
 
 function mountSwitch(changes: Partial<PortalSnapshot>) {

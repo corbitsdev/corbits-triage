@@ -5,7 +5,7 @@ import { Check, CircleCheck, Sparkles, Upload } from "lucide-react";
 import { errorText } from "@corbits/common";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
 import { useRepositories } from "../lib/bitbucket-datacenter.ts";
-import { githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
+import { connectedSources, githubAppSlugFromCredentials, hasActiveGithubCredential, portalConnected, type PortalSnapshot, type RepoRecord } from "../lib/hub-api.ts";
 import { hubOnLocalhost } from "../lib/hub-origin.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
 import { generateWebhookSecret, isPrivateKeyPem } from "../lib/connect-view.ts";
@@ -68,7 +68,8 @@ export default function Connect() {
   const webhookUrl = snapshot ? githubWebhookUrl(snapshot.workspace.tenantId) : "";
   const repos = snapshot?.repos ?? [];
   const openable = useRepositories();
-  const listingError = openable.error ? `Could not read your repositories from Bitbucket Data Center. ${openable.error.message}` : "";
+  const bitbucketError = snapshot && connectedSources(snapshot.credentials).includes("bitbucket-datacenter") ? openable.error : null;
+  const listingError = bitbucketError ? `Could not read your repositories from Bitbucket Data Center. ${bitbucketError.message}` : "";
   const verdicts = useTriageVerdicts();
   const triaged = useMemo(() => hostedRepos(verdicts.data?.triaged ?? []), [verdicts.data]);
   const catching = useMemo(() => catchingUpRepos(verdicts.data?.pulls ?? [], triaged), [verdicts.data, triaged]);
@@ -153,7 +154,7 @@ export default function Connect() {
   const sync = useGithubSync(githubConnected && (fromGithub || repos.length === 0));
   const syncError = sync.error ? `Could not read your repositories from GitHub. ${sync.error.message}` : "";
   const noReposYet = fromGithub && sync.data?.repos.length === 0;
-  const noneVisible = !openable.pending && !openable.error && !syncError && !sync.isFetching && openable.repos.length === 0;
+  const noneVisible = !openable.pending && !bitbucketError && !syncError && !sync.isFetching && openable.repos.length === 0;
 
   // Each sync result moves onboarding to the step GitHub's state implies.
   const [lastSync, setLastSync] = useState(sync.data);
