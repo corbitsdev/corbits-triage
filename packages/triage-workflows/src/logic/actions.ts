@@ -48,12 +48,16 @@ export interface ActionInput {
   labelled?: CheckResult[];
 }
 
-/** Events that clear a hold Triage adds itself, so the actions it held run whatever the policy's `on:` lists. */
-const RELEASES: readonly TriageEvent[] = ["threads"];
-
-/** Catch-up, and an event that clears Triage's own hold, run the policy's actions whatever woke it. */
+/** Catch-up runs the policy's actions whatever woke it. */
 export function wakes(pack: CheckPack, facts: PrFacts): boolean {
-  return facts.events.some((event) => event === "catch-up" || RELEASES.includes(event) || (pack.actions.when as readonly string[]).includes(event));
+  return facts.events.includes("catch-up") || facts.events.some((event) => (pack.actions.when as readonly string[]).includes(event));
+}
+
+/** Events that clear a hold Triage adds itself, and the kind of step each releases whatever the policy's `on:` lists. */
+const RELEASES: ReadonlyArray<[TriageEvent, ActionKind]> = [["threads", "merge"]];
+
+function releasedKinds(facts: PrFacts): ActionKind[] {
+  return RELEASES.filter(([event]) => facts.events.includes(event)).map(([, kind]) => kind);
 }
 
 /** GitHub takes team slugs, and only the repository owner's teams can review. */
@@ -227,16 +231,19 @@ function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: 
 }
 
 /**
- * The Dos of `steps` on this head; none when the event does not wake the policy. A step whose conditions do not hold,
- * or cannot be told, is skipped, and one that does nothing is not listed. Suggest only: nothing here writes to GitHub.
+ * The Dos of `steps` on this head; none when the event does not wake the policy, and only the kinds it releases when
+ * it only clears a hold Triage added. A step whose conditions do not hold, or cannot be told, is skipped, and one that
+ * does nothing is not listed. Suggest only: nothing here writes to GitHub.
  */
 export function stepActions(input: ActionInput, steps: readonly Step[]): SuggestedAction[] {
-  if (!wakes(input.pack, input.facts)) return [];
+  const woken = wakes(input.pack, input.facts);
+  const released = releasedKinds(input.facts);
+  if (!woken && released.length === 0) return [];
   const { verdict: list, reason, facts } = input;
   const subject = stepSubject(facts, input.pack);
   const out: SuggestedAction[] = [];
   for (const [index, step] of steps.entries()) {
-    if (step.do === "nothing") continue;
+    if (step.do === "nothing" || (!woken && !released.includes(step.do))) continue;
     const base = { list, index, kind: step.do };
     const holds = whenHolds(step.when, subject);
     if (holds.matches !== true) {
@@ -251,7 +258,7 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
       out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
     }
   }
-  return [...out, ...labelDo(input, reason)];
+  return woken ? [...out, ...labelDo(input, reason)] : out;
 }
 
 /** The Dos of the verdict's list on this head. */

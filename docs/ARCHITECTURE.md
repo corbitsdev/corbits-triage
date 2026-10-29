@@ -887,8 +887,9 @@ label off that head, so it never stands on a head not yet triaged.
    GitHub's `pull_request_review_thread` (`resolved`, `unresolved`) and Data
    Center's `pr:comment:edited` whose text is unchanged (a resolve or reopen,
    checked against Bitbucket 10.5) wake the pull request as `threads`, which
-   is not a policy event: like catch-up it runs the policy's actions whatever
-   `on:` lists, since it releases a hold Triage added itself.
+   is not a policy event: it runs only the policy's merge steps, whatever
+   `on:` lists, since it releases a hold Triage added itself; every other
+   action waits for an event `on:` lists.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
 `triage-do:<kind>:<owner>/<name>`), after the grant writer has followed that

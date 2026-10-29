@@ -876,18 +876,21 @@ describe("pr-triage body", () => {
     expect(writes).toEqual([`/repos/${REPO}/pulls/8/reviews/100`, `/repos/${REPO}/pulls/8/reviews/100/dismissals`, `/repos/${REPO}/pulls/8/merge`]);
   });
 
-  test("resolving the last review thread merges once, though the policy's on: lists neither updated nor the thread", async () => {
+  test("resolving the last review thread merges once, though the policy's on: lists neither updated nor the thread, and runs no other action", async () => {
     const github = fakeGithub();
     const empty = emptyPack(REPO);
-    const pack: CheckPack = { ...empty, checks: { "max-files-changed": { enabled: true, max: 30 } }, actions: { ...empty.actions, when: ["opened", "checks"], pass: [{ do: "merge" }] } };
+    const pack: CheckPack = { ...empty, checks: { "max-files-changed": { enabled: true, max: 30 } }, actions: { ...empty.actions, when: ["opened", "checks"], pass: [{ do: "labels", target: { from: "list", labels: ["shipit"] } }, { do: "merge" }] } };
     github.pr.ci = "success";
     github.pr.threads = [{ isResolved: false, login: "maya" }];
     await triage(pack, { github });
     expect(github.comments[0]!.body).toEndWith("Merge waits for 1 unresolved review thread, opened by maya.");
+    expect(github.labels).toContain("shipit");
+    github.labels.splice(github.labels.indexOf("shipit"), 1);
     github.pr.threads = [{ isResolved: true, login: "maya" }];
     await triage(pack, { github, events: ["threads"] });
     await triage(pack, { github, events: ["threads"] });
     expect(github.requests.filter((request) => request.method === "PUT").map((request) => request.path)).toEqual([`/repos/${REPO}/pulls/8/merge`]);
+    expect(github.labels).not.toContain("shipit");
   });
 
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {
