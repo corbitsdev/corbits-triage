@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { linesOf } from "@corbits/repo-read-tool";
 import { addWindow, type LinesRead } from "./lines-read.js";
-import { assembled } from "./stock-assembly.testing.js";
+import { assembled } from "./stock-assembly.test-helpers.js";
 
 const PATCH = Array.from({ length: 600 }, (_, i) => `+  log("changed line ${i + 1}", { value: ${i + 1}, label: "a\\tb" });`).join("\n");
 

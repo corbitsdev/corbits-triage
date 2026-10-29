@@ -10,7 +10,7 @@ import { consolidateDirectorOf } from "../consolidate-director.js";
 import type { CodeReviewProfile, Effort, Role } from "../profile.js";
 import { DIFF_DIR, DIFF_INDEX, indexedFiles, MAX_PART_BYTES, shownTag, unreadLines } from "../diff-parts.js";
 import { BUDGET_EXHAUSTED, checkoutPath, checkoutUnder, diffDirOf } from "./checkout.js";
-import { assembled } from "../stock-assembly.testing.js";
+import { assembled } from "../stock-assembly.test-helpers.js";
 import { candidates, checks, findersInput, review, reviewInputFor, writeInput } from "./review.js";
 
 const efforts: Record<Role, Effort> = { plan: "low", diffFinder: "low", repoFinder: "low", consolidate: "low", check: "low", write: "low" };
