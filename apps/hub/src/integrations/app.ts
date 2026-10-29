@@ -481,7 +481,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_TRIAGE_PATH}/:tenantId/policy/upgrades`,
     describeRoute({
       summary: "Whether each enabled repository has a policy file",
-      description: "Each enabled repository whose host credential the member may read. `start`: no policy file on the default branch, so triage runs nothing; its `pull` is the open pull request on `corbits-triage/policy`, found in the workspace's shared open pull request listing. `ok`: it has one. Each row names its repository's host as `source`.",
+      description: "Each enabled repository whose host credential the member may read. `start`: no policy file on the default branch, so triage runs nothing; its `pull` is the open pull request on `corbits-triage/policy`, found in the workspace's shared open pull request listing. `ok`: it has one, and `pull` is an open pull request changing it. `pullUnread`: that listing was refused or could not list the repository, so whether a policy pull request is open is not known. Each row names its repository's host as `source`.",
       tags: TAGS,
       responses: { 200: json("Each enabled repository's standing", PolicyUpgrades), ...failures },
     }),

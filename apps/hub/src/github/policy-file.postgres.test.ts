@@ -470,9 +470,16 @@ test("PostgreSQL: where no webhook is heard a merged policy file is read within 
 test("a Bitbucket policy pull request carries no head, so it is merged on Bitbucket, and each host's is found only for its own repository", () => {
   const pr = { number: 4, title: "Add the policy file", author: "triage", draft: false, sha: "bb-head", branch: POLICY_BRANCH, updatedAt: "2026-10-17T00:00:00Z", labels: [], url: "https://bitbucket.example/pr/4" };
   const listing = (source: RepoSource) => ({ at: 0, repos: [{ repo: "PROJ/widgets", source, prs: [pr] }] });
-  expect(listedPolicyPull(listing("bitbucket-datacenter"), "PROJ/widgets", "bitbucket-datacenter")).toEqual({ url: pr.url, number: 4 });
-  expect(listedPolicyPull(listing("github"), "PROJ/widgets", "github")).toEqual({ url: pr.url, number: 4, headSha: "bb-head" });
-  expect(listedPolicyPull(listing("github"), "PROJ/widgets", "bitbucket-datacenter")).toBeUndefined();
+  expect(listedPolicyPull(listing("bitbucket-datacenter"), "PROJ/widgets", "bitbucket-datacenter")).toEqual({ pull: { url: pr.url, number: 4 } });
+  expect(listedPolicyPull(listing("github"), "PROJ/widgets", "github")).toEqual({ pull: { url: pr.url, number: 4, headSha: "bb-head" } });
+  expect(listedPolicyPull(listing("github"), "PROJ/widgets", "bitbucket-datacenter")).toEqual({ pullUnread: true });
+});
+
+test("a listing that was refused or could not list the repository says the policy pull request is unread, not closed", () => {
+  const listed = { at: 0, repos: [{ repo: "acme/widgets", source: "github" as const, prs: [] }, { repo: "acme/failed", source: "github" as const, prs: [], error: "GitHub did not answer." }] };
+  expect(listedPolicyPull(listed, "acme/widgets", "github")).toEqual({});
+  expect(listedPolicyPull(listed, "acme/failed", "github")).toEqual({ pullUnread: true });
+  expect(listedPolicyPull(new Response(null, { status: 403 }), "acme/widgets", "github")).toEqual({ pullUnread: true });
 });
 
 const PATCH_FILE = `# Corbits Triage policy.

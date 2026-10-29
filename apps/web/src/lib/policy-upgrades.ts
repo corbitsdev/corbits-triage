@@ -28,6 +28,14 @@ function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyU
   return before.filter((row) => starting(row) && rowFor(now, idOf(row))?.upgrade?.state === "ok");
 }
 
+/** Where the hub could not list a repository's pull requests, the policy pull request last seen open is taken as still open. */
+function withLastKnownPulls(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): PolicyUpgradeRow[] {
+  return now.map(function lastKnownPull(row) {
+    const pull = row.pullUnread ? rowFor(before, idOf(row))?.pull : undefined;
+    return pull ? { ...row, pull } : row;
+  });
+}
+
 /** The repositories whose policy pull request was listed before and is not now: merged or closed, so their file may differ. */
 function pullsClosed(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): PolicyUpgradeRow[] {
   return before.filter((row) => row.pull && rowFor(now, idOf(row))?.pull?.number !== row.pull.number);
@@ -40,8 +48,8 @@ export const POLICY_UPGRADES_QUERY_KEY = "policy-upgrades";
 function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryClient) {
   const queryKey = [POLICY_UPGRADES_QUERY_KEY, tenantId];
   const queryFn = tenantId === undefined ? skipToken : async function readPolicyUpgrades(): Promise<Upgrades> {
-    const rows = await loadPolicyUpgrades(createHubTransport(), tenantId);
     const before = queryClient.getQueryData<Upgrades>(queryKey);
+    const rows = withLastKnownPulls(before?.rows ?? [], await loadPolicyUpgrades(createHubTransport(), tenantId));
     const settled = newlySettled(before?.rows ?? [], rows);
     // A merge on the host gives the repository its file or changes it, and a close leaves it as it was, so its policy is read again.
     const reread = [...new Set([...settled, ...pullsClosed(before?.rows ?? [], rows)])];
@@ -49,13 +57,13 @@ function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryCli
     return { rows, settled: [...(before?.settled ?? []), ...settled.map(idOf)] };
   };
   // A merge on the host changes a repository's standing without the portal knowing, so each load reads it again, and
-  // while the pull request adding its policy file is open it is read again until it merges.
+  // while a policy pull request is open it is read again until it merges or closes.
   return queryOptions({
     queryKey,
     queryFn,
     staleTime: 60_000,
     refetchOnMount: "always",
-    refetchInterval: (query) => (query.state.data?.rows.some((row) => starting(row) && row.pull) ? PULL_POLL_MS : false),
+    refetchInterval: (query) => (query.state.data?.rows.some((row) => row.pull) ? PULL_POLL_MS : false),
   });
 }
 
