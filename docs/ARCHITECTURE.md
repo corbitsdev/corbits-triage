@@ -951,7 +951,14 @@ the lines of each patch file `read_file` showed it, never `grep`'s matches;
 the review is `complete` only when the two finders between them were shown
 every line of every patch file and neither spent its budget. A review that is
 not complete holds approve and merge, as one that stopped early does, and the
-portal and the posted review say so in INCOMPLETE_NOTE's one sentence. The consolidate step reads each finding's lines at the head and reports
+portal and the posted review say so in INCOMPLETE_NOTE's one sentence. The
+review's `unread` lists the first 50 changed files, by repository path, with the
+ranges of their patch's lines no finder was shown, and `unreadFiles` counts
+every file with such lines; ranges are numbered through the whole
+patch so a line cut across parts is one line; past 20 ranges the last runs to
+the end of the file's last unread line. The hub logs the first 20 paths and
+the count with the run and head when it records a review that is not complete, and the portal's note names the first
+five. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file". The check step verifies every

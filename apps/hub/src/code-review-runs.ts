@@ -4,7 +4,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
-import { CodeReviewComment, findingOpen, REPO_SOURCES, repoSourceOf, StageResult, THREAD_STATES, type FindingThread, type RepoSource } from "@corbits/triage-contracts";
+import { CodeReviewComment, findingOpen, REPO_SOURCES, repoSourceOf, StageResult, THREAD_STATES, UnreadLines, type FindingThread, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { diffHash } from "@corbits/common/diff-hash";
 import type { PullRequestToReview } from "./pull-request-reader.js";
@@ -41,6 +41,8 @@ const CompletedRun = type({
   open: "number",
   budgetExhausted: "boolean",
   "complete?": "boolean",
+  "unread?": UnreadLines.array(),
+  "unreadFiles?": "number.integer >= 0",
   "diffHash?": "string",
 });
 const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string" });
@@ -81,10 +83,10 @@ function reviewOf(record: CodeReviewRecord): Review {
   const reported = StageResult.assert({ ...withPriorities(record.payload), head: record.head });
   if ("failed" in reported) return { ...base, status: "failed" };
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
-  const { summary, budgetExhausted, complete } = reported.result;
+  const { summary, budgetExhausted, complete, unread, unreadFiles } = reported.result;
   const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified, thread }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }), thread: threadOf(thread), open: findingOpen(thread) }));
   const open = comments.filter((comment) => comment.open).length;
-  return { ...base, status: "completed", summary, comments, open, budgetExhausted, ...(complete !== undefined && { complete }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
+  return { ...base, status: "completed", summary, comments, open, budgetExhausted, ...(complete !== undefined && { complete }), ...(unread && { unread }), ...(unreadFiles !== undefined && { unreadFiles }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 
 type CodeReviewRunsDeps = {

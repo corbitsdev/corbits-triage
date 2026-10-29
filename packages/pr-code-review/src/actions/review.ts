@@ -1,11 +1,11 @@
 import { type } from "arktype";
 import { hunksAt } from "@corbits/common/diff-files";
-import { isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
+import { isFromTriageSender, triggerRequestOf, type UnreadLines } from "@corbits/triage-contracts";
 import { changedFiles, parseFindings, samePath, type Finding, type Site } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
 import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
-import { DIFF_INDEX, indexedFiles, readWhole, shownIn } from "../diff-parts.js";
+import { DIFF_INDEX, indexedFiles, shownIn, unreadLines } from "../diff-parts.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
 
@@ -75,6 +75,9 @@ interface Candidates {
   budgetExhausted: boolean;
   /** Whether the finders between them were shown every line of the diff and neither spent its budget. */
   complete: boolean;
+  /** The patch lines neither finder was shown, by changed file, and how many files have any. */
+  unread: UnreadLines[];
+  unreadFiles: number;
   consolidate: string;
   inference: StepInference;
 }
@@ -106,6 +109,8 @@ interface Judged extends Verdict {
 interface WriteInput {
   budgetExhausted: boolean;
   complete: boolean;
+  unread: UnreadLines[];
+  unreadFiles: number;
   findings: Reported[];
   dropped: Judged[];
   text: string;
@@ -239,8 +244,9 @@ export async function candidates(steps: Steps): Promise<Candidates> {
   const found = [...findingsOf(stepOutput(steps, "findDiff"), "diff"), ...findingsOf(stepOutput(steps, "findRepo"), "repo")];
   const kept = withoutDuplicates(found);
   const budgetExhausted = replies.some((reply) => reply.startsWith(BUDGET_EXHAUSTED));
-  const complete = !budgetExhausted && readWhole(indexedFiles(request.diff), replies.map(shownIn));
-  return { found, kept, budgetExhausted, complete, consolidate: consolidateMessage(request, kept), inference: inference.consolidate };
+  const { unread, unreadFiles } = unreadLines(indexedFiles(request.diff), replies.map(shownIn));
+  const complete = !budgetExhausted && unreadFiles === 0;
+  return { found, kept, budgetExhausted, complete, unread, unreadFiles, consolidate: consolidateMessage(request, kept), inference: inference.consolidate };
 }
 
 /** The consolidate step's groups, with every candidate it left out or repeated in a group of its own. */
@@ -336,7 +342,7 @@ function posted({ finding, verdict }: Judged): boolean {
 /** The findings to report, those left out with the check's verdict and reason, and the write step's user message. */
 export async function writeInput(steps: Steps): Promise<WriteInput> {
   const { request, inference } = stepOutput(steps, "reviewInput");
-  const { budgetExhausted, complete } = stepOutput(steps, "candidates");
+  const { budgetExhausted, complete, unread, unreadFiles } = stepOutput(steps, "candidates");
   const { findings: checked } = stepOutput(steps, "checks");
   const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
   const judged = checked.map((finding, i) => ({ finding, ...(verdicts[i] ?? UNCHECKED) }));
@@ -345,7 +351,7 @@ export async function writeInput(steps: Steps): Promise<WriteInput> {
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nWrite the review.`;
-  return { budgetExhausted, complete, findings, dropped, text, inference: inference.write };
+  return { budgetExhausted, complete, unread, unreadFiles, findings, dropped, text, inference: inference.write };
 }
 
 interface Written {
@@ -367,12 +373,12 @@ function commentOf(finding: Reported, { title, body }: { title: string; body: st
 
 /**
  * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes, its
- * agreement and whether its lines went unread, whether it stopped early, whether it is complete, and each finding it left out, in its
+ * agreement and whether its lines went unread, whether it stopped early, whether it is complete and which patch lines no finder read, and each finding it left out, in its
  * finder's words with the check's verdict and reason. A finding the write step left without a comment gets one in its
  * finder's words.
  */
 export async function review(steps: Steps) {
-  const { findings, dropped, budgetExhausted, complete } = stepOutput(steps, "writeInput");
+  const { findings, dropped, budgetExhausted, complete, unread, unreadFiles } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
     return commentOf(finding, written.comments.find((c) => c.finding === index) ?? ownWords(finding));
@@ -380,5 +386,5 @@ export async function review(steps: Steps) {
   function droppedOf({ finding, verdict, reason }: Judged) {
     return { ...commentOf(finding, ownWords(finding)), verdict, reason };
   }
-  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, complete };
+  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, complete, unread, unreadFiles };
 }
