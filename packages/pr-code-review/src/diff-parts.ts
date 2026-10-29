@@ -100,13 +100,17 @@ function rangesOf(lines: ReadonlySet<number>): [number, number][] {
   return ranges;
 }
 
-/** The tag naming the lines of each patch file a reader was shown. */
+/** The tag naming the lines of each patch file a reader was shown, under each file's one normal path. */
 export function shownTag(read: LinesRead): string {
-  const shown: Record<string, [number, number][]> = {};
+  const merged: LinesRead = new Map();
   for (const [path, lines] of read) {
     const normal = posix.normalize(path);
-    if (normal.startsWith(`${DIFF_DIR}/`)) shown[normal] = [...(shown[normal] ?? []), ...rangesOf(lines)];
+    if (!normal.startsWith(`${DIFF_DIR}/`)) continue;
+    const seen = merged.get(normal);
+    if (seen) for (const line of lines) seen.add(line);
+    else merged.set(normal, new Set(lines));
   }
+  const shown = Object.fromEntries([...merged].map(([path, lines]) => [path, rangesOf(lines)]));
   return `\n<diff_shown>${JSON.stringify(shown)}</diff_shown>`;
 }
 
@@ -116,7 +120,7 @@ export function shownIn(reply: string): LinesRead {
   const read: LinesRead = new Map();
   if (!match) return read;
   for (const [path, ranges] of Object.entries(JSON.parse(match[1]!) as Record<string, [number, number][]>)) {
-    const lines = read.get(path) ?? new Set<number>();
+    const lines = new Set<number>();
     for (const [from, to] of ranges) for (let line = from; line <= to; line++) lines.add(line);
     read.set(path, lines);
   }
