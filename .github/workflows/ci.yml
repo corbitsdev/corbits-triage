@@ -22,6 +22,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - run: bun run lint
 
@@ -30,6 +32,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup
       - run: bun run check
 
@@ -46,6 +50,8 @@ jobs:
             shard: 1/1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - if: matrix.suite == 'postgres'
         uses: ./.github/actions/postgres
       - uses: ./.github/actions/setup
@@ -104,6 +110,8 @@ jobs:
             files: tests/chain/pushed.test.ts tests/chain/sidecar-cap.test.ts tests/chain/always.test.ts
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - if: env.RUN == 'true'
         uses: ./.github/actions/postgres
       - if: env.RUN == 'true'
