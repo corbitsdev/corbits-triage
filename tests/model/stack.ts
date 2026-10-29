@@ -73,7 +73,7 @@ const DeployBody = type({
 const MailText = type({ "prNumber?": "number", "items?": type({ prNumber: "number" }).array() });
 
 type Db = ReturnType<typeof createDB>["db"];
-type Run = { definition: WorkflowDefinition; principalId: string; token: string };
+type Run = { definition: WorkflowDefinition; principalId: string; tokens: ReadonlyMap<string, string> };
 
 const sessionService: SessionService = {
   stageWorkflowStep() {
@@ -95,6 +95,12 @@ export type Mail = { id: string; to: string; payload: ReturnType<typeof stockMai
 /** The consumers of the hub credential, each of which gets a run token, as deploy reads them off the definition's projection. */
 function hubConsumers(definition: WorkflowDefinition): readonly string[] {
   return collectHubConsumers(WorkflowProjectionDefinition.assert(projectLiveToInert(definition)));
+}
+
+function tokenOf(tokens: ReadonlyMap<string, string>, consumer: string): string {
+  const token = tokens.get(consumer);
+  if (token === undefined) throw new Error(`no run token was minted for ${consumer}`);
+  return token;
 }
 
 /** The pull requests a mail names: a manager's mail names one, the hub's mail to the listener one or more. */
@@ -202,7 +208,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
   const failed: { mail: Mail; status: string }[] = [];
   const directors = createWorkflowDirectorRegistry([mailDirector.factory]);
   const adapters = await loadAdapterRegistry([], { import: async function noAdapters() { return {}; } });
-  const tokens = createRunTokenStore({ db, cipher: createNoopCredentialCipher() });
+  const runTokens = createRunTokenStore({ db, cipher: createNoopCredentialCipher() });
 
   /**
    * Stock's deploy: a run of `definition` with its own principal, the grants its definition requires of its creator,
@@ -216,10 +222,9 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
       const resource = requirement.resource === SELF_RUN_RESOURCE ? `workflow-run:${runId}` : requirement.resource;
       await db.insert(schema.grant).values({ id: randomUUID(), tenantId: TENANT, principalId, resource, action: requirement.action, effect: "allow", origin: "creator" });
     }
-    await tokens.mintIfAbsent({ principalId, consumers: [...hubConsumers(definition)] }, db);
-    const [delivery] = await tokens.loadDelivery(principalId);
-    if (!delivery) throw new Error(`no run token was minted for ${runId}`);
-    runs.set(runId, { definition, principalId, token: delivery.token });
+    await runTokens.mintIfAbsent({ principalId, consumers: [...hubConsumers(definition)] }, db);
+    const delivery = await runTokens.loadDelivery(principalId);
+    runs.set(runId, { definition, principalId, tokens: new Map(delivery.map((row) => [row.consumer, row.token])) });
   }
 
   async function live(runId: string): Promise<boolean> {
@@ -322,8 +327,8 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     return app.request(url, init);
   }
 
-  /** What the hub delivers `runId`: GitHub for its definition's bindings, and its run token for each consumer of the hub credential. */
-  function deliveryOf({ definition, token }: Run): CredentialDelivery {
+  /** What the hub delivers `runId`: GitHub for its definition's bindings, and each consumer of the hub credential its own run token. */
+  function deliveryOf({ definition, tokens }: Run): CredentialDelivery {
     const bindings = (definition.credentialBindings ?? []) as readonly ({ handle: string; package: string } | { handle: string; action: string })[];
     const hub = hubConsumers(definition);
     return {
@@ -333,7 +338,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
       ],
       materials: [
         { credentialId: "github", providerKey: "http", origin: GITHUB_ORIGIN, secret: "installation-token" },
-        ...hub.map((consumer) => ({ credentialId: hubCredentialId(consumer), providerKey: "http", origin: HUB_ORIGIN, secret: token })),
+        ...hub.map((consumer) => ({ credentialId: hubCredentialId(consumer), providerKey: "http", origin: HUB_ORIGIN, secret: tokenOf(tokens, consumer) })),
       ],
     };
   }
