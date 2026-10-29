@@ -77,6 +77,7 @@ function action(text: string): Observed {
   try {
     writeFileSync(join(root, POLICY_FILE_PATH), text);
     const run = Bun.spawnSync([process.execPath, "--conditions=intx-src", ACTION, root, REPO], { env: {}, timeout: 10_000 });
+    if (run.exitCode === null) throw new Error("The policy-check Action timed out.");
     const lines = run.stdout.toString().split("\n");
     return { accept: run.exitCode === 0, reason: annotations(lines, "error"), pending: annotations(lines, "warning") };
   } finally {
@@ -89,7 +90,7 @@ async function hubRead(state: PolicyFileState): Promise<Observed> {
   const read = await readRepoPolicy(hubDeps(state), TENANT, REPO, "github");
   if (read.status === "invalid") return { accept: false, reason: read.reason };
   if (state.status !== "ok") throw new Error(`The hub read ${state.status} but resolved ${read.status}.`);
-  return { accept: read.status === "ok", pending: state.file.pending, reserved: reservedIn(state.workflow) };
+  return { accept: read.status === "ok", pending: state.file.pending, reserved: reservedIn(read.policyWorkflow ?? state.workflow) };
 }
 
 async function readers(text: string): Promise<Record<ReaderName, Observed>> {
