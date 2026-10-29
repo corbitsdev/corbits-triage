@@ -25,9 +25,10 @@ function undeployedSources(deployments: readonly DeployedWorkflow[], sources: re
   return sources.filter((source) => currentDeployment(deployments, TRIAGE_LISTENERS[source])?.live !== true);
 }
 
-type Status = { sources: RepoSource[]; undeployed: RepoSource[]; needsModel: boolean; modelUnread: boolean; triaging: number; total: number };
+type Status = { sources: RepoSource[]; undeployed: RepoSource[]; keysUnread: boolean; needsModel: boolean; modelUnread: boolean; triaging: number; total: number };
 
-function statusText({ sources, undeployed, needsModel, modelUnread, triaging, total }: Status): string {
+function statusText({ sources, undeployed, keysUnread, needsModel, modelUnread, triaging, total }: Status): string {
+  if (keysUnread) return "Triage could not read its keys, so it cannot tell whether triage is running.";
   if (sources.length === 0) return "Triage is not running: no source is connected.";
   if (needsModel) return "Triage needs a decision model before it can run. Add one below.";
   if (modelUnread) return "Triage could not read its decision model, so it cannot tell whether triage is running.";
@@ -93,7 +94,8 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
     sources,
     undeployed: undeployedSources(deployed.rows, sources),
     needsModel: lacksDecisionModel(snapshot),
-    modelUnread: snapshot.modelsError !== undefined || snapshot.credentialsError !== undefined,
+    keysUnread: snapshot.credentialsError !== undefined,
+    modelUnread: snapshot.modelsError !== undefined,
     triaging: triageReadyRepos(snapshot.repos, packs).size,
     total: snapshot.repos.length,
   };
