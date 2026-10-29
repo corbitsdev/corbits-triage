@@ -251,9 +251,10 @@ export type AuditLog = typeof AuditLog.infer;
 
 /**
  * The repository's policy file on its default branch; `text` is absent when it is too large to read, `problem` is why
- * triage does not run on it. `pull` is the open policy pull request's copy of the file at its head `headSha`.
+ * triage does not run on it. `pull` is the open policy pull request's copy of the file at its head `headSha`;
+ * `pullUnread` that the policy branch could not be listed or read, so whether it holds a copy is not known.
  */
-export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string", "pending?": "string", "pull?": { text: "string", headSha: "string" } });
+export const PolicyFileStatus = type({ path: "string", sha: "string", url: "string", "text?": "string", "problem?": "string", "pending?": "string", "pull?": { text: "string", headSha: "string" }, "pullUnread?": "true" });
 export type PolicyFileStatus = typeof PolicyFileStatus.infer;
 
 const FileRefShape = type({ path: "string", sha: "string" });
@@ -291,7 +292,8 @@ export type PolicyValidated = typeof PolicyValidated.infer;
 /** `headSha`: the GitHub pull request's head, which a merge from the portal pins; a Bitbucket one is merged there. */
 const PolicyPull = type({ url: "string", number: "number", "headSha?": "string" });
 
-export const PolicyExported = type({ status: "'opened'" }).and(PolicyPull);
+/** `refreshError`: the pull request is open, but the listing that shows it elsewhere could not be refreshed. */
+export const PolicyExported = type({ status: "'opened'", "refreshError?": "string" }).and(PolicyPull);
 export type PolicyExported = typeof PolicyExported.infer;
 
 /** No diff library is a dependency, so a preview is the file before the patch and the patched file. */

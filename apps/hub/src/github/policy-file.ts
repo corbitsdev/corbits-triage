@@ -284,8 +284,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     try {
       const file = statusOf(await cached(member.tenantId, record, maxAgeOf(member.tenantId, record)));
       if (file instanceof Response) return file;
-      const pull = file && await pullCopy(member, record);
-      return Response.json({ file: pull ? { ...file, pull } : file });
+      return Response.json({ file: file && { ...file, ...await pullCopy(member, record) } });
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_file_status_failed", tenantId: member.tenantId, repo, error: errorText(err) });
       return githubFailed(`read ${POLICY_FILE_PATH} from`, err);
@@ -294,18 +293,21 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   /**
    * The open policy pull request's copy of the file, found through the shared listing; none while its branch holds no
-   * readable file, or cannot be read, which leaves the default branch's file to answer on its own.
+   * readable file. A listing or branch read that fails is `pullUnread`, never none, and leaves the default branch's file
+   * to answer on its own.
    */
-  async function pullCopy(member: Member, record: RepoRecord): Promise<PolicyFileStatus["pull"]> {
-    const pr = policyPr(listedRepo(await deps.openPulls(member, false), record.name, sourceOf(record)));
-    if (!pr?.sha) return undefined;
+  async function pullCopy(member: Member, record: RepoRecord): Promise<Pick<PolicyFileStatus, "pull" | "pullUnread">> {
     try {
+      const listed = listedRepo(await deps.openPulls(member, false), record.name, sourceOf(record));
+      if (!listed || listed.error !== undefined) return { pullUnread: true };
+      const pr = policyPr(listed);
+      if (!pr?.sha) return {};
       const found = await findFile(member.tenantId, record, github.POLICY_BRANCH);
-      if (found?.read.kind !== "file" || found.read.text === null) return undefined;
-      return { text: found.read.text, headSha: pr.sha };
+      if (found?.read.kind !== "file" || found.read.text === null) return {};
+      return { pull: { text: found.read.text, headSha: pr.sha } };
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_pull_file_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
-      return undefined;
+      return { pullUnread: true };
     }
   }
 
@@ -334,7 +336,12 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     deps.log({ level: "info", msg, tenantId, repo: record.name, number: pull.number });
     // The listing is where the repository's standing and the upgrades read find the new pull request.
     deps.changed(tenantId, record.name);
-    await deps.openPulls(member, true);
+    try {
+      await deps.openPulls(member, true);
+    } catch (err) {
+      deps.log({ level: "warn", msg: "policy_pull_listing_refresh_failed", tenantId, repo: record.name, error: errorText(err) });
+      return Response.json({ status: "opened", ...pull, refreshError: errorText(err) });
+    }
     return Response.json({ status: "opened", ...pull });
   }
 
