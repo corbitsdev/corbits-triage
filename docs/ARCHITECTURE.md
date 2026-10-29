@@ -223,6 +223,14 @@ GitHub, Bitbucket DC ──webhook──► Hub ◄──── portal (/api)
   [provisioners/](provisioners/README.md) describes each.
   Code review requires `isolation:workload`; without Docker, E2B or Railway Sandboxes, stock
   Interchange refuses it with `provisioner_no_match`.
+  A sidecar that misses its two-minute connect deadline is replaced only when
+  stock's injected `classifyParkedRun` answers `parked`. The hub wraps it
+  (`apps/hub/src/sidecar/unstarted-run.ts`): a run that has committed nothing to
+  its run repository is answered `parked` until it has had three sidecars, so
+  stock replaces the sidecar on the same provisioner after its replacement
+  backoff, and the run keeps waiting rather than failing. Past three, or once
+  the run has committed anything, stock's own answer stands and the run fails
+  `sidecar_connect_failed` as before.
   `GET /api/integrations/code-review/{tenantId}/place` names the provisioner
   stock's plugin registry selects for it under the workspace's placement
   policies, or null, and lists every place the hub's provisioner packages
