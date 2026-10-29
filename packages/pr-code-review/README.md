@@ -14,7 +14,7 @@ under `prefix`, as `codeReviewReviewer`, the review a pull request's manager dep
 The request is `{ kind: "code-review", title, description, diff, checkout }`. The title and description are as the host
 shows them, without hidden text. Optional fields are `number` (the pull request's), `efforts` per step,
 `budgets.repoFinder` (400,000 billable tokens by default), `budgets.check` (each check's, 100,000 by default),
-and `budgets.checkTotal` (all of a review's checks together, 400,000 by default). The diff is reviewed whole: no
+and `budgets.checks` (how many findings a review checks, 12 by default). The diff is reviewed whole: no
 prompt carries it, and the steps read it from the checkout.
 
 ### Process
@@ -40,10 +40,9 @@ prompt carries it, and the steps read it from the checkout.
    which finders reported each finding.
 4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
    findings by defect. A group none of whose findings had a line of its file shown to the model is marked `unverified`.
-5. **check** verifies each group on every review: the finding, the diff hunks that change its lines, and the read
-   tools on the checkout. The total is handed out up front, in review order, each group getting `budgets.check` or
-   what is left of `budgets.checkTotal`, so with the defaults the four most serious groups are checked; later groups
-   are unsure, "check budget spent", and post only when both finders reported them. The check answers real when lines
+5. **check** verifies the groups on every review, each given its finding, the diff hunks that change its lines, and the read
+   tools on the checkout. The first `budgets.checks` groups in review order are checked, each on `budgets.check`; later
+   groups are not checked and not posted, and are kept as unsure, "not checked: checker cap reached". The check answers real when lines
    it read show the claimed behaviour, reached by the trigger with no guard and not intended by the description; not
    real only when a line of code disproves it; unsure when it cannot decide. A real or not real reason that cites, as
    path:line, no line it read (in the hunks or with the tools) is unsure, its reason led by "no cited line". Once a

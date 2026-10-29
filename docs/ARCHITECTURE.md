@@ -947,15 +947,14 @@ not complete holds approve and merge, as one that stopped early does, and the
 portal and the posted review say so in INCOMPLETE_NOTE's one sentence. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
-GitHub show as "Not checked against the file". The check step verifies every
-consolidated group on the diff finder's model, one reader run each: it gets the
+GitHub show as "Not checked against the file". The check step verifies the
+consolidated groups on the fast model, one reader run each: it gets the
 finding (path, lines, title, why, trigger), the diff hunks that change its
-lines, and the repository read tools on the checkout. The total check budget
-is handed out up front, in review order (severity, then agreement): each group
-gets `budgets.check` (100,000 billable tokens by default) or what is left of
-`budgets.checkTotal` (400,000 by default), so with the defaults the four most
-serious groups are checked; later groups are unsure with the reason "check
-budget spent" and post only when both finders reported them. The check answers
+lines, and the repository read tools on the checkout. The first
+`budgets.checks` groups (12 by default) in review order (severity, then
+agreement) are checked, each on `budgets.check` (100,000 billable tokens by
+default); later groups are not checked and not posted, and are kept as unsure
+with the reason "not checked: checker cap reached". The check answers
 real when lines it read show the claimed behaviour, reached by the trigger with
 no guard and not intended by the description, not real only when a line of
 code disproves it, and unsure when it cannot decide. The reader director makes

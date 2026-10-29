@@ -232,18 +232,18 @@ test("a finding is posted when the check confirms it, or cannot decide and both 
   ]);
 });
 
-test("checks share the review's total budget in review order, and a finding it does not reach is unsure", async () => {
-  const request = { kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout, budgets: { check: 100, checkTotal: 250 } };
+test("a review checks at most its number of findings, in review order, and a finding past them is not checked and not posted", async () => {
+  const request = { kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout, budgets: { check: 100 } };
   const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail(request)) };
-  const found = [1, 2, 3, 4].map((start) => ({ path: "src/a.ts", start, end: start, code: `line ${start}`, title: `t${start}`, priority: start }));
-  const folded = await candidates({ reviewInput, findDiff: reply({ findings: found }), findRepo: reply({ findings: [] }) });
+  const found = Array.from({ length: 13 }, (_, i) => ({ path: "src/a.ts", start: i + 1, end: i + 1, code: `line ${i + 1}`, title: `t${i + 1}`, priority: 2 }));
+  const folded = await candidates({ reviewInput, findDiff: reply({ findings: found }), findRepo: reply({ findings: found }) });
   const consolidate = reply({ groups: [], sites: found.map(({ path, start, end }) => ({ path, start, end })), unreadFindings: [] });
   const checked = await checks({ reviewInput, candidates: { output: folded }, consolidate });
-  expect(checked.checks.map((c) => /<budget tokens="(\d+)"\/>/.exec(c.text)![1])).toEqual(["100", "100", "50"]);
+  expect(checked.checks.map((c) => /<budget tokens="(\d+)"\/>/.exec(c.text)![1])).toEqual(Array(12).fill("100"));
   const check = { output: checked.checks.map(() => reply({ verdict: "real", reason: "r" }).output) };
   const written = await writeInput({ reviewInput, candidates: { output: folded }, checks: { output: checked }, check });
-  expect(written.findings.map((f) => f.start)).toEqual([1, 2, 3]);
-  expect(written.dropped.map(({ finding, verdict, reason }) => [finding.start, verdict, reason])).toEqual([[4, "unsure", "check budget spent"]]);
+  expect(written.findings.map((f) => f.start)).toEqual(found.slice(0, 12).map((f) => f.start));
+  expect(written.dropped.map(({ finding, verdict, reason }) => [finding.start, finding.agreement.finders, verdict, reason])).toEqual([[13, 2, "unsure", "not checked: checker cap reached"]]);
 });
 
 const PROFILE = { packageName: "@corbits/pr-code-review" } as CodeReviewProfile;
