@@ -10,7 +10,7 @@ const TOKEN = "installation-token";
 const READ_TOKEN = "read-token";
 
 export type File = { filename: string; status: string; additions: number; deletions: number; patch: string };
-export type CheckRun = { name: string; status: "queued" | "in_progress" | "completed"; conclusion: "success" | "failure" | null };
+export type CheckRun = { name: string; status: "queued" | "in_progress" | "completed"; conclusion: "success" | "failure" | "cancelled" | null };
 export type Pull = {
   number: number;
   title: string;
@@ -21,6 +21,7 @@ export type Pull = {
   commits: string[];
   labels: string[];
   comments: { id: number; user: typeof BOT; body: string }[];
+  draft?: boolean;
 };
 export type Write = { method: string; path: string; body: unknown };
 
@@ -57,7 +58,7 @@ export function fakeGithub() {
 
   function pullJson(repo: Repo, pull: Pull) {
     return {
-      number: pull.number, title: pull.title, body: pull.body, body_html: `<p>${pull.body}</p>`, state: "open", draft: false, merged: false, mergeable: true, mergeable_state: "clean",
+      number: pull.number, title: pull.title, body: pull.body, body_html: `<p>${pull.body}</p>`, state: "open", draft: pull.draft ?? false, merged: false, mergeable: true, mergeable_state: "clean",
       user: { login: pull.author, type: "User" }, author_association: "CONTRIBUTOR", head: { sha: pull.head, ref: `pr-${pull.number}`, repo: { id: 1, full_name: repo.name } }, base: { ref: "main", sha: "0".repeat(40), repo: { id: 1, full_name: repo.name } },
       additions: pull.files.reduce((sum, file) => sum + file.additions, 0), deletions: pull.files.reduce((sum, file) => sum + file.deletions, 0),
       changed_files: pull.files.length, labels: pull.labels.map((name) => ({ name })), requested_reviewers: [], requested_teams: [], assignees: [],
@@ -97,6 +98,7 @@ export function fakeGithub() {
       if (commit[2] === "status") return Response.json({ state: "success", statuses: [], total_count: 0 });
       return Response.json({ total_count: 0, check_suites: [] });
     }
+    if (rest.startsWith("/compare/")) return Response.json({ status: "ahead", ahead_by: 1, behind_by: 0, commits: [] });
     if (rest.startsWith("/git/trees/")) return Response.json({ sha: "tree", tree: [], truncated: false });
     if (rest.startsWith("/collaborators/")) return Response.json({ permission: "read", role_name: "read" });
     if (rest === "/labels" || rest.startsWith("/labels?")) return Response.json([]);
@@ -200,6 +202,9 @@ export function fakeGithub() {
     },
     setChecks(repo: string, head: string, runs: CheckRun[]): void {
       repos.get(repo)!.checks.set(head, runs);
+    },
+    checksOf(repo: string, head: string): CheckRun[] {
+      return repos.get(repo)!.checks.get(head) ?? [];
     },
     writesTo(repo: string, number: number): Write[] {
       return writes.filter((write) => write.path.startsWith(`/repos/${repo}/issues/${number}/`) || write.path.startsWith(`/repos/${repo}/pulls/${number}/`));

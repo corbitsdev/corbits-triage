@@ -1,0 +1,512 @@
+// Triage's real listener and manager definitions, each run through Interchange's runLocal in this process, against the
+// hub's own intake and manager routes on a database of their own and the chain's fake GitHub, which records every
+// write. Steps authorize against the grants a deployed run holds, built by Interchange's local credentials snapshot
+// from the definition and the grants recorded for the run. Mail between runs waits in one queue the test drains, so
+// the order runs see events in is the test's to choose.
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomBytes, randomUUID } from "node:crypto";
+import { and, eq, sql } from "drizzle-orm";
+import { type } from "arktype";
+import { createWorkflowDirectorRegistry } from "@intx/agent";
+import { actionConsumer, authorize, toolConsumer } from "@intx/authz";
+import { createNoopCredentialCipher } from "@intx/crypto";
+import { createDB, createGrantStore, createRunTokenStore, runMigrations, schema } from "@intx/db";
+import { buildCredentialCapabilities, createActionCredentialsFactory, createCredentialProviderRegistry, createHttpCredentialProvider, createInferenceCredentialResolver } from "@intx/harness";
+import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY } from "@intx/hub-api";
+import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
+import { createDependencies } from "@intx/inference";
+import { loadAdapterRegistry } from "@intx/inference/providers";
+import { createIsogitStore } from "@intx/storage-isogit/node";
+import { SELF_RUN_RESOURCE } from "@intx/types";
+import { HUB_CREDENTIAL_HANDLE, hubCredentialId, type CredentialDelivery } from "@intx/types/credential-delivery";
+import { createRuntimeCapabilities } from "@intx/types/runtime-capabilities";
+import { WorkflowProjectionDefinition } from "@intx/types/sidecar";
+import { projectLiveToInert, runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type StepInvokeRequest, type WorkflowDefinition } from "@intx/workflow";
+import { collectHubConsumers } from "@intx/workflow-deploy";
+import { createCredentialsBackedAuthorize, createGrantEvaluator, createLocalCredentialsSnapshot, createWorkflowStepInvoker, snapshotStepGrants } from "@intx/workflow-host/local";
+import { DEFAULT_REPO_POLICY, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
+import * as actions from "@corbits/triage-manager/actions/index";
+import { mailDirector } from "@corbits/triage-manager/directors";
+import * as loops from "@corbits/triage-manager/loops";
+import type { Release } from "@corbits/triage-manager/release";
+import { triageListener } from "@corbits/triage-manager/triage-listener";
+import { triageManager } from "@corbits/triage-manager/triage-manager";
+import { mailPayload } from "../../apps/hub/src/github/bridge.ts";
+import { RunUnavailableError } from "../../apps/hub/src/github/deployment.ts";
+import { createManagerIntake, createManagerWake, createSupersede } from "../../apps/hub/src/manager-intake.ts";
+import { MANAGER_RUN_TOKEN_ROUTES } from "../../apps/hub/src/manager-routes.ts";
+import type { PullRequestRef } from "../../apps/hub/src/manager-state.ts";
+import { mountTenantRoutes } from "../../apps/hub/src/tenant-routes.ts";
+import { migrateTriageTables } from "../../apps/hub/src/triage-db.ts";
+import { fakeGithub, type Pull, type Write } from "../chain/github.ts";
+
+const ADMIN_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
+const TENANT = "tnt_model";
+const DOMAIN = "model.test";
+const HUB_ORIGIN = "https://hub.test";
+const GITHUB_ORIGIN = "https://api.github.com";
+const APP_LOGIN = "corbits[bot]";
+const OWNER_PRINCIPAL = "prn_owner";
+const LISTENER_RUN = "run_listener";
+
+/** The manager the release publishes beside the listener, as the hub writes it into `release.json`. */
+export const MANAGER_RELEASE: Release = {
+  workflow: { assetId: `ast_${TRIAGE_MANAGERS.github}`, commitSha: "c0ffee", packageName: "@corbits/triage-manager", entry: "./triage-manager-github.mjs" },
+  offerings: { ids: ["off_model"], defaultId: "off_model" },
+};
+
+/** The definitions as the published `triage-listener-github` and `triage-manager-github` entries build them from that release. */
+const listenerDefinition = triageListener({ id: TRIAGE_LISTENERS.github, manager: MANAGER_RELEASE });
+const managerDefinition = triageManager({ id: TRIAGE_MANAGERS.github, sources: ["github"], codeReview: undefined });
+
+/** Each published release by its asset, and the definition it deploys. */
+const RELEASED = new Map([[MANAGER_RELEASE.workflow.assetId, { release: MANAGER_RELEASE, definition: managerDefinition }]]);
+
+const DeployBody = type({
+  source: { kind: "'asset'", assetId: "string", package: { format: "'source'", commitSha: "string", packageName: "string" } },
+  entry: "string",
+  sourceOfferingIds: "string[]",
+  defaultSourceOfferingId: "string",
+});
+const MailText = type({ "prNumber?": "number", "items?": type({ prNumber: "number" }).array() });
+const Taken = type({ outcome: "string", "pass?": { id: "string" } });
+const Deployed = type({ number: "number", runId: "string" });
+
+type Db = ReturnType<typeof createDB>["db"];
+type Run = { definition: WorkflowDefinition; principalId: string; token: string };
+/** The writes GitHub received while the pass `pass` of pull request `number` ran, from its take to the next one. */
+export type PassWrites = { number: number; pass: string; writes: Write[] };
+
+const sessionService: SessionService = {
+  stageWorkflowStep() {
+    throw new Error("no session runs here");
+  },
+  endSession() {
+    throw new Error("no session runs here");
+  },
+};
+
+/** A mail as stock hands it to the run it is addressed to. */
+function stockMail(from: string, to: string, text: string) {
+  return { headers: { from, to: [to] }, rawHeaders: {}, parts: [{ contentType: "text/plain", ref: "part-0", text }] };
+}
+
+/** A mail waiting for its run; a copy the test delivers a second time keeps its `id`. */
+export type Mail = { id: string; to: string; payload: ReturnType<typeof stockMail> };
+
+/** The consumers of the hub credential, each of which gets a run token, as deploy reads them off the definition's projection. */
+function hubConsumers(definition: WorkflowDefinition): readonly string[] {
+  return collectHubConsumers(WorkflowProjectionDefinition.assert(projectLiveToInert(definition)));
+}
+
+/** The pull request a mail names: a manager's mail, or the hub's mail to the listener. */
+export function pullOfMail(mail: Mail): number | undefined {
+  const named = MailText(JSON.parse(mail.payload.parts[0]!.text));
+  if (named instanceof type.errors) throw new Error(`mail to ${mail.to}: ${named.summary}`);
+  return named.prNumber ?? named.items?.[0]?.prNumber;
+}
+
+/** A database of the hub's own schema with one tenant whose `repo` is connected, and the two triage definitions. */
+async function createDatabase(repo: string) {
+  const name = `corbits_model_${randomBytes(6).toString("hex")}`;
+  const admin = createDB(ADMIN_DB);
+  try {
+    await admin.db.execute(sql.raw(`create database ${name}`));
+  } finally {
+    await admin.close();
+  }
+  const config = { ...ADMIN_DB, database: name };
+  await runMigrations(config, { schema: "public" });
+  const handle = createDB(config);
+  await migrateTriageTables(handle.db, "public");
+  await handle.db.insert(schema.tenant).values({ id: TENANT, name: "Model", slug: "model", domain: DOMAIN, config: { corbitsTriage: { repos: [{ name: repo, connected: true, enabled: true }] } } });
+  await handle.db.insert(schema.principal).values({ id: OWNER_PRINCIPAL, tenantId: TENANT, kind: "user", refId: "usr_owner", status: "active" });
+  for (const workflow of [TRIAGE_LISTENERS.github, TRIAGE_MANAGERS.github]) {
+    await handle.db.insert(schema.asset).values({ id: `ast_${workflow}`, tenantId: TENANT, kind: "workflow", name: workflow, creatorPrincipalId: OWNER_PRINCIPAL });
+    await handle.db.insert(schema.workflowDefinition).values({ id: `wfd_${workflow}`, tenantId: TENANT, name: workflow, assetId: `ast_${workflow}` });
+  }
+  async function drop(): Promise<void> {
+    await handle.close();
+    const again = createDB(ADMIN_DB);
+    try {
+      await again.db.execute(sql.raw(`drop database if exists ${name} with (force)`));
+    } finally {
+      await again.close();
+    }
+  }
+  return { db: handle.db, drop };
+}
+
+async function noSession() {
+  return null;
+}
+
+function noAuthRoute(): Response {
+  return new Response(null, { status: 404 });
+}
+
+/** The hub's stock app with its run-token routes and the hub's manager routes mounted, as the hub serves them. */
+function hubApp(db: Db, wake: ReturnType<typeof createManagerWake>, supersede: (tenantId: string, pr: PullRequestRef) => Promise<void>, log: (entry: Record<string, unknown>) => void) {
+  const app = createApp({
+    getSession: noSession,
+    authHandler: noAuthRoute,
+    db,
+    sidecarRouter: createSidecarRouter({
+      async withExecutableWorkflowRun(_target, send) {
+        return send();
+      },
+      async authenticateSidecar({ sidecarId }) {
+        return { sidecarId };
+      },
+      async resolveSidecarBindings() {
+        return [];
+      },
+      async validateSidecarIdentity() {
+        return true;
+      },
+    }),
+    sessionService,
+    eventCollectors: createEventCollectorRegistry({ db }),
+    assetService: null,
+    repoStore: null,
+    maxTarballBytes: 10_000_000,
+    credentialCipher: createNoopCredentialCipher(),
+    extraRunTokenRoutes: MANAGER_RUN_TOKEN_ROUTES,
+  });
+  mountTenantRoutes(app, { db, requireGrant: createRequireGrant({ grantStore: createGrantStore(db), conditionRegistry: HUB_CONDITION_REGISTRY }), log, wake, supersede, taken: noteTaken });
+  return app;
+}
+
+function noteTaken(): void {}
+
+/** The hub's log lines; the rules read what GitHub and the hub hold, never what was logged. */
+function log(): void {}
+
+/**
+ * A repository with `pack` as its policy, `automatic` the kinds the pr-triage role holds on it, and everything a run of
+ * it reaches; call `stop` after.
+ */
+export async function modelStack(repo: string, { pack, automatic }: { pack: CheckPack; automatic: ActionKind[] }) {
+  const github = fakeGithub();
+  github.addRepo(repo, null);
+  const { db, drop } = await createDatabase(repo);
+  const grantStore = createGrantStore(db);
+  const queue: Mail[] = [];
+  const runs = new Map<string, Run>();
+  /** Each manager run's pull request, as its listener named it to the hub. */
+  const managed = new Map<string, number>();
+  /** Mail dropped at a run that had ended, or refused when sent to one; one whose copy a run took is not lost. */
+  const dropped: Mail[] = [];
+  const delivered = new Set<string>();
+  /** Each run whose body ended other than completed, or a step that threw. */
+  const failed: { mail: Mail; status: string }[] = [];
+  const passes: { number: number; pass: string; from: number }[] = [];
+  const directors = createWorkflowDirectorRegistry([mailDirector.factory]);
+  const adapters = await loadAdapterRegistry([], { import: async function noAdapters() { return {}; } });
+  const tokens = createRunTokenStore({ db, cipher: createNoopCredentialCipher() });
+
+  /**
+   * Stock's deploy: a run of `definition` with its own principal, the grants its definition requires of its creator,
+   * the self-run requirement bound to the run, and a run token for each consumer of the hub credential.
+   */
+  async function deployRun(runId: string, definition: WorkflowDefinition): Promise<void> {
+    const principalId = `prn_${runId}`;
+    await db.insert(schema.principal).values({ id: principalId, tenantId: TENANT, kind: "workflow", refId: runId, status: "active" });
+    await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: `wfd_${definition.id}`, tenantId: TENANT, principalId, status: "deployed" });
+    for (const requirement of definition.grantRequirements ?? []) {
+      const resource = requirement.resource === SELF_RUN_RESOURCE ? `workflow-run:${runId}` : requirement.resource;
+      await db.insert(schema.grant).values({ id: randomUUID(), tenantId: TENANT, principalId, resource, action: requirement.action, effect: "allow", origin: "creator" });
+    }
+    await tokens.mintIfAbsent({ principalId, consumers: [...hubConsumers(definition)] }, db);
+    const [delivery] = await tokens.loadDelivery(principalId);
+    if (!delivery) throw new Error(`no run token was minted for ${runId}`);
+    runs.set(runId, { definition, principalId, token: delivery.token });
+  }
+
+  async function live(runId: string): Promise<boolean> {
+    const [run] = await db.select({ status: schema.workflowRun.status }).from(schema.workflowRun).where(eq(schema.workflowRun.id, runId));
+    return run !== undefined && schema.isLiveWorkflowRunStatus(run.status);
+  }
+
+  async function endRun(runId: string): Promise<void> {
+    await db.update(schema.workflowRun).set({ status: "cancelled" }).where(eq(schema.workflowRun.id, runId));
+  }
+
+  async function granted(runId: string, resource: string, action: string): Promise<boolean> {
+    const run = runs.get(runId);
+    if (!run) return false;
+    return (await authorize(grantStore, run.principalId, TENANT, resource, action, { conditions: HUB_CONDITION_REGISTRY })).effect === "allow";
+  }
+
+  async function cancelForHub(_tenantId: string, runId: string): Promise<void> {
+    await endRun(runId);
+  }
+
+  const { supersede } = createSupersede({ db, cancel: cancelForHub, log });
+
+  /** The hub's mail to a run, as `deliverToListener` sends it: a run that is not live takes none. */
+  async function deliver(_tenantId: string, address: string, payload: unknown): Promise<void> {
+    if (!(await live(address.slice(0, address.indexOf("@"))))) throw new RunUnavailableError(`${address} is not a live deployment`);
+    queue.push({ id: randomUUID(), to: address, payload: stockMail(`${TRIAGE_MAIL_SENDER}@${DOMAIN}`, address, JSON.stringify(payload)) });
+  }
+
+  async function listener(): Promise<string> {
+    return `${LISTENER_RUN}@${DOMAIN}`;
+  }
+
+  async function routable(): Promise<boolean> {
+    return true;
+  }
+
+  async function withAppLogin(_tenantId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return { ...payload, appLogin: APP_LOGIN };
+  }
+
+  async function ungated(_tenantId: string, _record: unknown, _number: number, request: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return request;
+  }
+
+  const wake = createManagerWake({ db, listener, deliver });
+  const app = hubApp(db, wake, supersede, log);
+  const toListener = createManagerIntake({
+    db,
+    listener,
+    routable,
+    readPull: function readPull() {
+      throw new Error("no code review in this stack");
+    },
+    openHeads: function openHeads() {
+      throw new Error("no backlog in this stack");
+    },
+    withAppLogin,
+    gate: ungated,
+    deliver,
+    supersede,
+    log,
+  });
+
+  /** Stock's deploy route: the caller must hold the deploy and the asset's read, and the body must name a published release exactly. */
+  async function deployRoute(runId: string, init?: RequestInit): Promise<Response> {
+    const body = DeployBody(JSON.parse(String(init?.body)));
+    if (body instanceof type.errors) return Response.json({ error: { code: "invalid_request", message: body.summary } }, { status: 400 });
+    const { assetId, package: pkg } = body.source;
+    if (!(await granted(runId, "workflow:*", "create")) || !(await granted(runId, `asset:${assetId}`, "read"))) return Response.json({ error: { code: "forbidden" } }, { status: 403 });
+    const released = RELEASED.get(assetId);
+    const { workflow } = released?.release ?? {};
+    if (!released || workflow?.packageName !== pkg.packageName || workflow.commitSha !== pkg.commitSha || workflow.entry !== body.entry) {
+      return Response.json({ error: { code: "not_found", message: `${assetId} publishes no ${pkg.packageName}@${pkg.commitSha} ${body.entry}` } }, { status: 404 });
+    }
+    const id = `run_${randomBytes(6).toString("hex")}`;
+    await deployRun(id, released.definition);
+    return Response.json({ id }, { status: 201 });
+  }
+
+  /** Stock's stop-run route: the caller must hold `manage` on the run; stock then ends it, here at once. */
+  async function stopRoute(runId: string, target: string): Promise<Response> {
+    if (!(await granted(runId, `workflow-run:${target}`, "manage"))) return Response.json({ error: { code: "forbidden" } }, { status: 403 });
+    if (!(await live(target))) return Response.json({ error: { code: "workflow_run_terminal" } }, { status: 409 });
+    await endRun(target);
+    return new Response(null, { status: 202 });
+  }
+
+  /** The hub as `runId` reaches it: stock's deploy and stop-run routes stand in here, the rest is the hub's own app. */
+  async function hubFetch(runId: string, url: URL, init?: RequestInit): Promise<Response> {
+    const method = init?.method ?? "GET";
+    const runPath = /^\/api\/tenants\/[^/]+\/workflows\/runs\/([^/]+)$/.exec(url.pathname);
+    if (method === "POST" && url.pathname === `/api/tenants/${TENANT}/workflows/deployments`) return deployRoute(runId, init);
+    if (method === "DELETE" && runPath) return stopRoute(runId, decodeURIComponent(runPath[1]!));
+    if (runPath) throw new Error(`${runId} read run ${runPath[1]}, which this stack does not serve`);
+    const answer = await app.request(url, init);
+    if (answer.ok && url.pathname.endsWith("/manager/deployed")) {
+      const deployed = Deployed.assert(JSON.parse(String(init?.body)));
+      managed.set(deployed.runId, deployed.number);
+    }
+    if (answer.ok && url.pathname.endsWith("/manager/take")) {
+      const taken = Taken.assert(await answer.clone().json());
+      passes.push({ number: managed.get(runId) ?? -1, pass: taken.pass?.id ?? `idle:${passes.length}`, from: github.writes.length });
+    }
+    return answer;
+  }
+
+  /** What the hub delivers `runId`: GitHub for its definition's bindings, and its run token for each consumer of the hub credential. */
+  function deliveryOf({ definition, token }: Run): CredentialDelivery {
+    const bindings = (definition.credentialBindings ?? []) as readonly ({ handle: string; package: string } | { handle: string; action: string })[];
+    const hub = hubConsumers(definition);
+    return {
+      bindings: [
+        ...bindings.map((binding) => ({ handle: binding.handle, credentialId: "github", consumer: "package" in binding ? toolConsumer(binding.package) : actionConsumer(binding.action) })),
+        ...hub.map((consumer) => ({ handle: HUB_CREDENTIAL_HANDLE, credentialId: hubCredentialId(consumer), consumer })),
+      ],
+      materials: [
+        { credentialId: "github", providerKey: "http", origin: GITHUB_ORIGIN, secret: "installation-token" },
+        ...hub.map((consumer) => ({ credentialId: hubCredentialId(consumer), providerKey: "http", origin: HUB_ORIGIN, secret: token })),
+      ],
+    };
+  }
+
+  /** Runs one mail's body of the run it is addressed to to its end, as the run's sidecar would; stock drops mail to a run that ended. */
+  async function runMail(mail: Mail): Promise<void> {
+    const runId = mail.to.slice(0, mail.to.indexOf("@"));
+    const run = runs.get(runId);
+    if (!run) throw new Error(`mail to ${mail.to}, which is no run`);
+    if (!(await live(runId))) {
+      dropped.push(mail);
+      return;
+    }
+    delivered.add(mail.id);
+    await db.update(schema.workflowRun).set({ status: "running" }).where(and(eq(schema.workflowRun.id, runId), eq(schema.workflowRun.status, "deployed")));
+    const cell = { current: deliveryOf(run) };
+    const requirements = await grantStore.collectGrants(run.principalId, TENANT);
+    const snapshot = { current: createLocalCredentialsSnapshot({ definition: run.definition, directors, delivery: cell.current, grants: requirements }) };
+    const workflowAuthorize = createCredentialsBackedAuthorize(snapshot, createGrantEvaluator({ floorFor: noFloor }));
+    async function routed(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (url.origin === HUB_ORIGIN) return hubFetch(runId, url, init);
+      return fetch(`${github.origin}${url.pathname}${url.search}`, init);
+    }
+    const providers = createCredentialProviderRegistry([createHttpCredentialProvider({ fetch: routed })]);
+    const address = `${runId}@${DOMAIN}`;
+    const root = mkdtempSync(join(tmpdir(), "corbits-model-"));
+
+    /** Stock's transport: mail to a run that is not live is refused, and lost to the run that sent it. */
+    async function send(message: { to: string; content: string }) {
+      const sent = { id: randomUUID(), to: message.to, payload: stockMail(address, message.to, message.content) };
+      if (!(await live(message.to.slice(0, message.to.indexOf("@"))))) {
+        dropped.push(sent);
+        throw new Error(`${message.to} is not a live run`);
+      }
+      queue.push(sent);
+      return { messageId: randomUUID(), status: "queued" };
+    }
+
+    /** What the sidecar gives the mail agent's step: its run's address, the mail transport and the credentials its grants allow. */
+    async function buildEnv(req: StepInvokeRequest) {
+      const workdir = mkdtempSync(join(root, "step-"));
+      const storage = await createIsogitStore(workdir);
+      const toolCwd = join(workdir, "workspace");
+      mkdirSync(toolCwd);
+      const factories = req.agent.toolFactories.map((factory) => ({ packageName: factory.id, declaredCredentials: [], factory }));
+      const stepGrants = snapshotStepGrants(snapshot, req.authzContext.stepId!);
+      const [credentials] = buildCredentialCapabilities(factories, { materialCell: cell, resolveGrants: function stepGrantsOf() { return stepGrants; }, providers }).values();
+      const source = { id: "unused", provider: "unused", baseURL: "http://127.0.0.1:9", credentialId: "unused", model: "unused" };
+      return {
+        sources: [source],
+        defaultSource: source.id,
+        storage,
+        audit: storage,
+        workdir,
+        toolCwd,
+        directors,
+        deps: createDependencies(adapters),
+        readCurrentMaterial: createInferenceCredentialResolver(cell),
+        capabilities: createRuntimeCapabilities(credentials ? { credentials } : {}),
+        address,
+        transport: { send },
+      };
+    }
+
+    function resolveAction(ref: string): ActionHandler {
+      return (actions as Record<string, ActionHandler>)[ref]!;
+    }
+
+    function resolveLoop(ref: string): LoopFn {
+      return (loops as Record<string, LoopFn>)[ref]!;
+    }
+
+    function actionGrants({ stepId }: { stepId: string }) {
+      return snapshotStepGrants(snapshot, stepId);
+    }
+
+    const body = (run.definition.steps["events"] as OnTriggerPrimitive).body;
+    if (!("inline" in body)) throw new Error(`${run.definition.id}'s body is not inline`);
+    try {
+      const { terminalStatus } = await runLocal(body.inline, {
+        authorize: workflowAuthorize,
+        directors,
+        hasUpstreamSignalResolver: true,
+        invokeStep: createWorkflowStepInvoker({ workflowAuthorize, buildEnv }),
+        actionResolver: resolveAction,
+        actionCredentials: createActionCredentialsFactory({ materialCell: cell, resolveStepGrants: actionGrants, providers }),
+        loopFns: resolveLoop,
+        triggerPayload: mail.payload,
+      }).complete;
+      if (terminalStatus !== "completed") failed.push({ mail, status: terminalStatus });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  await deployRun(LISTENER_RUN, listenerDefinition);
+  await db.update(schema.workflowRun).set({ status: "running" }).where(eq(schema.workflowRun.id, LISTENER_RUN));
+
+  /** The hub takes in a webhook on pull request `number` as the bridge mails it once its window flushes: `event` on `head`. */
+  async function webhook(number: number, event: TriageEvent, head: string): Promise<void> {
+    const request = mailPayload({ name: repo }, { ...DEFAULT_REPO_POLICY, enabled: true }, { pack, automatic, source: { file: { path: ".corbits-triage.yml", sha: "model-1" } } }, { tenantId: TENANT, prNumber: number, headSha: head, deliveryId: randomUUID(), events: [event] });
+    if (!(await toListener(TENANT, request))) throw new Error(`the hub took no mail for ${repo}#${number}`);
+  }
+
+  function ofPull(number: number) {
+    return function named(mail: Mail): boolean {
+      return pullOfMail(mail) === number;
+    };
+  }
+
+  return {
+    github,
+    repo,
+    queue,
+    webhook,
+    /** GitHub shows `pull` with no checks yet, and the hub takes in its opened webhook. */
+    async open(pull: Pull): Promise<void> {
+      github.open(repo, pull);
+      await webhook(pull.number, "opened", pull.head);
+    },
+    /** Runs the queued mail at `index` to its end, as the run it is addressed to. */
+    async run(index: number): Promise<void> {
+      const [mail] = queue.splice(index, 1);
+      if (!mail) throw new Error(`no mail is queued at ${index}`);
+      await runMail(mail);
+    },
+    /** Delivers the queued mail at `index` a second time. */
+    duplicate(index: number): void {
+      const mail = queue[index];
+      if (!mail) throw new Error(`no mail is queued at ${index}`);
+      queue.push(mail);
+    },
+    /** Runs each queued mail in turn, oldest first, until none is left. */
+    async drain(): Promise<void> {
+      for (let mail = queue.shift(); mail; mail = queue.shift()) await runMail(mail);
+    },
+    /** What is left of pull request `number`'s runs and mail: managers still live, mail queued or lost, and runs that did not complete. */
+    async leftover(number: number) {
+      const rows = await db.select({ id: schema.workflowRun.id, status: schema.workflowRun.status }).from(schema.workflowRun).where(eq(schema.workflowRun.definitionId, `wfd_${TRIAGE_MANAGERS.github}`));
+      const live = rows.filter((row) => managed.get(row.id) === number && schema.isLiveWorkflowRunStatus(row.status)).map((row) => row.id);
+      const named = ofPull(number);
+      const failures = failed.filter((failure) => named(failure.mail)).map((failure) => `${failure.mail.to} ${failure.status}`);
+      const lost = dropped.filter((mail) => named(mail) && !delivered.has(mail.id));
+      return { live, queued: queue.filter(named), lost, failed: failures };
+    },
+    /** The writes to pull request `number`, by the pass that made them. */
+    passWrites(number: number): PassWrites[] {
+      const prefixes = [`/repos/${repo}/issues/${number}/`, `/repos/${repo}/pulls/${number}/`];
+      const byPass = new Map<string, Write[]>();
+      passes.forEach(function collect({ number: of, pass, from }, index) {
+        if (of !== number) return;
+        const to = passes[index + 1]?.from ?? github.writes.length;
+        const writes = github.writes.slice(from, to).filter((write) => prefixes.some((prefix) => write.path.startsWith(prefix)));
+        byPass.set(pass, [...(byPass.get(pass) ?? []), ...writes]);
+      });
+      return [...byPass].map(([pass, writes]) => ({ number, pass, writes }));
+    },
+    async stop(): Promise<void> {
+      github.stop();
+      await drop();
+    },
+  };
+}
+
+function noFloor() {
+  return [];
+}
