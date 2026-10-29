@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button } from "@corbits/react-ui";
 import type { ActionMode } from "../lib/inbox-view.ts";
+import { DO_NAMES } from "../lib/pack-prose.ts";
 import { heldText } from "../lib/pane-report.ts";
 import type { PendingDo } from "../lib/pending-dos.ts";
 
@@ -31,7 +32,7 @@ export function PrActionCard({ mode, dos, disabled, onApprove, onSkip, children 
         <p className="suggest-text">{pending.reason}</p>
         {pending.error !== null ? <p role="alert" className="error">{pending.label} failed last time: {pending.error}</p> : null}
         <div className="pr-actions-row">
-          <Button type="button" disabled={disabled} onClick={() => onApprove(pending)}>Approve</Button>
+          <Button type="button" disabled={disabled} onClick={() => onApprove(pending)}>{DO_NAMES[pending.kind]}</Button>
           <Button type="button" variant="outline" onClick={() => onSkip(pending)}>Skip</Button>
         </div>
       </div>

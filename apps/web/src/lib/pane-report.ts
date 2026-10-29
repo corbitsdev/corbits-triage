@@ -233,18 +233,27 @@ function doneText(item: PrItem, rest: string): string {
   return upperFirst([...verdict, ...postedActions(item), ...notPostedText(item), rest].join(" · "));
 }
 
-/** A held action waiting on you is the decision even where the rules leave the turn to the author. */
+const ON_THE_PULL_REQUEST: ReadonlySet<ActionKind> = new Set(["approve", "close", "merge"]);
+
+/** What a held action does, lower case, naming the pull request after a verb that acts on it alone. */
+function heldAction({ kind, label }: Pick<PendingDo, "kind" | "label">): string {
+  const action = lowerFirst(label);
+  const verb = lowerFirst(DO_NAMES[kind]);
+  return ON_THE_PULL_REQUEST.has(kind) ? `${verb} this pull request${action.slice(verb.length)}` : action;
+}
+
+/** A held action waiting on you is the decision even where the rules leave the turn to the author, asked as a question in its own verb. */
 function heldForYouText(item: PrItem): string | null {
   const [pending] = pendingDos(item).filter((held) => held.until === null);
-  if (pending !== undefined) return `approve or hide the held action: ${pending.label}`;
-  return item.pendingApprovalId === null ? null : "confirm or dismiss the post Triage held, on the pull request's page";
+  if (pending !== undefined) return `${heldAction(pending)}?`;
+  return item.pendingApprovalId === null ? null : "Confirm or dismiss the post Triage held, on the pull request's page";
 }
 
 /** Without a rule left for you the turn is someone else's, unless an action waits on your approval. */
 function settled(item: PrItem, line: Said): PaneStatus {
   if (line.tone === "you" || line.tone === "ready") return { form: "you", ...line, live: false };
   const held = heldForYouText(item);
-  if (held !== null) return { form: "you", tone: "you", text: upperFirst(held), live: false };
+  if (held !== null) return { form: "you", tone: "you", text: held, live: false };
   return { form: "done", ...line, live: false };
 }
 
@@ -298,7 +307,7 @@ export function paneStatus({ item, detail, handled, pack }: StatusInput): PaneSt
   if (unsettled === null) return line;
   const held = heldForYouText(item);
   // Neither a verdict Triage could not settle nor a pass on unchecked commits asks you anything but the held action.
-  if (held !== null && (item.state === "stale" || inboxAction(item) === "merge")) return { form: "you", tone: "you", text: `${upperFirst(held)} · ${unsettled}`, live: false };
+  if (held !== null && (item.state === "stale" || inboxAction(item) === "merge")) return { form: "you", tone: "you", text: `${held} · ${unsettled}`, live: false };
   // Commits Triage has not checked are never merged, so a pass has nothing for you until Triage checks them.
   if (item.state !== "stale" && line.form === "you" && inboxAction(item) !== "merge") return { ...line, text: `${line.text} · ${unsettled}` };
   if (item.state !== "stale") return { ...line, form: "done", text: `${line.text} · ${unsettled} · Triage again` };
@@ -354,13 +363,9 @@ export function heldChoices(bar: PaneBar): HeldChoice[] {
   return [...carried, ...bar.dos.map((pending) => ({ pending, entry: null }))];
 }
 
-const ON_THE_PULL_REQUEST: ReadonlySet<ActionKind> = new Set(["approve", "close", "merge"]);
-
 /** A held action as the line under the status says it: when it will run on its own, or what Triage would do once you let it. */
-export function heldText({ kind, label, until }: Pick<PendingDo, "kind" | "label" | "until">): string {
-  const action = lowerFirst(label);
-  if (until !== null) return `Will run when ${until}: ${action}`;
-  const verb = lowerFirst(DO_NAMES[kind]);
-  const said = ON_THE_PULL_REQUEST.has(kind) ? `${verb} this pull request${action.slice(verb.length)}` : action;
+export function heldText(pending: Pick<PendingDo, "kind" | "label" | "until">): string {
+  if (pending.until !== null) return `Will run when ${pending.until}: ${lowerFirst(pending.label)}`;
+  const said = heldAction(pending);
   return `Triage would ${said}${/[.!?]"?$/.test(said) ? "" : "."}`;
 }

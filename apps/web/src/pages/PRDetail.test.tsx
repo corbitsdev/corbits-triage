@@ -87,16 +87,14 @@ test("an automatic action that has not run is described as not posted yet, not a
   expect(html).not.toContain("Triage commented");
 });
 
-test("a held action waits on you with Approve and Skip beside your controls", () => {
-  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []));
-  expect(html).toContain(">Approve<");
-  expect(html).toContain(">Skip<");
+test.each([["merge", "Merge"], ["approve", "Approve"]])("a held %s waits on you with its own name and Skip beside your controls", (kind, name) => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", kind, {}, { held: true })], []));
+  expect(html).toMatch(new RegExp(`<div class="suggest">.*>${name}</button>.*>Skip<`));
   expect(html).toContain(">Merge<");
 });
 
 test("a closed pull request offers no held action and none of your controls", () => {
   const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []), true);
-  expect(html).not.toContain(">Approve<");
   expect(html).not.toContain(">Skip<");
   expect(html).not.toContain(">Merge<");
 });
