@@ -4,9 +4,10 @@ Runs the hub (`apps/hub`, :3000) and portal (`apps/web`, :5173) against a local 
 
 ## 1. Prerequisites
 
-- Bun 1.4.4+, the version CI runs. `bun run check` and the portal build need `bun check`, which older Bun lacks; on one older than 1.4.3 they stop with `bun check needs Bun 1.4.3 or newer`, and `bun upgrade` fixes it
+- Bun 1.4.4+, the version CI runs. `bun run check` and the portal build need `bun check`, which Bun before 1.4.3 lacks; on that Bun they stop with `bun check needs Bun 1.4.3 or newer`, and `bun upgrade` fixes it
 - Postgres 15+ (Homebrew or Docker)
 - A GitHub account that can create GitHub Apps and own a sandbox repository
+- For Bitbucket Data Center, Docker running; see [Run it locally](BITBUCKET_DATACENTER.md#run-it-locally)
 
 ```sh
 bun install
@@ -81,7 +82,7 @@ Code review against the emulator: the emulator ignores GitHub's diff media type 
 ```sh
 bun run test     # unit + integration; hub tests need Postgres
 bun run test:chain  # the live chain: hub, sidecars, listener, manager, judge; about ten minutes
-bun run check    # typecheck web, tooling, extension, hub; bundle the hub
+bun run check    # typecheck tooling, portal, extension, hub, packages, e2e and the tests; check exact dependencies; bundle the hub
 bun run lint
 ```
 
@@ -106,7 +107,7 @@ Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
 ## Troubleshooting
 
 - **Hub exits on boot naming a secret**: one of the four keys is missing or not 64 hex characters.
-- **"The workspace has no decision model"**: triage has not started. Save a decision model in the **Triage** section of Settings.
-- **"Could not deploy triage workflows"**: the notice carries the hub's reason. Reload to retry.
+- **"Triage needs a decision model before it can run. Add one below."**: triage has not started. Save a decision model in the **Triage** section of Settings.
+- **Settings → Triage shows "Updating Triage failed; see the hub log."**: the host's last roll failed; the hub's `workflow_release_failed` log line has the reason, and the roll is tried again every ten minutes.
 - **New PRs never reach triage**: the host has no live listener (`triage-listener-github` or `triage-listener-bitbucket-datacenter`). Settings → Triage says why; the hub's `workflow_release_*` log lines say what the last roll did. A failed roll is tried again ten minutes later; restart the hub, or save the decision model again, to roll at once.
-- **Portal shows `HTTP 404` from a hub route**: the hub process is older than the code. Restart `bun run dev`.
+- **Portal shows "The hub answered with an error (HTTP 404)."**: the running hub does not have the route the portal calls. Restart `bun run dev`.

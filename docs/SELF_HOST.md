@@ -197,9 +197,9 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
 
    - Permissions: Pull requests, Issues and Contents: write; Checks, Members
      and Metadata: read.
-   - Events: Pull request, Pull request review, Issue comment, Check run,
-     Check suite and Push. GitHub sends installation events to every App
-     without ticking them.
+   - Events: Pull request, Pull request review, Pull request review thread,
+     Issue comment, Check run, Check suite and Push. GitHub sends
+     installation events to every App without ticking them.
 
    Bitbucket Data Center connects with an access token instead; see
    [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md).
@@ -417,18 +417,20 @@ any roll that failed.
   installation token serves the workspace, so the other accounts' repositories
   are left out.
 
-- A GitHub App created by an earlier build may lack permissions or events
-  added since. Accept new permissions (Contents: write, Members: read) when
-  GitHub asks an owner, and tick new events (Push, Check suite) under the App's
-  settings → Permissions & events. Until then, a policy file change committed
-  straight to the default branch, rather than merged in a pull request, is
-  read only after a hub restart, and a pull request waiting for CI is triaged after
-  the quiet time instead of seconds after CI finishes.
+- An existing GitHub App may lack permissions or events. Accept new
+  permissions (Contents: write, Members: read) when GitHub asks an owner, and
+  tick the events it lacks (Push, Check suite, Pull request review thread)
+  under the App's settings → Permissions & events → Subscribe to events, then
+  save. Without Push, a policy file change committed straight to the default
+  branch, rather than merged in a pull request, is read only after a hub
+  restart. Without Check suite, a pull request waiting for CI is triaged after
+  the quiet time instead of seconds after CI finishes. Without Pull request
+  review thread, resolving a review thread does not release a held merge.
 - Rules saved in the portal by an earlier build are archived on the first
-  start of this one and no longer run: a repository runs on its
-  `.corbits-triage.yml` only. Before upgrading, move any you still need into
-  that file on an earlier build, or write the file again afterwards.
-- What Triage does on its own can now follow each policy file, but an
+  start of this one: a repository runs on its `.corbits-triage.yml` only.
+  Before upgrading, move any you still need into that file on an earlier build,
+  or write the file again afterwards.
+- What Triage does on its own can follow each policy file, but an
   existing workspace keeps asking: the first start of this build sets it to
   ask, so **Take the actions each policy file names without asking** is off,
   only the verdict is posted on its own, and actions allowed by hand stay

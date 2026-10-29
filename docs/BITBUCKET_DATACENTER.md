@@ -35,6 +35,35 @@ listener, and every mail carries `repoSource: "bitbucket-datacenter"`.
 Triage with every rule switched off starts no run and writes nothing to the
 pull request (`triage_skipped_no_rules` in the hub log), on either host.
 
+## Run it locally
+
+A local instance needs Docker running. The Atlassian image sets itself up from `SETUP_*` variables, so there is no setup wizard. The licence is Atlassian's published three-hour Bitbucket Data Center test key from [Timebomb licenses for testing](https://developer.atlassian.com/platform/marketplace/timebomb-licenses-for-testing-server-apps/); save it to a file first, here `bitbucket-license.txt`.
+
+```sh
+docker run -d --name bitbucket-dev -p 7990:7990 -p 7999:7999 \
+  --add-host=host.docker.internal:host-gateway \
+  -v bitbucket-dev:/var/atlassian/application-data/bitbucket \
+  -e SERVER_PROXY_NAME=localhost -e SERVER_PROXY_PORT=7990 -e SERVER_SCHEME=http \
+  -e SETUP_BASEURL=http://localhost:7990 -e SETUP_DISPLAYNAME=Bitbucket \
+  -e SETUP_SYSADMIN_USERNAME=admin -e SETUP_SYSADMIN_PASSWORD=<password> \
+  -e SETUP_SYSADMIN_DISPLAYNAME=Admin -e SETUP_SYSADMIN_EMAILADDRESS=admin@example.com \
+  -e "SETUP_LICENSE=$(cat bitbucket-license.txt)" \
+  atlassian/bitbucket:10.5.1
+```
+
+It takes about two minutes to start. `curl http://localhost:7990/status` answers `{"state":"RUNNING"}` when it is ready, and `curl http://localhost:7990/rest/api/1.0/application-properties` then names the version. Stop and remove it with `docker rm -f bitbucket-dev && docker volume rm bitbucket-dev`.
+
+Then:
+
+1. Sign in at http://localhost:7990 as `admin`.
+2. Create a project and a repository, and push at least one commit to it; enabling an empty repository is refused with `repo_empty`.
+3. Create an HTTP access token (avatar, **Manage account**, **HTTP access tokens**) with Project read and Repository admin, as under [Token](#token).
+4. Start the hub with `BITBUCKET_EGRESS_ALLOWLIST=localhost`, since it refuses a loopback instance unless it is listed: `BITBUCKET_EGRESS_ALLOWLIST=localhost bun run dev`.
+5. In the portal, connect `http://localhost:7990` with the token.
+6. Turn triage on for the repository; that creates its webhook.
+
+The webhook URL Triage registers is built from `BETTER_AUTH_BASE_URL`, so a local hub registers a `localhost` address, which the container cannot reach. For live events, edit the webhook on the repository in Bitbucket and set its URL to `http://host.docker.internal:<hub port>/` followed by the path of the registered URL. Rotating the webhook secret puts the registered URL back, so edit it again afterwards.
+
 ## Token
 
 An HTTP access token, sent as `Authorization: Bearer`. A fresh Data Center 10.5 instance turns off password Basic auth for the REST API, so a token is the only way in. It needs:
@@ -172,9 +201,9 @@ and the hex HMAC of the raw body, in `X-Hub-Signature`, with the event in
 Resolving or reopening a comment thread sends `pr:comment:edited` with the
 comment's text unchanged (`previousComment` equals `comment.text`); only that
 wakes triage, so a held merge goes ahead once the last inline thread a person
-opened is resolved. An edit of the text wakes nothing. A webhook created before
-`pr:comment:edited` was listed gets it when the instance is connected again,
-which saves every webhook Triage created; one set up by hand needs it added.
+opened is resolved. An edit of the text wakes nothing. Rotating the webhook secret in Settings
+saves every webhook Triage created with all the events above; a webhook set up
+by hand needs **Comment edited** ticked.
 
 Data Center sends no webhook when a build finishes, so for a head waiting for
 CI the hub's reconcile pass reads its build statuses every 5 minutes and wakes
