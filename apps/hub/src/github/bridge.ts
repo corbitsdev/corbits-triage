@@ -152,10 +152,6 @@ function isSentBy(payload: unknown, login: string): boolean {
   return sender?.["type"] === "Bot" && sender["login"] === login;
 }
 
-export function json(status: number, body: unknown): Response {
-  return Response.json(body, { status });
-}
-
 const INSTALL_EVENTS = new Set(["installation", "installation_repositories"]);
 const REPO_LIST_CAP = 50;
 
@@ -327,7 +323,7 @@ async function handleInstallEvent(
   const fields = installationFields(payload);
   if (typeof action !== "string" || !fields || action === "new_permissions_accepted") {
     log({ level: "info", msg: "ignored", delivery, event, hook: loaded.credentialId });
-    return json(202, { status: "ignored" });
+    return Response.json({ status: "ignored" }, { status: 202 });
   }
 
   let truncated = false;
@@ -344,15 +340,15 @@ async function handleInstallEvent(
     nextNs = await patchCorbitsTriage(d.db, loaded.tenantId, apply);
   } catch {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
-    return json(500, { error: "tenant_config_unavailable" });
+    return Response.json({ error: "tenant_config_unavailable" }, { status: 500 });
   }
   if (nextNs === undefined) {
     log({ level: "info", msg: "ignored", delivery, event, action, hook: loaded.credentialId, reason: "unconfigured_tenant" });
-    return json(202, { status: "ignored" });
+    return Response.json({ status: "ignored" }, { status: 202 });
   }
   if (!applied) {
     log({ level: "info", msg: "ignored", delivery, event, action, hook: loaded.credentialId });
-    return json(202, { status: "ignored" });
+    return Response.json({ status: "ignored" }, { status: 202 });
   }
   if (truncated) {
     log({
@@ -368,7 +364,7 @@ async function handleInstallEvent(
 
   d.installationChanged(loaded.tenantId);
   log({ level: "info", msg: "accepted", delivery, event, action, hook: loaded.credentialId, reason: "recorded_only" });
-  return json(202, { status: "accepted" });
+  return Response.json({ status: "accepted" }, { status: 202 });
 }
 
 export async function tenantConfigOf(d: Pick<BridgeDeps, "db">, tenantId: string): Promise<unknown> {
@@ -389,12 +385,12 @@ async function connectedRecord(
     tenantConfig = await tenantConfigOf(d, loaded.tenantId);
   } catch {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
-    return json(500, { error: "tenant_config_unavailable" });
+    return Response.json({ error: "tenant_config_unavailable" }, { status: 500 });
   }
   const record = repoRecords(triageNs(tenantConfig)).find((row) => row.name === repo && sourceOf(row) === "github" && row.connected);
   if (record) return record;
   log({ level: "info", msg: "ignored", delivery, event, repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
-  return json(202, { status: "ignored" });
+  return Response.json({ status: "ignored" }, { status: 202 });
 }
 
 /**
@@ -416,11 +412,11 @@ async function handleBaseMove(
   } catch (err) {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
     log({ level: "error", msg: "policy_file_read_failed", delivery, event, repo, error: errorText(err) });
-    return json(500, { error: "policy_file_read_failed" });
+    return Response.json({ error: "policy_file_read_failed" }, { status: 500 });
   }
   if (!repoPolicy(record).enabled) {
     log({ level: "info", msg: "ignored", delivery, event, repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
-    return json(202, { status: "ignored" });
+    return Response.json({ status: "ignored" }, { status: 202 });
   }
   let due: number;
   try {
@@ -428,10 +424,10 @@ async function handleBaseMove(
   } catch (err) {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
     log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo, error: String(err) });
-    return json(500, { error: "triage_state_unavailable" });
+    return Response.json({ error: "triage_state_unavailable" }, { status: 500 });
   }
   log({ level: "info", msg: "base_moved", delivery, event, repo, merged, due, hook: loaded.credentialId });
-  return json(202, { status: "accepted" });
+  return Response.json({ status: "accepted" }, { status: 202 });
 }
 
 /**
@@ -455,18 +451,18 @@ async function handlePolicyPush(
   } catch (err) {
     d.cache.forget(`${loaded.credentialId}:${delivery}`);
     log({ level: "error", msg: "policy_file_read_failed", delivery, event, repo, error: errorText(err) });
-    return json(500, { error: "policy_file_read_failed" });
+    return Response.json({ error: "policy_file_read_failed" }, { status: 500 });
   }
   if (!read) {
     log({ level: "info", msg: "ignored", delivery, event, repo, hook: loaded.credentialId, reason: "unconfigured_repo" });
-    return json(202, { status: "ignored" });
+    return Response.json({ status: "ignored" }, { status: 202 });
   }
   log({ level: "info", msg: "policy_file_pushed", delivery, event, repo, status: read.status, hook: loaded.credentialId });
   if (changed) {
     const started = await d.startBacklog(loaded.tenantId, record);
     log({ level: "info", msg: "policy_push_backlog", delivery, event, repo, status: started.status, hook: loaded.credentialId });
   }
-  return json(202, { status: "accepted" });
+  return Response.json({ status: "accepted" }, { status: 202 });
 }
 
 export function logJson(entry: Record<string, unknown>): void {
@@ -476,38 +472,38 @@ export function logJson(entry: Record<string, unknown>): void {
 export function createBridgeHandler(d: BridgeDeps) {
   const log = d.log ?? logJson;
   return async function handleBridgeRequest(req: Request, target: { hookId: string; tenantHint?: string }): Promise<Response> {
-    if (req.method !== "POST") return json(404, { error: "not_found" });
+    if (req.method !== "POST") return Response.json({ error: "not_found" }, { status: 404 });
     let loaded: BridgeHook | undefined;
     try {
       loaded = await loadBridgeHook(d.db, d.cipher, target.hookId, target.tenantHint);
     } catch {
-      return json(500, { error: "vault_error" });
+      return Response.json({ error: "vault_error" }, { status: 500 });
     }
     // Do not leak name collisions or tenant misses, mirroring stock.
-    if (!loaded) return json(404, { error: "unknown_hook" });
+    if (!loaded) return Response.json({ error: "unknown_hook" }, { status: 404 });
 
     const body = await readCappedBody(req);
     if (body === null) {
       log({ level: "warn", msg: "payload_too_large", hook: loaded.credentialId });
-      return json(413, { error: "payload_too_large" });
+      return Response.json({ error: "payload_too_large" }, { status: 413 });
     }
     const delivery = req.headers.get(GITHUB_HOOK_HEADERS.delivery);
     const event = req.headers.get(GITHUB_HOOK_HEADERS.event);
     if (!verifyXHubSignature(loaded.secret, req.headers.get(GITHUB_HOOK_HEADERS.signature), body)) {
       log({ level: "warn", msg: "bad_signature", delivery, hook: loaded.credentialId });
-      return json(401, { error: "invalid_signature" });
+      return Response.json({ error: "invalid_signature" }, { status: 401 });
     }
-    if (!delivery || !event) return json(400, { error: "missing_headers" });
+    if (!delivery || !event) return Response.json({ error: "missing_headers" }, { status: 400 });
     if (d.cache.check(`${loaded.credentialId}:${delivery}`)) {
       log({ level: "info", msg: "duplicate", delivery, event, hook: loaded.credentialId });
-      return json(200, { status: "duplicate" });
+      return Response.json({ status: "duplicate" }, { status: 200 });
     }
     let payload: unknown;
     try {
       payload = JSON.parse(body);
     } catch {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
-      return json(400, { error: "invalid_json" });
+      return Response.json({ error: "invalid_json" }, { status: 400 });
     }
     const named = asRecord(asRecord(payload)?.["repository"])?.["full_name"];
     if (typeof named === "string") {
@@ -524,14 +520,14 @@ export function createBridgeHandler(d: BridgeDeps) {
     const mail = normalize(event, delivery, payload as Record<string, unknown>);
     if (!mail || mail.prNumber === null) {
       log({ level: "info", msg: "ignored", delivery, event, hook: loaded.credentialId });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     const unlabeled = asRecord(asRecord(payload)?.["label"])?.["name"];
     const unpausing = event === "pull_request" && mail.action === "unlabeled" && typeof unlabeled === "string";
     const triageEvent = unpausing ? "updated" : triageEventOf(mail);
     if (triageEvent === null) {
       log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "no_triage_event" });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     let botLogin: string;
     try {
@@ -539,18 +535,18 @@ export function createBridgeHandler(d: BridgeDeps) {
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "app_slug_unavailable", delivery, event, hook: loaded.credentialId, error: String(err) });
-      return json(500, { error: "app_slug_unavailable" });
+      return Response.json({ error: "app_slug_unavailable" }, { status: 500 });
     }
     if (isSentBy(payload, botLogin)) {
       log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "own_event" });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     const record = await connectedRecord(d, log, loaded, delivery, event, mail.repo);
     if (record instanceof Response) return record;
     const policy = repoPolicy(record);
     if (!policy.enabled) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, hook: loaded.credentialId, reason: "repo_not_enabled" });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     // A check event names its head but not whether the pull request is a draft or open; its window reads that once at its flush.
     const draftUnread = mail.headSha !== null && mail.draft === null;
@@ -561,19 +557,19 @@ export function createBridgeHandler(d: BridgeDeps) {
       } catch (err) {
         d.cache.forget(`${loaded.credentialId}:${delivery}`);
         log({ level: "error", msg: "head_lookup_failed", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });
-        return json(500, { error: "head_lookup_failed" });
+        return Response.json({ error: "head_lookup_failed" }, { status: 500 });
       }
     }
     // A pull request no longer open is not a draft to skip; the workflow sees it closed.
     // Its conversion to draft is triaged once, so the verdict stops offering it as ready.
     if (mail.action !== "converted_to_draft" && (mail.draft ?? head?.draft ?? false)) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "draft" });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     const headSha = mail.headSha ?? head?.headSha;
     if (headSha === undefined) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "not_open" });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     let stored: Awaited<ReturnType<typeof triagePolicy>>;
     try {
@@ -581,19 +577,19 @@ export function createBridgeHandler(d: BridgeDeps) {
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "policy_read_failed", delivery, event, repo: mail.repo, error: errorText(err) });
-      return json(500, { error: "policy_read_failed" });
+      return Response.json({ error: "policy_read_failed" }, { status: 500 });
     }
     if (!stored) {
       log({ level: "info", msg: "needs_setup", delivery, event, repo: mail.repo, hook: loaded.credentialId });
-      return json(202, { status: "needs-setup" });
+      return Response.json({ status: "needs-setup" }, { status: 202 });
     }
     if (unpausing && ("policyUnreadable" in stored || unlabeled !== stored.pauseLabel)) {
       log({ level: "info", msg: "ignored", delivery, event, action: mail.action, repo: mail.repo, hook: loaded.credentialId, reason: "no_triage_event" });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     if ("pack" in stored && !hasEnabledRules(stored.pack)) {
       log({ level: "info", msg: "triage_skipped_no_rules", delivery, event, repo: mail.repo, pr: mail.prNumber, headSha, hook: loaded.credentialId });
-      return json(202, { status: "ignored" });
+      return Response.json({ status: "ignored" }, { status: 202 });
     }
     let accepted: Accepted;
     try {
@@ -601,9 +597,9 @@ export function createBridgeHandler(d: BridgeDeps) {
     } catch (err) {
       d.cache.forget(`${loaded.credentialId}:${delivery}`);
       log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });
-      return json(500, { error: "triage_state_unavailable" });
+      return Response.json({ error: "triage_state_unavailable" }, { status: 500 });
     }
     log({ level: "info", msg: accepted, delivery, event, action: mail.action, repo: mail.repo, pr: mail.prNumber, headSha, workflow: loaded.workflow });
-    return json(202, { status: accepted });
+    return Response.json({ status: accepted }, { status: 202 });
   };
 }
