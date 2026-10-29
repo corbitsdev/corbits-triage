@@ -118,8 +118,8 @@ A recorded repository the token no longer sees is listed with
 Needs `manage` on the workspace and `use` on both credentials. Records the
 repository enabled with its default branch and creates its webhook, or keeps
 the one it created before. In the same write it grants the `pr-triage` role
-Comment, which also writes the verdict as the `Corbits Triage` build status,
-since the host has no labels, then wakes the reconcile pass. Under the
+Comment, then wakes the reconcile pass. The verdict is written as the `Corbits
+Triage` build status whatever the role holds, since the host has no labels. Under the
 workspace's `policy` automation that pass's policy read grants the other kinds
 the policy file names, and takes back Labels and Assign, which the host lacks;
 under `ask` every other action waits for a person
@@ -171,7 +171,7 @@ and the hex HMAC of the raw body, in `X-Hub-Signature`, with the event in
 Data Center sends no webhook when a build finishes, so for a head waiting for
 CI the hub's reconcile pass reads its build statuses every 5 minutes and wakes
 a manager once they are no longer in progress. While it waits, its `Corbits Triage` build
-status reads `INPROGRESS` "Triage: Waiting for CI" where Comment is on. A verdict left unsure or failed by `ci-green` is re-read on the
+status reads `INPROGRESS` "Triage: Waiting for CI". A verdict left unsure or failed by `ci-green` is re-read on the
 unconfirmed retry interval (5 minutes, doubling) and queued again once its
 builds changed (`triage_requeued` with `reason: build_status_changed`).
 

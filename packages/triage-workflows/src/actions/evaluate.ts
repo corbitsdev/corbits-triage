@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step } from "@corbits/triage-contracts";
+import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, UNREAD_STATUS, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { approvalHeldBy, changesWanted, heldApprovals, holdDos, packApproves, stepActions, type ActionInput, type SuggestedAction } from "../logic/actions.js";
 import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
@@ -120,8 +120,6 @@ export const DO_NAMES: Record<ActionKind, string> = {
   merge: "merge",
 };
 
-const FAILED_BUILD = "Triage couldn't run";
-
 function doNames(actions: SuggestedAction[]): string {
   return [...new Set(actions.map((action) => DO_NAMES[action.kind]))].join(", ");
 }
@@ -148,14 +146,14 @@ function withoutDos(feedback: string, actions: SuggestedAction[]): string {
 
 /**
  * A run that could not read the pull request says so where its verdict would stand: the failed label in place of any
- * verdict label on GitHub, a failed build status on Bitbucket Data Center. None without a known head, so a newer head is
+ * verdict label on GitHub, an error status on Bitbucket Data Center. None without a known head, so a newer head is
  * never touched, nor where triage does not write the verdict.
  */
 function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, automatic: ActionKind[], owned: readonly string[], appLogin: string | undefined): WaitingMark | undefined {
   if (headSha === "" || !marksWaiting(source, automatic)) return undefined;
   const pull = { repo, number, onHead: headSha, ...(appLogin && { appLogin }) };
   const args = source === "bitbucket-datacenter"
-    ? { ...pull, labels: [], owned: [], build: { state: "FAILED" as const, description: FAILED_BUILD } }
+    ? { ...pull, labels: [], owned: [], status: UNREAD_STATUS }
     : { ...pull, labels: [FAILED_LABEL], owned };
   return { effectId: `degraded:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
 }

@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
-import { repoSourceOf, ruleLabel, type ActionKind } from "@corbits/triage-contracts";
+import { repoSourceOf, verdictStatus, type ActionKind } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import { asText } from "../logic/extract.js";
 import { call, data, hostWrite, toolName, type HostWrite } from "../logic/host.js";
@@ -9,10 +9,6 @@ import { decidesDos } from "../logic/settled.js";
 import type { UnreadyOutput } from "./waiting.js";
 
 const MIRRORED_KINDS: readonly ActionKind[] = ["comment", "labels", "approve", "request-changes"];
-
-const BUILD_STATES = { pass: "SUCCESSFUL", fail: "FAILED", unsure: "INPROGRESS" } as const;
-const BUILD_WORDS = { pass: "Pass", fail: "Fail", unsure: "Needs review" } as const;
-const BUILD_DESCRIPTION_MAX = 255;
 
 export type MirrorOutcome = { call: string; ok: boolean; error?: string; changeRequestsKept?: string; unchanged?: string; skipped?: string };
 /** Why a verdict was not posted: it could not be decided, it waits on the host's checks, it carries nothing to post, or the pr-triage role is granted no write. */
@@ -27,13 +23,6 @@ export function verdictsOf(input: Record<string, unknown>): { verdicts: Verdict[
     : { verdicts: [input as unknown as Verdict], batch: false };
 }
 
-/** A host without labels shows the verdict as a build status on the head; the rule labels it would carry name the failed rules in its description. */
-function verdictBuild(v: Verdict) {
-  const failed = v.checks.filter((c) => c.result === "fail").map((c) => ruleLabel(c.check));
-  const description = failed.length ? `${BUILD_WORDS[v.verdict]}: ${failed.join(", ")}` : BUILD_WORDS[v.verdict];
-  return { state: BUILD_STATES[v.verdict], description: description.slice(0, BUILD_DESCRIPTION_MAX) };
-}
-
 /**
  * A settled head that may not be approved takes back the approve Do's approvals, of it or earlier heads, in a pack that approves;
  * one with nothing left for the author to fix takes back the request-changes Do's requests, in a pack that requests changes.
@@ -43,15 +32,20 @@ function dismissals(v: Verdict) {
   return { ...(settled && v.approvable === false && { notReadyHead: v.headSha }), ...(settled && v.changesWanted === false && { fixedHead: v.headSha }) };
 }
 
-/** Why the mirror writes nothing for the verdict; none when it writes its marker, what the pr-triage role is granted, or what an earlier Do left to take back. */
+/** Why the mirror writes nothing for the verdict; none when it writes its marker, the status Bitbucket Data Center always shows, what the pr-triage role is granted, or what an earlier Do left to take back. */
 function notPosted(v: Verdict): NotPostedReason | undefined {
   if (v.mark !== undefined) return undefined;
   if (v.mirror !== true) return "stale";
   if (v.waiting) return "waiting";
   if (!v.request) return "no_request";
   if (!Array.isArray(v.automatic)) return "no_grants";
+  if (repoSourceOf(v.repoSource) === "bitbucket-datacenter") return undefined;
   if (MIRRORED_KINDS.some((kind) => v.automatic.includes(kind)) || Object.keys(dismissals(v)).length > 0) return undefined;
   return "no_grants";
+}
+
+function headStatus(v: Verdict) {
+  return verdictStatus(v.verdict, v.checks.filter((c) => c.result === "fail").map((c) => c.check));
 }
 
 function mirrorCallId(v: Verdict): string {
@@ -79,14 +73,14 @@ function mirrorCall(v: Verdict): ToolCall {
   const source = repoSourceOf(v.repoSource);
   const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
   const comment = v.automatic.includes("comment") ? { comment: r.comment, ...(r.header && { header: r.header }) } : {};
-  const build = source === "bitbucket-datacenter" && v.automatic.includes("comment") ? { build: verdictBuild(v) } : {};
+  const status = source === "bitbucket-datacenter" ? { status: headStatus(v) } : {};
   const appLogin = v.appLogin ? { appLogin: v.appLogin } : {};
-  return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...build, ...dismissals(v), ...appLogin }, mirrorCallId(v));
+  return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...status, ...dismissals(v), ...appLogin }, mirrorCallId(v));
 }
 
 /**
  * Writes triage's labels when the pr-triage role holds labels and its reply when it holds comment; a host without labels
- * writes the verdict build status with the comment. It takes back what earlier approve and request-changes Dos left
+ * shows the verdict as a status on the head whatever the role holds, since it reports the verdict and acts on nothing. It takes back what earlier approve and request-changes Dos left
  * standing; the portal offers the rest. An unready output, and a verdict that waits on the host's checks, writes only its marker.
  */
 export async function mirrorVerdicts(input: unknown, write: HostWrite): Promise<MirrorOutput> {

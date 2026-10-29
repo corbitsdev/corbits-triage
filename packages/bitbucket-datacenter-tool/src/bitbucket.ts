@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { errorText } from "@corbits/common";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type VerdictStatus, type WrittenComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
 
@@ -193,15 +193,22 @@ async function builds(bb: BitbucketFetch, sha: string): Promise<Build[]> {
 }
 
 /** The verdict as a build status on the head: Data Center has no labels, and a build status is what its pull request page shows beside the head. */
-type VerdictBuild = { state: "SUCCESSFUL" | "FAILED" | "INPROGRESS"; description: string; url?: string };
+const BUILD_STATES = { success: "SUCCESSFUL", failure: "FAILED", pending: "INPROGRESS", error: "FAILED" } as const;
+const BUILD_DESCRIPTION_MAX = 255;
 
 /** Writes the verdict build status unless the head already shows it; Data Center keeps one status per key and needs a URL on it. */
-async function setVerdictBuild(bb: BitbucketFetch, sha: string, build: VerdictBuild, fallbackUrl: string): Promise<{ build: VerdictBuild["state"]; written: boolean }> {
-  const url = build.url ?? fallbackUrl;
+async function setVerdictBuild(bb: BitbucketFetch, sha: string, status: VerdictStatus, url: string) {
+  const state = BUILD_STATES[status.state];
+  const description = status.description.slice(0, BUILD_DESCRIPTION_MAX);
   const current = (await builds(bb, sha)).find((b) => b.key === TRIAGE_BUILD_KEY);
-  if (current && current.state === build.state && (current.description ?? "") === build.description && current.url === url) return { build: build.state, written: false };
-  await json(bb, `/rest/build-status/1.0/commits/${sha}`, send("POST", { state: build.state, key: TRIAGE_BUILD_KEY, name: TRIAGE_BUILD_NAME, url, description: build.description }));
-  return { build: build.state, written: true };
+  if (current && current.state === state && (current.description ?? "") === description && current.url === url) return { build: state, written: false };
+  await json(bb, `/rest/build-status/1.0/commits/${sha}`, send("POST", { state, key: TRIAGE_BUILD_KEY, name: TRIAGE_BUILD_NAME, url, description }));
+  return { build: state, written: true };
+}
+
+/** Data Center opens the pull request scrolled to a comment from its overview with the comment's id. */
+function commentUrl(pr: PullRequest, commentId: number): string {
+  return `${pr.url}/overview?commentId=${commentId}`;
 }
 
 export interface MirrorInput {
@@ -212,7 +219,8 @@ export interface MirrorInput {
   owned?: readonly string[];
   comment?: string;
   header?: TriageHeader;
-  build?: VerdictBuild;
+  /** The verdict's state, shown as the Corbits Triage build status linking to the comment, or to the pull request without one. */
+  status?: VerdictStatus;
   /** Writes nothing once the pull request has moved past this head. */
   onHead?: string;
   close: boolean;
@@ -226,7 +234,7 @@ export async function mirror(bb: BitbucketFetch, i: MirrorInput, user: Bitbucket
   if (i.onHead !== undefined && i.onHead !== pr.sha) return { commentId: null, updated: false, closed: false, sha: pr.sha, skipped: HEAD_MOVED };
   if (i.comment === "") await deleteTriageComments(bb, repo, number, await user());
   const posted = i.comment ? await writeTriageComment(bb, { repo, number, body: i.comment, header: i.header, branch: pr.branch }, await user()) : null;
-  const build = i.build ? await setVerdictBuild(bb, pr.sha, i.build, pr.url) : undefined;
+  const build = i.status ? await setVerdictBuild(bb, pr.sha, i.status, posted ? commentUrl(pr, posted.commentId) : pr.url) : undefined;
   if (i.close) await declinePr(bb, { repo, number, version: pr.version });
   return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }), ...(build && { build: build.build, buildWritten: build.written }) };
 }

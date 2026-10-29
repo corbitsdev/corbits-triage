@@ -102,12 +102,22 @@ describe("mirror", () => {
 });
 
 describe("mirror build status", () => {
-  test("writes the verdict build status on the head once, with the pull request page as its URL", async () => {
+  const PR_URL = "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1";
+
+  test("writes the verdict build status on the head once, linking to the verdict comment", async () => {
     const fake = fakeBitbucket();
-    const build = { state: "FAILED" as const, description: "Fail: rule: ci-green" };
-    expect(await mirror(fake.bb, { ...REQUEST, comment: "", header: HEADER, build, close: false }, user)).toMatchObject({ build: "FAILED", buildWritten: true });
-    expect(await mirror(fake.bb, { ...REQUEST, comment: "", header: HEADER, build, close: false }, user)).toMatchObject({ build: "FAILED", buildWritten: false });
-    expect(fake.builds).toEqual([{ state: "FAILED", key: "corbits-triage", name: "Corbits Triage", url: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1", description: "Fail: rule: ci-green" }]);
+    const status = { state: "failure" as const, description: "Fail: rule: ci-green" };
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "Fail", header: HEADER, status, close: false }, user)).toMatchObject({ commentId: 10, build: "FAILED", buildWritten: true });
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "Fail", header: HEADER, status, close: false }, user)).toMatchObject({ build: "FAILED", buildWritten: false });
+    expect(fake.builds).toEqual([{ state: "FAILED", key: "corbits-triage", name: "Corbits Triage", url: `${PR_URL}/overview?commentId=10`, description: "Fail: rule: ci-green" }]);
+  });
+
+  test("without a comment it links to the pull request page", async () => {
+    const fake = fakeBitbucket();
+    const { comment: _comment, ...uncommented } = REQUEST;
+    expect(await mirror(fake.bb, { ...uncommented, status: { state: "pending", description: "Needs review" }, close: false }, user)).toMatchObject({ commentId: null, build: "INPROGRESS", buildWritten: true });
+    expect(fake.builds).toEqual([{ state: "INPROGRESS", key: "corbits-triage", name: "Corbits Triage", url: PR_URL, description: "Needs review" }]);
+    expect(fake.writes.map((w) => w.path)).toEqual(["/rest/build-status/1.0/commits/abc"]);
   });
 });
 

@@ -615,14 +615,14 @@ describe("mirror grants", () => {
     return calls;
   }
 
-  test("a Bitbucket Data Center verdict mirrors through its own tool, with the verdict as a build status beside its comment", async () => {
+  test("a Bitbucket Data Center verdict mirrors through its own tool as a status on its head, whatever the pr-triage role is granted", async () => {
     const checks = [{ check: "ci-green", result: "fail" }, { check: "linked-issue", result: "pass" }];
-    const { labels: _labels, owned: _owned, ...pull } = request;
-    const [call] = await mirrorCalls({ ...verdict, verdict: "fail", checks, repoSource: "bitbucket-datacenter", automatic: ["comment"] });
+    const { labels: _labels, owned: _owned, comment: _comment, ...pull } = request;
+    const [call] = await mirrorCalls({ ...verdict, verdict: "fail", checks, repoSource: "bitbucket-datacenter", automatic: [] });
     expect(call).toEqual({
       id: "mirror:acme--widgets:8",
       name: "bitbucket_datacenter_mirror_auto",
-      arguments: { ...pull, labels: [], owned: [], build: { state: "FAILED", description: "Fail: rule: ci-green" } },
+      arguments: { ...pull, labels: [], owned: [], status: { state: "failure", description: "Fail: rule: ci-green" } },
     });
   });
 
@@ -632,7 +632,7 @@ describe("mirror grants", () => {
     expect(await mirrorVerdicts({ items: [{ ...verdict, automatic: ["comment"], mirror: false }] }, write)).toEqual({ results: [{ call: "mirror:acme--widgets:8", skipped: true, reason: "stale" }] });
   });
 
-  test("a Bitbucket Data Center head waiting for CI shows the waiting build status where its verdict would, under its effect id", async () => {
+  test("a Bitbucket Data Center head waiting for CI shows the waiting status where its verdict would, under its effect id, with the progress comment only under comment", async () => {
     const head = { repo: "acme/widgets", number: 8, headSha: "abc" };
     const { labels } = emptyPack("acme/widgets");
     function marked(automatic: ("comment" | "labels")[]) {
@@ -641,14 +641,9 @@ describe("mirror grants", () => {
     expect(await marked(["comment"])).toEqual([{
       id: "waiting:acme--widgets:8:abc",
       name: "bitbucket_datacenter_mirror_auto",
-      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], build: { state: "INPROGRESS", description: "Triage: Waiting for CI" }, comment: progressComment(["ci"]) },
+      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], status: { state: "pending", description: "Triage: Waiting for CI" }, comment: progressComment(["ci"]) },
     }]);
-    expect(await marked(["labels"])).toEqual([]);
-  });
-
-  test("a Bitbucket Data Center repository holding labels but not comment writes no build status", async () => {
-    const [call] = await mirrorCalls({ ...verdict, repoSource: "bitbucket-datacenter", automatic: ["labels"] });
-    expect(call?.arguments).not.toHaveProperty("build");
+    expect((await marked([]))[0]?.arguments).toEqual({ repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], status: { state: "pending", description: "Triage: Waiting for CI" } });
   });
 
   test("comment alone posts the reply and leaves labels alone; approve alone still runs it to take approvals back", async () => {

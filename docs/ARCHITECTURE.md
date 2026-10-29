@@ -836,11 +836,13 @@ label off that head, so it never stands on a head not yet triaged.
    instead of waiting. A CI re-read that queues a head again keeps its
    attempts, since the head did not fail, and sets `noWait` on its last.
 7. **mirror** (manager): writes the verdict label when the `pr-triage` role holds
-   Labels, and the marker comment when it holds Comment; on Bitbucket, Comment
-   also writes the verdict as the `Corbits Triage` build status. It runs
+   Labels, and the marker comment when it holds Comment; on Bitbucket it
+   writes the verdict as the `Corbits Triage` build status whatever the role
+   holds, from the host-neutral state `verdictStatus` (triage-contracts) gives,
+   linked to the comment, or to the pull request without one. It runs
    before execute, so a merge or close finds the final verdict on the head. A
    waiting verdict writes only its waiting marker: the waiting label or
-   `INPROGRESS` build status, and, where the role holds Comment, the
+   pending build status, and, where the role holds Comment, the
    in-progress comment naming CI. On GitHub the marker passes the fail and
    unsure verdict labels as `keep`, so a pull request carrying one keeps its
    labels until the verdict, which swaps them only when it differs. A head

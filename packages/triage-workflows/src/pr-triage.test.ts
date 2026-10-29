@@ -962,7 +962,7 @@ describe("a run that could not read the pull request", () => {
     expect(github.labels).toEqual(["bug", "Triage: Ready"]);
   });
 
-  test("a policy the hub can't read marks each head the mail names failed with why on both hosts, once, and only with the grant", async () => {
+  test("a policy the hub can't read marks each head the mail names failed with why on both hosts, once, on GitHub only with the grant", async () => {
     const reason = "The policy file has unknown checks: max-size.";
     const mail = { kind: "pr", prNumber: 8, policy: { enabled: true }, policyUnreadable: reason, automatic: ACTION_KINDS, events: ["opened"] };
     const github = fakeGithub({ labels: ["bug", "Triage: Ready"] });
@@ -977,7 +977,7 @@ describe("a run that could not read the pull request", () => {
     const named = [{ headSha: "abc" }, { prNumber: undefined, items: [{ prNumber: 8, headSha: "abc" }] }];
     for (const heads of named) {
       const host = fakeBitbucket();
-      await runTriage(host.bb, [], false, hubMail({ ...mail, repo: BB_REPO, repoSource: "bitbucket-datacenter", ...heads }, "github@acme.test"), false, bitbucket, credentialBindingsFor(["bitbucket-datacenter"]));
+      await runTriage(host.bb, [], false, hubMail({ ...mail, repo: BB_REPO, repoSource: "bitbucket-datacenter", automatic: [], ...heads }, "github@acme.test"), false, bitbucket, credentialBindingsFor(["bitbucket-datacenter"]));
       expect(host.builds).toEqual([expect.objectContaining({ state: "FAILED", description: "Triage couldn't run" })]);
     }
   });
