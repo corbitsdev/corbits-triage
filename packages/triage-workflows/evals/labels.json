@@ -227,6 +227,48 @@
       "note": "new CLI flag documented",
       "headSha": "2a8b7377a38ee4ec9c6e7944343fd8f62f3afe6d",
       "baseSha": "06bf2d6190cad19fb43e8980c57503ee2edf4367"
+    },
+    "773": {
+      "needsDocs": false,
+      "note": "docs only, one large manual refresh",
+      "headSha": "c53ee51bd43f0347e0a44833d0a0ab4b1e594c37",
+      "baseSha": "13b2eb4a82133c33543096da88603e07e8c8f7e2"
+    },
+    "694": {
+      "needsDocs": false,
+      "note": "docs only, many files",
+      "headSha": "b164d6e1e2feb0e99e5491d7c5e00bd9497c470d",
+      "baseSha": "cc305526e26b263545082612adc85d91c2069410"
+    },
+    "663": {
+      "needsDocs": false,
+      "note": "docs only",
+      "headSha": "68485204e2edf28e8530ff28ab431db3ec6fb4f1",
+      "baseSha": "717f9aee8d0f9bd66457c7f68f94f1172a512298"
+    },
+    "649": {
+      "needsDocs": false,
+      "note": "config only, policy and workflow pin",
+      "headSha": "7668b6b5997c2dde607decd0fd160874c4cb75cd",
+      "baseSha": "28a902e9a6e2f7ec53c581425b72d97c6800fc89"
+    },
+    "763": {
+      "needsDocs": false,
+      "note": "config only, workflow checkout options",
+      "headSha": "f5bba9810ccbc6ae5a75b5bf601caff9073cefb0",
+      "baseSha": "01eb507bf95718aabcc8eb95bc1e713fe86fa19f"
+    },
+    "732": {
+      "needsDocs": false,
+      "note": "dependency bump, manifests and lockfile",
+      "headSha": "84cad49c8e20eac1b68d42074f1e15850bf41d24",
+      "baseSha": "d9a519613d9a1b60ff4d535f593059c5e290a26a"
+    },
+    "623": {
+      "needsDocs": false,
+      "note": "dependency bump, manifests and lockfile",
+      "headSha": "dba97c71aecc732900b1044ddafcc7900576e60b",
+      "baseSha": "57322e94ca0e64b7ebea3825d683c98f7b616ebf"
     }
   },
   "mixes": [
@@ -257,6 +299,14 @@
     [
       "187",
       "188"
+    ],
+    [
+      "773",
+      "763"
+    ],
+    [
+      "732",
+      "763"
     ]
   ],
   "describedMixes": [
