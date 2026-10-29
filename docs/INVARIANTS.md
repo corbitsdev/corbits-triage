@@ -7,7 +7,7 @@ request that changes how Triage keeps a rule names the rule.
 
 - **R1** One final verdict per pull request head, for the current head. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles it has exactly one current Triage comment, which is a verdict naming the head, and no waiting label.
 - **R2** Triage approves or merges only on Pass with a complete code review that meets the policy's findings condition, all for the current head. No automated check yet.
-- **R3** Every host write happens once under its effect id. Checked by `tests/model/rules.postgres.test.ts` over every write the pull request received, whichever pass made it: no Triage comment is created twice for one head, and no label is added while it is on.
+- **R3** Every host write happens once under its effect id. Checked by `tests/model/rules.postgres.test.ts` over every write the pull request received, whichever pass made it: no Triage comment is created while one is current, unless that one was superseded, and no label is added while it is on.
 - **R4** Unreadable input never passes or approves. No automated check yet.
 - **R5** Nothing is left running after the final post. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles, none of its managers is live, no live manager was deployed for no single pull request, and no mail for it was lost to a run that had ended. Settling delivers every queued mail, so no mail is left waiting by construction.
 - **R6** An older run never overwrites a newer head's comment, label, status or approval. No automated check yet.

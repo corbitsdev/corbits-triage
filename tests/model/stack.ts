@@ -193,6 +193,8 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
   const runs = new Map<string, Run>();
   /** Each manager run's pull request, read off the mail its listener was deploying it for; none when that mail named several. */
   const managed = new Map<string, number | undefined>();
+  /** Unattributed live managers already reported, so each fails only the first pull request checked after it. */
+  const reported = new Set<string>();
   /** Mail dropped at a run that had ended, or refused when sent to one; one whose copy a run took is not lost. */
   const dropped: Mail[] = [];
   const delivered = new Set<string>();
@@ -472,7 +474,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     },
     /**
      * What is left of pull request `number`'s runs and mail: its managers still live, live managers no pull request can
-     * be told for, mail no run took, and runs that did not complete.
+     * be told for that no earlier check reported, mail no run took, and runs that did not complete.
      */
     async leftover(number: number) {
       const rows = await db.select({ id: schema.workflowRun.id, status: schema.workflowRun.status }).from(schema.workflowRun).where(eq(schema.workflowRun.definitionId, `wfd_${TRIAGE_MANAGERS.github}`));
@@ -480,7 +482,9 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
       const named = ofPull(number);
       const failures = failed.filter((failure) => named(failure.mail)).map((failure) => `${failure.mail.to} ${failure.status}`);
       const lost = dropped.filter((mail) => named(mail) && !delivered.has(mail.id));
-      return { live: running.filter((id) => managed.get(id) === number), unattributed: running.filter((id) => managed.get(id) === undefined), lost, failed: failures };
+      const unattributed = running.filter((id) => managed.get(id) === undefined && !reported.has(id));
+      for (const id of unattributed) reported.add(id);
+      return { live: running.filter((id) => managed.get(id) === number), unattributed, lost, failed: failures };
     },
     /** The writes to pull request `number` and to its comments, in the order GitHub received them. */
     writes(number: number): Write[] {
