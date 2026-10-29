@@ -576,6 +576,7 @@ const workflowBundleDir = resolve(env.PORTAL_DIR ?? resolve(ROOT, "apps/web/publ
 const unroutedTries = createUnroutedTries();
 const workflowRollout = createWorkflowRollout({
   db: composition.db,
+  writes: systemWrites,
   assets: composition.assetService,
   repoStore: composition.repoStore,
   bundle: bundleAt(workflowBundleDir),

@@ -7,7 +7,6 @@ import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createDB, createGrantStore, runMigrations, schema } from "@intx/db";
 import { asRecord } from "@corbits/common";
 import { bitbucketConnection } from "../bitbucket-datacenter/records.js";
-import { allowCreator } from "./admin-github-grant.js";
 import { connectTriage, grantWanted } from "./automation.js";
 import { keepExistingWorkspacesAsking, patchCorbitsTriage, prepareCorbitsTriagePatch, repoRecords, triageNs, type CorbitsTriageNs, type RepoRecord } from "./tenant-config.js";
 
@@ -49,7 +48,7 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     await db.insert(schema.principal).values({ id: MANAGER, tenantId: T, kind: "user", refId: "usr_manager", status: "active" });
     await db.insert(schema.provider).values({ id: "prv_github", tenantId: T, name: "github", plugin: "http", apiBaseUrl: "https://api.github.test" });
     await db.insert(schema.credential).values({ id: "crd_github", tenantId: T, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key", secret: "unused", status: "active" });
-    await db.transaction((tx) => allowCreator(tx, T, MANAGER, `tenant:${T}`, "manage", new Date()));
+    await db.insert(schema.grant).values({ id: "grt_manager_tenant", tenantId: T, principalId: MANAGER, resource: `tenant:${T}`, action: "manage", effect: "allow", origin: "creator" });
 
     const grants = createGrantStore(db);
     const granted: string[] = [];
@@ -96,7 +95,7 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     const githubOn = { ...current, repos: [{ ...github, enabled: true }, bitbucket] };
     expect(await errorOf(await prepareCorbitsTriagePatch(deps, T, MANAGER, patchReq(githubOn)))).toEqual([403, "forbidden"]);
     expect(granted).toEqual([]);
-    await db.transaction((tx) => allowCreator(tx, T, MANAGER, "credential:crd_github", "use", new Date()));
+    await db.insert(schema.grant).values({ id: "grt_manager_github", tenantId: T, principalId: MANAGER, resource: "credential:crd_github", action: "use", effect: "allow", origin: "creator" });
     current = await patched(githubOn);
     expect(granted).toEqual(["acme/widgets"]);
     expect(repoRecords(current)[0]?.enabled).toBe(true);

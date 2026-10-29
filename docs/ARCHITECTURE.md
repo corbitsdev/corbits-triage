@@ -1229,14 +1229,17 @@ review, not the listener.
 
 The publisher's setup, its `Deployer` assignment and the workspace's lifetime
 ceiling, goes through the hub's write layer (`apps/hub/src/system-writes`) in
-one transaction. The layer writes as the workspace's `triage-hub` system
-principal: its first write in a workspace mints it through stock's principal
+one transaction. So do the publisher's creator `read` on each asset another
+workflow deploys, written once however often a roll publishes, and taking the
+`Deployer` role from people, one transaction for all of them. The layer
+writes as the workspace's `triage-hub` system principal: its first write in a workspace mints it through stock's principal
 store and gives it stock's system `admin` role; a workspace without that role
 is refused. It is an `agent` principal, so its address never resolves as a
 mail sender. A transaction declares every write it will make up front, as
 what stock's own route checks (`manage` on `tenant:<id>` for the ceiling,
-`manage` on `role:*` to assign a role, and for the `Deployer` role `create`
-on `role:*` and `create` on `grant:*`), and the layer runs stock's
+`manage` on `role:*` to assign or take a role, `create` on `grant:*` for a
+creator's grant, and for the `Deployer` role `create` on `role:*` and `create`
+on `grant:*`), and the layer runs stock's
 `authorize` for each, throwing `SystemWriteDenied` unless it allows, so taking
 `admin` from `triage-hub` stops those writes in that workspace; a write the
 transaction did not declare throws. The `Deployer` role also checks `manage`

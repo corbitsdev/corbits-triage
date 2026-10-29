@@ -15,7 +15,7 @@ export async function lockHolder(tx: Tx, tenantId: string, holderId: string): Pr
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${tenantId}:${holderId}`}))`);
 }
 
-async function allow(tx: Tx, tenantId: string, holder: Holder, resource: string, action: string, stamp: Date): Promise<void> {
+export async function allow(tx: Tx, tenantId: string, holder: Holder, resource: string, action: string, stamp: Date): Promise<void> {
   await lockHolder(tx, tenantId, holder.roleId === null ? holder.principalId : holder.roleId);
   const target = holder.roleId === null ? eq(grant.principalId, holder.principalId) : eq(grant.roleId, holder.roleId);
   const [held] = await tx.select({ id: grant.id }).from(grant).where(and(
@@ -34,10 +34,6 @@ async function allow(tx: Tx, tenantId: string, holder: Holder, resource: string,
 
 export async function allowRole(tx: Tx, tenantId: string, roleId: string, resource: string, action: string, stamp: Date): Promise<void> {
   await allow(tx, tenantId, { roleId, principalId: null, origin: "role" }, resource, action, stamp);
-}
-
-export async function allowCreator(tx: Tx, tenantId: string, principalId: string, resource: string, action: string, stamp: Date): Promise<void> {
-  await allow(tx, tenantId, { roleId: null, principalId, origin: "creator" }, resource, action, stamp);
 }
 
 async function adminRoleId(tx: Tx, tenantId: string): Promise<string | undefined> {

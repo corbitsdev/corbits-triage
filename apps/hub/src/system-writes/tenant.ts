@@ -21,7 +21,7 @@ export const ASSIGNS_ROLE: Check = { resource: "role:*", action: "manage" };
 
 const CREATES_ROLE: Check = { resource: "role:*", action: "create" };
 
-const CREATES_GRANT: Check = { resource: "grant:*", action: "create" };
+export const CREATES_GRANT: Check = { resource: "grant:*", action: "create" };
 
 export function managesGrant(grantId: string): Check {
   return { resource: `grant:${grantId}`, action: "manage" };

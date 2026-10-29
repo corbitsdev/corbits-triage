@@ -7,7 +7,9 @@ import git from "isomorphic-git";
 import { schema, type DB } from "@intx/db";
 import { AssetServiceError, DEFAULT_ASSET_REF, type AssetService, type RepoStore } from "@intx/hub-sessions";
 import { deployedByChain, publishable, withRelease, type ModelInfo, type PublishedSource, type SourceIndexEntry, type SourceTree } from "@corbits/triage-contracts";
-import { allowCreator } from "../github/admin-github-grant.js";
+import { allowCreator } from "../system-writes/grants.js";
+import { CREATES_GRANT } from "../system-writes/tenant.js";
+import type { SystemWrites } from "../system-writes/writer.js";
 
 /** The workflow sources the portal build writes under `packages/sources/`, in the order they publish. */
 export type Bundle = {
@@ -20,6 +22,7 @@ export type Publisher = { tenantId: string; principalId: string };
 
 export type PublishDeps = {
   db: DB["db"];
+  writes: SystemWrites;
   assets: Pick<AssetService, "createAsset" | "populateAsset" | "readAssetBlob">;
   repoStore: Pick<RepoStore, "resolveRef" | "getRepoDir">;
   now: () => Date;
@@ -112,8 +115,8 @@ async function publishSource(deps: PublishDeps, publisher: Publisher, workflow: 
   if (asset.creatorPrincipalId !== publisher.principalId) throw new Error(`${name} was created by someone else; publishing to it would deploy under their permissions.`);
   // A deployed workflow deploys the next one under its creator's read on that one's asset, which stock does not give a creator.
   if (deployedByChain(workflow)) {
-    await deps.db.transaction(function grantRead(tx) {
-      return allowCreator(tx, publisher.tenantId, publisher.principalId, `asset:${asset.id}`, "read", deps.now());
+    await deps.writes.transaction(publisher.tenantId, [CREATES_GRANT], function grantRead(w) {
+      return allowCreator(w, publisher.principalId, `asset:${asset.id}`, "read", deps.now());
     });
   }
   const published = await releaseCommit(deps, asset.id);

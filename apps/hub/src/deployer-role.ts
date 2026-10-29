@@ -5,8 +5,8 @@ import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { DEPLOYER_GRANTS, DEPLOYER_ROLE, TRIAGE_ROLE } from "@corbits/triage-contracts";
 import { allowRole } from "./github/admin-github-grant.js";
-import { managesGrant, SETS_ROLE_GRANTS } from "./system-writes/tenant.js";
-import { authorizeWrite, check, type WriteTx } from "./system-writes/writer.js";
+import { ASSIGNS_ROLE, managesGrant, SETS_ROLE_GRANTS } from "./system-writes/tenant.js";
+import { authorizeWrite, check, type SystemWrites, type WriteTx } from "./system-writes/writer.js";
 
 /** The tenant's Deployer role holding exactly its grants, created when missing; grants it held before are dropped. */
 export async function ensureDeployerRole(w: WriteTx, stamp: Date): Promise<string> {
@@ -37,17 +37,20 @@ export async function triageTenants(db: DB["db"]): Promise<string[]> {
  * Only the workspace's system publisher holds the role: the portal once handed it to people, and their deployments
  * would act under it. Taken once the publisher's listener runs, so a workspace is never left with no one to deploy.
  */
-export async function revokeHumanDeployers(db: DB["db"], tenantId: string, log: (entry: Record<string, unknown>) => void): Promise<void> {
+export async function revokeHumanDeployers(writes: SystemWrites, tenantId: string, log: (entry: Record<string, unknown>) => void): Promise<void> {
   const { principal, principalRole, role, user } = schema;
-  const held = await db
-    .select({ principalId: principalRole.principalId, roleId: role.id })
-    .from(principalRole)
-    .innerJoin(role, eq(role.id, principalRole.roleId))
-    .innerJoin(principal, eq(principal.id, principalRole.principalId))
-    .innerJoin(user, eq(user.id, principal.refId))
-    .where(and(eq(role.tenantId, tenantId), eq(role.name, DEPLOYER_ROLE), eq(role.isSystem, true), eq(principal.kind, "user")));
-  for (const row of held) {
-    await db.delete(principalRole).where(and(eq(principalRole.principalId, row.principalId), eq(principalRole.roleId, row.roleId)));
-  }
-  if (held.length > 0) log({ level: "info", msg: "deployer_role_revoked", tenantId, people: held.length });
+  const revoked = await writes.transaction(tenantId, [ASSIGNS_ROLE], async function revoke({ tx }) {
+    const held = await tx
+      .select({ principalId: principalRole.principalId, roleId: role.id })
+      .from(principalRole)
+      .innerJoin(role, eq(role.id, principalRole.roleId))
+      .innerJoin(principal, eq(principal.id, principalRole.principalId))
+      .innerJoin(user, eq(user.id, principal.refId))
+      .where(and(eq(role.tenantId, tenantId), eq(role.name, DEPLOYER_ROLE), eq(role.isSystem, true), eq(principal.kind, "user")));
+    for (const row of held) {
+      await tx.delete(principalRole).where(and(eq(principalRole.principalId, row.principalId), eq(principalRole.roleId, row.roleId)));
+    }
+    return held.length;
+  });
+  if (revoked > 0) log({ level: "info", msg: "deployer_role_revoked", tenantId, people: revoked });
 }
