@@ -13,6 +13,9 @@ type Comment = typeof Comment.infer;
 
 export const isTriageComment = isLinkReferenceTriageComment;
 
+/** The first line of each comment a code review posts begins with it. */
+export const CODE_REVIEW_MARKER = "[corbits-code-review]: #";
+
 const Activity = type({ action: "string", "comment?": Comment });
 
 function thread(comment: Comment): Comment[] {
@@ -42,12 +45,14 @@ function unresolved(comment: Comment): boolean {
 /**
  * Why a merge waits on the review threads: an inline comment thread neither resolved nor orphaned, or threads that
  * could not be read. A general comment is not a review thread, as on GitHub, so Triage's own verdict never holds it.
+ * The findings `own`, Triage's token user, posted with the code review marker are left to the code review's own hold.
  */
-export async function unresolvedThreadsHold(bb: BitbucketFetch, repo: string, number: number): Promise<string | undefined> {
+export async function unresolvedThreadsHold(bb: BitbucketFetch, repo: string, number: number, own: string): Promise<string | undefined> {
   try {
     const activities = (await jsonAll(bb, `${repoPath(repo)}/pull-requests/${number}/activities`, PAGE_LIMIT, THREAD_PAGES, true)).map((row) => Activity.assert(row));
     const roots = new Map(activities.flatMap((activity) => (activity.action === "COMMENTED" && activity.comment ? [[activity.comment.id, activity.comment] as const] : [])));
-    return threadsHold([...roots.values()].filter(unresolved).map((comment) => comment.author.slug));
+    const people = [...roots.values()].filter((comment) => !(comment.author.slug === own && comment.text.startsWith(CODE_REVIEW_MARKER)));
+    return threadsHold(people.filter(unresolved).map((comment) => comment.author.slug));
   } catch (err) {
     return threadsUnread(errorText(err));
   }

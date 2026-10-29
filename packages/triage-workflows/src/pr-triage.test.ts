@@ -200,13 +200,13 @@ const VERDICT_PATH = { hostSteps: ["markUnready", "facts", "mirror", "execute"],
 // `judgeText` fails focused, so the judge is called again for its file questions; a failed judged rule decides Fail without the verdict question.
 const JUDGE_PATH = { hostSteps: ["markUnready", "facts", "mirror", "execute"], judgeCalls: 2 };
 
-type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; noWait?: true; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource };
+type TriageOptions = GithubSeed & { backlog?: boolean; judgeFails?: boolean; noWait?: true; automatic?: readonly ActionKind[]; from?: string; github?: ReturnType<typeof fakeGithub>; source?: PolicySource; events?: TriageEvent[] };
 
-async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, noWait, automatic = ACTION_KINDS, from = "github@acme.test", github, source, ...seed }: TriageOptions = {}) {
+async function triage(checkPack: CheckPack, { backlog = false, judgeFails = false, noWait, automatic = ACTION_KINDS, from = "github@acme.test", github, source, events = ["opened"], ...seed }: TriageOptions = {}) {
   const { gh, requests, pr } = github ?? fakeGithub(seed);
   const policy = { enabled: true, ...(source && { source }) };
   const judged: SystemOne[] = [];
-  const request = backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, headSha: pr.head, policy, checkPack, automatic, events: ["opened"], ...(noWait && { noWait }) };
+  const request = backlog ? { kind: "backlog", repo: REPO, policy, checkPack, automatic } : { kind: "pr", repo: REPO, prNumber: 8, headSha: pr.head, policy, checkPack, automatic, events, ...(noWait && { noWait }) };
   const { terminalStatus, outputs } = await runTriage(gh, judged, judgeFails, hubMail(request, from), backlog);
   expect(terminalStatus).toBe("completed");
   const mirrors = ["mirror", "mirrorRules"].filter((id) => id in outputs);
@@ -874,6 +874,20 @@ describe("pr-triage body", () => {
     const writes = github.requests.filter((request) => request.method === "PUT").map((request) => request.path);
     // The mirror takes the earlier request back before execute merges, so the merge finds the final verdict on the head.
     expect(writes).toEqual([`/repos/${REPO}/pulls/8/reviews/100`, `/repos/${REPO}/pulls/8/reviews/100/dismissals`, `/repos/${REPO}/pulls/8/merge`]);
+  });
+
+  test("resolving the last review thread merges once, though the policy's on: lists neither updated nor the thread", async () => {
+    const github = fakeGithub();
+    const empty = emptyPack(REPO);
+    const pack: CheckPack = { ...empty, checks: { "max-files-changed": { enabled: true, max: 30 } }, actions: { ...empty.actions, when: ["opened", "checks"], pass: [{ do: "merge" }] } };
+    github.pr.ci = "success";
+    github.pr.threads = [{ isResolved: false, login: "maya" }];
+    await triage(pack, { github });
+    expect(github.comments[0]!.body).toEndWith("Merge waits for 1 unresolved review thread, opened by maya.");
+    github.pr.threads = [{ isResolved: true, login: "maya" }];
+    await triage(pack, { github, events: ["threads"] });
+    await triage(pack, { github, events: ["threads"] });
+    expect(github.requests.filter((request) => request.method === "PUT").map((request) => request.path)).toEqual([`/repos/${REPO}/pulls/8/merge`]);
   });
 
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {

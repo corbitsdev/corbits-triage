@@ -32,8 +32,8 @@ describe("normalizeBitbucket", () => {
     ["pr:reviewer:needs_work", { participant: { status: "NEEDS_WORK" } }, "changes-requested"],
     ["pr:reviewer:unapproved", { participant: { status: "UNAPPROVED" } }, null],
     ["pr:comment:added", { comment: { id: 4, text: "Please also add multiply.", author: { slug: "rev" } } }, "commented"],
-    ["pr:comment:edited", { comment: { id: 4, text: "Rename it.", threadResolved: true }, previousComment: "Rename it." }, "updated"],
-    ["pr:comment:edited", { comment: { id: 4, text: "Rename it.", threadResolved: false }, previousComment: "Rename it." }, "updated"],
+    ["pr:comment:edited", { comment: { id: 4, text: "Rename it.", threadResolved: true }, previousComment: "Rename it." }, "threads"],
+    ["pr:comment:edited", { comment: { id: 4, text: "Rename it.", threadResolved: false }, previousComment: "Rename it." }, "threads"],
     ["pr:declined", { pullRequest: pullRequest({ state: "DECLINED" }) }, "closed"],
     ["pr:deleted", {}, "closed"],
   ] as const)("%s %j wakes triage as %s", (eventKey, extra, expected) => {

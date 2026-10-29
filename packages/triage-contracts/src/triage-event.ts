@@ -40,9 +40,8 @@ export function triageEventOf({ event, action, review, merged }: MailEvent): Tri
     case "pull_request_review":
       if (action !== "submitted") return null;
       return REVIEW[reviewState(review)] ?? "reviewed";
-    // A thread resolved or reopened can let a held merge go ahead, or hold it again.
     case "pull_request_review_thread":
-      return action === "resolved" || action === "unresolved" ? "updated" : null;
+      return action === "resolved" || action === "unresolved" ? "threads" : null;
     case "check_run":
     case "check_suite":
       return action === "completed" ? "checks" : null;

@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
 import { authorFailures, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
@@ -48,9 +48,12 @@ export interface ActionInput {
   labelled?: CheckResult[];
 }
 
-/** Catch-up runs the policy's actions whatever woke it. */
+/** Events that clear a hold Triage adds itself, so the actions it held run whatever the policy's `on:` lists. */
+const RELEASES: readonly TriageEvent[] = ["threads"];
+
+/** Catch-up, and an event that clears Triage's own hold, run the policy's actions whatever woke it. */
 export function wakes(pack: CheckPack, facts: PrFacts): boolean {
-  return facts.events.includes("catch-up") || facts.events.some((event) => (pack.actions.when as readonly string[]).includes(event));
+  return facts.events.some((event) => event === "catch-up" || RELEASES.includes(event) || (pack.actions.when as readonly string[]).includes(event));
 }
 
 /** GitHub takes team slugs, and only the repository owner's teams can review. */
@@ -294,16 +297,16 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
 
 /**
  * An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. A
- * merge the review threads hold waits after the CI hold, skipped rather than held, so no person can approve it past
- * them and a later pass writes it under the same effect id once they allow it.
+ * merge the review threads hold is skipped before it too, rather than held, so no person can approve it past them and
+ * a later pass writes it under the same effect id once they allow it.
  */
 export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, { checks: ci, mergeHold }: Pick<PrFacts, "checks" | "mergeHold">): SuggestedAction[] {
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
     if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, ...approval };
+    if (action.kind === "merge" && mergeHold !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, waits: true, reason: mergeHold };
     if (ci === "pending") return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
     if (ci !== "success" && action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
-    if (action.kind === "merge" && mergeHold !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, waits: true, reason: mergeHold };
     return action;
   });
 }

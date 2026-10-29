@@ -162,7 +162,7 @@ describe("executeAction", () => {
     expect(clean.writes.map((w) => w.path)).toEqual([`${PR_PATH}/merge?version=4`]);
   });
 
-  test("refuses a merge while an inline thread is neither resolved nor orphaned, or the threads cannot be read", async () => {
+  test("refuses a merge while a person's inline thread is neither resolved nor orphaned, or the threads cannot be read; triage's own findings are left to code review", async () => {
     function thread(id: number, slug: string, fields: object) {
       return { id, text: "note", author: { slug }, createdDate: 0, ...fields };
     }
@@ -171,7 +171,10 @@ describe("executeAction", () => {
       thread(2, "li", { anchor: { orphaned: false }, threadResolved: true }),
       thread(3, "li", { anchor: { orphaned: true }, threadResolved: false }),
       thread(4, "triage-bot", { threadResolved: false }),
+      { ...thread(6, "triage-bot", { anchor: { orphaned: false }, threadResolved: false }), text: "[corbits-code-review]: #abc/0123456789ab\n**P1 · Off by one**" },
     ];
+    const findingOnly = fakeBitbucket({ threads: threads.slice(-1) });
+    expect(await executeAction(findingOnly.bb, { request: REQUEST, step: step("merge", {}) }, user)).toEqual({ status: "done", result: { merged: true } });
     const open = fakeBitbucket({ threads });
     expect(await runAction(open.bb, { request: REQUEST, step: step("merge", {}) }, user)).toEqual({ status: "skipped", reason: "Merge waits for 1 unresolved review thread, opened by maya." });
     const refused = fakeBitbucket({ threads: "refused" });

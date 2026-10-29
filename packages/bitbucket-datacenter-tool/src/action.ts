@@ -143,7 +143,7 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
       const me = await user();
       const requested = pr.reviewers.filter((r) => r.status === "NEEDS_WORK" && r.user.id !== me.id).map((r) => r.user.slug);
       if (requested.length) throw new ActionNotRunnableError(`changes are requested by ${requested.join(", ")}`);
-      const threads = await unresolvedThreadsHold(bb, repo, number);
+      const threads = await unresolvedThreadsHold(bb, repo, number, me.slug);
       if (threads !== undefined) throw new ActionNotRunnableError(threads);
       // Triage's own needs-work is its verdict on this head, which now merges; a "no needs work" merge check would veto it.
       if (statusOf(pr, me) === "NEEDS_WORK") await setStatus(bb, { repo, number, slug: me.slug, status: "UNAPPROVED" });

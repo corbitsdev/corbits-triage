@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
+import { CODE_REVIEW_MARKER, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
 import { APPROVE_DO_MARKER } from "./github";
 import { doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget } from "./do";
 
 type FakeComment = { id: number; user: { login: string; type: string }; body: string };
 type FakeReview = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body?: string };
-type FakeThread = { isResolved: boolean; isOutdated: boolean; login: string };
+type FakeThread = { isResolved: boolean; isOutdated: boolean; login: string; review?: number };
 
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
@@ -19,7 +19,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
     if (path === "/graphql") {
       if (seed.threads === "refused") return new Response("{}", { status: 502 });
-      const nodes = (seed.threads ?? []).map(({ isResolved, isOutdated, login }) => ({ isResolved, isOutdated, opener: { nodes: [{ databaseId: 1, createdAt: "2026-10-29T00:00:00Z", author: { login } }] }, comments: { nodes: [] } }));
+      const nodes = (seed.threads ?? []).map(({ isResolved, isOutdated, login, review }) => ({ isResolved, isOutdated, opener: { nodes: [{ databaseId: 1, createdAt: "2026-10-29T00:00:00Z", author: { login }, pullRequestReview: review === undefined ? null : { databaseId: review } }] }, comments: { nodes: [] } }));
       return Response.json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } } });
     }
     if (method !== "GET") writes.push({ method, path, body });
@@ -130,6 +130,14 @@ describe("executeDo", () => {
     const refused = fakeGithub({ threads: "refused" });
     await expect(run(refused.gh, step("merge", {}))).rejects.toThrow("Merge waits: Triage couldn't read the review threads");
     expect([...open.writes, ...refused.writes]).toEqual([]);
+  });
+
+  test("the threads of triage's own code review are left to its findings condition; a person's thread still holds the merge", async () => {
+    const review = { id: 50, user: APP, state: "COMMENTED", commit_id: "abc0000000000000000000000000000000000000", body: `${CODE_REVIEW_MARKER}\nOne finding.` };
+    const finding = { isResolved: false, isOutdated: false, login: "corbits-triage", review: 50 };
+    expect(await run(fakeGithub({ approvals: [review], threads: [finding] }).gh, step("merge", {}))).toMatchObject({ status: "done" });
+    const person = fakeGithub({ approvals: [review], threads: [finding, { isResolved: false, isOutdated: false, login: "maya", review: 51 }] });
+    await expect(run(person.gh, step("merge", {}))).rejects.toThrow("Merge waits for 1 unresolved review thread, opened by maya.");
   });
 
   test("triage's own request for changes does not stop a merge: one on this head is taken back first and marked as triage's, one on an earlier head is the mirror's", async () => {

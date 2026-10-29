@@ -455,7 +455,7 @@ export async function readMergeStates(gh: GithubFetch, repo: string, numbers: re
   return Object.entries(data.repository).flatMap(([alias, node]) => (node === null || failed.has(alias) ? [] : [{ number: node.number, open: node.state === "OPEN", mergeable: MERGEABLE[node.mergeable], mergeableState: node.mergeStateStatus.toLowerCase(), reviewDecision: node.reviewDecision }]));
 }
 
-const ThreadComment = type({ databaseId: "number", createdAt: "string", author: type({ login: "string" }).or("null") });
+const ThreadComment = type({ databaseId: "number", createdAt: "string", author: type({ login: "string" }).or("null"), "pullRequestReview?": type({ databaseId: "number" }).or("null") });
 const ThreadsReply = type({
   data: {
     repository: {
@@ -476,7 +476,7 @@ const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $af
     pageInfo { hasNextPage endCursor }
     nodes {
       isResolved isOutdated
-      opener: comments(first: 1) { nodes { databaseId createdAt author { login } } }
+      opener: comments(first: 1) { nodes { databaseId createdAt author { login } pullRequestReview { databaseId } } }
       comments(last: 100) { nodes { databaseId createdAt author { login } } }
     }
   } } }
@@ -500,10 +500,23 @@ export async function listReviewThreads(gh: GithubFetch, repo: string, number: n
   throw new Error(`more than ${THREAD_PAGES * 100} review threads`);
 }
 
-/** Why a merge waits on the review threads: one neither resolved nor outdated, or threads that could not be read. */
-export async function unresolvedThreadsHold(gh: GithubFetch, repo: string, number: number): Promise<string | undefined> {
+/** The ids of the code reviews `appLogin`, the App's bot account, sent: its own reviews that carry the marker. */
+async function ownCodeReviews(gh: GithubFetch, repo: string, number: number, appLogin: string): Promise<Set<number>> {
+  const reviews = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+  return new Set(reviews.filter((review) => review.user?.login === appLogin && carries(review, CODE_REVIEW_MARKER)).map((review) => review.id as number));
+}
+
+/**
+ * Why a merge waits on the review threads: one neither resolved nor outdated, or threads that could not be read.
+ * Threads of the code reviews the App sent are left to the code review's own hold.
+ */
+export async function unresolvedThreadsHold(gh: GithubFetch, repo: string, number: number, appLogin: string): Promise<string | undefined> {
   try {
-    const open = (await listReviewThreads(gh, repo, number)).filter((thread) => !thread.isResolved && !thread.isOutdated);
+    const [threads, own] = await Promise.all([listReviewThreads(gh, repo, number), ownCodeReviews(gh, repo, number, appLogin)]);
+    const open = threads.filter(function people(thread) {
+      const review = thread.opener.nodes[0]?.pullRequestReview?.databaseId;
+      return !thread.isResolved && !thread.isOutdated && (review === undefined || !own.has(review));
+    });
     // GitHub shows a deleted account as ghost.
     return threadsHold(open.map((thread) => thread.opener.nodes[0]?.author?.login ?? "ghost"));
   } catch (err) {

@@ -171,8 +171,8 @@ and the hex HMAC of the raw body, in `X-Hub-Signature`, with the event in
 
 Resolving or reopening a comment thread sends `pr:comment:edited` with the
 comment's text unchanged (`previousComment` equals `comment.text`); only that
-wakes triage, so a held merge goes ahead once its last inline thread is
-resolved. An edit of the text wakes nothing. A webhook created before
+wakes triage, so a held merge goes ahead once the last inline thread a person
+opened is resolved. An edit of the text wakes nothing. A webhook created before
 `pr:comment:edited` was listed gets it when the instance is connected again,
 which saves every webhook Triage created; one set up by hand needs it added.
 

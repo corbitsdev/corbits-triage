@@ -379,6 +379,7 @@ export const TRIAGE_EVENTS = [
   "approved",
   "changes-requested",
   "checks",
+  "threads",
   "closed",
   "merged",
   "catch-up",

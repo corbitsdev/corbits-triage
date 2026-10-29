@@ -15,8 +15,9 @@ describe("triageEventOf", () => {
     [{ event: "pull_request_review", action: "submitted", review: { state: "approved" } }, "approved"],
     [{ event: "pull_request_review", action: "submitted", review: { state: "CHANGES_REQUESTED" } }, "changes-requested"],
     [{ event: "pull_request_review", action: "submitted", review: { state: "commented" } }, "reviewed"],
-    [{ event: "pull_request_review_thread", action: "resolved" }, "updated"],
-    [{ event: "pull_request_review_thread", action: "unresolved" }, "updated"],
+    [{ event: "pull_request_review_thread", action: "resolved" }, "threads"],
+    [{ event: "pull_request_review_thread", action: "unresolved" }, "threads"],
+    [{ event: "pull_request_review_thread", action: "created" }, null],
   ])("%j maps to %p", (mail, event) => {
     expect(triageEventOf(mail)).toBe(event);
   });

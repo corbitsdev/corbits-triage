@@ -874,7 +874,10 @@ label off that head, so it never stands on a head not yet triaged.
    per host, `unresolvedThreadsHold` (github-reads: GraphQL `reviewThreads`,
    neither resolved nor outdated; bitbucket-datacenter-reads: `activities`,
    inline root comments neither `threadResolved` nor `anchor.orphaned`), says
-   why. Facts reads it through the host's `review_threads_hold` tool when the
+   why. It leaves out Triage's own findings, which the code review hold
+   governs: on GitHub a thread opened by a review the App sent with the code
+   review marker (its `pullRequestReview.databaseId`), on Data Center a comment
+   the token user posted starting with the marker. Facts reads it through the host's `review_threads_hold` tool when the
    policy lists a merge, and evaluate skips the merge with `waits` and that
    reason, which the comment closes with; the merge write reads it again and
    refuses as not runnable. Both read every page up to a bound (1,000
@@ -883,7 +886,9 @@ label off that head, so it never stands on a head not yet triaged.
    the pass after the last thread is resolved writes it under the same id.
    GitHub's `pull_request_review_thread` (`resolved`, `unresolved`) and Data
    Center's `pr:comment:edited` whose text is unchanged (a resolve or reopen,
-   checked against Bitbucket 10.5) wake the pull request as `updated`.
+   checked against Bitbucket 10.5) wake the pull request as `threads`, which
+   is not a policy event: like catch-up it runs the policy's actions whatever
+   `on:` lists, since it releases a hold Triage added itself.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
 `triage-do:<kind>:<owner>/<name>`), after the grant writer has followed that

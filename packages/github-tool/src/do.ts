@@ -167,7 +167,7 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       const reviews = await getReviews(gh, repo, number, login);
       const requested = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
       if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
-      const threads = await unresolvedThreadsHold(gh, repo, number);
+      const threads = await unresolvedThreadsHold(gh, repo, number, login);
       if (threads !== undefined) throw new DoNotRunnableError(threads);
       // Execute runs before the mirror, and a protected branch refuses the merge while triage's own request on this head stands; one on an earlier head is the mirror's to take back.
       const ownRequest = reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha);

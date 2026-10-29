@@ -22,7 +22,7 @@ export function threadsUnread(reason: string): string {
 }
 
 /**
- * What became of a finding's thread on the host:the author resolved it, the code under it changed, someone other than
+ * What became of a finding's thread on the host: the author resolved it, the code under it changed, someone other than
  * Triage replied, or none of these yet.
  */
 export const THREAD_STATES = ["resolved", "outdated", "replied", "untouched"] as const;

@@ -62,7 +62,7 @@ const READ_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "bitbucket_datacenter_review_threads_hold",
-    description: "Say why a merge waits on the pull request's inline comment threads: how many are neither resolved nor orphaned and who opened them, or that they could not be read. No hold when none is unresolved.",
+    description: "Say why a merge waits on the pull request's inline comment threads: how many are neither resolved nor orphaned and who opened them, or that they could not be read. Triage's own code review findings are left out. No hold when none is unresolved.",
     inputSchema: obj({ repo, number: { type: "integer" } }),
   },
   {
@@ -180,7 +180,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
     case "bitbucket_datacenter_author_teams":
       return authorTeams(bb, { repo: a.repo, author: a.author, teams: a.teams });
     case "bitbucket_datacenter_review_threads_hold":
-      return { hold: (await unresolvedThreadsHold(bb, a.repo, a.number)) ?? null };
+      return { hold: (await unresolvedThreadsHold(bb, a.repo, a.number, (await user()).slug)) ?? null };
     case "bitbucket_datacenter_finding_thread_states":
       return findingThreadStates(bb, a.repo, a.number, a.ids);
     case "bitbucket_datacenter_read_file":

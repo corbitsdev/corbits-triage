@@ -358,7 +358,7 @@ The file lists steps for each verdict, and the Policy section shows them under *
 | Action | What it does |
 | --- | --- |
 | Approve | Approves the pull request. |
-| Merge | Merges the pull request. Only on Pass, and only once no review thread is open (see [Merge waits for review threads](#merge-waits-for-review-threads)). |
+| Merge | Merges the pull request. Only on Pass, and only once no person's review thread is open (see [Merge waits for review threads](#merge-waits-for-review-threads)). |
 | Close | Closes the pull request. |
 | Comment | Posts the comment the step gives. |
 | Request changes | Sends the author a review listing the rules to fix. |
@@ -380,7 +380,7 @@ An **Unsure** comment lists each rule Triage could not confirm, with checks stil
 
 #### Merge waits for review threads
 
-Triage never merges a pull request while a review thread on it is open, whoever opened it. Its comment says so in one line, such as **Merge waits for 2 unresolved review threads, opened by maya, li.**, and the merge runs on its own once the last thread is resolved, with no new commit. A thread counts as open until someone resolves it, or a later commit changes the lines it is on. If Triage can't read the threads, it doesn't merge, and the comment says **Merge waits: Triage couldn't read the review threads** with the reason. Approve and every other action are not affected.
+Triage never merges a pull request while a person's review thread on it is open. Its comment says so in one line, such as **Merge waits for 2 unresolved review threads, opened by maya, li.**, and the merge runs on its own once the last thread is resolved, with no new commit, whatever events the policy's `on:` lists. The threads of Triage's own code review findings don't count here: they follow the policy's findings setting (see [Code review](#code-review)). A thread counts as open until someone resolves it, or a later commit changes the lines it is on. If Triage can't read the threads, it doesn't merge, and the comment says **Merge waits: Triage couldn't read the review threads** with the reason. Approve and every other action are not affected.
 
 - **On GitHub** a review thread is a comment on a line or file of the change. Comments in the pull request's conversation are not threads. A thread on lines a later commit changed shows as outdated and no longer counts. A GitHub App created before this needs one change so that resolving a thread reaches Triage: on GitHub, open the App's settings, then **Permissions & events → Subscribe to events**, tick **Pull request review thread** and save. Until then the merge waits for the pull request's next event, such as a new commit or CI finishing.
 - **On Bitbucket Data Center** a review thread is a comment on a line or file of the change. General comments, Triage's own verdict among them, don't count, even though Bitbucket lets you resolve them. A comment whose line a later commit removed counts as outdated. Resolving a thread reaches Triage through the webhook's **Comment edited** event. A webhook Triage created before this gets that event when the Bitbucket instance is connected again; a webhook set up by hand needs **Comment edited** ticked by a repository admin. Until then the merge waits for the pull request's next event.

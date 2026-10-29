@@ -319,7 +319,7 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
 
   const merges = packMerges(pack);
   function threadsCall(n: number): ToolCall[] {
-    return merges ? [call(tool("review_threads_hold"), { repo, number: n }, `threads:${n}`)] : [];
+    return merges ? [call(tool("review_threads_hold"), { repo, number: n, ...(stamp.appLogin && { appLogin: stamp.appLogin }) }, `threads:${n}`)] : [];
   }
 
   const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...numbers.flatMap(threadsCall), ...teamsCalls()]);
