@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPatchResponse, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageAutomated, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type PolicyPatchChange, type RepoCheckFlags, type RepoPolicy, type RepoSource, type ThreadState, type UnreadLines, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPatchResponse, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, isActionKind, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageAutomated, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type PolicyPatchChange, type RepoCheckFlags, type RepoPolicy, type RepoSource, type ThreadState, type UnreadLines, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 
 const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
@@ -1296,10 +1296,6 @@ type DoStatus = (typeof DO_STATUSES)[number];
 
 function isDoStatus(value: unknown): value is DoStatus {
   return (DO_STATUSES as readonly unknown[]).includes(value);
-}
-
-function isActionKind(value: unknown): value is ActionKind {
-  return (ACTION_KINDS as readonly unknown[]).includes(value);
 }
 
 function suggestedActions(actions: NonNullable<VerdictDetail["actions"]>): SuggestedAction[] {

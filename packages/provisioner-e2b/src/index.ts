@@ -6,7 +6,8 @@ import type {
   EnsureSidecarResult,
   SidecarProvisioner,
 } from "@intx/hub-sessions";
-import { sidecarEnv } from "@corbits/provisioner-template";
+import { settled } from "@corbits/common";
+import { isDestroyedBy, sidecarEnv } from "@corbits/provisioner-template";
 import type { AdapterManifest } from "@intx/types";
 import type { E2bApi, E2bSandbox } from "./e2b.js";
 
@@ -55,18 +56,6 @@ function labelled({ sandboxId, metadata }: E2bSandbox): Labelled | undefined {
 async function listSandboxes({ e2b, hubId }: E2bSidecars, allocationId?: string): Promise<Labelled[]> {
   const sandboxes = await e2b.list({ [LABEL.hub]: hubId, ...(allocationId !== undefined && { [LABEL.allocation]: allocationId }) });
   return sandboxes.map(labelled).filter((sandbox) => sandbox !== undefined);
-}
-
-function isDestroyedBy(sandbox: Labelled, request: DestroySidecarRequest): boolean {
-  return sandbox.generation < request.generation || (sandbox.generation === request.generation && sandbox.sidecarId === request.sidecarId);
-}
-
-async function settled(operation: Promise<unknown> | undefined): Promise<void> {
-  try {
-    await operation;
-  } catch {
-    // The caller of that operation sees its failure; the queue only needs ordering.
-  }
 }
 
 /** One E2B sandbox per sidecar, labelled with this hub, the allocation, the generation and the sidecar id. */

@@ -30,7 +30,7 @@ async function settled(operation: Promise<unknown> | undefined): Promise<void> {
 // At the destroyed generation only the destroyed identity goes: replacement
 // ensures a new sidecarId at that same generation, and a delayed destroy must
 // not remove it.
-function isDestroyedBy(resource: SidecarResource, request: DestroySidecarRequest): boolean {
+export function isDestroyedBy(resource: Pick<SidecarResource, "generation" | "sidecarId">, request: DestroySidecarRequest): boolean {
   return (
     resource.generation < request.generation ||
     (resource.generation === request.generation && resource.sidecarId === request.sidecarId)

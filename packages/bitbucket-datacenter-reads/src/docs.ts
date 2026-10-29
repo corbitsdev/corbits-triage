@@ -1,4 +1,4 @@
-import { PR_FILES_PAGE_CHARS, readRepoDocs, type RepoDocsPage, type RuleSpan } from "@corbits/github-reads";
+import { fitsDocsPage, readRepoDocs, type RepoDocsPage, type RuleSpan } from "@corbits/github-reads";
 import { type } from "arktype";
 import { filePath, json, jsonAll, repoPath, request, type BitbucketFetch } from "./client.js";
 import { BranchHead } from "./shapes.js";
@@ -46,10 +46,6 @@ export function createDocsReader(bb: BitbucketFetch) {
   };
 }
 
-function fits(page: RepoDocsPage, doc: { path: string; text: string }): boolean {
-  return JSON.stringify({ ...page, docs: [...page.docs, doc], next: Number.MAX_SAFE_INTEGER }).length <= PR_FILES_PAGE_CHARS;
-}
-
 /** The longest prefix of `bytes` from `from` that fits the page, never splitting a character. */
 function fittingEnd(page: RepoDocsPage, path: string, bytes: Uint8Array, from: number): number {
   let low = from;
@@ -58,7 +54,7 @@ function fittingEnd(page: RepoDocsPage, path: string, bytes: Uint8Array, from: n
     let middle = Math.ceil((low + high) / 2);
     while (middle < bytes.length && (bytes[middle]! & 0xc0) === 0x80) middle++;
     if (middle <= low) break;
-    if (fits(page, { path, text: decoder.decode(bytes.subarray(from, middle)) })) low = middle;
+    if (fitsDocsPage(page, { path, text: decoder.decode(bytes.subarray(from, middle)) })) low = middle;
     else high = middle - 1;
   }
   return low;

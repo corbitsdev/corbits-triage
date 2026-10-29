@@ -11,8 +11,12 @@
     "./diff-hash": "./src/diff-hash.ts",
     "./hook-metadata": "./src/hook-metadata.ts",
     "./patch": "./src/patch.ts",
+    "./reactor": "./src/reactor.ts",
     "./security-headers": "./src/security-headers.ts",
     "./x-hub-signature": "./src/x-hub-signature.ts"
+  },
+  "dependencies": {
+    "@intx/types": "workspace:*"
   },
   "main": "./src/index.ts",
   "description": "Helpers shared across Corbits Triage packages"

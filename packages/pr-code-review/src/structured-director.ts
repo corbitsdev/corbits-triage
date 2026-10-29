@@ -1,6 +1,7 @@
 import { defineDirector } from "@intx/agent";
 import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent } from "@intx/types/runtime";
 import { type } from "arktype";
+import { turnText } from "@corbits/common/reactor";
 import { MODEL_FAILED } from "./failures.js";
 import { packageName } from "./package-name.js";
 import type { CodeReviewProfile } from "./profile.js";
@@ -8,10 +9,6 @@ import type { CodeReviewProfile } from "./profile.js";
 export interface StructuredDirectorConfig {
   name: string;
   schema: Record<string, unknown>;
-}
-
-function turnText(turn: AssistantTurn): string {
-  return turn.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
 }
 
 /**

@@ -6,7 +6,8 @@ import type {
   EnsureSidecarResult,
   SidecarProvisioner,
 } from "@intx/hub-sessions";
-import { sidecarEnv } from "@corbits/provisioner-template";
+import { settled } from "@corbits/common";
+import { isDestroyedBy, sidecarEnv } from "@corbits/provisioner-template";
 import type { AdapterManifest } from "@intx/types";
 import { DockerEngineError, isThisMachine, type DockerEngine } from "./engine.js";
 import { pullDockerImage } from "./images.js";
@@ -70,17 +71,8 @@ type Fence = {
   readonly destroyedSidecarId?: string;
 };
 
-async function settled(operation: Promise<unknown> | undefined): Promise<void> {
-  try {
-    await operation;
-  } catch {
-    // The caller of that operation sees its failure; the queue only needs ordering.
-  }
-}
-
-function isDestroyedBy(container: Container, request: DestroySidecarRequest): boolean {
-  const generation = container.Labels[LABEL.generation];
-  return generation < request.generation || (generation === request.generation && container.Labels[LABEL.sidecar] === request.sidecarId);
+function isDestroyed(container: Container, request: DestroySidecarRequest): boolean {
+  return isDestroyedBy({ generation: container.Labels[LABEL.generation], sidecarId: container.Labels[LABEL.sidecar] }, request);
 }
 
 // A container cannot reach the hub's loopback; Docker maps host.docker.internal to the host.
@@ -252,10 +244,10 @@ export function createDockerSidecarProvisioner({
     if (fence === undefined || request.generation >= fence.generation) {
       fences.set(request.allocationId, { generation: request.generation, destroyedSidecarId: request.sidecarId });
     }
-    for (const container of (await list(request.allocationId, request.signal)).filter((container) => isDestroyedBy(container, request))) {
+    for (const container of (await list(request.allocationId, request.signal)).filter((container) => isDestroyed(container, request))) {
       await removeContainer(engine, container.Id, request.signal);
     }
-    const remaining = (await list(request.allocationId, request.signal)).filter((container) => isDestroyedBy(container, request));
+    const remaining = (await list(request.allocationId, request.signal)).filter((container) => isDestroyed(container, request));
     if (remaining.length > 0) {
       throw new Error(`Sidecar containers for ${request.allocationId} are still present`);
     }

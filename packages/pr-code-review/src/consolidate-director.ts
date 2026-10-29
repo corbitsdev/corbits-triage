@@ -1,6 +1,7 @@
 import { defineDirector } from "@intx/agent";
 import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent, ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
+import { lazy, turnText } from "@corbits/common/reactor";
 import { checkoutOf, READ_FILE_TOOL, type Checkout } from "./actions/checkout.js";
 import { MODEL_FAILED } from "./failures.js";
 import { quotedLine, type Finding, type Site } from "./findings.js";
@@ -34,10 +35,6 @@ function findingsIn(content: string): Finding[] {
   const close = content.lastIndexOf("\n</findings>");
   if (open === -1 || close === -1) return [];
   return JSON.parse(content.slice(open + "<findings>\n".length, close)) as Finding[];
-}
-
-function turnText(turn: AssistantTurn): string {
-  return turn.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
 }
 
 // The read tools clip a line past 500 characters and end it with "…".
@@ -205,12 +202,7 @@ export function consolidateDirectorOf(profile: CodeReviewProfile) {
     id: `${packageName(profile.packageName)}/consolidate`,
     configSchema: type({ name: "string", schema: "Record<string, unknown>" }),
     factory: function buildConsolidateDirector(config, _env, agent) {
-      let inner: ReactorDirector | undefined;
-      return {
-        async decide(event, state, caps) {
-          return (inner ??= consolidateDirector(caps, agent.systemPrompt, config)).decide(event, state, caps);
-        },
-      };
+      return lazy((caps) => consolidateDirector(caps, agent.systemPrompt, config));
     },
   });
 }

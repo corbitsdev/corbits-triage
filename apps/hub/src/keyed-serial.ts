@@ -1,10 +1,4 @@
-async function settled(work: Promise<unknown>): Promise<void> {
-  try {
-    await work;
-  } catch {
-    // The caller of `work` handles its failure; the chain only waits for it.
-  }
-}
+import { settled } from "@corbits/common";
 
 async function runAfter<T>(previous: Promise<void> | undefined, work: () => Promise<T>): Promise<T> {
   await previous;

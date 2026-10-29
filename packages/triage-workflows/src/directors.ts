@@ -1,13 +1,10 @@
 import { defineDirector } from "@intx/agent";
-import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent } from "@intx/types/runtime";
+import type { ReactorCapabilities, ReactorDirector, ReactorInboundEvent } from "@intx/types/runtime";
 import { type } from "arktype";
 import { isRecord } from "@corbits/common";
+import { lazy, turnText } from "@corbits/common/reactor";
 import { parseJsonText } from "./logic/extract.js";
 import type { Judgment } from "./actions/evaluate.js";
-
-function turnText(turn: AssistantTurn) {
-  return turn.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
-}
 
 /** The only inference path: one System One call for one rules chunk, replied as that chunk's `Judgment`. */
 function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): ReactorDirector {
@@ -33,16 +30,6 @@ function judgeDirector(caps: ReactorCapabilities, systemPrompt: string): Reactor
         default:
           return [];
       }
-    },
-  };
-}
-
-/** The reactor hands one stable capabilities object to `decide`; the director is built from it on first use. */
-function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDirector {
-  let inner: ReactorDirector | undefined;
-  return {
-    async decide(event, state, caps) {
-      return (inner ??= build(caps)).decide(event, state, caps);
     },
   };
 }

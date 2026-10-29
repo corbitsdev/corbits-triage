@@ -1,7 +1,7 @@
 // What the audit log and held Dos read from a pr-triage run's event log: the
 // approval it carried out and the verdict it made for a pull request.
 import { type } from "arktype";
-import { APPROVE_DO_KIND, isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, isFromTriageSender, parseJson, triggerRequestOf } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { classifyTerminalEvent, type WorkflowRunEvent } from "@intx/hub-sessions";
 import type { ApprovedDo } from "./verdict-record-store.js";
@@ -11,15 +11,6 @@ const INLINE_PREFIX = "inline:";
 
 /** An approval run names no head; `approved` is set once it ended, empty when it wrote nothing. `principalId` is who approved. */
 export type Approval = { repo: string; number: number; principalId?: string; approved?: ApprovedDo[] };
-function parseJson(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-}
-
 /** The pull request an approval mail from the hub's sender names a Do of; pr-triage takes any other mail as no approval. */
 function approvalOf(started: Record<string, unknown>): Approval | undefined {
   const mail = asRecord(started["trigger"])?.["payload"];
