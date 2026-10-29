@@ -38,7 +38,6 @@ const CompletedRun = type({
   startedAt: "string",
   summary: "string",
   comments: ShownFinding.array(),
-  open: "number",
   budgetExhausted: "boolean",
   "complete?": "boolean",
   "unread?": UnreadLines.array(),
@@ -85,8 +84,7 @@ function reviewOf(record: CodeReviewRecord): Review {
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
   const { summary, budgetExhausted, complete, unread, unreadFiles } = reported.result;
   const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified, thread }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }), thread: threadOf(thread), open: findingOpen(thread) }));
-  const open = comments.filter((comment) => comment.open).length;
-  return { ...base, status: "completed", summary, comments, open, budgetExhausted, ...(complete !== undefined && { complete }), ...(unread && { unread }), ...(unreadFiles !== undefined && { unreadFiles }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
+  return { ...base, status: "completed", summary, comments, budgetExhausted, ...(complete !== undefined && { complete }), ...(unread && { unread }), ...(unreadFiles !== undefined && { unreadFiles }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 
 type CodeReviewRunsDeps = {

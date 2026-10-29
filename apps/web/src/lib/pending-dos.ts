@@ -1,5 +1,6 @@
 import { alwaysHeld, type ActionKind, type VerdictWord } from "@corbits/triage-contracts";
 import { strings, type HeldDoRef, type PrItem, type SuggestedAction } from "./hub-api.ts";
+import { joined } from "./triage-view.ts";
 
 /**
  * `sentKey` also names the status it had when approved, so a later failure offers it again. `until` is what lets an
@@ -169,11 +170,6 @@ export function postedActions(item: PrItem): string[] {
 /** This verdict has a merge step Triage will run without asking. */
 export function mergesOnItsOwn(item: PrItem): boolean {
   return item.actions.some((action) => action.kind === "merge" && !awaitsApproval(action) && action.status !== "done" && action.status !== "satisfied");
-}
-
-export function joined(phrases: string[]): string {
-  if (phrases.length < 2) return phrases.join("");
-  return `${phrases.slice(0, -1).join(", ")} and ${phrases[phrases.length - 1]}`;
 }
 
 /**

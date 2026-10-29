@@ -89,7 +89,7 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
     await recordEvent(db, TENANT, GITHUB, "run_stray", { type: "reviewer-result", head: "sha9", payload: { kind: "code-review", result: OUTPUT } });
     await recordEvent(db, TENANT, GITHUB, "run_new", { type: "reviewer-result", head: "sha2", payload: { kind: "code-review", failed: "the review did not finish" } });
     await claim([reviewer("run_new", "sha2")], [eventKey("run_old")]);
-    const finished = { status: "completed" as const, headSha: "sha1", startedAt: expect.any(String), ...REVIEW, comments: REVIEW.comments.map((comment) => ({ ...comment, thread: { state: "not-tracked" as const }, open: true })), open: 1 };
+    const finished = { status: "completed" as const, headSha: "sha1", startedAt: expect.any(String), ...REVIEW, comments: REVIEW.comments.map((comment) => ({ ...comment, thread: { state: "not-tracked" as const }, open: true })) };
     expect(await reviewsOf(GITHUB)).toEqual({ review: { status: "failed", headSha: "sha2", startedAt: expect.any(String) }, completed: finished, carriedTo: null });
     expect(await reviewsOf(BITBUCKET)).toEqual({ review: null, completed: null, carriedTo: null });
 
@@ -142,17 +142,18 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
     const newest = await deployed("run_newest");
     await claim([reviewer("run_newest", "sha15")], [eventKey("run_old"), eventKey("run_new"), eventKey("run_unprioritised"), eventKey("run_threaded")]);
     const shown = (await reviewsOf(GITHUB)).completed;
-    expect(shown).toMatchObject({ headSha: "sha14", open: 3 });
+    expect(shown).toMatchObject({ headSha: "sha14" });
     expect(shown?.comments.map(({ thread, open }) => ({ state: thread.state, open }))).toEqual([{ state: "resolved", open: false }, { state: "outdated", open: false }, { state: "replied", open: true }, { state: "untouched", open: true }, { state: "not-tracked", open: true }]);
 
     // `at` answers one head's reviews, and no other head's review stands for it.
+    const readsBeforeAt = hostReads;
     expect(await reviewsOf(GITHUB, undefined, "sha15")).toEqual({ review: { status: "running", headSha: "sha15", startedAt: newest.toISOString() }, completed: null, carriedTo: null });
     expect(await reviewsOf(GITHUB, undefined, "sha1")).toEqual({ review: finished, completed: finished, carriedTo: null });
     hostDown = false;
     head = { ...head, headSha: "sha16", diff: DIFF };
     expect(await reviewsOf(GITHUB, "sha16", "sha14")).toMatchObject({ review: { headSha: "sha14" }, carriedTo: null });
     expect(await reviewsOf(GITHUB, undefined, "sha16")).toEqual({ review: null, completed: null, carriedTo: null });
-    expect(hostReads).toBe(7);
+    expect(hostReads).toBe(readsBeforeAt);
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

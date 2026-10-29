@@ -4,7 +4,7 @@ import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-re
 import { useCodeReviewOn } from "../lib/check-packs.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { relativeTime } from "../lib/duration.ts";
-import { joined } from "../lib/pending-dos.ts";
+import { joined } from "../lib/triage-view.ts";
 import type { CodeReviewComment, CodeReviewRun, FindingThread, PrItem } from "../lib/hub-api.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
@@ -26,12 +26,17 @@ function hint(review: CodeReviewRun, completed: CodeReviewRun | null): string {
 
 const MAX_NAMED_UNREAD = 5;
 
-/** The files the review left lines of unread, the first few by name; empty when it names none. */
-function notRead({ unread, unreadFiles }: CodeReviewRun): string {
-  if (!unread?.length || unreadFiles === undefined) return "";
+/** The files the review left lines of unread, the first few by name; null when it names none. */
+function notRead({ unread, unreadFiles }: CodeReviewRun): string | null {
+  if (!unread?.length || unreadFiles === undefined) return null;
   const named = unread.slice(0, MAX_NAMED_UNREAD).map((file) => file.path);
   const more = unreadFiles - named.length;
-  return ` Not read: ${joined(more > 0 ? [...named, `${more} more`] : named)}.`;
+  return `Not read: ${joined(more > 0 ? [...named, `${more} more`] : named)}.`;
+}
+
+function IncompleteNote({ review }: { review: CodeReviewRun }) {
+  const unread = notRead(review);
+  return <p className="note">{INCOMPLETE_NOTE}{unread === null ? null : <><br />{unread}</>}</p>;
 }
 
 function location({ path, start, end }: CodeReviewComment): string {
@@ -142,7 +147,7 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       {completed && carriedTo ? <p className="note">Carried over from {shortSha(completed.headSha)}: the new commits leave the diff as it was reviewed.</p> : null}
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
       {completed?.budgetExhausted ? <p className="note">{BUDGET_EXHAUSTED_NOTE}</p> : null}
-      {completed && completed.complete !== true ? <p className="note">{INCOMPLETE_NOTE}{notRead(completed)}</p> : null}
+      {completed && completed.complete !== true ? <IncompleteNote review={completed} /> : null}
       {completed?.comments?.length ? <ol className="threads">{completed.comments.map((comment, index) => <Thread key={index} comment={comment} review={completed} />)}</ol> : null}
     </section>
   );
