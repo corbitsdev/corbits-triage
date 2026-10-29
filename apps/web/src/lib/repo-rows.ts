@@ -3,6 +3,7 @@ import type { PackState } from "./check-packs.ts";
 import type { OpenPulls, PrItem, RepoRecord } from "./hub-api.ts";
 import { inboxAction, inNeedsYou, UNASSIGNED } from "./inbox-view.ts";
 import { hasRuleOn } from "./pack-rules.ts";
+import { repoKey, sameRepo, type RepoId } from "./repo-id.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
 
@@ -31,18 +32,6 @@ export function reposNeedingSetup(repos: RepoRecord[], packs: ReadonlyMap<string
 
 export function packsPending(packs: ReadonlyMap<string, PackState>): boolean {
   return [...packs.values()].some((state) => state.pending);
-}
-
-/** A repository is its host and its name; the same name can be connected from both hosts, and no host means GitHub. */
-export type RepoId = { name: string; source?: RepoSource };
-
-export function sameRepo(a: RepoId, b: RepoId): boolean {
-  return a.name === b.name && repoSourceOf(a.source) === repoSourceOf(b.source);
-}
-
-/** The key a repository's entry in a map such as `useCheckPacks` sits under. */
-export function repoKey(repo: RepoId): string {
-  return `${repoSourceOf(repo.source)}:${repo.name}`;
 }
 
 /** The hub names a repository on its host as `{ repo, source }`. */
@@ -85,8 +74,9 @@ export function enabledRepos(repos: RepoRecord[]): RepoRecord[] {
   return repos.filter((repo) => repoPolicy(repo).enabled);
 }
 
+/** The `repoKey` of each enabled repository. */
 export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
-  return new Set(enabledRepos(repos).map((repo) => repo.name));
+  return new Set(enabledRepos(repos).map(repoKey));
 }
 
 /** The `repoKey` of each enabled repository whose policy runs. */

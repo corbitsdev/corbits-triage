@@ -1,7 +1,7 @@
 import { AUTHOR_GROUPS, NO_CHANGES_REQUESTED, triageStopped, type AuthorKind, type AwaitedStage } from "@corbits/triage-contracts";
 import type { MergeBlock, PrItem, QueueState } from "./hub-api.ts";
 import { holdsActionForYou, mergesOnItsOwn, pendingDos, triageActed } from "./pending-dos.ts";
-import { repoKey } from "./repo-rows.ts";
+import { repoKey } from "./repo-id.ts";
 import { priorityRank } from "./triage-view.ts";
 
 export type InboxAction = "decide" | "review" | "unblock" | "merge" | "failed";
@@ -337,7 +337,7 @@ export type OpenItem = { item: PrItem; handled: HandledMark | null };
 
 /** A pending approval or held action still needs a person after its repository's triage is turned off. */
 export function allOpen(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
-  return open.filter((entry) => enabled.has(entry.item.repo) || awaitsYourDecision(entry.item));
+  return open.filter((entry) => enabled.has(itemRepoKey(entry.item)) || awaitsYourDecision(entry.item));
 }
 
 function needsYouEntry(entry: OpenItem): boolean {

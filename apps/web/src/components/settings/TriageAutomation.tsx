@@ -8,7 +8,7 @@ import { deleteGrant, type HubGrant, type PortalSnapshot, type RepoRecord } from
 import { createHubTransport } from "../../lib/hub-transport.ts";
 import { DO_NAMES } from "../../lib/pack-prose.ts";
 import { GRANTS_QUERY_KEY, usePortal } from "../../lib/portal.tsx";
-import { repoKey } from "../../lib/repo-rows.ts";
+import { repoKey } from "../../lib/repo-id.ts";
 import { useAllowed, useGrants, useRoles } from "../../lib/tenant-entities.ts";
 import { MergeCaution } from "../repo-panel/MergeCaution.tsx";
 

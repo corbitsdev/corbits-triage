@@ -4,7 +4,7 @@ import { CATALOG_IDS, catalogCheckEnabled, repoSourceOf, type ActionKind, type C
 import { createHubTransport } from "./hub-transport.ts";
 import { loadRepoCheckPack, type CheckPackArtifact } from "./hub-api.ts";
 import { usePortal } from "./portal.tsx";
-import { repoKey, type RepoId } from "./repo-rows.ts";
+import { repoKey, type RepoId } from "./repo-id.ts";
 
 export function checkPackQuery(tenantId: string | undefined, repo: string, source: RepoSource) {
   return queryOptions({

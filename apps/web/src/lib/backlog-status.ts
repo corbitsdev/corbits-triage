@@ -1,5 +1,5 @@
 import type { TriageVerdicts } from "@corbits/triage-contracts";
-import { sameRepo, type RepoId } from "./repo-rows.ts";
+import { sameRepo, type RepoId } from "./repo-id.ts";
 
 /**
  * Repositories with no verdict yet whose pull requests have a manager's run going, each on its host; `triaged` are the

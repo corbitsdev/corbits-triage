@@ -4,7 +4,8 @@ import { DeniedNotice } from "../../lib/denied.tsx";
 import type { PortalSnapshot, RepoRecord } from "../../lib/hub-api.ts";
 import { usePolicyFile } from "../../lib/policy-file.ts";
 import { usePolicyUpgrade } from "../../lib/policy-upgrades.ts";
-import { repoHref, repoKey } from "../../lib/repo-rows.ts";
+import { repoKey } from "../../lib/repo-id.ts";
+import { repoHref } from "../../lib/repo-rows.ts";
 
 function policyText(file: { path: string } | null | undefined, failed: boolean) {
   if (failed) return "Could not read its policy file";

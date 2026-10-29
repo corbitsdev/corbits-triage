@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import type { PackState } from "./check-packs.ts";
 import { projectQueue, type OpenPulls, type PrItem, type RepoRecord } from "./hub-api.ts";
-import { groupInbox, regroupInbox, waitsOnIn } from "./inbox-view.ts";
-import { findRepo, hostedRepos, mergeRepositories, packsPending, repoHealth, repoKey, repoRows, reposNeedingSetup, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
+import { allOpen, groupInbox, regroupInbox, waitsOnIn } from "./inbox-view.ts";
+import { repoKey } from "./repo-id.ts";
+import { findRepo, hostedRepos, mergeRepositories, packsPending, repoHealth, repoRows, reposNeedingSetup, selectedRepo, triageEnabledRepos, triageReadyRepos } from "./repo-rows.ts";
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   const base: PrItem = {
@@ -188,7 +189,7 @@ describe("merged repositories", () => {
     expect([github!.health.label, bitbucket!.health.label]).toEqual(["Webhooks OK", "Catching up"]);
   });
 
-  test("the same name on both hosts is set up, awaits triage and counts in Settings on its own host", () => {
+  test("the same name on both hosts is enabled, set up, awaits triage and counts in Settings on its own host", () => {
     const github = { name: "acme/api", connected: true, source: "github" as const, enabled: true };
     const bitbucket = { name: "acme/api", connected: true, source: "bitbucket-datacenter" as const, enabled: true };
     const merged = [github, bitbucket];
@@ -199,5 +200,7 @@ describe("merged repositories", () => {
     expect(groupInbox(items, triageReadyRepos(merged, packs)).awaiting).toBe(1);
     expect(triageReadyRepos(merged, packs).size).toBe(1);
     expect(triageReadyRepos(merged, new Map([...packs, [repoKey(bitbucket), policyFile("acme/api")]])).size).toBe(2);
+    const open = items.map((pull) => ({ item: pull, handled: null }));
+    expect(allOpen(open, triageEnabledRepos([github, { ...bitbucket, enabled: false }])).map((entry) => entry.item.source)).toEqual(["github"]);
   });
 });

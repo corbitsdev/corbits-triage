@@ -2,11 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { triageStopped } from "@corbits/triage-contracts";
 import type { CheckResult, PrItem } from "./hub-api.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
-import { repoKey } from "./repo-rows.ts";
+import { repoKey } from "./repo-id.ts";
 import { allOpen, entriesFor, groupInbox, groupOpen, inboxAction, inboxStatus, inNeedsYou, legacyTriageTarget, needsYouCount, needsYou, primaryAction, readyToMerge, stoppedNotes, triageView, waitingOnOthers, waitsOn, waitsOnIn, withTriageView, type OpenItem } from "./inbox-view.ts";
 
-const READY = new Set(["acme/widgets"]);
-const READY_KEYS = new Set([repoKey({ name: "acme/widgets" })]);
+const READY = new Set([repoKey({ name: "acme/widgets" })]);
 
 function item(overrides: Partial<PrItem>): PrItem {
   const base: PrItem = {
@@ -69,7 +68,7 @@ describe("groupInbox", () => {
       item({ key: "f", state: "needs-decision", comment: "Looks wanted." }),
       item({ key: "g", state: "stale" }),
       item({ key: "h", state: "new", runId: null, failure: "failed" }),
-    ], READY_KEYS);
+    ], READY);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([
       ["decide", ["f"]],
       ["unblock", ["c"]],
@@ -86,7 +85,7 @@ describe("groupInbox", () => {
       item({ key: "early", priority: "P2", waitingSince: "2026-10-01T00:00:00.000Z" }),
       item({ key: "human", priority: "P2", needsHuman: true, waitingSince: "2026-10-06T00:00:00.000Z" }),
       item({ key: "urgent", priority: "P1", waitingSince: "2026-10-07T00:00:00.000Z" }),
-    ], READY_KEYS);
+    ], READY);
     expect(view.groups[0]?.items.map((row) => row.key)).toEqual(["urgent", "human", "early", "late"]);
   });
 
@@ -98,7 +97,7 @@ describe("groupInbox", () => {
       item({ key: "c", state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }),
       item({ key: "d", state: "new", runId: null, verdict: null, untriaged: stopped, failure: "failed" }),
     ];
-    const view = groupInbox(items, READY_KEYS);
+    const view = groupInbox(items, READY);
     expect(view.groups.map((group) => [group.action, group.items.map((row) => row.key)])).toEqual([["failed", ["c"]]]);
     expect(view.awaiting).toBe(0);
     expect(stoppedNotes(items)).toEqual([stopped]);
@@ -115,14 +114,14 @@ describe("groupInbox", () => {
   });
 
   test("a pull request Triage is at work on leaves Needs you until it has something for you, and counts as awaiting triage", () => {
-    const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true }), item({ key: "reviewing", awaiting: ["code-review"] })], READY_KEYS);
+    const view = groupInbox([item({ key: "rerun", running: true }), item({ key: "first", state: "new", running: true }), item({ key: "reviewing", awaiting: ["code-review"] })], READY);
     expect(view.groups).toEqual([]);
     expect(view.awaiting).toBe(3);
   });
 
   test("a pull request turned into a draft after its verdict leaves Needs you and waits on its author", () => {
     const drafted = item({ state: "awaiting-review", draft: true });
-    expect(groupInbox([drafted], READY_KEYS).groups).toEqual([]);
+    expect(groupInbox([drafted], READY).groups).toEqual([]);
     expect(waitingOnOthers([{ item: drafted, handled: null }], READY).map((entry) => entry.item.key)).toEqual([drafted.key]);
     expect(waitsOn(drafted, null)).toBe("author");
   });
@@ -175,7 +174,7 @@ describe("requested changes", () => {
   const entries = (pr: PrItem): OpenItem[] => [{ item: pr, handled: null }];
 
   test("leave Needs you and wait on the author until the verdict sees an answer", () => {
-    expect(groupInbox([reviewed], READY_KEYS).groups).toEqual([]);
+    expect(groupInbox([reviewed], READY).groups).toEqual([]);
     expect(needsYouCount(entries(reviewed), READY)).toBe(0);
     expect(waitsOn(reviewed, null)).toBe("author");
   });
@@ -185,7 +184,7 @@ describe("requested changes", () => {
     ["stored before verdicts waited on the reviewer", "needs-author-update"],
   ] as const)("an answered review %s is the maintainer's to re-review", (_, state) => {
     const answered = { ...reviewed, state, reviewAnswered: true };
-    expect(groupInbox([answered], READY_KEYS).groups.map((group) => group.action)).toEqual(["review"]);
+    expect(groupInbox([answered], READY).groups.map((group) => group.action)).toEqual(["review"]);
     expect(primaryAction(answered, inboxAction(answered))).toBe("approve");
     expect(inboxStatus(answered)).toBe("Waiting for review");
     expect(waitsOn(answered, null)).toBe("maintainer");
@@ -278,7 +277,7 @@ describe("All open", () => {
   });
 
   test("an untriaged pull request in a repository that is not set up waits on its setup", () => {
-    expect(waitsOnIn({ item: item({ state: "new", runId: null }), handled: null }, READY_KEYS)).toBe("setup");
+    expect(waitsOnIn({ item: item({ state: "new", runId: null }), handled: null }, READY)).toBe("setup");
   });
 
   test("Needs you keeps a pending approval of a repository with triage off", () => {
@@ -318,7 +317,7 @@ describe("Ready", () => {
   test("a pass the host would not merge leaves Ready and Merge for where it gets unblocked", () => {
     const open = [passed(1, {}), passed(2, { mergeBlock: "review-required" }), passed(3, { mergeBlock: "behind" }), passed(4, { mergeBlock: "checking" })];
     expect(readyToMerge(open, READY).map((entry) => entry.item.number)).toEqual([1]);
-    expect(groupInbox(open.map((entry) => entry.item), READY_KEYS).groups.map((group) => [group.action, group.items.map((row) => row.number)])).toEqual([
+    expect(groupInbox(open.map((entry) => entry.item), READY).groups.map((group) => [group.action, group.items.map((row) => row.number)])).toEqual([
       ["review", [2, 4]],
       ["unblock", [3]],
       ["merge", [1]],

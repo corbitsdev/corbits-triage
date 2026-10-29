@@ -70,7 +70,8 @@ import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesF
 import { leavesOpen, useOpenPulls, useOpenPullsUnanswered, useQueueLoading, useMarkedItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
-import { enabledRepos, packsPending, repoHref, repoKey, reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
+import { repoKey } from "../lib/repo-id.ts";
+import { enabledRepos, packsPending, repoHref, reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";

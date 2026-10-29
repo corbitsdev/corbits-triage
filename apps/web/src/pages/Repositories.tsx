@@ -18,7 +18,8 @@ import { rowFor, upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.
 import { usePortal } from "../lib/portal.tsx";
 import { hostName } from "../lib/pull-link.ts";
 import { createHubTransport } from "../lib/hub-transport.ts";
-import { findRepo, hostedRepos, repoKey, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
+import { repoKey } from "../lib/repo-id.ts";
+import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { relativeTime } from "../lib/triage-view.ts";
 

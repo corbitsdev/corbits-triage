@@ -7,6 +7,7 @@ import { useDecidedDoKeys } from "./held-dos.ts";
 import { useMergeBlocks } from "./merge-states.ts";
 import { withoutDecidedDos } from "./pending-dos.ts";
 import { usePortal } from "./portal.tsx";
+import { repoKey } from "./repo-id.ts";
 import { triageEnabledRepos } from "./repo-rows.ts";
 import { useApprovals, useApprovalsFirstLoad } from "./tenant-entities.ts";
 import { usePullTriage, useTriageVerdicts } from "./triage-verdicts.ts";
@@ -207,7 +208,7 @@ export function usePullPageItems(repo: string | null, number: number | null): Pr
   const listed = verdicts.data?.pulls.some(named) === true;
   const open = openPulls.data?.repos.some((row) => row.repo === repo && row.prs.some((pr) => pr.number === number)) === true;
   const { snapshot } = usePortal();
-  const enabled = repo !== null && triageEnabledRepos(snapshot?.repos ?? []).has(repo);
+  const enabled = repo !== null && snapshot !== null && triageEnabledRepos(snapshot.repos).has(repoKey({ name: repo }));
   const single = usePullTriage(repo ?? "", number, repo !== null && verdicts.data !== undefined && !listed && !(open && enabled));
   return usePullRequestItems(single?.pulls);
 }
