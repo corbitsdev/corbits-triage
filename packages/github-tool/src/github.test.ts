@@ -383,11 +383,12 @@ describe("sendCodeReview", () => {
   /** The App's reviews as GitHub keeps them, each one's inline comments listed back newest first, on a pull request whose head can move. */
   function reviewedPull() {
     const reviews: Array<{ id: number; user: typeof APP; commit_id: string; body: string; comments: Array<{ path: string; body: string }> }> = [];
-    const pr = { head: "abc123", patch: PATCH, readBack: true };
+    const pr = { head: "abc123", patch: PATCH, readBack: true, compare: true };
     const { gh, requests } = recorder(function respond(path, init) {
       if (path.includes("/reviews?per_page")) return reviews;
       if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: pr.patch }];
-      if (path.endsWith("/compare/base1...abc123")) return { files: [{ filename: "src/a.ts", status: "modified", patch: PATCH }] };
+      if (path.endsWith("/compare/base1...abc123") && pr.compare) return { files: [{ filename: "src/a.ts", status: "modified", patch: PATCH }] };
+      if (path.includes("/compare/")) return Response.json({ message: "Not Found" }, { status: 404 });
       if (path.endsWith("/pulls/8") && !init?.method) return { state: "open", head: { sha: pr.head }, base: { sha: "base1", repo: { id: 1 } } };
       const listed = /\/reviews\/(\d+)\/comments\?per_page/.exec(path);
       if (listed && !pr.readBack) return Response.json({ message: "Server Error" }, { status: 502 });
@@ -414,6 +415,15 @@ describe("sendCodeReview", () => {
     pr.head = "def456";
     pr.patch = "@@ -10,3 +12,4 @@\n ten\n-old\n+new\n+added\n twelve\n@@ -40 +43 @@\n-x\n+y";
     expect(await sendCodeReview(gh, { ...review, sha: "def456", reviewed: "abc123" }, login)).toEqual({ reviewId: 9, sent: false, threads: [40, null, 41] });
+  });
+
+  test("a review sent again after the head it was posted on was force-pushed away writes nothing and leaves its comments unknown", async () => {
+    const { gh, requests, pr } = reviewedPull();
+    await sendCodeReview(gh, review, login);
+    pr.head = "def456";
+    pr.compare = false;
+    expect(await sendCodeReview(gh, { ...review, sha: "def456", reviewed: "abc123" }, login)).toEqual({ reviewId: 9, sent: false, threads: null, unread: expect.stringContaining("404") });
+    expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
   });
 
   test("a posted review whose comments cannot be read back still counts as sent, with its comments unknown until it is sent again", async () => {

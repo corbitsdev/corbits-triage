@@ -293,11 +293,38 @@ async function reviewThreads(gh: GithubFetch, repo: string, number: number, revi
   }
 }
 
+type PrHeads = { head: { sha: string }; base: { sha: string } };
+
 /** The files of the pull request's diff as it stood at `head`: its head now, or the one an earlier review was posted on. */
-async function filesAt(gh: GithubFetch, repo: string, number: number, pr: { head: { sha: string }; base: { sha: string } }, head: string): Promise<Array<{ path: string; patch?: string }>> {
+async function filesAt(gh: GithubFetch, repo: string, number: number, pr: PrHeads, head: string): Promise<Array<{ path: string; patch?: string }>> {
   if (pr.head.sha === head) return listPrFiles(gh, repo, number);
   const compared: { files: Array<{ filename: string; patch?: string }> } = await json(gh, `/repos/${repo}/compare/${pr.base.sha}...${head}`);
   return compared.files.map((file) => ({ path: file.filename, ...(file.patch !== undefined && { patch: file.patch }) }));
+}
+
+/** Each finding's inline comment as the diff at `head` places it, or undefined for one the review's body holds. */
+async function inlineAt(gh: GithubFetch, repo: string, number: number, pr: PrHeads, head: string, findings: readonly CodeReviewComment[]): Promise<(ReviewComment | undefined)[]> {
+  const files = await filesAt(gh, repo, number, pr, head);
+  const patches = new Map(files.flatMap((file) => (file.patch === undefined ? [] : [[file.path, parsePatch(file.patch)] as const])));
+  return findings.map(function inlineOf(finding) {
+    const at = anchor(finding, patches.get(finding.path) ?? []);
+    return at && inlineComment(finding, at);
+  });
+}
+
+/**
+ * `reviewThreads` of a review sent before, placed by the diff at the head it was posted on; a diff that cannot be read,
+ * as of a head force-pushed away, leaves them unknown rather than failing a send that writes nothing.
+ */
+async function sentThreads(gh: GithubFetch, repo: string, number: number, review: { id: number; head: string }, findings: readonly CodeReviewComment[]): Promise<SentThreads> {
+  let inline: (ReviewComment | undefined)[];
+  try {
+    const pr: PrHeads = await json(gh, `/repos/${repo}/pulls/${number}`);
+    inline = await inlineAt(gh, repo, number, pr, review.head, findings);
+  } catch (err) {
+    return { threads: null, unread: errorText(err) };
+  }
+  return reviewThreads(gh, repo, number, review.id, inline);
 }
 
 /**
@@ -310,15 +337,10 @@ export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput
   const { repo, number, sha, reviewed } = input;
   const heads = [sha, ...(reviewed === undefined ? [] : [reviewed])];
   const sent = (await reviewsBy(gh, repo, number, login)).find((review) => heads.some((head) => head === review.commit_id) && review.body?.includes(CODE_REVIEW_MARKER));
+  if (sent) return { reviewId: sent.id, sent: false, ...(await sentThreads(gh, repo, number, { id: sent.id, head: sent.commit_id ?? sha }, input.comments)) };
   const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
-  if (!sent && pr.head.sha !== sha) return { reviewId: null, sent: false, skipped: HEAD_MOVED };
-  const files = await filesAt(gh, repo, number, pr, sent?.commit_id ?? sha);
-  const patches = new Map(files.flatMap((file) => (file.patch === undefined ? [] : [[file.path, parsePatch(file.patch)] as const])));
-  const inline = input.comments.map(function inlineOf(finding) {
-    const at = anchor(finding, patches.get(finding.path) ?? []);
-    return at && inlineComment(finding, at);
-  });
-  if (sent) return { reviewId: sent.id, sent: false, ...(await reviewThreads(gh, repo, number, sent.id, inline)) };
+  if (pr.head.sha !== sha) return { reviewId: null, sent: false, skipped: HEAD_MOVED };
+  const inline = await inlineAt(gh, repo, number, pr, sha, input.comments);
   const comments = inline.filter((comment) => comment !== undefined);
   const outside = input.comments.filter((_finding, index) => inline[index] === undefined).map(findingSection);
   const body = reviewBody(input.summary, outside);
