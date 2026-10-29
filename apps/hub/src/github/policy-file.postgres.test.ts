@@ -32,9 +32,11 @@ const PATCHED = "acme/patched";
 const PATCH_LISTED = "acme/patch-listed";
 const RESERVED = "acme/reserved";
 const PULL_READ = "acme/pull-read";
+const REFRESHED = "acme/refreshed";
 const BOTH = "acme/both";
 const UNHEARD = "acme/unheard";
 const BITBUCKET_UNHEARD = "PROJ/unheard";
+const BITBUCKET_PULL = "PROJ/pull-read";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 /** Uses the host credential, but may neither create grants nor manage the workspace. */
 const USER = { tenantId: TENANT, principalId: "prn_plain" };
@@ -51,6 +53,14 @@ const YAML = ".corbits-triage.yaml";
 const DIRECTORY = "directory";
 const files = new Map<string, { sha: string; text: string | null }>();
 let readFails = false;
+/** Set, the workspace's open pull request listing throws. */
+let listingFails = false;
+/** Set to a repository, the workspace's open pull request listing leaves it out. */
+let listingOmits: string | undefined;
+/** Set, GitHub fails the lookup of a repository's open pull request by branch. */
+let pullLookupFails = false;
+/** Bitbucket repositories with an open policy pull request. */
+const bitbucketPulls = new Set<string>();
 /** Keyed by `repo:branch`, to the commit it points at. */
 const refs = new Map<string, string>();
 const pulls: Array<{ repo: string; number: number; head: string; base: string; title: string; body: string; open: boolean }> = [];
@@ -130,6 +140,7 @@ async function github(req: Request): Promise<Response> {
     return Response.json(open.map((pull) => ({ number: pull.number, title: pull.title, user: { login: "triage", type: "Bot" }, draft: false, head: { ref: pull.head, sha: "head-sha", repo: { id: 1 } }, base: { repo: { id: 1 } }, updated_at: "2026-10-17T00:00:00Z", labels: [], html_url: `https://github.com/${repo}/pull/${pull.number}` })));
   }
   if (req.method === "GET" && path === "pulls") {
+    if (pullLookupFails) return new Response(null, { status: 502 });
     const head = url.searchParams.get("head");
     return Response.json(pulls.filter((pull) => pull.repo === repo && pull.open && `${owner}:${pull.head}` === head).map((pull) => ({ number: pull.number, title: pull.title, body: pull.body, html_url: `https://github.com/${repo}/pull/${pull.number}`, head: { sha: "head-sha" } })));
   }
@@ -176,7 +187,8 @@ async function bitbucket(path: string, init?: RequestInit): Promise<Response> {
     branchCommits.push({ at: `${repo}:main`, sha: id, message: String(form.get("message")) });
     return Response.json({ id });
   }
-  if (kind === "branches") return Response.json({ latestCommit: "head", values: [{ displayId: "main", latestCommit: "head" }] });
+  if (kind === "pull-requests") return Response.json({ values: bitbucketPulls.has(repo) ? [{ id: 4, version: 1, title: "policy", fromRef: { latestCommit: "bb-head" }, links: { self: [{ href: `https://bitbucket.example/${repo}/pull-requests/4` }] } }] : [] });
+  if (kind === "branches") return Response.json({ latestCommit: "head", values: [{ displayId: "main", latestCommit: "head" }, ...(bitbucketPulls.has(repo) ? [{ displayId: POLICY_BRANCH, latestCommit: "bb-head" }] : [])] });
   if (!file) return new Response(null, { status: 404 });
   if (kind === "browse") return Response.json({ type: "FILE" });
   if (kind === "raw") return new Response(file.text);
@@ -198,7 +210,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, RESERVED, PULL_READ, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
+  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, RESERVED, PULL_READ, REFRESHED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: BITBUCKET_PULL, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -220,9 +232,14 @@ beforeAll(async () => {
     return (resource === "credential:crd_github" || resource === "credential:crd_bb") && action === "use" && (principalId === "prn_user" || principalId === "prn_plain");
   }
   const list = createTenantOpenPrs({ db, cipher, onKeyMoved: noKeyPush, githubApiOrigin, tenantBitbucket: async () => undefined });
+  const listed = createMemberOpenPulls({ db, cipher, onKeyMoved: noKeyPush, authorize, list, cache: createOpenPullsCache(() => new Date()) });
   policyFile = createPolicyFile({
     db,
-    openPulls: createMemberOpenPulls({ db, cipher, onKeyMoved: noKeyPush, authorize, list, cache: createOpenPullsCache(() => new Date()) }),
+    async openPulls(member, fresh) {
+      if (listingFails) throw new Error("listing failed");
+      const read = await listed(member, fresh);
+      return read instanceof Response ? read : { ...read, repos: read.repos.filter((row) => row.repo !== listingOmits) };
+    },
     changed() {},
     refusal: refused,
     cipher,
@@ -654,14 +671,34 @@ test("PostgreSQL: the policy file read carries the open policy pull request's co
   expect(branchText).not.toBe(PATCH_FILE);
   expect(await fileOf(PULL_READ)).toMatchObject({ text: PATCH_FILE, pull: { text: branchText, headSha: "head-sha" } });
 
-  // A branch that cannot be read leaves the default branch's file to answer on its own.
+  // A branch that cannot be read or listed leaves the default branch's file to answer, with the copy marked unknown.
   readFails = true;
   const res = await policyFile.fileRoute({ repo: PULL_READ }, MEMBER);
   readFails = false;
   expect(res.status).toBe(200);
   const unread = ((await res.json()) as { file: unknown }).file;
-  expect(unread).toMatchObject({ text: PATCH_FILE });
+  expect(unread).toMatchObject({ text: PATCH_FILE, pullUnread: true });
   expect(unread).not.toHaveProperty("pull");
+
+  listingFails = true;
+  expect(await fileOf(PULL_READ)).toMatchObject({ text: PATCH_FILE, pullUnread: true });
+  listingFails = false;
+  expect(await fileOf(PULL_READ)).not.toHaveProperty("pullUnread");
+
+  // A repository the listing does not cover is asked of the host.
+  listingOmits = PULL_READ;
+  expect(await fileOf(PULL_READ)).toMatchObject({ pull: { text: branchText, headSha: "head-sha" } });
+  pullLookupFails = true;
+  expect(await fileOf(PULL_READ)).toMatchObject({ text: PATCH_FILE, pullUnread: true });
+  pullLookupFails = false;
+  listingOmits = undefined;
+
+  onMain(BITBUCKET_PULL, YML, FILE);
+  await policyFile.onPush(TENANT, BITBUCKET_PULL, "bitbucket-datacenter");
+  bitbucketPulls.add(BITBUCKET_PULL);
+  listingOmits = BITBUCKET_PULL;
+  expect(await fileOf(BITBUCKET_PULL, "bitbucket-datacenter")).toMatchObject({ text: FILE, pull: { text: FILE, headSha: "bb-head" } });
+  listingOmits = undefined;
 
   onMain(PULL_READ, YML, branchText);
   pulls.find((row) => row.repo === PULL_READ)!.open = false;
@@ -708,4 +745,14 @@ test("PostgreSQL: edited text is pushed to the default branch as one commit wher
   const bitbucketCurrent = files.get(`${BITBUCKET_PUSHED}@main/${YML}`)!;
   expect(await pushOf(BITBUCKET_PUSHED, "bitbucket-datacenter", FILE, bitbucketCurrent.sha)).toMatchObject({ http: 409, error: { code: "push_refused" } });
   expect(files.get(`${BITBUCKET_PUSHED}@main/${YML}`)).toEqual(bitbucketCurrent);
+});
+
+test("PostgreSQL: a policy pull request that was opened is answered when the listing refresh after it fails", async () => {
+  onMain(REFRESHED, YML, PATCH_FILE);
+  await policyFile.onPush(TENANT, REFRESHED, "github");
+  listingFails = true;
+  const opened = await patchOf({ repo: REFRESHED, changes: [{ kind: "rule", id: "focused", enabled: false }] });
+  listingFails = false;
+  expect(opened).toMatchObject({ http: 200, status: "opened", number: expect.any(Number) });
+  expect(pulls.filter((row) => row.repo === REFRESHED)).toHaveLength(1);
 });

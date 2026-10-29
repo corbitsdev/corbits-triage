@@ -5,7 +5,7 @@ import { filePath, listPrCommits, readRepoFile, repoParts, repoPath, type Bitbuc
 import { bodyWith, commitMessage, missingSections, openingBody, POLICY_BRANCH, PolicyFileMoved, replacedBody, retriedEdit, withCommitted, type PolicyChange, type PolicyPull } from "../github/policy-pull.js";
 import { BitbucketFailed } from "./client.js";
 
-const Pull = type({ id: "number", version: "number", title: "string", "description?": "string", links: { self: type({ href: "string" }).array().atLeastLength(1) } });
+const Pull = type({ id: "number", version: "number", title: "string", "description?": "string", fromRef: { latestCommit: "string" }, links: { self: type({ href: "string" }).array().atLeastLength(1) } });
 const Pulls = type({ values: Pull.array() });
 const Branches = type({ values: type({ displayId: "string" }).array() });
 const Written = type({ id: "string" });
@@ -25,6 +25,11 @@ async function send(bb: BitbucketFetch, path: string, init?: RequestInit): Promi
 async function openPull(bb: BitbucketFetch, repo: string): Promise<typeof Pull.infer | undefined> {
   const path = `${repoPath(repo)}/pull-requests?state=OPEN&direction=OUTGOING&at=${encodeURIComponent(BRANCH_REF)}`;
   return Pulls.assert(await send(bb, path)).values[0];
+}
+
+/** The sha the open pull request's branch is at, for a read of the branch's file. */
+export async function openPolicyPullHead(bb: BitbucketFetch, repo: string): Promise<string | undefined> {
+  return (await openPull(bb, repo))?.fromRef.latestCommit;
 }
 
 export async function openPolicyPull(bb: BitbucketFetch, repo: string): Promise<PolicyPull | undefined> {

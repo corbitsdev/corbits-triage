@@ -284,8 +284,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     try {
       const file = statusOf(await cached(member.tenantId, record, maxAgeOf(member.tenantId, record)));
       if (file instanceof Response) return file;
-      const pull = file && await pullCopy(member, record);
-      return Response.json({ file: pull ? { ...file, pull } : file });
+      return Response.json({ file: file && { ...file, ...await pullCopy(member, record) } });
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_file_status_failed", tenantId: member.tenantId, repo, error: errorText(err) });
       return githubFailed(`read ${POLICY_FILE_PATH} from`, err);
@@ -293,19 +292,24 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   }
 
   /**
-   * The open policy pull request's copy of the file, found through the shared listing; none while its branch holds no
-   * readable file, or cannot be read, which leaves the default branch's file to answer on its own.
+   * The open policy pull request's copy of the file, found through the shared listing, or asked of the host where the
+   * listing does not cover the repository; none while its branch holds no readable file. A listing, host or branch read
+   * that fails is `pullUnread`, never none, and leaves the default branch's file to answer on its own.
    */
-  async function pullCopy(member: Member, record: RepoRecord): Promise<PolicyFileStatus["pull"]> {
-    const pr = policyPr(listedRepo(await deps.openPulls(member, false), record.name, sourceOf(record)));
-    if (!pr?.sha) return undefined;
+  async function pullCopy(member: Member, record: RepoRecord): Promise<Pick<PolicyFileStatus, "pull" | "pullUnread">> {
     try {
+      const listing = await deps.openPulls(member, false);
+      if (listing instanceof Response) return { pullUnread: true };
+      const listed = listedRepo(listing, record.name, sourceOf(record));
+      if (listed?.error !== undefined) return { pullUnread: true };
+      const headSha = listed ? policyPr(listed)?.sha : await pullHead(member.tenantId, record);
+      if (!headSha) return {};
       const found = await findFile(member.tenantId, record, github.POLICY_BRANCH);
-      if (found?.read.kind !== "file" || found.read.text === null) return undefined;
-      return { text: found.read.text, headSha: pr.sha };
+      if (found?.read.kind !== "file" || found.read.text === null) return {};
+      return { pull: { text: found.read.text, headSha } };
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_pull_file_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
-      return undefined;
+      return { pullUnread: true };
     }
   }
 
@@ -318,6 +322,12 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function openPull(tenantId: string, record: RepoRecord): Promise<github.PolicyPull | undefined> {
     if (sourceOf(record) === "github") return github.openPolicyPull(await repoGithub(tenantId, record), record.name);
     return bitbucketPull.openPolicyPull(await repoBitbucket(tenantId), record.name);
+  }
+
+  /** The head of the open policy pull request, asked of the host. */
+  async function pullHead(tenantId: string, record: RepoRecord): Promise<string | undefined> {
+    if (sourceOf(record) === "github") return (await openPull(tenantId, record))?.headSha;
+    return bitbucketPull.openPolicyPullHead(await repoBitbucket(tenantId), record.name);
   }
 
   async function propose(tenantId: string, record: RepoRecord, change: github.PolicyChange): Promise<github.PolicyPull> {
@@ -334,7 +344,11 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     deps.log({ level: "info", msg, tenantId, repo: record.name, number: pull.number });
     // The listing is where the repository's standing and the upgrades read find the new pull request.
     deps.changed(tenantId, record.name);
-    await deps.openPulls(member, true);
+    try {
+      await deps.openPulls(member, true);
+    } catch (err) {
+      deps.log({ level: "warn", msg: "policy_pull_listing_refresh_failed", tenantId, repo: record.name, error: errorText(err) });
+    }
     return Response.json({ status: "opened", ...pull });
   }
 
