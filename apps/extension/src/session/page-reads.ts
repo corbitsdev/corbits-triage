@@ -109,7 +109,9 @@ export function pageReads(): PageReads {
     throw new Error(`github.com's pull request search gives no association for ${repo}#${number}'s author`);
   }
 
-  async function mergeable(repo: string, base: string, head: string): Promise<boolean | null> {
+  async function mergeable(repo: string, base: string, headOwner: string, headBranch: string): Promise<boolean | null> {
+    const branch = encodeURIComponent(headBranch);
+    const head = headOwner && headOwner !== repo.split("/")[0] ? `${headOwner}:${branch}` : branch;
     const { state } = await json(`/${repo}/branches/pre_mergeable/${encodeURIComponent(base)}...${head}`) as { state?: string };
     if (state === "clean") return true;
     if (state === "dirty") return false;
@@ -126,8 +128,6 @@ export function pageReads(): PageReads {
       json(`${base}/page_data/diffstat`),
       json(`${base}/page_data/tab_counts`),
     ]);
-    const owner = repo.split("/")[0];
-    const head = pr.headRepositoryOwnerLogin && pr.headRepositoryOwnerLogin !== owner ? `${pr.headRepositoryOwnerLogin}:${pr.headBranch}` : pr.headBranch;
     const open = pr.state === "OPEN" || pr.state === "DRAFT";
     const login = pr.author.slug ? `${pr.author.slug}[bot]` : pr.author.login;
     return {
@@ -142,7 +142,7 @@ export function pageReads(): PageReads {
       author_association: assoc,
       head: { sha: pr.headSha, ref: pr.headBranch },
       base: { ref: pr.baseBranch },
-      mergeable: open ? await mergeable(repo, pr.baseBranch, head) : null,
+      mergeable: open ? await mergeable(repo, pr.baseBranch, pr.headRepositoryOwnerLogin, pr.headBranch) : null,
       requested_reviewers: side.users.map((each) => ({ login: each })),
       requested_teams: side.teams.map((slug) => ({ slug })),
       assignees: side.assignees.map((each) => ({ login: each })),

@@ -49,3 +49,32 @@ test("open pull requests into a base are listed from the dashboard filtered on i
   expect(JSON.parse((await pageReads().answer(`/repos/${REPO}/pulls?state=open&per_page=100`))!)).toMatchObject([{ number: 4 }]);
   expect(asked[0]).toContain('q=is:pr is:open base:"main"');
 });
+
+test("the mergeability read encodes the head branch like the base, keeping a fork's owner prefix", async () => {
+  const asked: string[] = [];
+  function servePull(headBranch: string, headRepositoryOwnerLogin: string) {
+    globalThis.fetch = async function pullPage(url) {
+      const path = String(url);
+      asked.push(path);
+      const pullRequest = { state: "OPEN", baseBranch: "main", headBranch, headRepositoryOwnerLogin, headSha: HEAD, title: "T", author: { login: "x" } };
+      const bodies: Record<string, unknown> = {
+        header: { pullRequest },
+        description: { body: "", bodyHtml: "" },
+        diffstat: { diffstat: { linesAdded: 0, linesDeleted: 0 } },
+        tab_counts: { filesChangedCount: 0 },
+      };
+      const body = bodies[path.split("/").at(-1)!] ?? { state: "clean", payload: { sidebar: { value: "" }, repoPullsDashboardContentRoute: { results: [{ number: 1, author: { association: "OWNER" } }] } } };
+      return new Response(JSON.stringify(body));
+    } as typeof fetch;
+    globalThis.DOMParser = class { parseFromString() { return { querySelectorAll: () => [] }; } } as unknown as typeof DOMParser;
+  }
+  for (const [branch, owner] of [["fix#1", "acme"], ["100%", "acme"], ["fix#1", "fork"]]) {
+    servePull(branch, owner);
+    await pageReads().answer(`/repos/${REPO}/pulls/1`);
+  }
+  expect(asked.filter((url) => url.includes("pre_mergeable"))).toEqual([
+    `/${REPO}/branches/pre_mergeable/main...fix%231`,
+    `/${REPO}/branches/pre_mergeable/main...100%25`,
+    `/${REPO}/branches/pre_mergeable/main...fork:fix%231`,
+  ]);
+});
