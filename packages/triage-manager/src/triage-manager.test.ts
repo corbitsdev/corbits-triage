@@ -47,7 +47,7 @@ const RELEASE = { workflow: { assetId: "ast_review", commitSha: "c0ffee", packag
 const JUDGE_RELEASE = { workflow: { assetId: "ast_judge", commitSha: "c0ffee", packageName: "@corbits/triage-judge-github-workflow", entry: "./triage-judge-github.mjs" }, offerings: { ids: ["off_d"], defaultId: "off_d" } };
 const CODE_REVIEW = { codeReview: { on: true, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "any" }, blocks: ["code-review"] };
 const REVIEW_REQUEST = { codeReviewRequest: { kind: "code-review", number: PR.number, title: PR.title, description: PR.body, diff: "diff --git a/src/flag.ts b/src/flag.ts", checkout: { source: "github", repo: PR.repo, sha: HEAD } } };
-const REVIEW = { summary: "One bug.", comments: [{ path: "src/flag.ts", start: 1, end: 1, title: "Always true", body: "The flag can never be off." }], budgetExhausted: false, complete: true };
+const REVIEW = { summary: "One bug.", comments: [{ path: "src/flag.ts", start: 1, end: 1, title: "Always true", body: "The flag can never be off.", priority: 2 }], budgetExhausted: false, complete: true };
 const LATER = "2999-01-01T00:00:00.000Z";
 const reviewer = (deadline = LATER) => ({ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN, deadline });
 
@@ -600,7 +600,7 @@ describe("triage-manager with code review", () => {
 
   const APPROVE_DO = { list: "pass", index: 0, kind: "approve", effectId: "do:approve", target: {}, reason: "every rule passed" };
   const CI_FAILED = [{ check: "ci-green", kind: "machine", result: "fail" }];
-  const finding = (priority?: number) => ({ ...REVIEW, comments: [{ ...REVIEW.comments[0]!, ...(priority !== undefined && { priority }) }] });
+  const finding = (priority: number) => ({ ...REVIEW, comments: [{ ...REVIEW.comments[0]!, priority }] });
   const OPEN = "Code review has 1 finding open on this head.";
   const OPEN_P2 = "Code review has 1 finding at P2 or above open on this head.";
   const NOTE = { body: "Thanks." };
@@ -608,7 +608,7 @@ describe("triage-manager with code review", () => {
     ["approve, by default, holds for a P3 finding while a comment runs", finding(3), [{ do: "approve" }, { do: "comment", target: NOTE }], [OPEN, undefined]],
     ["approve allowing findings below P2 runs with a P3 finding", finding(3), [{ do: "approve", when: { findings: { above: "P2" } } }], [undefined]],
     ["approve allowing findings below P2 holds for a P2 finding", finding(2), [{ do: "approve", when: { findings: { above: "P2" } } }], [OPEN_P2]],
-    ["a finding with no priority counts as P0", finding(), [{ do: "approve", when: { findings: { above: "P0" } } }], ["Code review has 1 finding at P0 or above open on this head."]],
+    ["approve allowing findings below P0 holds for a P0 finding", finding(0), [{ do: "approve", when: { findings: { above: "P0" } } }], ["Code review has 1 finding at P0 or above open on this head."]],
     ["approve allowing any finding runs with a P0 finding", finding(0), [{ do: "approve", when: { findings: { any: true } } }], [undefined]],
     ["a comment allowing no finding holds for one", finding(3), [{ do: "comment", target: NOTE, when: { findings: { any: false } } }], [OPEN]],
     ["a clean review runs every Do", CLEAN.result, [{ do: "approve" }, { do: "comment", target: NOTE, when: { findings: { any: false } } }], [undefined, undefined]],
