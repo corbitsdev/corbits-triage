@@ -89,8 +89,8 @@ function action(text: string): Observed {
 async function hubRead(state: PolicyFileState): Promise<Observed> {
   const read = await readRepoPolicy(hubDeps(state), TENANT, REPO, "github");
   if (read.status === "invalid") return { accept: false, reason: read.reason };
-  if (state.status !== "ok") throw new Error(`The hub read ${state.status} but resolved ${read.status}.`);
-  return { accept: read.status === "ok", pending: state.file.pending, reserved: reservedIn(read.policyWorkflow ?? state.workflow) };
+  if (read.status !== "ok" || state.status !== "ok") throw new Error(`The hub read ${state.status} but resolved ${read.status}.`);
+  return { accept: true, pending: state.file.pending, reserved: reservedIn(read.policyWorkflow ?? state.workflow) };
 }
 
 async function readers(text: string): Promise<Record<ReaderName, Observed>> {
