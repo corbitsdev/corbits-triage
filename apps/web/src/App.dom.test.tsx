@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import App from "./App.tsx";
-import type { PortalSnapshot, PrItem } from "./lib/hub-api.ts";
+import { ApiError, type Transport } from "@intx/hub-client";
+import { loadPortal, type PortalSnapshot, type PrItem } from "./lib/hub-api.ts";
 import * as checkPacks from "./lib/check-packs.ts";
 import * as openPulls from "./lib/open-pulls.ts";
 import * as portal from "./lib/portal.tsx";
@@ -239,8 +240,8 @@ test("a connected workspace whose keys could not be read sees a notice with Try 
   expect([...document.querySelectorAll("button")].some((button) => button.textContent === "Try again")).toBe(true);
 });
 
-async function retryKeys(settle: () => void) {
-  snapshot = { ...connectedSnapshot, credentialsError: "The hub is unavailable." };
+async function retry(unread: PortalSnapshot, settle: () => void) {
+  snapshot = unread;
   connected = false;
   renderAt("/");
   await act(async () => {
@@ -254,16 +255,47 @@ async function retryKeys(settle: () => void) {
 }
 
 test("a retry that still cannot read the keys says so and offers Try again again", async () => {
-  await retryKeys(() => finishRefresh());
+  await retry({ ...connectedSnapshot, credentialsError: "The hub is unavailable." }, () => finishRefresh());
 
   expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys.");
   expect([...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.disabled).toBe(false);
 });
 
 test("a retry that cannot reach the service says so", async () => {
-  await retryKeys(() => failRefresh(new Error("Could not reach the service.")));
+  await retry({ ...connectedSnapshot, credentialsError: "The hub is unavailable." }, () => failRefresh(new Error("Could not reach the service.")));
 
   expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys: Could not reach the service.");
+});
+
+async function workspaceUnread(): Promise<PortalSnapshot> {
+  async function fetch<T>(method: string, url: string): Promise<T> {
+    const path = new URL(url, "http://hub").pathname;
+    if (path === "/api/tenants/tenant") throw new ApiError(500, "internal", "The hub is unavailable.");
+    if (path === "/api/tenants/tenant/credentials") return { data: [{ id: "crd_github", name: "github", status: "active" }], nextCursor: null } as T;
+    if (path.includes("/catalog/")) return { data: [], nextCursor: null } as T;
+    if (path.endsWith("/place")) throw new ApiError(403, "forbidden", "forbidden");
+    throw new Error(`unexpected ${method} ${path}`);
+  }
+  const transport = { fetch, subscribe: () => () => {} } as unknown as Transport;
+  return loadPortal(transport, { kind: "member", workspace: connectedSnapshot.workspace, tenantName: "Acme", workspaces: [], invitations: [] });
+}
+
+test("a workspace that could not be read says so with Try again, instead of showing no repositories", async () => {
+  snapshot = await workspaceUnread();
+  renderAt("/");
+
+  expect(window.location.pathname).toBe("/");
+  expect(document.querySelector(".page-notice")?.textContent).toContain("Couldn't read your workspace.");
+  expect(document.querySelector("[role=alert]")?.textContent).toBe("The hub is unavailable.");
+  expect(document.querySelector(".ws-name")?.textContent).toBe("Acme");
+  expect(document.querySelector(".nav-a .n")).toBeNull();
+});
+
+test("a retry that still cannot read the workspace says so", async () => {
+  await retry(await workspaceUnread(), () => finishRefresh());
+
+  expect(refreshes).toBe(1);
+  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your workspace.");
 });
 
 test("a workspace with no keys stored is sent to onboarding", () => {

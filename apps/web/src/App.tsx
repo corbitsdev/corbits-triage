@@ -115,26 +115,40 @@ function DeniedGate({ snapshot }: { snapshot: PortalSnapshot }) {
   );
 }
 
-function stillUnread(cause: Error, shown: string): string {
-  const text = errorText(cause);
-  if (text === shown) return "Still couldn't read your keys.";
-  return `Still couldn't read your keys: ${text}`;
+const UNREAD = {
+  workspaceError: { notice: "Couldn't read your workspace.", still: "Still couldn't read your workspace" },
+  credentialsError: { notice: "Couldn't read your workspace's keys.", still: "Still couldn't read your keys" },
+} as const;
+
+type Unread = { section: keyof typeof UNREAD; message: string };
+
+function unreadOf(snapshot: PortalSnapshot): Unread | undefined {
+  if (snapshot.workspaceError) return { section: "workspaceError", message: snapshot.workspaceError };
+  if (snapshot.credentialsError) return { section: "credentialsError", message: snapshot.credentialsError };
+  return undefined;
 }
 
-function KeysUnreadNotice({ message }: { message: string }) {
+function stillUnread(cause: Error, { section, message }: Unread): string {
+  const text = errorText(cause);
+  if (text === message) return `${UNREAD[section].still}.`;
+  return `${UNREAD[section].still}: ${text}`;
+}
+
+function UnreadNotice({ unread }: { unread: Unread }) {
   const { refreshNow } = usePortal();
   const retry = useMutation({
-    mutationFn: async function retryKeys() {
+    mutationFn: async function retryRead() {
       const next = await refreshNow();
-      if (next?.credentialsError) throw new Error(next.credentialsError);
+      const failure = next?.[unread.section];
+      if (failure) throw new Error(failure);
     },
   });
   return (
     <main className="page-notice" id="main">
-      <p>Couldn't read your workspace's keys.</p>
-      <p role="alert" className="field-error">{message}</p>
+      <p>{UNREAD[unread.section].notice}</p>
+      <p role="alert" className="field-error">{unread.message}</p>
       <Button type="button" variant="outline" size="sm" disabled={retry.isPending} onClick={() => retry.mutate()}>{retry.isPending ? "Trying again…" : "Try again"}</Button>
-      {retry.error && <p role="alert" className="field-error">{stillUnread(retry.error, message)}</p>}
+      {retry.error && <p role="alert" className="field-error">{stillUnread(retry.error, unread)}</p>}
     </main>
   );
 }
@@ -176,8 +190,9 @@ function Gate() {
   if (snapshot.denied.repos || snapshot.denied.credentials || snapshot.denied.models) {
     return <DeniedGate snapshot={snapshot} />;
   }
-  // Without the keys, whether the workspace is connected is unknown, so it is never sent back to onboarding.
-  if (snapshot.credentialsError) return <Layout><KeysUnreadNotice message={snapshot.credentialsError} /></Layout>;
+  // Without the workspace or its keys, what is set up is unknown, so it is never shown empty or sent back to onboarding.
+  const unread = unreadOf(snapshot);
+  if (unread) return <Layout><UnreadNotice key={unread.section} unread={unread} /></Layout>;
   if (!connected || path === "/connect") return <Connect />;
 
   if (path === "/" && new URLSearchParams(location.search).has("installation_id")) return <GithubReturn />;

@@ -162,7 +162,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <Link className="nav-a" to="/" aria-current={triageActive ? "true" : undefined}>
           <InboxIcon />
           Triage
-          {openPullsUnanswered ? null : <span className="n">{needsYou}</span>}
+          {openPullsUnanswered || snapshot?.workspaceError ? null : <span className="n">{needsYou}</span>}
         </Link>
         <span className="grow" />
         <WorkspaceSwitcher />

@@ -87,7 +87,7 @@ The first time you sign in to a new workspace, the portal walks you through two 
 
 You can also invite teammates from this screen by expanding **Invite people**, or do it later from Settings.
 
-If the portal can't read your workspace's keys, every page says **Couldn't read your workspace's keys.** with **Try again**, instead of sending you back to these steps.
+If the portal can't read your workspace, every page says **Couldn't read your workspace.** with **Try again**, instead of showing it empty. If it can't read your workspace's keys, every page says **Couldn't read your workspace's keys.** with **Try again**, instead of sending you back to these steps.
 
 ### After setup
 
