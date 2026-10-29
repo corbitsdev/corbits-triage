@@ -112,10 +112,11 @@ test("without the merge grant a held merge has no button of its own and the page
   expect(html).not.toMatch(/<div class="suggest">(?:(?!<\/div><\/div>).)*>Merge</);
 });
 
-test("a merge that runs once CI finishes keeps the page's Merge beside its own", () => {
+test("a merge that runs once CI finishes has no button of its own, and the page keeps its Merge", () => {
   const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true, ci: "pending" })], ["merge"]));
   expect(html).toContain("Will run when CI finishes: merge");
-  expect(html.match(/>Merge</g)).toHaveLength(2);
+  expect(html.match(/>Merge</g)).toHaveLength(1);
+  expect(html).toMatch(/<div class="suggest">.*<div class="pr-actions-row"><button[^>]*>Skip<\/button><\/div><\/div>/);
 });
 
 test("a closed pull request offers no held action and none of your controls", () => {

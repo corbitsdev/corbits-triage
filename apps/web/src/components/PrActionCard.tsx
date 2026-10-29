@@ -20,7 +20,7 @@ type PrActionCardProps = {
 
 type HeldDoProps = { pending: PendingDo; disabled: boolean; canMerge: boolean; onApprove: (pending: PendingDo) => void; onSkip: (pending: PendingDo) => void };
 
-/** A held action, with its own button only for one who may run it. */
+/** A held action, with its own button only for one who may run it and only while it waits on a person rather than CI. */
 function HeldDo({ pending, disabled, canMerge, onApprove, onSkip }: HeldDoProps) {
   const holdsDo = useHoldsDo(pending.kind, pending.ref.repo);
   return (
@@ -29,7 +29,7 @@ function HeldDo({ pending, disabled, canMerge, onApprove, onSkip }: HeldDoProps)
       <p className="suggest-text">{pending.reason}</p>
       {pending.error !== null ? <p role="alert" className="error">{pending.label} failed last time: {pending.error}</p> : null}
       <div className="pr-actions-row">
-        {holdsDo ? <Button type="button" disabled={disabled || (pending.kind === "merge" && !canMerge)} onClick={() => onApprove(pending)}>{DO_NAMES[pending.kind]}</Button> : null}
+        {holdsDo && pending.until === null ? <Button type="button" disabled={disabled || (pending.kind === "merge" && !canMerge)} onClick={() => onApprove(pending)}>{DO_NAMES[pending.kind]}</Button> : null}
         <Button type="button" variant="outline" onClick={() => onSkip(pending)}>Skip</Button>
       </div>
     </div>
