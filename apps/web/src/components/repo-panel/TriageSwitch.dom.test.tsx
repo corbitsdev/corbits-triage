@@ -43,7 +43,7 @@ function credential(): HubCredential {
   };
 }
 
-function snapshot(pack: CheckPack, model: PortalSnapshot["decisionModel"], modelsDenied = false): PortalSnapshot {
+function snapshot(pack: CheckPack, model: PortalSnapshot["decisionModel"]): PortalSnapshot {
   return {
     workspace: { tenantId: "tenant", principalId: "principal", userId: "user" },
     tenantName: "Acme",
@@ -52,7 +52,7 @@ function snapshot(pack: CheckPack, model: PortalSnapshot["decisionModel"], model
     repos: [{ name: pack.repo, connected: true, source: "github", enabled: true }],
     credentials: [credential()],
     ...(model ? { decisionModel: model } : {}),
-    denied: { repos: false, credentials: false, models: modelsDenied },
+    denied: { repos: false, credentials: false, models: false },
   };
 }
 
@@ -87,14 +87,29 @@ function portalValue(current: PortalSnapshot): ReturnType<typeof usePortal> {
   };
 }
 
-function quietFetch(): void {
-  globalThis.fetch = async function failClosed() {
+/** The Bitbucket Data Center repositories the hub lists, `"fails"` for a failed listing, or null for no connection. */
+type BitbucketListing = Array<{ name: string; connected: boolean; source: "bitbucket-datacenter" }> | "fails" | null;
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+function hubFetch(bitbucket: BitbucketListing): void {
+  globalThis.fetch = async function answer(input: RequestInfo | URL) {
+    const path = new URL(input instanceof Request ? input.url : String(input), "http://hub.test").pathname;
+    if (path.endsWith("/evaluate")) return json({ effect: "allow" });
+    if (path.endsWith("/bitbucket-datacenter/tenant/connection")) {
+      return bitbucket === null ? json({ error: "not found" }, 404) : json({ baseUrl: "https://bitbucket.test", hookUrl: "https://hub.test/hook" });
+    }
+    if (path.endsWith("/bitbucket-datacenter/tenant/repositories")) {
+      return bitbucket === "fails" ? json({ error: "unavailable" }, 500) : json({ repositories: bitbucket });
+    }
     return new Response("", { status: 401 });
   } as unknown as typeof fetch;
 }
 
-async function mount(node: ReactNode) {
-  quietFetch();
+async function mount(node: ReactNode, bitbucket: BitbucketListing = null) {
+  hubFetch(bitbucket);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const host = document.createElement("div");
   document.body.append(host);
@@ -103,10 +118,14 @@ async function mount(node: ReactNode) {
     root?.render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
     await Promise.resolve();
   });
+  await act(async function settleQueries() {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
 }
 
-function mountSwitch(pack: CheckPack, model: PortalSnapshot["decisionModel"], modelsDenied = false) {
-  portal = portalValue(snapshot(pack, model, modelsDenied));
+function mountSwitch(changes: Partial<PortalSnapshot>) {
+  const pack = recommendedPack(REPO);
+  portal = portalValue({ ...snapshot(pack, undefined), ...changes });
   return mount(
     <MemoryRouter>
       <TriageSwitch
@@ -129,22 +148,27 @@ function Where() {
 }
 
 test("a judgement policy with no saved model says it needs a model", async () => {
-  await mountSwitch(recommendedPack(REPO), undefined);
+  await mountSwitch({});
   expect(document.body.textContent).toContain("needs a model");
   expect(document.querySelector("a")?.getAttribute("href")).toBe("/settings/triage");
 });
 
 test("the same policy with a saved model shows no model prompt", async () => {
-  await mountSwitch(recommendedPack(REPO), { endpoint: "https://example.com", model: "jev" });
+  await mountSwitch({ decisionModel: { endpoint: "https://example.com", model: "jev" } });
   expect(document.body.textContent ?? "").not.toContain("needs a model");
 });
 
-test("a refused model catalog read shows no model prompt", async () => {
-  await mountSwitch(recommendedPack(REPO), undefined, true);
+test("a failed model catalog read shows no model prompt", async () => {
+  await mountSwitch({ modelsError: "The hub is unavailable." });
   expect(document.body.textContent ?? "").not.toContain("needs a model");
 });
 
-function mountConnect(current: PortalSnapshot) {
+test("a failed key read shows no model prompt", async () => {
+  await mountSwitch({ credentialsError: "The hub is unavailable." });
+  expect(document.body.textContent ?? "").not.toContain("needs a model");
+});
+
+function mountConnect(current: PortalSnapshot, bitbucket: BitbucketListing = null) {
   portal = portalValue(current);
   return mount(
     <SessionProvider>
@@ -157,7 +181,12 @@ function mountConnect(current: PortalSnapshot) {
         </HeldInboxProvider>
       </MemoryRouter>
     </SessionProvider>,
+    bitbucket,
   );
+}
+
+function bitbucketOnly(): PortalSnapshot {
+  return { ...snapshot(starterPack(REPO), undefined), repos: [], credentials: [{ ...credential(), name: BITBUCKET_DATACENTER_CREDENTIAL_NAME }] };
 }
 
 function openRepositoriesButton(): HTMLButtonElement | undefined {
@@ -174,9 +203,22 @@ test("setup has no decision model step and opens Repositories", async () => {
   expect(document.body.textContent).toContain("/repositories");
 });
 
-test("setup offers no Open Repositories while there are no repositories to open", async () => {
-  await mountConnect({ ...snapshot(starterPack(REPO), undefined), repos: [], credentials: [{ ...credential(), name: BITBUCKET_DATACENTER_CREDENTIAL_NAME }] });
+test("setup opens Repositories once Bitbucket Data Center lists a repository", async () => {
+  await mountConnect(bitbucketOnly(), [{ name: "PROJ/widgets", connected: false, source: "bitbucket-datacenter" }]);
+  expect(openRepositoriesButton()).toBeDefined();
+});
+
+test("setup with no repositories visible says so and links to the connection", async () => {
+  await mountConnect(bitbucketOnly(), []);
   expect(document.querySelector("[aria-current=step] h2")?.textContent).toBe("Repositories");
-  expect(document.body.textContent).not.toContain("Choose repositories on GitHub");
   expect(openRepositoriesButton()).toBeUndefined();
+  expect(document.body.textContent).toContain("No repositories are visible to this connection yet.");
+  expect(document.querySelector("[aria-current=step] a")?.getAttribute("href")).toBe("/settings/triage");
+});
+
+test("setup shows a failed Bitbucket Data Center listing with Try again", async () => {
+  await mountConnect(bitbucketOnly(), "fails");
+  expect(openRepositoriesButton()).toBeUndefined();
+  expect(document.querySelector("[role=alert]")?.textContent).toContain("Could not read your repositories from Bitbucket Data Center.");
+  expect([...document.querySelectorAll("button")].some((element) => element.textContent === "Try again")).toBe(true);
 });

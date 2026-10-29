@@ -1167,11 +1167,9 @@ export async function loadPortal(transport: Transport, access: MemberAccess): Pr
   };
 }
 
-/** True only when the catalog and the keys were both read and no decision model is saved; a refused or failed read says nothing either way. */
+/** True only when the catalog and the keys were both read and no decision model is saved; a failed read says nothing either way. */
 export function lacksDecisionModel(snapshot: PortalSnapshot): boolean {
-  if (snapshot.decisionModel) return false;
-  if (snapshot.denied.models || snapshot.denied.credentials) return false;
-  return snapshot.modelsError === undefined && snapshot.credentialsError === undefined;
+  return !snapshot.decisionModel && snapshot.modelsError === undefined && snapshot.credentialsError === undefined;
 }
 
 export const BITBUCKET_DATACENTER_CREDENTIAL_NAME = "bitbucket-datacenter";
