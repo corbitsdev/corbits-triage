@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@corbits/react-ui";
+import { errorText } from "@corbits/common";
 import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query";
 import { Toaster } from "@corbits/react-ui/ui/toast";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
@@ -122,6 +123,7 @@ function KeysUnreadNotice({ message }: { message: string }) {
       <p>Couldn't read your workspace's keys.</p>
       <p role="alert" className="field-error">{message}</p>
       <Button type="button" variant="outline" size="sm" disabled={retry.isPending} onClick={() => retry.mutate()}>{retry.isPending ? "Trying again…" : "Try again"}</Button>
+      {retry.error && <p role="alert" className="field-error">Still couldn't read your keys: {errorText(retry.error)}</p>}
     </main>
   );
 }

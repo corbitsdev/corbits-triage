@@ -90,6 +90,7 @@ let snapshot = connectedSnapshot;
 let connected = true;
 let refreshes = 0;
 let finishRefresh: () => void = function noRefresh() {};
+let failRefresh: (cause: Error) => void = function noRefresh() {};
 
 beforeEach(function connect() {
   snapshot = connectedSnapshot;
@@ -99,8 +100,9 @@ beforeEach(function connect() {
 
 function refreshNow() {
   refreshes += 1;
-  return new Promise<PortalSnapshot>((resolve) => {
+  return new Promise<PortalSnapshot>((resolve, reject) => {
     finishRefresh = () => resolve(snapshot);
+    failRefresh = reject;
   });
 }
 
@@ -235,6 +237,23 @@ test("a connected workspace whose keys could not be read sees a notice with Try 
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   expect([...document.querySelectorAll("button")].some((button) => button.textContent === "Try again")).toBe(true);
+});
+
+test("a retry that fails says so and offers Try again again", async () => {
+  snapshot = { ...connectedSnapshot, credentialsError: "The hub is unavailable." };
+  connected = false;
+  renderAt("/");
+
+  await act(async () => {
+    [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    failRefresh(new Error("Could not reach the service."));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys: Could not reach the service.");
+  expect([...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.disabled).toBe(false);
 });
 
 test("a workspace with no keys stored is sent to onboarding", () => {
