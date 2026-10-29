@@ -157,7 +157,7 @@ After a save the editor says **Pull request #… opened**, with **Review on GitH
 
 When a repository's first policy file is merged while the page is open, the Policy section says **Done. Your rules now come from .corbits-triage.yml.** above the rules.
 
-The Repositories list marks each repository that still needs a file **Add a policy file**, or **Waiting for merge** while its pull request is open. Triage shows the same words in one line, each repository linking to its page; repositories with no policy file yet are counted in a line of their own that links to Repositories.
+The Repositories list marks each repository that still needs a file **Add a policy file**, or **Waiting for merge** while its pull request is open. When Triage could not check whether that pull request is still open, it says **Couldn't check the policy pull request.** instead, and the repository's page links to the pull request with no Merge button. Triage shows the same words in one line, each repository linking to its page; repositories with no policy file yet are counted in a line of their own that links to Repositories.
 
 ![The Repositories list: acme/widgets and corbitsdev/corbits-code marked Waiting for merge, acme/gadgets Needs setup](images/35.png)
 

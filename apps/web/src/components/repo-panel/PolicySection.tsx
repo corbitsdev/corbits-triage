@@ -26,8 +26,8 @@ export default function PolicySection({ repo, source, pack, disabled }: PolicySe
   const { snapshot } = usePortal();
   const policyFile = usePolicyFile(repo, source);
   const policy = useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, source));
-  const row = usePolicyUpgrade(repo);
-  const settled = useSettled(repo);
+  const row = usePolicyUpgrade({ name: repo, source });
+  const settled = useSettled({ name: repo, source });
   const [editing, setEditing] = useState(false);
   const file = policyFile.data;
   const host = HOST_NAME[source];
@@ -52,7 +52,7 @@ export default function PolicySection({ repo, source, pack, disabled }: PolicySe
       return <p role="alert" className="error">Could not read <code>{POLICY_FILE_PATH}</code>: {errorText(policyFile.error)} <button type="button" className="linkish quiet" onClick={() => void policyFile.refetch()}>Try again</button></p>;
     }
     if (file === undefined || policy.isLoading) return null;
-    if (file === null) return <PolicyStart repo={repo} source={source} pull={row?.pull} disabled={disabled} />;
+    if (file === null) return <PolicyStart repo={repo} source={source} pull={row?.pull} unread={row?.pullUnread === true} disabled={disabled} />;
     const { text } = file;
     if (editing && text !== undefined) return <PolicyEditor repo={repo} source={source} file={{ ...file, text }} onDone={() => setEditing(false)} />;
     return (

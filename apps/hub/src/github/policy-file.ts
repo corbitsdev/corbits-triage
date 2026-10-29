@@ -90,18 +90,24 @@ function hostFailed(record: RepoRecord, what: string, err: unknown): Response {
 
 /**
  * A repository's open policy pull request, found in the shared listing so a workspace costs no host calls per repository
- * on each load. A member the listing refuses is not told of one; opening the pull request answers it.
+ * on each load. Where the listing is refused or could not list the repository, it says so rather than that none is open.
  */
-export function listedPolicyPull(listing: OpenPullsRead | Response, repo: string, source: RepoSource): github.PolicyPull | undefined {
-  const pr = listedPolicyRow(listing, repo, source);
-  if (!pr?.url) return undefined;
+export function listedPolicyPull(listing: OpenPullsRead | Response, repo: string, source: RepoSource): Pick<PolicyUpgradeRow, "pull" | "pullUnread"> {
+  const listed = listedRepo(listing, repo, source);
+  if (!listed || listed.error !== undefined) return { pullUnread: true };
+  const pr = policyPr(listed);
+  if (!pr?.url) return {};
   // Only a GitHub pull request is merged from the portal, at the head it was shown.
-  return source === "github" && pr.sha ? { url: pr.url, number: pr.number, headSha: pr.sha } : { url: pr.url, number: pr.number };
+  return { pull: source === "github" && pr.sha ? { url: pr.url, number: pr.number, headSha: pr.sha } : { url: pr.url, number: pr.number } };
 }
 
-function listedPolicyRow(listing: OpenPullsRead | Response, repo: string, source: RepoSource): RepoPulls["prs"][number] | undefined {
+function listedRepo(listing: OpenPullsRead | Response, repo: string, source: RepoSource): RepoPulls | undefined {
   if (listing instanceof Response) return undefined;
-  return listing.repos.find((row) => row.repo === repo && row.source === source)?.prs.find((row) => row.branch === github.POLICY_BRANCH);
+  return listing.repos.find((row) => row.repo === repo && row.source === source);
+}
+
+function policyPr(listed: RepoPulls | undefined): RepoPulls["prs"][number] | undefined {
+  return listed?.prs.find((row) => row.branch === github.POLICY_BRANCH);
 }
 
 export type PolicyFileDeps = PortalCredentialDeps & {
@@ -291,7 +297,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
    * readable file, or cannot be read, which leaves the default branch's file to answer on its own.
    */
   async function pullCopy(member: Member, record: RepoRecord): Promise<PolicyFileStatus["pull"]> {
-    const pr = listedPolicyRow(await deps.openPulls(member, false), record.name, sourceOf(record));
+    const pr = policyPr(listedRepo(await deps.openPulls(member, false), record.name, sourceOf(record)));
     if (!pr?.sha) return undefined;
     try {
       const found = await findFile(member.tenantId, record, github.POLICY_BRANCH);
@@ -531,11 +537,10 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     const row = { repo: record.name, source: sourceOf(record) };
     try {
       const state = (await cached(member.tenantId, record, maxAgeOf(member.tenantId, record))).status === "absent" ? "start" : "ok";
-      const pull = listedPolicyPull(await listed(), record.name, row.source);
-      return { ...row, upgrade: { state }, ...(pull && { pull }) };
+      return { ...row, upgrade: { state }, ...listedPolicyPull(await listed(), record.name, row.source) };
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_upgrade_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
-      return { ...row, error: `Could not read ${record.name}'s policy from ${HOST_NAMES[row.source]}.` };
+      return { ...row, pullUnread: true, error: `Could not read ${record.name}'s policy from ${HOST_NAMES[row.source]}.` };
     }
   }
 

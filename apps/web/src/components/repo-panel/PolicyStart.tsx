@@ -21,10 +21,11 @@ function Track({ at, merge }: { at: number; merge: string }) {
   return <ol className="track" aria-label="Progress">{steps.map(step)}</ol>;
 }
 
-type PolicyStartProps = { repo: string; source: RepoSource; pull: PolicyUpgradeRow["pull"]; disabled: boolean };
+/** `unread`: the hub could not check whether the listed pull request is still open. */
+type PolicyStartProps = { repo: string; source: RepoSource; pull: PolicyUpgradeRow["pull"]; unread: boolean; disabled: boolean };
 
 /** Adding a policy file to a repository without one through a pull request of the starter policy, until it is merged. */
-export default function PolicyStart({ repo, source, pull: listed, disabled }: PolicyStartProps) {
+export default function PolicyStart({ repo, source, pull: listed, unread, disabled }: PolicyStartProps) {
   const { propose, merge } = usePolicyStartActions(repo, source);
   const busy = disabled || propose.isPending || merge.isPending;
   const pull = propose.data ?? listed;
@@ -33,6 +34,18 @@ export default function PolicyStart({ repo, source, pull: listed, disabled }: Po
 
   function actions() {
     if (!pull) return <div className="acts"><Button type="button" size="sm" disabled={busy} onClick={() => propose.mutate()}>Create pull request</Button></div>;
+    if (unread && !propose.data) {
+      // Merging needs to know the pull request is still open, so an unchecked one is only linked.
+      return (
+        <div className="sentences">
+          <div className="sentence pr-row">
+            <span className="txt">Pull request #{pull.number}</span>
+            <span className="state">Couldn't check the policy pull request.</span>
+            <Button asChild variant="ghost" size="sm"><a href={pull.url} target="_blank" rel="noreferrer">Open on {host} <ExternalIcon /></a></Button>
+          </div>
+        </div>
+      );
+    }
     const { headSha } = pull;
     return (
       <div className="sentences">

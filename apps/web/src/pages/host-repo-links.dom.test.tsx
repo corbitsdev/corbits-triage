@@ -2,12 +2,15 @@ import { afterEach, expect, mock, test } from "bun:test";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { RepoSource } from "@corbits/triage-contracts";
 import { PolicyFiles } from "../components/settings/PolicyFiles.tsx";
 import type { PortalSnapshot, PrItem, RepoRecord } from "../lib/hub-api.ts";
+import * as policyUpgrades from "../lib/policy-upgrades.ts";
+import type { PolicyUpgradeRow } from "../lib/policy-upgrades.ts";
 import { findRepo, selectedRepo } from "../lib/repo-rows.ts";
 import Inbox from "./Inbox.tsx";
+import Repositories from "./Repositories.tsx";
 
 const NAME = "acme/api";
 
@@ -16,6 +19,7 @@ const bitbucket = { name: NAME, connected: true, source: "bitbucket-datacenter" 
 const repos = [github, bitbucket];
 
 let open: Array<{ item: PrItem; handled: null }> = [];
+let upgrades: PolicyUpgradeRow[] = [];
 
 mock.module("../lib/portal.tsx", () => ({
   usePortal() {
@@ -44,6 +48,7 @@ mock.module("../lib/held-inbox.tsx", () => ({
 mock.module("../lib/open-pulls.ts", () => ({
   leavesOpen() { return false; },
   useOpenItems() { return open; },
+  useQueueItems() { return open.map((entry) => entry.item); },
   useMarkedItems() { return { open, known: open }; },
   useOpenPulls() { return { data: undefined, isError: false, isEnabled: false }; },
   useOpenPullsUnanswered() { return false; },
@@ -75,6 +80,15 @@ mock.module("../lib/github-pull.ts", () => ({
   },
 }));
 
+mock.module("../lib/bitbucket-datacenter.ts", () => ({
+  useRepositories() { return { repos, pending: false }; },
+  useBitbucketDatacenterRepositories() { return { error: null }; },
+}));
+
+mock.module("../lib/github-sync.ts", () => ({
+  useGithubSync() { return { error: null, isFetching: false }; },
+}));
+
 mock.module("../lib/media-query.ts", () => ({
   useMediaQuery() { return true; },
 }));
@@ -85,18 +99,15 @@ mock.module("../lib/policy-file.ts", () => ({
   },
 }));
 
+const realPolicyUpgrades = { ...policyUpgrades };
+
 mock.module("../lib/policy-upgrades.ts", () => ({
+  ...realPolicyUpgrades,
   usePolicyUpgrade() {
     return { repo: NAME, source: "github" satisfies RepoSource, upgrade: { state: "start" } };
   },
   usePolicyUpgrades() {
-    return [
-      { repo: NAME, source: "github" satisfies RepoSource, upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 } },
-      { repo: NAME, source: "bitbucket-datacenter" satisfies RepoSource, upgrade: { state: "start" }, pull: { url: "https://bitbucket.example/pull/1", number: 1 } },
-    ];
-  },
-  upgradeLabel() {
-    return "Waiting for merge";
+    return upgrades;
   },
 }));
 
@@ -169,7 +180,15 @@ function pull(source: RepoSource, number: number): PrItem {
   };
 }
 
+function waitingOnBoth(): PolicyUpgradeRow[] {
+  return [
+    { repo: NAME, source: "github", upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 } },
+    { repo: NAME, source: "bitbucket-datacenter", upgrade: { state: "start" }, pull: { url: "https://bitbucket.example/pull/1", number: 1 } },
+  ];
+}
+
 function show(first: RepoSource) {
+  upgrades = waitingOnBoth();
   const order = first === "github" ? ["github", "bitbucket-datacenter"] as const : ["bitbucket-datacenter", "github"] as const;
   open = order.map((source, index) => ({ item: pull(source, index + 1), handled: null }));
   const host = document.createElement("div");
@@ -213,4 +232,38 @@ test("the same repository name on GitHub and Bitbucket Data Center opens each ho
   document.body.innerHTML = "";
   show("bitbucket-datacenter");
   expect(opened(document.querySelector("a.repo-link")?.getAttribute("href") ?? "")?.source).toBe("bitbucket-datacenter");
+});
+
+/** Each row of the repositories list as its host and its health mark. */
+function repositoriesHealth(): Array<[RepoSource, string | null | undefined]> {
+  open = [];
+  const host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  act(() => {
+    root?.render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/repositories"]}>
+          <Routes><Route path="/repositories" element={<Repositories />} /></Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  });
+  return [...document.querySelectorAll("tbody tr")].map((row) => [row.querySelector(".c-name small.src") ? "bitbucket-datacenter" : "github", row.querySelector(".c-health .hl")?.textContent]);
+}
+
+test("the repositories list gives each host's repository of the same name its own policy standing", () => {
+  upgrades = [
+    { repo: NAME, source: "github", upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 } },
+    { repo: NAME, source: "bitbucket-datacenter", upgrade: { state: "start" } },
+  ];
+  expect(repositoriesHealth()).toEqual([["github", "Waiting for merge"], ["bitbucket-datacenter", "!Add a policy file"]]);
+});
+
+test("a policy pull request the hub could not check is not shown as waiting for merge", () => {
+  upgrades = [
+    { repo: NAME, source: "github", upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 }, pullUnread: true },
+    { repo: NAME, source: "bitbucket-datacenter", upgrade: { state: "start" }, pull: { url: "https://bitbucket.example/pull/1", number: 1 } },
+  ];
+  expect(repositoriesHealth()).toEqual([["github", "!Couldn't check the policy pull request."], ["bitbucket-datacenter", "Waiting for merge"]]);
 });

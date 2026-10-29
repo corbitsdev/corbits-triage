@@ -313,8 +313,12 @@ export type PolicyPushAccess = typeof PolicyPushAccess.infer;
 export const PolicyPushed = type({ status: "'pushed'", path: "string", sha: "string", commit: "string" });
 export type PolicyPushed = typeof PolicyPushed.infer;
 
-/** Each enabled repository the member may read; `pull` is its open policy pull request, with or without a policy file, `error` why the repository could not be read. */
-export const PolicyUpgrades = type({ repos: type({ repo: "string", source: type.enumerated(...REPO_SOURCES), "upgrade?": PolicyUpgrade, "pull?": PolicyPull, "error?": "string" }).array() });
+/**
+ * Each enabled repository the member may read; `pull` is its open policy pull request, with or without a policy file,
+ * `pullUnread` that its open pull requests could not be listed, so whether one is open is not known, and `error` why the
+ * repository could not be read.
+ */
+export const PolicyUpgrades = type({ repos: type({ repo: "string", source: type.enumerated(...REPO_SOURCES), "upgrade?": PolicyUpgrade, "pull?": PolicyPull, "pullUnread?": "true", "error?": "string" }).array() });
 export type PolicyUpgrades = typeof PolicyUpgrades.infer;
 
 export const BacklogStarted = type({ status: "'started'" });

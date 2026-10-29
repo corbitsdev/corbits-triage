@@ -14,7 +14,7 @@ function policyText(file: { path: string } | null | undefined, failed: boolean) 
 
 function PolicyFileRow({ repo }: { repo: RepoRecord }) {
   const file = usePolicyFile(repo.name, repo.source);
-  const canStart = usePolicyUpgrade(repo.name)?.upgrade?.state === "start";
+  const canStart = usePolicyUpgrade(repo)?.upgrade?.state === "start";
 
   return (
     <div className="sentence">
