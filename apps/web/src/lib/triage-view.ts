@@ -8,6 +8,11 @@ export function lowerFirst(text: string): string {
   return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
+export function joined(phrases: string[]): string {
+  if (phrases.length < 2) return phrases.join("");
+  return `${phrases.slice(0, -1).join(", ")} and ${phrases[phrases.length - 1]}`;
+}
+
 export const VERDICT_LABEL: Record<VerdictWord, string> = { pass: "Pass", fail: "Fail", unsure: "Unsure" };
 
 export const NOT_EVALUATED = "Not evaluated";

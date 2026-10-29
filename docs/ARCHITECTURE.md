@@ -959,9 +959,9 @@ review's `unread` lists the first 50 changed files, by repository path, with the
 ranges of their patch's lines no finder was shown, and `unreadFiles` counts
 every file with such lines; ranges are numbered through the whole
 patch so a line cut across parts is one line; past 20 ranges the last runs to
-the end of the file's last unread line. The hub logs the first 20 paths and
+the end of the file's last unread line. The hub logs those paths and
 the count with the run and head when it records a review that is not complete, and the portal's note names the first
-five. The consolidate step reads each finding's lines at the head and reports
+five on a line of their own. The consolidate step reads each finding's lines at the head and reports
 the findings it could show the model no line of; a comment whose group had no
 member read carries `unverified`, which the portal and the review sent to
 GitHub show as "Not checked against the file". The check step verifies every
@@ -1060,9 +1060,8 @@ nested `comments`) follow its REST reference and have not been checked against a
 running instance. The portal shows it
 from `GET …/code-review`; a finding held in the summary, one a person sent from
 the portal that the manager never posts again on that head, or one posted
-before Triage kept its comment is `not-tracked`. Each finding's `open` and
-each finished review's count of open findings follow that record through
-`findingOpen` in triage-contracts: a finding whose thread is resolved or
+before Triage kept its comment is `not-tracked`. Each finding's `open` follows
+that record through `findingOpen` in triage-contracts: a finding whose thread is resolved or
 outdated is no longer open; replied, untouched and `not-tracked` ones are.
 With `at`, the route answers only that head's reviews and carries none over to
 it, so an older head's review reads with the states recorded for it. A

@@ -24,7 +24,6 @@ const TAKE_PATH = "/manager/take";
 const DONE_PATH = "/manager/done";
 const REVIEWER_RESULT_PATH = "/manager/reviewer-result";
 const DEPLOYED_PATH = "/manager/deployed";
-const MAX_LOGGED_UNREAD = 20;
 
 export const MANAGER_RUN_TOKEN_ROUTES: readonly RunTokenRoute[] = [
   { method: "POST", path: `/api/tenants/:tenantId${TAKE_PATH}` },
@@ -208,7 +207,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
     REVIEWER_RESULT_PATH,
     describeRoute({
       summary: "Record a reviewer's result for the pull request's manager",
-      description: "Run token only, for a reviewer granted `create` on `triage-manager:result`, which reaches no other manager route. The body is a `StageResult`. A result for a head the pull request has moved past is dropped and logged, and `recorded` is false. Otherwise the event is recorded under the calling run's id, so `recorded` is false when that run reported before, and the pull request's manager is woken as a host event wakes it: its live manager is mailed, or the host's listener deploys one, whose take collects the result. When that wake fails the result stays recorded, the route answers `wake_failed`, and the hub's next reconcile pass wakes a manager for it. A code review recorded as not complete is logged with the paths of its first 20 unread files and how many it has.",
+      description: "Run token only, for a reviewer granted `create` on `triage-manager:result`, which reaches no other manager route. The body is a `StageResult`. A result for a head the pull request has moved past is dropped and logged, and `recorded` is false. Otherwise the event is recorded under the calling run's id, so `recorded` is false when that run reported before, and the pull request's manager is woken as a host event wakes it: its live manager is mailed, or the host's listener deploys one, whose take collects the result. When that wake fails the result stays recorded, the route answers `wake_failed`, and the hub's next reconcile pass wakes a manager for it. A code review recorded as not complete is logged with the paths of the unread files the review kept and how many it has.",
       tags: TAGS,
       responses: {
         200: json("Whether the result was recorded now", Recorded),
@@ -232,7 +231,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
         log({ level: "info", msg: "reviewer_result_stale", ...entry, current });
         return c.json({ recorded: false });
       }
-      if (recorded && reported.kind === "code-review" && !("failed" in reported) && reported.result.complete !== true) log({ level: "info", msg: "code_review_incomplete", ...entry, unread: reported.result.unread?.slice(0, MAX_LOGGED_UNREAD).map((file) => file.path), unreadFiles: reported.result.unreadFiles });
+      if (recorded && reported.kind === "code-review" && !("failed" in reported) && reported.result.complete !== true) log({ level: "info", msg: "code_review_incomplete", ...entry, unread: reported.result.unread?.map((file) => file.path), unreadFiles: reported.result.unreadFiles });
       try {
         if (!(await wake(tenantId, pr, head))) log({ level: "warn", msg: "reviewer_result_unrouted", ...entry, reason: "the workspace has no listener for the host" });
       } catch (err) {

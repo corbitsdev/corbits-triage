@@ -5,7 +5,7 @@ import {
 import { asRecord, asRepo, compare } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import type { ApprovalResponse, CredentialResponse, GrantResponse, PrincipalResponse, RoleResponse } from "@intx/types";
-import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPatchResponse, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageAutomated, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type PolicyPatchChange, type RepoCheckFlags, type RepoPolicy, type RepoSource, type ThreadState, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
+import { ANTHROPIC_PROVIDER, AuditLog, BacklogStarted, DECISION_MODEL_ALIAS, INFERENCE_PROVIDER, CodeReviewPlace, PolicyExported, TRIAGE_LISTENERS, PolicyFileRead, PolicyPatchResponse, PolicyPushAccess, PolicyPushed, PolicyRead, PolicyUpgrades, readCheckPack, repoPolicy, repoSourceOf, CODE_REVIEW_PROVIDERS, currentRows, parseCheckOutput, ACTION_KINDS, RETIRED_CHECK_IDS, DeployedVersions, InviteRoles, InviteSent, SessionList, TriageAutomated, TriageStats, TriageVerdicts, type ActionKind, type AuthorKind, type AutomationMode, type AwaitedStage, type CheckOutput, type CheckPack, type MergeRisk, type PolicyFileStatus, type PolicyPatchChange, type RepoCheckFlags, type RepoPolicy, type RepoSource, type ThreadState, type UnreadLines, type VerdictDetail, type VerdictWord } from "@corbits/triage-contracts";
 
 const WORKSPACE_SLUG =
   (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_WORKSPACE_SLUG?.trim() || "corbits-triage";
@@ -803,7 +803,7 @@ export type CodeReviewRun = {
   /** Whether its finders between them read every line of the diff; a finished review without it is not complete. */
   complete?: boolean;
   /** The first 50 changed files with patch lines no finder read, in at most 20 ranges each; absent on a review recorded before it was kept. */
-  unread?: { path: string; lines: [number, number][] }[];
+  unread?: UnreadLines[];
   /** How many files have patch lines no finder read; absent with `unread`. */
   unreadFiles?: number;
 };
