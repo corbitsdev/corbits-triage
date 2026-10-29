@@ -383,7 +383,7 @@ describe("sendCodeReview", () => {
   /** The App's reviews as GitHub keeps them, the pull request's inline comments listed back newest first, on a pull request whose head can move. */
   function reviewedPull() {
     const reviews: Array<{ id: number; user: typeof APP; commit_id: string; body: string; comments: Array<{ path: string; body: string; line: number; start_line?: number }> }> = [];
-    const pr = { head: "abc123", patch: PATCH, readBack: true };
+    const pr = { head: "abc123", patch: PATCH, readBack: true, dropFirst: false };
     const { gh, requests } = recorder(function respond(path, init) {
       if (path.includes("/reviews?per_page")) return reviews;
       if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: pr.patch }];
@@ -392,7 +392,7 @@ describe("sendCodeReview", () => {
       if (listed && !pr.readBack) return Response.json({ message: "Server Error" }, { status: 502 });
       if (listed) {
         const rows = reviews.flatMap((posted) => posted.comments.map(({ path: file, body, line, start_line }, index) => ({ id: 40 + index, pull_request_review_id: posted.id, path: file, body, original_line: line, original_start_line: start_line ?? null })));
-        return rows.reverse();
+        return rows.slice(pr.dropFirst ? 1 : 0).reverse();
       }
       const posted = JSON.parse(String(init?.body));
       reviews.push({ id: 9, user: APP, commit_id: posted.commit_id, body: posted.body, comments: posted.comments });
@@ -422,6 +422,12 @@ describe("sendCodeReview", () => {
     const { gh } = reviewedPull();
     const twin = { path: "src/a.ts", title: "Unchecked input", body: "Validate it first." };
     expect(await sendCodeReview(gh, { ...review, comments: [{ ...twin, start: 11, end: 11 }, { ...twin, start: 41, end: 41 }] }, login)).toEqual({ reviewId: 9, sent: true, threads: [40, 41] });
+  });
+
+  test("a posted inline comment missing from the read-back leaves the review's comments unread rather than passing it for a summary finding", async () => {
+    const { gh, pr } = reviewedPull();
+    pr.dropFirst = true;
+    expect(await sendCodeReview(gh, review, login)).toEqual({ reviewId: 9, sent: true, threads: null, unread: "1 of review 9's 2 inline comments matched no finding" });
   });
 
   test("a posted review whose comments cannot be read back still counts as sent, with its comments unknown until it is sent again", async () => {

@@ -290,16 +290,20 @@ function writtenFor(finding: CodeReviewComment, row: ReviewCommentRow): boolean 
 /**
  * Each finding's inline comment in the App's review, read off the comments' own lines in the head the review was posted
  * on, or null for a finding the review's body holds. The review's own comment list names no lines, so the pull
- * request's is read.
+ * request's is read. `inline` is how many findings were posted inline, or, for a review sent before, every inline
+ * comment it holds; when fewer match, the ids are unread rather than a posted finding passing for a summary one.
  */
-async function reviewThreads(gh: GithubFetch, repo: string, number: number, reviewId: number, findings: readonly CodeReviewComment[]): Promise<SentThreads> {
+async function reviewThreads(gh: GithubFetch, repo: string, number: number, reviewId: number, findings: readonly CodeReviewComment[], inline?: number): Promise<SentThreads> {
   try {
     const rows = await jsonAll<ReviewCommentRow>(gh, `/repos/${repo}/pulls/${number}/comments?per_page=100`);
     const unused = rows.filter((row) => row.pull_request_review_id === reviewId);
+    const expected = inline ?? unused.length;
     const threads = findings.map(function threadOf(finding) {
       const at = unused.findIndex((row) => writtenFor(finding, row));
       return at === -1 ? null : unused.splice(at, 1)[0]!.id;
     });
+    const matched = threads.filter((id) => id !== null).length;
+    if (matched < expected) return { threads: null, unread: `${expected - matched} of review ${reviewId}'s ${expected} inline comments matched no finding` };
     return { threads };
   } catch (err) {
     // The review stands once posted; its comment ids are read again the next time it is sent.
@@ -329,7 +333,7 @@ export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput
   }
   const body = reviewBody(input.summary, outside);
   const posted = await json(gh, `/repos/${repo}/pulls/${number}/reviews`, send("POST", { commit_id: sha, event: "COMMENT", body, comments }));
-  return { reviewId: posted.id as number, sent: true, ...(await reviewThreads(gh, repo, number, posted.id, input.comments)) };
+  return { reviewId: posted.id as number, sent: true, ...(await reviewThreads(gh, repo, number, posted.id, input.comments, comments.length)) };
 }
 
 const ThreadComment = type({ databaseId: "number", createdAt: "string", author: type({ login: "string" }).or("null") });

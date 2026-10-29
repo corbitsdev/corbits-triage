@@ -431,7 +431,7 @@ function findingsOf({ payload }: ManagerEvent): (typeof ReportedFindings.infer)[
   return reported instanceof type.errors ? [] : reported.result.comments;
 }
 
-/** How many threads a pass reads at most, so the reads stay bounded on a long-lived pull request. */
+/** How many threads a pass reads at most, which bounds Bitbucket Data Center's one read per comment; GitHub reads every thread in pages either way. */
 const MAX_THREAD_READS = 100;
 
 /** The newest `count` of `ids`, in their order. */

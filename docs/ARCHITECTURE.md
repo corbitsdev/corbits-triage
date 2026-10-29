@@ -1024,7 +1024,8 @@ text written for the finding on those lines; on Bitbucket
 Data Center the id each inline post returns), and done
 keeps that id as `thread` on the finding in its reviewer-result row; ids that do
 not line up with the review's findings are logged and left out. A GitHub
-read-back that fails leaves the ids unknown and is logged as
+read-back that fails, or that matches fewer comments to findings than the
+review holds inline, leaves the ids unknown and is logged as
 `finding_threads_unread`; the review counts as posted, and a later send of it
 reads them again. The first pass on a newer head gets from take at most 100
 ids, the newest unresolved findings' first and then the newest resolved ones,
@@ -1041,7 +1042,8 @@ Center the fields read (`threadResolved`, `threadResolvedDate`, `anchor.orphaned
 nested `comments`) follow its REST reference and have not been checked against a
 running instance. The portal shows it
 from `GET …/code-review`; a finding held in the summary, one a person sent from
-the portal, or one posted before Triage kept its comment is `not-tracked`. A
+the portal that the manager never posts again on that head, or one posted
+before Triage kept its comment is `not-tracked`. A
 closed or merged pull request is not read again.
 
 The steps, the provider profile and how to add a provider are in

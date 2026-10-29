@@ -23,8 +23,8 @@ const Source = type.enumerated(...REPO_SOURCES);
 export const CodeReviewQuery = type({ repo: "string > 0", "source?": Source, number: "string.integer.parse", "head?": "string > 0" });
 
 /**
- * What became of a finding's thread as last read: `not-tracked` for one held in the review's summary or posted before
- * Triage kept its comment, `untouched` for one nobody acted on, including one not read since it was posted; `at` is when it changed, when the host says.
+ * What became of a finding's thread as last read: `not-tracked` for one held in the review's summary, sent from the
+ * portal and never posted again by the manager, or posted before Triage kept its comment, `untouched` for one nobody acted on, including one not read since it was posted; `at` is when it changed, when the host says.
  */
 const Thread = type({ state: type.enumerated(...THREAD_STATES, "not-tracked"), "at?": "string" });
 const ShownFinding = CodeReviewComment.omit("thread").and({ thread: Thread });
