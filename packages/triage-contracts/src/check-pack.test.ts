@@ -236,7 +236,7 @@ describe("check pack contract", () => {
 
   test("a labels step holding a level label is left out and named, and the rest of the pack loads", () => {
     const level = { do: "labels", target: { from: "list", labels: ["Risk: High"] } };
-    const withOthers = { do: "labels", target: { from: "list", labels: ["needs-qa", "Risk: High"] } };
+    const withOthers = { do: "labels", target: { from: "list", labels: ["needs-qa", "Risk: High", "sensitive: MEDIUM", "risk: high"] } };
     const read = readCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, pass: [COMMENT, COMMENT, level, withOthers] } });
     expect(read.actions.pass).toEqual([COMMENT]);
     expect(read.dropped).toEqual([

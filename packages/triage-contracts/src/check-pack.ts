@@ -1188,7 +1188,7 @@ function stepWithoutLevelLabel(step: Step, at: string, dropped: string[], refuse
   const level = levelLabelOf(step);
   if (level === undefined) return [step];
   if (refuse) throw new Error(`${at} label ${level} is one Triage takes back; name another.`);
-  const others = step.do === "labels" && step.target.from === "list" ? step.target.labels.filter((label) => label !== level) : [];
+  const others = step.do === "labels" && step.target.from === "list" ? step.target.labels.filter((label) => levelLabelRule(label) === undefined) : [];
   dropped.push(`${at} label ${level} is one Triage takes back, so the whole step is skipped${others.length > 0 ? `; its other labels (${others.join(", ")}) are not added either` : ""}`);
   return [];
 }
