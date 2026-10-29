@@ -412,6 +412,30 @@
         "drizzle-orm": "catalog:",
       },
     },
+    "tests/model": {
+      "name": "@corbits/model-test",
+      "version": "0.1.0",
+      "dependencies": {
+        "@corbits/github-reads": "workspace:*",
+        "@corbits/triage-contracts": "workspace:*",
+        "@corbits/triage-manager": "workspace:*",
+        "@intx/agent": "workspace:*",
+        "@intx/authz": "workspace:*",
+        "@intx/crypto": "0.5.0",
+        "@intx/db": "workspace:*",
+        "@intx/harness": "workspace:*",
+        "@intx/hub-api": "0.5.0",
+        "@intx/hub-sessions": "0.5.0",
+        "@intx/inference": "workspace:*",
+        "@intx/storage-isogit": "workspace:*",
+        "@intx/types": "workspace:*",
+        "@intx/workflow": "workspace:*",
+        "@intx/workflow-deploy": "0.5.0",
+        "@intx/workflow-host": "workspace:*",
+        "arktype": "catalog:",
+        "drizzle-orm": "catalog:",
+      },
+    },
     "tests/policy-corpus": {
       "name": "@corbits/policy-corpus-test",
       "version": "0.1.0",
@@ -988,6 +1012,8 @@
     "@corbits/github-tool": ["@corbits/github-tool@workspace:packages/github-tool"],
 
     "@corbits/hub": ["@corbits/hub@workspace:apps/hub"],
+
+    "@corbits/model-test": ["@corbits/model-test@workspace:tests/model"],
 
     "@corbits/openai-null-delta": ["@corbits/openai-null-delta@workspace:packages/openai-null-delta"],
 

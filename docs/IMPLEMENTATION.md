@@ -111,7 +111,7 @@ A WXT browser extension that checks the open GitHub pull request locally; see
 | `bun run dev` | Database migrations, then hub and portal with prefixed logs (`tooling/dev.ts`). |
 | `bun run db:migrate` | Apply every database migration the hub needs to `DATABASE_URL`; run before the hub starts. |
 | `bun run hub` | Hub only; does not migrate. |
-| `bun run check` | Typecheck tooling, portal, extension, hub, packages, `e2e/` and `tests/chain/`, and bundle the hub. |
+| `bun run check` | Typecheck tooling, portal, extension, hub, packages, `e2e/`, `tests/chain/` and `tests/model/`, and bundle the hub. |
 | `bun run test` | Unit and integration tests; hub tests need Postgres. |
 | `bun run test:unit`, `test:postgres`, `test:dom` | The three parts of `bun run test`: tests that need no Postgres, the `*.postgres.test.ts` tests, and the portal's DOM tests. CI runs unit and Postgres tests in three shards each (`--shard=1/3`). |
 | `bun run test:chain` | The live triage chain from webhook to pull request on one machine, against a fake GitHub and a stub decision model; needs Postgres and reaches the npm registry for native modules. |
