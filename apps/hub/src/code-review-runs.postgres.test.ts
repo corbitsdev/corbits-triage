@@ -77,8 +77,8 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
       },
       log() {},
     });
-    async function reviewsOf(pr: PullRequestRef, asked?: string) {
-      return runs.latest(TENANT, { repo: pr.repo, source: pr.source, number: pr.number, ...(asked && { head: asked }) });
+    async function reviewsOf(pr: PullRequestRef, asked?: string, at?: string) {
+      return runs.latest(TENANT, { repo: pr.repo, source: pr.source, number: pr.number, ...(asked && { head: asked }), ...(at && { at }) });
     }
 
     expect(await reviewsOf(GITHUB)).toEqual({ review: null, completed: null, carriedTo: null });
@@ -87,7 +87,7 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
     await recordEvent(db, TENANT, GITHUB, "run_stray", { type: "reviewer-result", head: "sha9", payload: { kind: "code-review", result: OUTPUT } });
     await recordEvent(db, TENANT, GITHUB, "run_new", { type: "reviewer-result", head: "sha2", payload: { kind: "code-review", failed: "the review did not finish" } });
     await claim([reviewer("run_new", "sha2")], [eventKey("run_old")]);
-    const finished = { status: "completed" as const, headSha: "sha1", startedAt: expect.any(String), ...REVIEW, comments: REVIEW.comments.map((comment) => ({ ...comment, thread: { state: "not-tracked" as const } })) };
+    const finished = { status: "completed" as const, headSha: "sha1", startedAt: expect.any(String), ...REVIEW, comments: REVIEW.comments.map((comment) => ({ ...comment, thread: { state: "not-tracked" as const }, open: true })), open: 1 };
     expect(await reviewsOf(GITHUB)).toEqual({ review: { status: "failed", headSha: "sha2", startedAt: expect.any(String) }, completed: finished, carriedTo: null });
     expect(await reviewsOf(BITBUCKET)).toEqual({ review: null, completed: null, carriedTo: null });
 
@@ -133,6 +133,24 @@ test("PostgreSQL: a pull request's latest code review is what its manager record
     await recordEvent(db, TENANT, GITHUB, "run_unprioritised", { type: "reviewer-result", head: "sha13", payload: { kind: "code-review", result: { ...OUTPUT, comments: [unprioritised, ...OUTPUT.comments] } } });
     await claim([reviewer("run_unprioritised", "sha13")], [eventKey("run_old"), eventKey("run_new"), eventKey("run_unprioritised")]);
     expect(await reviewsOf(GITHUB)).toMatchObject({ review: { status: "completed", headSha: "sha13", comments: REVIEW.comments } });
+
+    // A finding is open until its thread is resolved or the code under it changed on a later head.
+    const threaded = { ...OUTPUT, comments: [...(["resolved", "outdated", "replied", "untouched"] as const).map((state, id) => ({ ...OUTPUT.comments[0]!, thread: { id, state } })), OUTPUT.comments[0]!] };
+    await recordEvent(db, TENANT, GITHUB, "run_threaded", { type: "reviewer-result", head: "sha14", payload: { kind: "code-review", result: threaded, diffHash: diffHash(DIFF) } });
+    const newest = await deployed("run_newest");
+    await claim([reviewer("run_newest", "sha15")], [eventKey("run_old"), eventKey("run_new"), eventKey("run_unprioritised"), eventKey("run_threaded")]);
+    const shown = (await reviewsOf(GITHUB)).completed;
+    expect(shown).toMatchObject({ headSha: "sha14", open: 3 });
+    expect(shown?.comments.map(({ thread, open }) => ({ state: thread.state, open }))).toEqual([{ state: "resolved", open: false }, { state: "outdated", open: false }, { state: "replied", open: true }, { state: "untouched", open: true }, { state: "not-tracked", open: true }]);
+
+    // `at` answers one head's reviews, and no other head's review stands for it.
+    expect(await reviewsOf(GITHUB, undefined, "sha15")).toEqual({ review: { status: "running", headSha: "sha15", startedAt: newest.toISOString() }, completed: null, carriedTo: null });
+    expect(await reviewsOf(GITHUB, undefined, "sha1")).toEqual({ review: finished, completed: finished, carriedTo: null });
+    hostDown = false;
+    head = { ...head, headSha: "sha16", diff: DIFF };
+    expect(await reviewsOf(GITHUB, "sha16", "sha14")).toMatchObject({ review: { headSha: "sha14" }, carriedTo: null });
+    expect(await reviewsOf(GITHUB, undefined, "sha16")).toEqual({ review: null, completed: null, carriedTo: null });
+    expect(hostReads).toBe(7);
   } finally {
     await handle?.close();
     await admin.db.execute(sql.raw(`drop database if exists ${database} with (force)`));

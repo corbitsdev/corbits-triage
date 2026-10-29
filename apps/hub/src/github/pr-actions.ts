@@ -71,7 +71,7 @@ export async function sendReview(send: CodeReviewSender, body: CodeReviewSendBod
   if (completed.headSha !== headSha && carriedTo !== headSha) return failure(409, "code_review_outdated", "A newer code review replaced this one. Reload, then send it.");
   const summary = codeReviewSummary(completed);
   if (!summary && completed.comments.length === 0) return failure(409, "code_review_empty", "This code review has nothing to post.");
-  const comments = completed.comments.map(({ thread: _thread, ...finding }) => finding);
+  const comments = completed.comments.map(({ thread: _thread, open: _open, ...finding }) => finding);
   const sent = await send({ repo, number, sha: headSha, reviewed: completed.headSha, summary, comments });
   if ("skipped" in sent) return failure(409, "head_moved", "The pull request has new commits since this review. Review again, then send it.");
   const { threads: _threads, unread: _unread, ...answer } = sent;
