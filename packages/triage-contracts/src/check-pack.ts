@@ -347,6 +347,10 @@ export type StepKind = (typeof STEP_KINDS)[number];
 export const ACTION_KINDS = ["labels", "assign", "request-review", "comment", "approve", "request-changes", "close", "merge"] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
+export function isActionKind(value: unknown): value is ActionKind {
+  return (ACTION_KINDS as readonly unknown[]).includes(value);
+}
+
 /** `group` names a group the policy file defines, or `everyone`. */
 export type AuthorMatch = AuthorKind | { team: string } | { users: string[] } | { group: string };
 

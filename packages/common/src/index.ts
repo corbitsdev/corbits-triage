@@ -28,3 +28,12 @@ export function compare(a: string, b: string): number {
   if (a > b) return 1;
   return 0;
 }
+
+/** Waits for `operation` without raising its failure, which its own caller handles. */
+export async function settled(operation: Promise<unknown> | undefined): Promise<void> {
+  try {
+    await operation;
+  } catch {
+    // The caller of that operation sees its failure; the queue only needs ordering.
+  }
+}

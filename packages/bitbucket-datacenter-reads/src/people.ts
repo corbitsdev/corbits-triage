@@ -1,5 +1,4 @@
-import { MAX_AUTHOR_TEAMS, type AuthorTeams, type Codeowners } from "@corbits/github-reads";
-import { teamSlug } from "@corbits/triage-contracts/team";
+import { teamsOfAuthor, type AuthorTeams, type Codeowners, type Membership } from "@corbits/github-reads";
 import { json, jsonAll, repoParts, repoPath, type BitbucketFetch } from "./client.js";
 import { PullRequest, User } from "./shapes.js";
 
@@ -27,8 +26,6 @@ export async function authorAssociation(bb: BitbucketFetch, repo: string, author
   return "NONE";
 }
 
-type Membership = "member" | "not" | "unknown";
-
 /** The filter matches any part of a name or email, so a group can take many pages. A failed page or a malformed row is unknown. */
 async function membership(bb: BitbucketFetch, group: string, author: string): Promise<Membership> {
   try {
@@ -41,14 +38,7 @@ async function membership(bb: BitbucketFetch, group: string, author: string): Pr
 
 /** Data Center groups are global, so `@PROJECT/group` and `group` both name the group. Listing members needs admin permission; without it a group is unknown. */
 export async function authorTeams(bb: BitbucketFetch, input: { repo: string; author: string; teams: string[] }): Promise<AuthorTeams> {
-  const result: AuthorTeams = { teams: [], unknown: input.teams.slice(MAX_AUTHOR_TEAMS) };
-  for (const team of input.teams.slice(0, MAX_AUTHOR_TEAMS)) {
-    const group = teamSlug(team, input.repo);
-    const answer = group === null ? "unknown" : await membership(bb, group, input.author);
-    if (answer === "member") result.teams.push(team);
-    else if (answer === "unknown") result.unknown.push(team);
-  }
-  return result;
+  return teamsOfAuthor(input, (group) => membership(bb, group, input.author));
 }
 
 /** The default reviewers Data Center's conditions name for this pull request, less its author; Data Center has no team reviewers. */

@@ -23,14 +23,14 @@ function bareAddress(value: unknown): { local: string; domain: string } | undefi
  * from the domain of the deployment it was sent to.
  */
 export function isFromTriageSender(payload: unknown): boolean {
-  const headers = asRecord(asRecord(parsed(payload))?.["headers"]);
+  const headers = asRecord(asRecord(parseJson(payload))?.["headers"]);
   const from = bareAddress(headers?.["from"]);
   const to = headers?.["to"];
   if (from?.local !== TRIAGE_MAIL_SENDER || !Array.isArray(to) || to.length !== 1) return false;
   return bareAddress(to[0])?.domain === from.domain;
 }
 
-function parsed(value: unknown): unknown {
+export function parseJson(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
     return JSON.parse(value);
@@ -41,7 +41,7 @@ function parsed(value: unknown): unknown {
 
 /** The request a run's trigger carried: stock stores the trigger mail with the request JSON as inline text of a part (none for a part stored by ref), and callers may also pass the request itself or its JSON. */
 export function triggerRequestOf(payload: unknown): Record<string, unknown> | undefined {
-  const value = asRecord(parsed(payload));
+  const value = asRecord(parseJson(payload));
   if (!value) return undefined;
   if (typeof value["kind"] === "string") return value;
   const parts = value["parts"];

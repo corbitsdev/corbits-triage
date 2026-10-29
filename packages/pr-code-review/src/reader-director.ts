@@ -2,6 +2,7 @@ import { defineDirector } from "@intx/agent";
 import { getLogger } from "@intx/log";
 import type { AssistantTurn, ReactorCapabilities, ReactorDirector, ReactorInboundEvent, TokenUsage, ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
+import { lazy, turnText } from "@corbits/common/reactor";
 import { refused, REPO_READ_DEFINITIONS, rootedAt } from "@corbits/repo-read-tool";
 import { BUDGET_EXHAUSTED, budgetOf, checkoutOf, checkoutPath, diffDirOf, isCheckedOut } from "./actions/checkout.js";
 import { MODEL_FAILED, NO_CHECKOUT, NO_VERDICT, UNREADABLE } from "./failures.js";
@@ -29,10 +30,6 @@ const REFUSED_ROUNDS = 2;
 
 function toolCalls(turn: AssistantTurn): ToolCall[] {
   return turn.content.flatMap((b) => (b.type === "tool_call" ? [{ id: b.id, name: b.name, arguments: b.arguments }] : []));
-}
-
-function turnText(turn: AssistantTurn): string {
-  return turn.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
 }
 
 const ANSWERS = ["findings", "verdict", "plan"] as const;
@@ -183,15 +180,6 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
         default:
           return [];
       }
-    },
-  };
-}
-
-function lazy(build: (caps: ReactorCapabilities) => ReactorDirector): ReactorDirector {
-  let inner: ReactorDirector | undefined;
-  return {
-    async decide(event, state, caps) {
-      return (inner ??= build(caps)).decide(event, state, caps);
     },
   };
 }

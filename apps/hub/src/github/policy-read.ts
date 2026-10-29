@@ -1,6 +1,6 @@
 // A repository's policy as triage reads it, so the portal shows the same pack the hub mails.
 import { type } from "arktype";
-import { ACTION_KINDS, alwaysHeld, AUTHOR_GROUPS, authorGroupsOf, catalogCheckEnabled, policyKinds, REPO_SOURCES, ruleVerdicts, VERDICTS, whenHolds, type ActionKind, type AuthorKind, type CheckPack, type DecideRule, type MergeRisk, type RepoSource, type StepWhen, type VerdictWord } from "@corbits/triage-contracts";
+import { alwaysHeld, AUTHOR_GROUPS, authorGroupsOf, catalogCheckEnabled, isActionKind, policyKinds, REPO_SOURCES, ruleVerdicts, VERDICTS, whenHolds, type ActionKind, type AuthorKind, type CheckPack, type DecideRule, type MergeRisk, type RepoSource, type StepWhen, type VerdictWord } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import type { CheckPackRead, PolicyReader } from "./repo-policy.js";
 import type { Member } from "../integrations/app.js";
@@ -15,10 +15,6 @@ const WORKFLOW_FILES = [".github/workflows/x.yml", ".github/workflows/x.yaml"];
 
 /** An approve or merge Triage runs on its own: the verdicts it fires on, and the conditions that must all hold. */
 type Landing = { verdicts: VerdictWord[]; whens: StepWhen[] };
-
-function isActionKind(kind: string): kind is ActionKind {
-  return (ACTION_KINDS as readonly string[]).includes(kind);
-}
 
 function landing(kind: string, verdicts: readonly VerdictWord[], whens: StepWhen[], automatic: readonly ActionKind[]): Landing[] {
   if (!isActionKind(kind) || !LANDING.includes(kind) || !automatic.includes(kind)) return [];

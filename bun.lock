@@ -172,6 +172,9 @@
     "packages/common": {
       "name": "@corbits/common",
       "version": "0.1.0",
+      "dependencies": {
+        "@intx/types": "workspace:*",
+      },
     },
     "packages/github-reads": {
       "name": "@corbits/github-reads",
@@ -259,6 +262,7 @@
       "name": "@corbits/provisioner-docker",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@corbits/provisioner-template": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/hub-sessions": "0.5.0",
@@ -273,6 +277,7 @@
       "name": "@corbits/provisioner-e2b",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@corbits/provisioner-template": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@intx/hub-sessions": "0.5.0",

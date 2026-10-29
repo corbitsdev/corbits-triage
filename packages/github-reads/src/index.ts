@@ -194,11 +194,11 @@ export async function listOrgMembersForRepo(gh: GithubFetch, repo: string): Prom
   return { organization: owner.login, members: [...new Set(members)].sort((a, b) => a.localeCompare(b)) };
 }
 
-export const MAX_AUTHOR_TEAMS = 20;
+const MAX_AUTHOR_TEAMS = 20;
 
 export type AuthorTeams = { teams: string[]; unknown: string[] };
 
-type Membership = "member" | "not" | "unknown";
+export type Membership = "member" | "not" | "unknown";
 
 /** A value put in one path segment; `.` and `..` move the path even when encoded. */
 function segment(value: string): string {
@@ -220,10 +220,15 @@ async function membership(gh: GithubFetch, org: string, slug: string, author: st
 /** Which of `teams` the author actively belongs to. Teams past the first MAX_AUTHOR_TEAMS, in another org, in a repository no org owns, or whose membership GitHub will not show are unknown. */
 export async function authorTeams(gh: GithubFetch, input: { repo: string; author: string; teams: string[] }): Promise<AuthorTeams> {
   const org = input.repo.split("/", 1)[0]!;
+  return teamsOfAuthor(input, (slug) => membership(gh, org, slug, input.author));
+}
+
+/** Sorts `teams` into those the author belongs to and those unknown, asking `membershipOf` once per team slug. */
+export async function teamsOfAuthor(input: { repo: string; teams: string[] }, membershipOf: (slug: string) => Promise<Membership>): Promise<AuthorTeams> {
   const result: AuthorTeams = { teams: [], unknown: input.teams.slice(MAX_AUTHOR_TEAMS) };
   for (const team of input.teams.slice(0, MAX_AUTHOR_TEAMS)) {
     const slug = teamSlug(team, input.repo);
-    const answer = slug === null ? "unknown" : await membership(gh, org, slug, input.author);
+    const answer = slug === null ? "unknown" : await membershipOf(slug);
     if (answer === "member") result.teams.push(team);
     else if (answer === "unknown") result.unknown.push(team);
   }
@@ -671,7 +676,7 @@ export async function listPrFilesPage(gh: GithubFetch, repo: string, number: num
   return page;
 }
 
-type RepoDoc = {
+export type RepoDoc = {
   path: string;
   text: string;
 };
@@ -757,7 +762,7 @@ function nextChar(bytes: Uint8Array, at: number): number {
 
 const utf8 = new TextDecoder();
 
-function fitsDocsPage(page: RepoDocsPage, doc: RepoDoc): boolean {
+export function fitsDocsPage(page: RepoDocsPage, doc: RepoDoc): boolean {
   return JSON.stringify({ ...page, docs: [...page.docs, doc], next: Number.MAX_SAFE_INTEGER }).length <= PR_FILES_PAGE_CHARS;
 }
 
