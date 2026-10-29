@@ -5,7 +5,6 @@ import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { Tx } from "./github/admin-github-grant.js";
 import { deploymentUp, done, endNeverRan, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
-import { replaceVerdict } from "./github/verdict-record-store.js";
 import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -158,16 +157,14 @@ test("PostgreSQL: a mail that names no event, taken while the head waits, wakes 
 }, 120_000);
 
 test.each([
-  ["held a merge for CI", { held: true, ci: "pending" }, ["opened", "checks"]],
+  ["held an action for CI", { heldForCi: true } as const, ["opened", "checks"]],
   ["held nothing", {}, ["checks"]],
 ] as const)("PostgreSQL: after a verdict that %s, the next mail on the head wakes the events its pass took only then", async (_held, hold, events) => {
   await withDatabase(async function heldForCi(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
     await startManager(db, GITHUB, "run_a");
     await take(db, TENANT, GITHUB, "run_a");
-    await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", request: { comment: "Triage: Pass" } } });
-    const at = new Date();
-    await replaceVerdict(db, TENANT, { runId: "run_a", repo: GITHUB.repo, number: GITHUB.number, headSha: "h1", startedAt: at, verdictAt: at, settled: true, state: "ready-monitoring", actor: "triage", humanGated: false, checks: [], dos: [], commented: true, detail: { actions: [{ kind: "merge", effectId: "e1", ...hold }] } });
+    await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", request: { comment: "Triage: Pass" }, ...hold } });
     await recordEvent(db, TENANT, GITHUB, "d2", prMail("h1", ["checks"]));
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", request: { events } });
   });
@@ -175,14 +172,12 @@ test.each([
 
 test("PostgreSQL: a pass whose verdict a later one of its run replaced still acted, so its events are not woken again", async () => {
   await withDatabase(async function replaced(db) {
-    const at = new Date();
     await startManager(db, GITHUB, "run_a");
-    for (const [id, events] of [["d1", ["opened"]], ["d2", ["updated"]]] as const) {
+    for (const [id, events, hold] of [["d1", ["opened"], {}], ["d2", ["updated"], { heldForCi: true }]] as const) {
       await recordEvent(db, TENANT, GITHUB, id, prMail("h1", [...events]));
       await take(db, TENANT, GITHUB, "run_a");
-      await done(db, TENANT, GITHUB, "run_a", [], { wait: true, report: { head: "h1", request: { comment: `Triage: ${id}` } } });
+      await done(db, TENANT, GITHUB, "run_a", [], { wait: true, report: { head: "h1", request: { comment: `Triage: ${id}` }, ...hold } });
     }
-    await replaceVerdict(db, TENANT, { runId: "run_a", repo: GITHUB.repo, number: GITHUB.number, headSha: "h1", startedAt: at, verdictAt: at, settled: true, state: "ready-monitoring", actor: "triage", humanGated: false, checks: [], dos: [], commented: true, detail: { actions: [{ kind: "merge", effectId: "e1", held: true, ci: "pending" }] } });
     await recordEvent(db, TENANT, GITHUB, "d3", prMail("h1", ["checks"]));
     expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", request: { events: ["updated", "checks"] } });
   });

@@ -924,11 +924,13 @@ label off that head, so it never stands on a head not yet triaged.
    (`unacted` in manager-state.ts), each read as the trigger reads it, so a
    mail that names no event (the reconcile pass, Triage again, Review again)
    is `catch-up`. A pass acted when it posted a verdict that held no Do for CI
-   (the verdict row's `detail.actions`, `held` with `ci: "pending"`); a
+   (done keeps `heldForCi` on the closed pass when an action is `held` with
+   `ci: "pending"`); a
    verdict given while CI still runs holds for CI every Do Triage may write on
    its own, so the pass after CI finishes decides them again under the same
    events and effect ids. A pass whose verdict a later pass of its run on the
-   head replaced keeps `acted`, so its events are not woken again.
+   head replaced keeps `acted` beside its `heldForCi`, so its events wake again
+   only if its own verdict held an action for CI.
    Events on a head a push superseded are not carried, since effect ids are
    per head. A pass the reconcile pass queues, after a CI wait or a build
    status change (on Data Center, where no event reports a finished build),

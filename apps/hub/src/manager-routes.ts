@@ -105,12 +105,18 @@ function postedOf(report: Reported | undefined): Record<string, unknown> | undef
   return report?.verdict && withResults(report.verdict, doResultsOf(report.executed));
 }
 
-/** What done keeps on the closed pass: whether its verdict waits for the host's checks, or the mirror request of its verdict. */
+/** Whether the verdict held an action until CI on its head finishes, which the pass after CI decides again. */
+function heldForCi(posted: Record<string, unknown> | undefined): boolean {
+  const actions = posted?.["actions"];
+  return Array.isArray(actions) && actions.map(asRecord).some((action) => action?.["held"] === true && action["ci"] === "pending");
+}
+
+/** What done keeps on the closed pass: whether its verdict waits for the host's checks, or the mirror request of its verdict and whether it held an action for CI. */
 function passReport(report: Reported | undefined, posted: Record<string, unknown> | undefined): PassReport | undefined {
   if (!report) return undefined;
   if (posted?.["waiting"] === true || report.waiting === true) return { head: report.head, waiting: true };
   const request = asRecord(posted?.["request"]);
-  return { head: report.head, ...(request && { request }) };
+  return { head: report.head, ...(request && { request }), ...(heldForCi(posted) && { heldForCi: true }) };
 }
 
 export function createManagerRoutes({ db, requireGrant, log, wake, supersede, taken }: ManagerRoutesDeps) {

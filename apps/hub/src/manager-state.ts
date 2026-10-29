@@ -10,7 +10,6 @@ import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, triageEventsOf, type AwaitedStage, type RepoSource, type ThreadRead, type TriageEvent } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
-import { verdictRecord } from "./github/verdict-record-store.js";
 import { timings } from "./timings.js";
 import { triageSchema } from "./triage-db.js";
 import { START_DEADLINE_MS } from "./workflow-release/rollout.js";
@@ -32,8 +31,11 @@ const ClaimState = type({
   "runId?": "string > 0",
   "pass?": PassState,
   reviewers: ReviewerState.array(),
-  /** `acted` stays on a pass whose `request` a later pass of its run on its head replaced: it posted a verdict too. */
-  history: PassState.and({ runId: "string > 0", doneAt: "string.date.iso", "waiting?": "true", "request?": "Record<string, unknown>", "acted?": "true" }).array(),
+  /**
+   * `heldForCi` marks a pass whose verdict held an action until CI finishes; `acted` one whose `request` a later pass of
+   * its run on its head replaced, as it posted a verdict too.
+   */
+  history: PassState.and({ runId: "string > 0", doneAt: "string.date.iso", "waiting?": "true", "request?": "Record<string, unknown>", "heldForCi?": "true", "acted?": "true" }).array(),
   starts: "number.integer >= 0",
   "overdueWokenAt?": "string.date.iso",
   "deployAskedAt?": "string.date.iso",
@@ -64,8 +66,11 @@ type TakenEvent = { key: string; event: ManagerEvent };
 type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[]; waitingSince?: string; headSince?: string; claimedAt: string };
 type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean; threads: number[] } & Latest);
 type ClosedPass = Claim["history"][number];
-/** What a pass reports as done closes it: the head it worked on, whether its verdict waits for the host's checks, or the mirror request of the verdict it posted. */
-export type PassReport = { head: string; waiting?: true; request?: Record<string, unknown> };
+/**
+ * What a pass reports as done closes it: the head it worked on, whether its verdict waits for the host's checks, or the
+ * mirror request of the verdict it posted and whether that verdict held an action until CI finishes.
+ */
+export type PassReport = { head: string; waiting?: true; request?: Record<string, unknown>; heldForCi?: true };
 /** A reporting pass's head, when this run's first pass on it was taken, and the newest pull request mail for it. */
 export type Closing = { head: string; startedAt: string; mail?: Record<string, unknown> };
 /** Records what the closed pass reported in done's transaction, so the claim never moves on without it. */
@@ -396,23 +401,15 @@ function waitingSince(history: Claim["history"], head: string): string | undefin
   return since;
 }
 
-/** The runs of `runIds` whose verdict on `head` held a Do until the head's CI finishes, which the pass after it decides again. */
-async function heldForCi(tx: Tx, tenantId: string, pr: PullRequestRef, head: string, runIds: readonly string[]): Promise<Set<string>> {
-  if (runIds.length === 0) return new Set();
-  const rows = await tx.select({ runId: verdictRecord.runId, detail: verdictRecord.detail }).from(verdictRecord)
-    .where(and(eq(verdictRecord.tenantId, tenantId), inArray(verdictRecord.runId, [...runIds]), eq(verdictRecord.repo, pr.repo), eq(verdictRecord.number, pr.number), eq(verdictRecord.headSha, head)));
-  return new Set(rows.filter((row) => row.detail?.actions?.some((action) => action.held === true && action.ci === "pending")).map((row) => row.runId));
-}
-
 /**
  * The events of the pull request mails on `head` taken since its last pass that acted, plus those of the open pass. A
- * pass acted when it posted a verdict that held nothing for CI, or one a later verdict of its run replaced. A pass that waited for CI or a reviewer acted on none of its events, and
- * the mail that ends the wait names only what ended it. Events on an older head are not carried: effect ids are per head.
+ * pass acted when it posted a verdict that held nothing for CI, whether or not a later verdict of its run replaced it. A
+ * pass that waited for CI or a reviewer acted on none of its events, and the mail that ends the wait names only what
+ * ended it. Events on an older head are not carried: effect ids are per head.
  */
-async function unacted(tx: Tx, tenantId: string, pr: PullRequestRef, history: Claim["history"], head: string, open: Pass | undefined): Promise<TriageEvent[]> {
+async function unacted(tx: Tx, tenantId: string, history: Claim["history"], head: string, open: Pass | undefined): Promise<TriageEvent[]> {
   const passes = history.filter((pass) => pass.head === head);
-  const held = await heldForCi(tx, tenantId, pr, head, passes.flatMap((pass) => (pass.request === undefined ? [] : [pass.runId])));
-  const acted = passes.findLastIndex((pass) => pass.acted === true || (pass.request !== undefined && !held.has(pass.runId)));
+  const acted = passes.findLastIndex((pass) => (pass.request !== undefined || pass.acted === true) && pass.heldForCi !== true);
   const keys = [...passes.slice(acted + 1), ...(open ? [open] : [])].flatMap((pass) => pass.events);
   const mails = (await eventsByKey(tx, tenantId, keys)).filter(({ event }) => event.type === "webhook" && event.head === head && event.payload["kind"] === "pr");
   return mails.flatMap(({ event }) => triageEventsOf(event.payload));
@@ -428,7 +425,7 @@ async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim
   const named = open?.head ?? newest?.["headSha"];
   const head = typeof named === "string" ? named : undefined;
   const since = head === undefined ? undefined : waitingSince(claim.history, head);
-  const carried = head === undefined ? [] : await unacted(tx, tenantId, pr, claim.history, head, open);
+  const carried = head === undefined ? [] : await unacted(tx, tenantId, claim.history, head, open);
   const request = newest && { ...newest, events: [...new Set([...carried, ...triageEventsOf(newest)])] };
   const first = claim.history.find((pass) => pass.head === head)?.takenAt;
   return { ...(request && { request }), reviewers: claim.reviewers, claimedAt: claim.claimedAt, ...(since !== undefined && { waitingSince: since }), ...(first !== undefined && { headSince: first }) };
@@ -600,12 +597,12 @@ function closing(claim: Claim, runId: string, now: Date, report: PassReport | un
   const pass = claim.pass ?? (report && { id: randomUUID(), head: report.head, events: [], takenAt: at, takes: 1 });
   if (!pass) return undefined;
   const waiting = report === undefined ? claim.history.findLast((closed) => closed.head === pass.head)?.waiting : report.waiting;
-  return { ...pass, runId, doneAt: at, ...(waiting && { waiting: true }), ...(report?.request && { request: report.request }) };
+  return { ...pass, runId, doneAt: at, ...(waiting && { waiting: true }), ...(report?.request && { request: report.request }), ...(report?.heldForCi && { heldForCi: true }) };
 }
 
 /**
  * The history with `closed` added; only the newest pass of a run on a head keeps a mirror request, the verdict that run's
- * row now holds. An older one that posted keeps `acted`, so its events are never woken again.
+ * row now holds. An older one that posted keeps `acted`, and whether it held an action for CI.
  */
 function closedInto(history: Claim["history"], closed: ClosedPass): Claim["history"] {
   if (closed.request === undefined) return [...history, closed];

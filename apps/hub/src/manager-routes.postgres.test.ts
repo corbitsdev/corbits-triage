@@ -410,6 +410,23 @@ test("PostgreSQL: done records the verdict a pass posted as its run's on its hos
   });
 }, 60_000);
 
+test("PostgreSQL: the events of passes whose verdicts held an action for CI wake again once CI finishes, though a later verdict of their run replaced one", async () => {
+  await withDatabase(async function heldTwice(db) {
+    const app = buildHub(db);
+    const manager = bearer(await runWithToken(db, "run_held", [STATE]));
+    await launchedAs(db, "run_held", "triage-manager-github");
+    for (const action of ["opened", "edited"]) {
+      await mailed(db, GITHUB, "h1", action);
+      await post(app, "take", GITHUB, manager);
+      const { report } = postedOn(GITHUB, "h1");
+      const actions = [{ list: "pass", index: 0, effectId: "label-h1", kind: "labels", target: { labels: ["api"] }, held: true, ci: "pending" }];
+      await post(app, "done", { ...GITHUB, reviewers: [], wait: true, report: { ...report, verdict: { ...report.verdict, actions }, executed: { dos: [] } } }, manager);
+    }
+    await recordEvent(db, TENANT, GITHUB, "checks-github", { type: "webhook", head: "h1", payload: { kind: "pr", event: "check_suite", action: "completed", headSha: "h1" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", request: { events: ["opened", "updated", "checks"] } });
+  });
+}, 60_000);
+
 test("PostgreSQL: a run the claim does not name, a session and a run without the grant are refused, and only a take answered is noted", async () => {
   await withDatabase(async function refusals(db) {
     const noted: string[] = [];
