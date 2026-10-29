@@ -1,5 +1,5 @@
 import { errorText } from "@corbits/common";
-import { BUDGET_EXHAUSTED_NOTE, INCOMPLETE_NOTE, UNVERIFIED_FINDING } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, INCOMPLETE_NOTE, uncheckedNote, UNVERIFIED_FINDING } from "@corbits/triage-contracts";
 import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-review.ts";
 import { useCodeReviewOn } from "../lib/check-packs.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
@@ -122,6 +122,7 @@ export function CodeReviewThreads({ item }: { item: Reviewed }) {
       {completed?.summary ? <p className="cr-summary">{completed.summary}</p> : null}
       {completed?.budgetExhausted ? <p className="note">{BUDGET_EXHAUSTED_NOTE}</p> : null}
       {completed && completed.complete !== true ? <p className="note">{INCOMPLETE_NOTE}</p> : null}
+      {completed?.unchecked !== undefined && completed.unchecked > 0 ? <p className="note">{uncheckedNote(completed.unchecked)}</p> : null}
       {completed?.comments?.length ? <ol className="threads">{completed.comments.map((comment, index) => <Thread key={index} comment={comment} review={completed} />)}</ol> : null}
     </section>
   );

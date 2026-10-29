@@ -12,7 +12,7 @@ import { codeReviewAgents, credentialBindingsFor } from "@corbits/pr-code-review
 import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
 import { CHECK_UNFINISHED, UNCITED } from "@corbits/pr-code-review/reader-director";
 import { codeReviewWorkflow } from "@corbits/pr-code-review/pr-code-review";
-import { stockTriggerMail } from "@corbits/triage-contracts";
+import { CODE_REVIEW_PROVIDERS, stockTriggerMail } from "@corbits/triage-contracts";
 import { runLocalWorkflow } from "../../triage-workflows/src/run-local.js";
 import * as actions from "./actions/index.js";
 import { workflow as reviewerBitbucket } from "./pr-code-review-reviewer-bitbucket-datacenter.js";
@@ -52,6 +52,8 @@ let dir: string;
 let tarball: Uint8Array;
 let model: ReturnType<typeof Bun.serve>;
 const fetched: string[] = [];
+/** The model each check call asked for. */
+const checkModels: string[] = [];
 /** How many of the diff finder's next answers are prose with no findings list. */
 let diffFinderProse = 0;
 /** Whether the diff finder greps for every line instead of reading the patch files. */
@@ -165,6 +167,7 @@ beforeAll(function serve() {
       if (planRefused && JSON.stringify(body.messages).includes("Plan the review")) {
         return Response.json({ type: "error", error: { type: "invalid_request_error", message: "Refused" } }, { status: 400 });
       }
+      if (JSON.stringify(body.messages).includes("Verify this finding.")) checkModels.push(body.model);
       const content = answer(body);
       const stop = content[0]!.type === "tool_use" ? "tool_use" : "end_turn";
       const usage = { input_tokens: 10, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
@@ -234,6 +237,7 @@ test("the finders read the diff and the head the checkout action put on the side
   expect(results["grep"]).toMatchObject({ content: { matches: [{ path: "src/a.ts", line: 1 }] } });
   expect(results["escape"]).toMatchObject({ content: `${join(dir, "head/src/a.ts")} is outside the repository`, isError: true });
   expect(first.run.outputs["review"]).toMatchObject({ summary: "One defect.", complete: true, comments: [{ path: "src/a.ts", start: 2, title: "add subtracts", agreement: { finders: 2 } }] });
+  expect(new Set(checkModels)).toEqual(new Set([CODE_REVIEW_PROVIDERS.anthropic.models.fast]));
 
   const second = await review(join(dir, "data"));
   expect(second.run.terminalStatus).toBe("completed");

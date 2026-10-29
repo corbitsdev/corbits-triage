@@ -798,6 +798,8 @@ export type CodeReviewRun = {
   budgetExhausted?: boolean;
   /** Whether its finders between them read every line of the diff; a finished review without it is not complete. */
   complete?: boolean;
+  /** Findings past the review's number of checks, neither checked nor posted; absent on a review from before checks were counted. */
+  unchecked?: number;
 };
 
 /**

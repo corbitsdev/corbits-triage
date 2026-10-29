@@ -4,7 +4,7 @@ import { isFromTriageSender, triggerRequestOf } from "@corbits/triage-contracts"
 import { changedFiles, parseFindings, samePath, type Finding, type Site } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
-import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
+import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECKS, repositoryTag } from "./checkout.js";
 import { DIFF_INDEX, indexedFiles, readWhole, shownIn } from "../diff-parts.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
@@ -16,7 +16,7 @@ const ReviewRequest = type({
   diff: "string",
   checkout: Checkout,
   "efforts?": { "plan?": Effort, "diffFinder?": Effort, "repoFinder?": Effort, "consolidate?": Effort, "check?": Effort, "write?": Effort },
-  "budgets?": { "repoFinder?": "number.integer > 0", "check?": "number.integer > 0", "checkTotal?": "number.integer > 0" },
+  "budgets?": { "repoFinder?": "number.integer > 0", "check?": "number.integer > 0", "checks?": "number.integer > 0" },
   /** The pull request's number, so a run can be found by it. */
   "number?": "number.integer > 0",
 });
@@ -91,12 +91,12 @@ type Verdict = typeof Verdict.infer;
 
 interface Checks {
   findings: Reported[];
-  /** One per finding from the first, while the review's total check budget lasts. */
+  /** One per finding from the first, up to the review's number of checks. */
   checks: { text: string; inference: StepInference }[];
 }
 
-/** The verdict of a finding the total check budget did not reach. */
-const UNCHECKED: Verdict = { verdict: "unsure", reason: "check budget spent" };
+/** The verdict of a finding past the review's number of checks, which is never posted. */
+const UNCHECKED: Verdict = { verdict: "unsure", reason: "not checked: checker cap reached" };
 
 /** A finding with the check's verdict and reason; one the review leaves out is kept with them in its `dropped`. */
 interface Judged extends Verdict {
@@ -106,6 +106,8 @@ interface Judged extends Verdict {
 interface WriteInput {
   budgetExhausted: boolean;
   complete: boolean;
+  /** How many groups were past the review's number of checks. */
+  unchecked: number;
   findings: Reported[];
   dropped: Judged[];
   text: string;
@@ -308,24 +310,14 @@ export function orderedGroups(kept: readonly Candidate[], { groups, sites, unrea
   return groupsOf(groups, kept.length).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
 }
 
-/**
- * Every consolidated finding, ordered by severity then agreement, and a check of each in that order, each on the per-check
- * budget or what is left of the review's total, until the total is spent.
- */
+/** Every consolidated finding, ordered by severity then agreement, and a check of each in that order on the per-check budget, up to the review's number of checks. */
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { kept } = stepOutput(steps, "candidates");
   const findings = orderedGroups(kept, jsonReply<Consolidated>(stepOutput(steps, "consolidate"))).map((o) => o.finding);
-  const perCheck = request.budgets?.check ?? DEFAULT_CHECK_BUDGET;
-  let left = request.budgets?.checkTotal ?? DEFAULT_CHECK_TOTAL;
-  const checked: Checks["checks"] = [];
-  for (const finding of findings) {
-    const budget = Math.min(perCheck, left);
-    if (budget === 0) break;
-    left -= budget;
-    checked.push({ text: checkMessage(request, finding, budget), inference: inference.check });
-  }
-  return { findings, checks: checked };
+  const budget = request.budgets?.check ?? DEFAULT_CHECK_BUDGET;
+  const checked = findings.slice(0, request.budgets?.checks ?? DEFAULT_CHECKS);
+  return { findings, checks: checked.map((finding) => ({ text: checkMessage(request, finding, budget), inference: inference.check })) };
 }
 
 /** Whether a checked finding is posted: the check confirmed it, or could not decide and both finders reported it. */
@@ -339,13 +331,14 @@ export async function writeInput(steps: Steps): Promise<WriteInput> {
   const { budgetExhausted, complete } = stepOutput(steps, "candidates");
   const { findings: checked } = stepOutput(steps, "checks");
   const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
-  const judged = checked.map((finding, i) => ({ finding, ...(verdicts[i] ?? UNCHECKED) }));
+  const judged = verdicts.map((verdict, i) => ({ finding: checked[i]!, ...verdict }));
+  const unchecked = checked.slice(verdicts.length).map((finding) => ({ finding, ...UNCHECKED }));
   const findings = judged.flatMap((j) => (posted(j) ? [j.finding] : []));
-  const dropped = judged.filter((j) => !posted(j));
+  const dropped = [...judged.filter((j) => !posted(j)), ...unchecked];
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nWrite the review.`;
-  return { budgetExhausted, complete, findings, dropped, text, inference: inference.write };
+  return { budgetExhausted, complete, unchecked: unchecked.length, findings, dropped, text, inference: inference.write };
 }
 
 interface Written {
@@ -367,12 +360,12 @@ function commentOf(finding: Reported, { title, body }: { title: string; body: st
 
 /**
  * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes, its
- * agreement and whether its lines went unread, whether it stopped early, whether it is complete, and each finding it left out, in its
+ * agreement and whether its lines went unread, whether it stopped early, whether it is complete, how many groups were past its number of checks, and each finding it left out, in its
  * finder's words with the check's verdict and reason. A finding the write step left without a comment gets one in its
  * finder's words.
  */
 export async function review(steps: Steps) {
-  const { findings, dropped, budgetExhausted, complete } = stepOutput(steps, "writeInput");
+  const { findings, dropped, budgetExhausted, complete, unchecked } = stepOutput(steps, "writeInput");
   const written = jsonReply<Written>(stepOutput(steps, "write"));
   function comment(finding: Reported, index: number) {
     return commentOf(finding, written.comments.find((c) => c.finding === index) ?? ownWords(finding));
@@ -380,5 +373,5 @@ export async function review(steps: Steps) {
   function droppedOf({ finding, verdict, reason }: Judged) {
     return { ...commentOf(finding, ownWords(finding)), verdict, reason };
   }
-  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, complete };
+  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, complete, unchecked };
 }

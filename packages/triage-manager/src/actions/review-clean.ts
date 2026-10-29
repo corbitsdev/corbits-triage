@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
+import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, uncheckedNote, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
 import { DO_NAMES } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
@@ -35,6 +35,8 @@ function reviewOf({ taken, review, reviewers, head }: TakeOutput, verdict: Verdi
   const reported = head === undefined || (verdict.headSha !== null && verdict.headSha !== head) ? undefined : (review ?? storedReview(reviewers, head));
   if (!reported) return { incomplete: "Code review did not report on this head." };
   if (reported.budgetExhausted || reported.complete !== true) return { incomplete: "Code review did not read the whole change on this head." };
+  const unchecked = reported.unchecked ?? 0;
+  if (unchecked > 0) return { incomplete: uncheckedNote(unchecked) };
   return { findings: reported.comments };
 }
 

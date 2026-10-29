@@ -71,7 +71,7 @@ findings are not matched on their message. Findings are scored in order:
   earlier finding used, and is neither a catch nor a false alarm.
 - Any other finding is a false alarm. A clean case is flagged when it has one.
 
-`--e2e` checks every finding, as every review does, and scores the finders'
+`--e2e` checks the findings as every review does, and scores the finders'
 union, the consolidated findings (what the review posted before the check ran
 on every request), the ones the check confirmed, the final review, and the
 review's comments found by both finders and by one. A stage's precision is its
