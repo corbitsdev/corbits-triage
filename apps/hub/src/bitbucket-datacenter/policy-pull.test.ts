@@ -88,7 +88,7 @@ async function bitbucket(req: Request): Promise<Response> {
 }
 
 function pullJson(pull: (typeof pulls)[number]) {
-  return { id: pull.id, version: pull.version, title: pull.title, description: pull.description, links: { self: [{ href: `https://bitbucket.test/projects/ACME/repos/widgets/pull-requests/${pull.id}` }] } };
+  return { id: pull.id, version: pull.version, title: pull.title, description: pull.description, fromRef: { latestCommit: "head" }, links: { self: [{ href: `https://bitbucket.test/projects/ACME/repos/widgets/pull-requests/${pull.id}` }] } };
 }
 
 test("the Bitbucket pull request is made once from a new branch, then brought up to date in place", async () => {

@@ -302,7 +302,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       if (listing instanceof Response) return { pullUnread: true };
       const listed = listedRepo(listing, record.name, sourceOf(record));
       if (listed?.error !== undefined) return { pullUnread: true };
-      const headSha = listed ? policyPr(listed)?.sha : (await openPull(member.tenantId, record))?.headSha;
+      const headSha = listed ? policyPr(listed)?.sha : await pullHead(member.tenantId, record);
       if (!headSha) return {};
       const found = await findFile(member.tenantId, record, github.POLICY_BRANCH);
       if (found?.read.kind !== "file" || found.read.text === null) return {};
@@ -322,6 +322,12 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   async function openPull(tenantId: string, record: RepoRecord): Promise<github.PolicyPull | undefined> {
     if (sourceOf(record) === "github") return github.openPolicyPull(await repoGithub(tenantId, record), record.name);
     return bitbucketPull.openPolicyPull(await repoBitbucket(tenantId), record.name);
+  }
+
+  /** The head of the open policy pull request, asked of the host. */
+  async function pullHead(tenantId: string, record: RepoRecord): Promise<string | undefined> {
+    if (sourceOf(record) === "github") return (await github.openPolicyPull(await repoGithub(tenantId, record), record.name))?.headSha;
+    return bitbucketPull.openPolicyPullHead(await repoBitbucket(tenantId), record.name);
   }
 
   async function propose(tenantId: string, record: RepoRecord, change: github.PolicyChange): Promise<github.PolicyPull> {
