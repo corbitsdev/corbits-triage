@@ -129,7 +129,8 @@ export type PolicyFileState =
 type FoundFile = { path: string; read: RepoFileRead };
 type CachedFile = { read: Promise<PolicyFileState>; at: number; settled?: PolicyFileState };
 
-function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
+/** The file `read` at `path` as triage takes it. */
+export function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
   if (read.kind === "not-a-file") return { status: "invalid", path, reason: notAFileReason(path) };
   if (read.text === null) return { status: "invalid", path, reason: `${path} is too large or uses aliases.`, file: { path, sha: read.sha, url: read.url } };
   const file = { path, sha: read.sha, url: read.url, text: read.text };

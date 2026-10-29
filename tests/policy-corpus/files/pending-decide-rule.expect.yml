@@ -1,7 +1,7 @@
 # A decide rule conditioned on a reserved block: read without that rule, refused by the portal.
 accept: true
-pending: "Line 9: `decide[1].if.deslop`: security and deslop reviews are not available yet"
+pending: "Line 9: `decide[1].if.deslop`: security and deslop reviews are not available yet, so Triage skips this rule; remove the rule."
 seams:
   hubWrite:
     accept: false
-    reason: "Line 9: `decide[1].if.deslop`: security and deslop reviews are not available yet"
+    reason: "Line 9: `decide[1].if.deslop`: security and deslop reviews are not available yet, so Triage skips this rule; remove the rule."

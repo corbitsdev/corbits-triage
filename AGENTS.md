@@ -60,6 +60,7 @@ Check these for a stock route or primitive before touching the hub, sidecars or 
 - Only load-bearing tests, end to end where possible.
 - Tests beside the code are fast and offline; anything that runs real services lives in `e2e/`.
 - The one exception is `tests/chain/`: it starts the real hub and local sidecars but reaches no outside service (a fake GitHub and a stub decision model), and CI runs it as its own job, `bun run test:chain`.
+- `tests/policy-corpus/` holds one policy file per case with its expected outcome, run through every reader of the policy; a new policy key needs a fixture there.
 - Never read `process.env` in tests.
 - A failed chain shard is read, never rerun.
 - A change to how a workflow judges or reviews states its package's eval result before and after.
