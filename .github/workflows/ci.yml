@@ -92,7 +92,7 @@ jobs:
       matrix:
         include:
           - shard: 1/5
-            files: tests/chain/unwoken.test.ts
+            files: tests/chain/unstarted.test.ts
           - shard: 2/5
             files: tests/chain/woken.test.ts tests/chain/local-sidecars.test.ts tests/chain/deterministic.test.ts tests/chain/unset.test.ts
           - shard: 3/5

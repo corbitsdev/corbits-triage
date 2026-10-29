@@ -36,7 +36,7 @@ export function managerMailOf(payload: unknown): ManagerMail {
 }
 
 /** The tenant and pull request a manager's mail, as `manageMail` writes it, names. */
-export function managedBy(request: Record<string, unknown>): Omit<ManagerMail, "runId"> {
+function managedBy(request: Record<string, unknown>): Omit<ManagerMail, "runId"> {
   const { kind, tenantId, repo, prNumber, repoSource } = request;
   if (kind !== MANAGE_KIND || typeof tenantId !== "string" || typeof repo !== "string" || typeof prNumber !== "number") throw new Error("the mail names no tenant, repository or pull request");
   return { tenantId, pullRequest: { source: repoSourceOf(repoSource), repo, number: prNumber } };

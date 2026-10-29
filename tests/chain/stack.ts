@@ -33,20 +33,21 @@ const STOP_MS = 30_000;
 export const POLL_MS = 100;
 
 /**
- * The waits the hub, listener and manager run on in the chain, short so a scenario waits on the state it names rather
- * than on production windows. A manager must still reach its sidecar inside `managerReadyMs` and `managerStartGraceMs`,
- * which takes half a minute on a loaded machine.
+ * The waits the hub runs on in the chain, short so a scenario waits on the state it names rather than on production
+ * windows.
  */
 export const TIMINGS: Timings = {
   ...DEFAULT_TIMINGS,
-  managerReadyMs: 60_000,
-  managerStartGraceMs: 60_000,
-  managerPollMs: 1_000,
-  wakePollMs: 100,
   reconcileIntervalMs: 15_000,
   reconcileRetryMs: 1_000,
   coalesceQuietMs: 500,
 };
+
+/**
+ * Stock's hold on mail to a just-deployed run, and so the hub's start grace for a manager. A manager must still reach
+ * its sidecar inside it, which takes half a minute on a loaded machine.
+ */
+export const MAIL_HOLD_MS = 60_000;
 
 function timingEnv(timings: Timings): Record<string, string> {
   return Object.fromEntries(Object.entries(TIMING_VARIABLES).map(([key, variable]) => [variable, String(timings[key as keyof Timings])]));
@@ -114,6 +115,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
       BETTER_AUTH_BASE_URL: origin,
       GITHUB_API_ORIGIN: github.origin,
       ...timingEnv(TIMINGS),
+      HUB_MAIL_HOLD_TTL_MS: String(MAIL_HOLD_MS),
       // Every sidecar a local process, as on a hub without Docker, so each reaches the fake GitHub and model on loopback.
       DOCKER_HOST: "unix:///nonexistent/docker.sock",
       ...env,

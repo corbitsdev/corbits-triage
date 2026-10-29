@@ -250,9 +250,11 @@ are the detail of each step.
    policy file it cannot read the hub mails the reason, and the manager marks
    the head failed.
 2. **Listener.** It gets only pull requests with no manager up. For each it
-   deploys a manager and wakes it; when the wake mail fails it cancels that
-   manager and deploys one more, once. The claim on the pull request lets one
-   manager run for it at a time.
+   deploys a manager and wakes it at once; stock holds the mail until the
+   manager's deploy is recorded. A manager that never comes up loses the pull
+   request once that hold lapses, and its next event or the next reconcile
+   pass asks again. The claim on
+   the pull request lets one manager run for it at a time.
 3. **Policy.** The manager triages under the policy the hub resolves from
    `.corbits-triage.yml` on the default branch, the only source.
 4. **First post.** Unless the first pass decides, the manager posts at once
@@ -316,17 +318,23 @@ any other tenant or an unknown sender.
   hub publishes beside it in `release.json`, read as each body runs, and
   wakes it with a mail that names only the pull request. A pull request
   whose manager is up is mailed that manager instead, so a later webhook
-  does not deploy a second one. A wake mail waits up to two minutes for the
-  new manager to publish its key. When a wake mail fails for any reason, the
-  listener cancels that manager through the stock stop-run route under the
-  `manage` grant stock gives a deployment's creator, and its `unwoken` step's
-  output names each run it cancelled and why the mail failed. Its `retry`
-  step then deploys one more manager for each of those pull requests and
-  wakes it the same way, and `unwokenAgain` cancels that one too if its mail
-  fails, with no third. The claim's hold on a new ask (`deployAskedAt`)
-  covers both wakes, each waiting two minutes, plus 30 seconds, so it lapses
-  only after a double failure and the pull request's next mail asks the
-  listener again. A run stock
+  does not deploy a second one. The listener mails the new manager at once:
+  stock's mail hold (`hub-sessions` `sidecar-handler.ts`) parks mail to a run
+  whose deploy is not recorded yet and delivers it once the deploy records
+  the run's key. The hold does not end early when the deploy fails and does
+  not tell the sender; it drops the mail after `HUB_MAIL_HOLD_TTL_MS`
+  (fifteen minutes by default). A failed manager start is therefore
+  recovered by the hub's grace and the reconciler, bounded by the hold: the
+  hub's start grace for a just-deployed manager, the time one may sit on its
+  sidecar unstarted and the claim's hold on a new ask (`deployAskedAt`) are
+  all `HUB_MAIL_HOLD_TTL_MS`. The ask's hold ends sooner once the run the
+  listener deployed for it is one stock no longer lets execute
+  (`canExecuteWorkflowRun`), as a failed or cancelled start is, so the pull
+  request's next event asks the listener for another at once. Otherwise,
+  once the hold lapses the manager has lost its pull request, and the next
+  event, or the reconcile pass after the hold (a queued head counts as never
+  started after the hold plus one `TRIAGE_RECONCILE_INTERVAL_MS`), asks the
+  listener for another. A run stock
   no longer lets execute, as one whose cancellation is requested or whose
   deadline has passed, is mailed nothing and its own take is refused; one
   that holds the claim keeps it until it ends, so no second manager writes
@@ -551,11 +559,11 @@ any other tenant or an unknown sender.
   claim, the run's last step stops it through the stop-run route under a
   `manage` grant on its own run, so the run is ended once and never keeps
   the claim: the next manager's take finds the run gone and claims.
-  A run left deployed with no sidecar for two minutes is gone too, and its
-  cancellation is requested so it does not start after the claim has moved on.
-  A manager or judge is deployed with the mail that starts
-  it, so one still `deployed` five minutes after it reached its sidecar never
-  ran: it is gone for the claim, and each reconcile pass ends it and logs
+  A run left deployed with no sidecar for `HUB_MAIL_HOLD_TTL_MS` (fifteen
+  minutes by default) is gone too, and its cancellation is requested so it
+  does not start after the claim has moved on. A manager or judge is deployed
+  with the mail that starts it, so one still `deployed` that long after it
+  reached its sidecar never ran, its mail dropped by stock's hold: it is gone for the claim, and each reconcile pass ends it and logs
   `triage_deployment_never_ran` with its run id and workflow. The hub times
   that from the sidecar's connection for the run, or from its own start for a
   run placed before it.
@@ -612,15 +620,15 @@ any other tenant or an unknown sender.
   deadline with no result recorded (`createOverdueWake`,
   `apps/hub/src/manager-intake.ts`), and logs `manager_woken_overdue`. A
   wake that succeeded is recorded on the claim (`overdueWokenAt`), and the
-  next pass wakes again only once the manager start grace has passed: two
-  minutes when a manager has taken the claim since, thirty while none has, so
+  next pass wakes again only once the manager start grace has passed:
+  `HUB_MAIL_HOLD_TTL_MS` when a manager has taken the claim since, thirty while none has, so
   a manager slow to reach a sidecar is never deployed twice. Each pull request
   is woken on its own: one whose wake fails is logged as
   `manager_overdue_wake_failed`, the rest are still woken, and the next pass
   tries it again. The same pass wakes a pull request whose manager is not up
   while a reviewer result no pass has taken waits for it, as after the
-  reviewer-result route could not wake one, once two minutes have passed
-  since that result was recorded, so a manager the route's own wake deployed
+  reviewer-result route could not wake one, once the manager start grace has
+  passed since that result was recorded, so a manager the route's own wake deployed
   is not deployed again while it starts, and with the same hold after its
   own overdue wake. So
   within one pass of the deadline that manager posts the verdict without the

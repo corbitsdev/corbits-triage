@@ -5,7 +5,8 @@ import type { DockerTls, FindDockerHostOpts } from "@corbits/provisioner-docker"
 import { LifecycleDuration, lifecycleDurationMs, type ResolvedWorkflowLifecyclePolicy } from "@intx/types";
 import { DEFAULT_GITHUB_API_ORIGIN } from "./github/github-app-credential-adapter.js";
 import type { CoalesceWindow } from "./github/coalescer.js";
-import { DEFAULT_RECONCILE_POLICY, type ReconcilePolicy } from "./github/reconcile-plan.js";
+import { DEFAULT_RECONCILE_POLICY, unstartedAfterMs, type ReconcilePolicy } from "./github/reconcile-plan.js";
+import { DEFAULT_MAIL_HOLD_MS } from "./timings.js";
 
 const secret = type("string").narrow((value, ctx) =>
   /^[0-9a-fA-F]{64}$/.test(value) || ctx.mustBe("32 bytes encoded as 64 hexadecimal characters"));
@@ -73,10 +74,6 @@ const HubEnvSchema = type({
   "RAILWAY_GIT_REPO_OWNER?": "string",
   "RAILWAY_GIT_REPO_NAME?": "string",
   "RAILWAY_ENVIRONMENT_ID?": "string",
-  "TRIAGE_MANAGER_READY_MS?": positiveInteger,
-  "TRIAGE_MANAGER_START_GRACE_MS?": positiveInteger,
-  "TRIAGE_MANAGER_POLL_MS?": positiveInteger,
-  "TRIAGE_WAKE_POLL_MS?": positiveInteger,
   "TRIAGE_RECONCILE_INTERVAL_MS?": positiveInteger,
   "TRIAGE_RECONCILE_RETRY_MS?": positiveInteger,
   "TRIAGE_COALESCE_QUIET_MS?": positiveInteger,
@@ -273,10 +270,11 @@ export function migrationEnv(db: DatabaseConfig): Record<string, string> {
   };
 }
 
-/** Heads the reconciler lets a tenant have queued or running at once. */
-export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" | "TRIAGE_CAPPED_RETRY_MS">): ReconcilePolicy {
+/** Heads the reconciler lets a tenant have queued or running at once, and how long a queued head may wait to start. */
+export function triageReconcilePolicy(env: Pick<HubEnv, "TRIAGE_MAX_IN_FLIGHT" | "TRIAGE_CAPPED_RETRY_MS">, { mailHoldMs, reconcileIntervalMs }: { mailHoldMs: number; reconcileIntervalMs: number }): ReconcilePolicy {
   return {
     ...DEFAULT_RECONCILE_POLICY,
+    unstartedAfterMs: unstartedAfterMs(mailHoldMs, reconcileIntervalMs),
     maxInFlight: numberOr(env.TRIAGE_MAX_IN_FLIGHT, DEFAULT_RECONCILE_POLICY.maxInFlight),
     cappedRetryAfterMs: numberOr(env.TRIAGE_CAPPED_RETRY_MS, DEFAULT_RECONCILE_POLICY.cappedRetryAfterMs),
   };
@@ -386,9 +384,10 @@ export function interchangeSettings(env: HubEnv): InterchangeSettings {
     ...(env.HUB_API_ORIGIN !== undefined && { hubApiOrigin: env.HUB_API_ORIGIN }),
     // Triage mail is routed, not dispatched, so only the router's ack retries keep it alive. A
     // pack receive holds the connection queue for minutes and the stock 5 x 10 s give-up drops it.
+    // The mail hold is the hub's start grace for a just-deployed manager too, and how long a queued head may wait to start.
     sidecarLink: {
       ...(env.HUB_SIDECAR_REQUEST_TIMEOUT_MS !== undefined && { requestTimeoutMs: Number(env.HUB_SIDECAR_REQUEST_TIMEOUT_MS) }),
-      mailHoldTTLMs: numberOr(env.HUB_MAIL_HOLD_TTL_MS, 15 * 60_000),
+      mailHoldTTLMs: numberOr(env.HUB_MAIL_HOLD_TTL_MS, DEFAULT_MAIL_HOLD_MS),
       mailAckRetryIntervalMs: numberOr(env.HUB_MAIL_ACK_RETRY_INTERVAL_MS, 30_000),
       mailAckMaxRetries: numberOr(env.HUB_MAIL_ACK_MAX_RETRIES, 10),
     },

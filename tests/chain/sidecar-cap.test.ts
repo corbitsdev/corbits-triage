@@ -7,8 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
-import { DEFAULT_TIMINGS, parseTriageState, TIMING_VARIABLES, triageStateName, WAITING_FOR_CAPACITY, type PrTriageRow } from "@corbits/triage-contracts";
+import { parseTriageState, triageStateName, WAITING_FOR_CAPACITY, type PrTriageRow } from "@corbits/triage-contracts";
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
+import { DEFAULT_MAIL_HOLD_MS } from "../../apps/hub/src/timings.ts";
 import { stubModel } from "./model.ts";
 import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
@@ -32,12 +33,8 @@ beforeAll(async () => {
   github.addRepo(SECOND, POLICY);
   const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
   database = created;
-  // The second manager's wake waits out the first manager's whole pass for a slot, so it keeps the production windows.
-  hub = await startHub(database, github, portalDir, {
-    TRIAGE_MAX_LOCAL_SIDECARS: "2",
-    [TIMING_VARIABLES.managerReadyMs]: String(DEFAULT_TIMINGS.managerReadyMs),
-    [TIMING_VARIABLES.managerStartGraceMs]: String(DEFAULT_TIMINGS.managerStartGraceMs),
-  });
+  // The second manager's wake waits out the first manager's whole pass for a slot, so it keeps the production mail hold.
+  hub = await startHub(database, github, portalDir, { TRIAGE_MAX_LOCAL_SIDECARS: "2", HUB_MAIL_HOLD_TTL_MS: String(DEFAULT_MAIL_HOLD_MS) });
   workspace = await signUp(hub, database);
   await setUpWorkspace(workspace, github, model.origin);
   await listenerStarted(workspace);

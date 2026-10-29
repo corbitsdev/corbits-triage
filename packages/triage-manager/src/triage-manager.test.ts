@@ -89,8 +89,7 @@ type HubCall = { method: string; path: string; body?: unknown };
 type HubAnswer = Record<string, unknown> | typeof REFUSED;
 
 /** The hub's manager routes, answering each take and done in turn, its deploy route and its stop-run route. */
-/** `deployed`, the run ids the deploy route answers in turn, each after the last answering again. */
-function fakeHub({ takes, dones = [], deployed = [DEPLOYED] }: { takes: HubAnswer[]; dones?: HubAnswer[]; deployed?: string[] }) {
+function fakeHub({ takes, dones = [] }: { takes: HubAnswer[]; dones?: HubAnswer[] }) {
   const calls: HubCall[] = [];
   function answer(next: HubAnswer | undefined): Response {
     if (next === undefined) throw new Error("the hub was asked more than the test expects");
@@ -102,7 +101,7 @@ function fakeHub({ takes, dones = [], deployed = [DEPLOYED] }: { takes: HubAnswe
     if (url.pathname === `${TENANT_PATH}/manager/take`) return answer(takes.shift());
     if (url.pathname === `${TENANT_PATH}/manager/done`) return answer(dones.shift());
     if (method === "DELETE" && url.pathname.startsWith(`${TENANT_PATH}/workflows/runs/`)) return new Response(null, { status: 202 });
-    if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: deployed.length > 1 ? deployed.shift() : deployed[0] }, { status: 201 });
+    if (method === DEPLOY.method && url.pathname === DEPLOY.path) return Response.json({ id: DEPLOYED }, { status: 201 });
     if (method === NOTE.method && url.pathname === NOTE.path) return Response.json({ noted: true });
     return Response.json({ error: { code: "not_found" } }, { status: 404 });
   }
@@ -111,7 +110,7 @@ function fakeHub({ takes, dones = [], deployed = [DEPLOYED] }: { takes: HubAnswe
 
 /** The host's credentials as triage-workflows wires them, plus the hub credential deploy binds to the hub actions. */
 function actionCredentials(bindings: Bindings, host: Fetch, hub: (url: URL, init?: RequestInit) => Promise<Response>) {
-  const consumers = ["take", "done", "deployReview", "deployJudge", "forward", "unwoken", "retry", "unwokenAgain", "stop"].map(actionConsumer);
+  const consumers = ["take", "done", "deployReview", "deployJudge", "forward", "stop"].map(actionConsumer);
   const cell = delivered(bindings, [{ credentialId: "hub", providerKey: "http", origin: HUB_ORIGIN, secret: "run-token" }]);
   cell.current = { ...cell.current, bindings: [...cell.current.bindings, ...consumers.map((consumer) => ({ handle: HUB_CREDENTIAL_HANDLE, credentialId: "hub", consumer }))] };
   const hubGrants: GrantRule[] = consumers.map((tool, index) => ({ id: `hub-${index}`, resource: "credential:hub", action: "use", effect: "allow", origin: "system", conditions: { tool }, expiresAt: null, roleId: null, principalId: null }));
@@ -135,9 +134,9 @@ function hurried() {
 
 /**
  * Runs one mail's body; the mail agent's director runs its one tool, so the mail it would send is recorded and answered
- * `mailed` in the `{ reply, turn }` a live agent step outputs.
+ * `mailed` in the `{ reply, turn }` a live agent step outputs. `delivers`, whether every mail goes, or whether each in
+ * turn does; one that does not fails its step unless the agent tolerates it.
  */
-/** `delivers`, whether every wake mail goes, or whether each in turn does. */
 async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetch, hub: ReturnType<typeof fakeHub>["hub"], mailed: unknown[] = [], delivers: boolean | readonly boolean[] = true, clock?: () => Date) {
   const body = (definition.steps.events as OnTriggerPrimitive).body;
   if (!("inline" in body)) throw new Error("the body is not inline");
@@ -148,6 +147,7 @@ async function runMail(definition: WorkflowDefinition, mail: unknown, host: Fetc
       if (!agent.id.startsWith("triage-mail")) throw new Error(`no agent but the mail agent runs, not ${agent.id}`);
       mailed.push(input);
       const goes = typeof delivers === "boolean" ? delivers : delivers[mailed.length - 1];
+      if (!goes && agent.id !== "triage-mail-tolerant") throw new Error("mail: public key was not published by its readyBy");
       const reply = JSON.stringify(goes ? { mailed: true } : { mailed: false, error: "public key was not published by its readyBy" });
       return { output: { reply, turn: { role: "assistant", content: [{ type: "text", text: reply }] } } };
     },
@@ -998,28 +998,14 @@ describe("triage-listener", () => {
     ]);
   });
 
-  test("a manager whose wake mail did not go is cancelled, and the one the listener deploys in its place is woken", async () => {
-    const hub = fakeHub({ takes: [], deployed: [DEPLOYED, "run_again"] });
+  test("a wake mail that does not go leaves the other pull requests in the batch woken", async () => {
+    const hub = fakeHub({ takes: [] });
     const mailed: unknown[] = [];
-    const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }] });
-    const { terminalStatus, outputs } = await runMail(listener, mail, githubHost().host, hub.hub, mailed, [false, true]);
+    const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }, { prNumber: 9, headSha: "h9" }] });
+    const { terminalStatus } = await runMail(listener, mail, githubHost().host, hub.hub, mailed, [false, true]);
     expect(terminalStatus).toBe("completed");
-    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }, DEPLOY, NOTE]);
-    expect((mailed as { to: string; content: string }[]).map((sent) => [sent.to, JSON.parse(sent.content)])).toEqual([
-      [DEPLOYED, JSON.parse(manageMail(TENANT, PULL))],
-      ["run_again", JSON.parse(manageMail(TENANT, PULL))],
-    ]);
-    expect(outputs["unwoken"]).toEqual({ cancelled: [{ runId: DEPLOYED, reason: expect.stringContaining("public key") }] });
-    expect(outputs["unwokenAgain"]).toEqual({ cancelled: [] });
-  });
-
-  test("a manager deployed in place of an unwoken one whose mail fails too is cancelled, and the listener deploys no third", async () => {
-    const hub = fakeHub({ takes: [], deployed: [DEPLOYED, "run_again"] });
-    const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }] });
-    const { terminalStatus, outputs } = await runMail(listener, mail, githubHost().host, hub.hub, [], false);
-    expect(terminalStatus).toBe("completed");
-    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/${DEPLOYED}` }, DEPLOY, NOTE, { method: "DELETE", path: `${TENANT_PATH}/workflows/runs/run_again` }]);
-    expect(outputs["unwokenAgain"]).toEqual({ cancelled: [{ runId: "run_again", reason: expect.stringContaining("public key") }] });
+    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, DEPLOY, NOTE]);
+    expect((mailed as { content: string }[]).map((sent) => JSON.parse(sent.content))).toEqual([JSON.parse(manageMail(TENANT, PULL)), JSON.parse(manageMail(TENANT, { ...PULL, number: 9 }))]);
   });
 
   test("a mail that names no pull request, or is not from the hub, fails instead of being dropped", async () => {

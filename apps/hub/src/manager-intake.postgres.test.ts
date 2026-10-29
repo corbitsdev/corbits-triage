@@ -10,6 +10,7 @@ import { createPauseGate } from "./github/pr-workflow.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { ListenerUnroutedError, RunUnavailableError } from "./github/deployment.js";
 import { recordEvent } from "./manager-state.js";
+import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -282,7 +283,7 @@ test("PostgreSQL: the reconcile pass wakes a manager for a pull request whose re
     expect(logged).toEqual([{ level: "info", msg: "manager_woken_overdue", tenantId: TENANT, source: "github", repo: RECORD.name, number: 7, head: "h1" }]);
 
     // A manager the wake started took the claim and went away before done; past the start grace the next pass wakes again.
-    const earlier = new Date(Date.now() - 3 * 60_000);
+    const earlier = new Date(Date.now() - timings().mailHoldMs - 60_000);
     await db.execute(sql`UPDATE corbits_triage.manager_state SET state = state || ${JSON.stringify({ overdueWokenAt: earlier.toISOString(), deployAskedAt: earlier.toISOString(), claimedAt: new Date(earlier.getTime() + 1_000).toISOString() })}::jsonb WHERE key = ${`mgr:github:${RECORD.name}#7`}`);
     await wakeOverdue(TENANT);
     expect(mailed).toEqual([woken, woken]);
@@ -332,7 +333,7 @@ test("PostgreSQL: an overdue wake is recorded only once it succeeded, and one pu
 
 test("PostgreSQL: a manager deployed without a sidecar past the startup window is not mailed, and the listener is", async () => {
   await withDatabase(async function stuck(db) {
-    await claimManager(db, "run_stuck", 7, "deployed", new Date(Date.now() - 3 * 60_000));
+    await claimManager(db, "run_stuck", 7, "deployed", new Date(Date.now() - timings().mailHoldMs - 60_000));
     const { toListener, mailed } = stack(db, LISTENER);
     expect(await toListener(TENANT, requeued(7, "h1"))).toBe(true);
     expect(mailed).toEqual([{ address: LISTENER, payload: { kind: "pr", repo: RECORD.name, tenantId: TENANT, items: [{ prNumber: 7, headSha: "h1" }] } }]);

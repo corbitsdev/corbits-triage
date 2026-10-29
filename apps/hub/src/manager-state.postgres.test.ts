@@ -4,7 +4,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { Tx } from "./github/admin-github-grant.js";
-import { done, endNeverRan, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
+import { deploymentUp, done, endNeverRan, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
+import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -402,7 +403,7 @@ async function claimRun(db: Db, runId: string): Promise<void> {
 test("PostgreSQL: a manager deployed without a sidecar past the startup window does not hold the pull request", async () => {
   await withDatabase(async function stuck(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
-    await deployedRun(db, "run_stuck", new Date(Date.now() - 3 * MINUTE));
+    await deployedRun(db, "run_stuck", new Date(Date.now() - timings().mailHoldMs - MINUTE));
     await claimRun(db, "run_stuck");
     await liveRun(db, "run_next");
     expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
@@ -422,7 +423,7 @@ test("PostgreSQL: a manager deployed inside the startup window, or one with a si
     await liveRun(db, "run_next");
     expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
 
-    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 3 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_fresh'`);
+    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - timings().mailHoldMs - MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_fresh'`);
     await db.insert(schema.sidecar).values({
       id: "sdc_up",
       tokenHashSha256: new Uint8Array(32).fill(7),
@@ -453,7 +454,7 @@ test("PostgreSQL: a manager being cancelled is mailed nothing and takes nothing,
   await withDatabase(async function cancelling(db) {
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     await startManager(db, GITHUB, "run_cancelling");
-    await db.update(schema.workflowRun).set({ cancellationRequestedAt: new Date(), cancellationDeadline: new Date(), cancellationReason: "unwoken" }).where(sql`${schema.workflowRun.id} = 'run_cancelling'`);
+    await db.update(schema.workflowRun).set({ cancellationRequestedAt: new Date(), cancellationDeadline: new Date(), cancellationReason: "stopped" }).where(sql`${schema.workflowRun.id} = 'run_cancelling'`);
     await liveRun(db, "run_next");
     expect(await liveManager(db, TENANT, GITHUB)).toBeUndefined();
     expect(await take(db, TENANT, GITHUB, "run_cancelling")).toEqual({ outcome: "refused" });
@@ -469,14 +470,14 @@ async function allocate(db: Db, runId: string, fields: { status: "allocated"; si
   await db.insert(schema.sidecarAllocation).values({ id: `alc_${runId}`, anchorRunId: runId, tenantId: TENANT, provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest", maxDisconnectedMs: 60_000, ...fields });
 }
 
-test("PostgreSQL: a manager on its sidecar five minutes without running gives up the pull request, and the reaper ends it but never the listener", async () => {
+test("PostgreSQL: a manager on its sidecar past the mail hold without running gives up the pull request, and the reaper ends it but never the listener", async () => {
   await withDatabase(async function neverRan(db) {
     await db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: "triage-listener-github" });
     await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date(Date.now() - 60 * MINUTE) });
     await allocate(db, "run_listener", { status: "allocated", sidecarId: "sdc_local" });
-    await deployedRun(db, "run_quiet", new Date(Date.now() - 6 * MINUTE));
+    await deployedRun(db, "run_quiet", new Date(Date.now() - timings().mailHoldMs - MINUTE));
     await allocate(db, "run_quiet", { status: "allocated", sidecarId: "sdc_local" });
-    notePlaced({ allocationId: "alc_run_quiet", generation: 0 }, new Date(Date.now() - 6 * MINUTE));
+    notePlaced({ allocationId: "alc_run_quiet", generation: 0 }, new Date(Date.now() - timings().mailHoldMs - MINUTE));
     await claimRun(db, "run_quiet");
     const cancelled: string[][] = [];
     const logs: Record<string, unknown>[] = [];
@@ -491,9 +492,9 @@ test("PostgreSQL: a manager on its sidecar five minutes without running gives up
   });
 }, 120_000);
 
-test("PostgreSQL: a manager that waited past five minutes for a slot is timed from its placement, not its deploy", async () => {
+test("PostgreSQL: a manager that waited past the mail hold for a slot is timed from its placement, not its deploy", async () => {
   await withDatabase(async function placedLate(db) {
-    await deployedRun(db, "run_late", new Date(Date.now() - 10 * MINUTE));
+    await deployedRun(db, "run_late", new Date(Date.now() - timings().mailHoldMs - 5 * MINUTE));
     await allocate(db, "run_late", { status: "allocated", sidecarId: "sdc_local" });
     notePlaced({ allocationId: "alc_run_late", generation: 0 }, new Date(Date.now() - MINUTE));
     await claimRun(db, "run_late");
@@ -518,6 +519,16 @@ test("PostgreSQL: a listener counts as live as a manager does, and one deployed 
     const [left] = await db.select({ cancellationRequestedAt: schema.workflowRun.cancellationRequestedAt, cancellationReason: schema.workflowRun.cancellationReason }).from(schema.workflowRun).where(sql`${schema.workflowRun.id} = 'run_listener'`);
     expect(left?.cancellationRequestedAt).toBeInstanceOf(Date);
     expect(left?.cancellationReason).toBe("listener deployed without a sidecar");
+  });
+}, 120_000);
+
+test("PostgreSQL: a deployment without a sidecar past the listener's start grace reads as not live, though still inside the mail hold", async () => {
+  await withDatabase(async function unstarted(db) {
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_listener", tenantId: TENANT, name: "triage-listener-github" });
+    await db.insert(schema.workflowRun).values({ id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_listener", tenantId: TENANT, status: "deployed", createdAt: new Date() });
+    expect(await deploymentUp(db, "run_listener")).toBe(true);
+    await db.update(schema.workflowRun).set({ createdAt: new Date(Date.now() - 7 * MINUTE) }).where(sql`${schema.workflowRun.id} = 'run_listener'`);
+    expect(await deploymentUp(db, "run_listener")).toBe(false);
   });
 }, 120_000);
 

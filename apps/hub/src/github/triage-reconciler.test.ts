@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { formatRunAddress } from "@intx/types";
-import { emptyPack, type ActionKind, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
+import { DEFAULT_TIMINGS, emptyPack, type ActionKind, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
 import type { CheckRun } from "@corbits/github-reads";
 import { unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import { DEFAULT_RECONCILE_POLICY, planTenant, runKey, type ObservedRun, type OpenPr } from "./reconcile-plan.js";
 import { triageReconcilePolicy } from "../env.js";
+import { DEFAULT_MAIL_HOLD_MS } from "../timings.js";
 import { TriageStateConflictError, type TriageStateStore } from "./triage-state-store.js";
 import { ListenerUnroutedError, type LiveDeployment } from "./deployment.js";
 import type { HostedVerdict } from "./verdict-record-store.js";
@@ -154,7 +155,7 @@ function harness(runs: Runs | (() => Runs), prs: OpenPr[] | Record<string, OpenP
       delivered.push({ payload: payload as Record<string, unknown> });
     },
     unroutedTries,
-    policy: triageReconcilePolicy({ ...(options.maxInFlight !== undefined && { TRIAGE_MAX_IN_FLIGHT: options.maxInFlight }) }),
+    policy: triageReconcilePolicy({ ...(options.maxInFlight !== undefined && { TRIAGE_MAX_IN_FLIGHT: options.maxInFlight }) }, { mailHoldMs: DEFAULT_MAIL_HOLD_MS, reconcileIntervalMs: DEFAULT_TIMINGS.reconcileIntervalMs }),
     now,
     log: (entry) => logged.push(entry),
   });

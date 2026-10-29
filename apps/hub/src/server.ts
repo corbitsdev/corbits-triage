@@ -156,8 +156,9 @@ const WORKFLOW_RELEASE_CONCURRENCY = 2;
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
+const settings = interchangeSettings(env);
 const triageTimings = timingsFrom(env);
-setTimings(triageTimings);
+setTimings({ ...triageTimings, mailHoldMs: settings.sidecarLink.mailHoldTTLMs });
 const database = databaseConfig(env);
 const githubOrigin = githubApiOrigin(env);
 
@@ -246,7 +247,7 @@ const email = emailSettings(env);
 const smtp = email === undefined ? undefined : createSmtpEmail(email);
 const composition = await createInterchangeHub({
   database,
-  settings: interchangeSettings(env),
+  settings,
   authConfig: { ...signIn, baseURL: env.BETTER_AUTH_BASE_URL, secret: env.BETTER_AUTH_SECRET, trustedOrigins: portalOrigin, portalOrigin: inviteLinkOrigin(env), ...(ipHeaders && { clientIpHeaders: ipHeaders }), ...(smtp && { email: { resetPassword: smtp.passwordReset, verifyEmail: smtp.verifyEmail } }) },
   credentialCipher,
   adapterManifest: SIDECAR_ADAPTER_MANIFEST,
@@ -656,7 +657,7 @@ const githubOpenPulls = createGithubOpenPulls({
   authorize: authorizePortal,
 });
 const triageStateStore = createTriageStateStore({ db: composition.db, writerFor: githubSenderPrincipal, log: logJson });
-const reconcilePolicy = triageReconcilePolicy(env);
+const reconcilePolicy = triageReconcilePolicy(env, { mailHoldMs: settings.sidecarLink.mailHoldTTLMs, reconcileIntervalMs: triageTimings.reconcileIntervalMs });
 const triageSettingsLink = new URL("/settings/triage", inviteLinkOrigin(env)).href;
 const triageLiveness = createTriageLiveness({
   db: composition.db,

@@ -196,10 +196,13 @@ export async function recordResult(db: DB["db"], tenantId: string, pr: PullReque
 }
 
 /**
- * How long a manager or judge may sit on its sidecar without its first mail starting it. Both are deployed with that
- * mail, so one still waiting is stuck. A listener is exempt: it stays deployed until its first pull request arrives.
+ * How long a manager or judge may sit on its sidecar without its first mail starting it: stock's mail hold, after which
+ * that mail is dropped, so one still waiting is stuck. A listener is exempt: it stays deployed until its first pull
+ * request arrives.
  */
-const NEVER_RAN_MS = 5 * 60_000;
+function neverRanMs(): number {
+  return timings().mailHoldMs;
+}
 
 /** The workflows deployed with the mail that starts them. */
 const MAILED_WORKFLOWS = [...Object.values(TRIAGE_MANAGERS), ...Object.values(TRIAGE_JUDGES)];
@@ -214,7 +217,7 @@ const hubStartedAt = new Date();
 export function notePlaced({ allocationId, generation }: Placement, at = new Date()): void {
   if (placements.get(allocationId)?.generation === generation) return;
   // An entry older than the window no longer keeps any run up, so it can go.
-  for (const [id, placed] of placements) if (at.getTime() - placed.at.getTime() > NEVER_RAN_MS) placements.delete(id);
+  for (const [id, placed] of placements) if (at.getTime() - placed.at.getTime() > neverRanMs()) placements.delete(id);
   placements.set(allocationId, { generation, at });
 }
 
@@ -265,26 +268,23 @@ function runIsRunning(run: ManagerRun | undefined): boolean {
   return run.status === "running" || (run.allocationStatus === "allocated" && run.sidecarId !== null);
 }
 
-type UpRule = { readonly graceMs?: number; readonly startedByMail: boolean };
+type UpRule = { readonly graceMs: number; readonly startedByMail: boolean };
 
-/**
- * A running run; one on its sidecar, unless it is started by its mail and sat there past `NEVER_RAN_MS`; or one
- * deployed inside the startup window.
- */
-function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs = timings().managerStartGraceMs, startedByMail }: UpRule): boolean {
+/** A running run; one on its sidecar, unless it is started by its mail and sat there past `neverRanMs`; or one deployed within `graceMs`. */
+function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs, startedByMail }: UpRule): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
   if (run.status === "running") return true;
-  if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < NEVER_RAN_MS;
+  if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < neverRanMs();
   return now.getTime() - run.createdAt.getTime() < graceMs;
 }
 
 async function runGone(tx: Tx | DB["db"], runId: string, now: Date): Promise<boolean> {
-  return !runIsUp(await managerRun(tx, runId), now, { startedByMail: true });
+  return !runIsUp(await managerRun(tx, runId), now, { graceMs: timings().mailHoldMs, startedByMail: true });
 }
 
 /** Whether a deployment is up as the hub counts a listener: running, on its sidecar, or just deployed. */
 export async function deploymentUp(db: DB["db"], runId: string): Promise<boolean> {
-  return runIsUp(await managerRun(db, runId), new Date(), { startedByMail: false });
+  return runIsUp(await managerRun(db, runId), new Date(), { graceMs: LISTENER_START_GRACE_MS, startedByMail: false });
 }
 
 /**
@@ -298,7 +298,7 @@ async function releaseStuck(tx: Tx | DB["db"], runId: string, now: Date, reason:
     .where(and(eq(schema.workflowRun.id, runId), inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]), isNull(schema.workflowRun.cancellationRequestedAt)));
 }
 
-/** Ends every manager and judge that sat on its sidecar past `NEVER_RAN_MS` without its mail starting it. */
+/** Ends every manager and judge that sat on its sidecar past `neverRanMs` without its mail starting it. */
 export async function endNeverRan(
   db: DB["db"],
   now: Date,
@@ -316,13 +316,13 @@ export async function endNeverRan(
       eq(workflowRun.id, workflowRun.anchorRunId),
       eq(workflowRun.status, "deployed"),
       isNull(workflowRun.cancellationRequestedAt),
-      lt(workflowRun.createdAt, new Date(now.getTime() - NEVER_RAN_MS)),
+      lt(workflowRun.createdAt, new Date(now.getTime() - neverRanMs())),
       eq(sidecarAllocation.status, "allocated"),
       isNotNull(sidecarAllocation.sidecarId),
       inArray(workflowName, MAILED_WORKFLOWS),
     ));
   for (const run of candidates) {
-    if (onSidecarMs(run, now) < NEVER_RAN_MS) continue;
+    if (onSidecarMs(run, now) < neverRanMs()) continue;
     await cancel(run.tenantId, run.runId, `${run.workflow} deployed but never ran`);
     log({ level: "warn", msg: "triage_deployment_never_ran", runId: run.runId, workflow: run.workflow });
   }
@@ -352,7 +352,7 @@ export async function liveManager(db: DB["db"], tenantId: string, pr: PullReques
     const claim = await lockClaim(tx, tenantId, pr);
     if (claim?.status !== "live" || claim.runId === undefined) return undefined;
     const run = await managerRun(tx, claim.runId);
-    return run && canExecuteWorkflowRun(run) && runIsUp(run, now, { startedByMail: true }) ? claim.runId : undefined;
+    return run && canExecuteWorkflowRun(run) && runIsUp(run, now, { graceMs: timings().mailHoldMs, startedByMail: true }) ? claim.runId : undefined;
   });
 }
 
@@ -600,19 +600,19 @@ async function endedWaiting(tx: Tx, tenantId: string, pr: PullRequestRef, histor
 }
 
 /**
- * How long an ask holds off the next: the listener's wake of the manager it deployed and of the one it deploys in its
- * place when that wake fails, each waiting `managerReadyMs`, and stock's 30-second cancel grace between them.
+ * Whether a manager the hub asked the listener for has not taken the claim yet and may still be starting: within stock's
+ * mail hold, unless the run the listener deployed for this ask is one stock no longer lets execute, as a failed or
+ * cancelled start is.
  */
-function deployAskHoldMs(): number {
-  return 2 * timings().managerReadyMs + 30_000;
-}
-
-/** Whether a manager the hub asked the listener for has not taken the claim yet and may still be starting. */
-function deploying(claim: Claim, now: Date): boolean {
+async function deploying(tx: Tx, claim: Claim, now: Date): Promise<boolean> {
   if (claim.deployAskedAt === undefined) return false;
   const asked = Date.parse(claim.deployAskedAt);
   const taken = claim.starts > 0 && Date.parse(claim.claimedAt) >= asked;
-  return !taken && now.getTime() - asked < deployAskHoldMs();
+  if (taken || now.getTime() - asked >= timings().mailHoldMs) return false;
+  if (claim.deployedRunId === undefined) return true;
+  const deployed = await managerRun(tx, claim.deployedRunId);
+  if (deployed === undefined || deployed.createdAt.getTime() < asked) return true;
+  return canExecuteWorkflowRun(deployed, now);
 }
 
 /**
@@ -628,7 +628,7 @@ export async function askDeploy(db: DB["db"], tenantId: string, pr: PullRequestR
     await tx.insert(managerState).values({ tenantId, key, kind: "claim", state: claimOf(key, unstarted) }).onConflictDoNothing();
     const claim = await lockClaim(tx, tenantId, pr);
     if (!claim) throw new Error(`manager_state ${key} vanished under its lock`);
-    if (deploying(claim, now)) return undefined;
+    if (await deploying(tx, claim, now)) return undefined;
     const at = now.toISOString();
     await writeClaim(tx, tenantId, pr, { ...claim, deployAskedAt: at });
     return at;
@@ -731,7 +731,7 @@ const OVERDUE_UNSTARTED_GRACE_MS = 30 * 60_000;
 function recentlyWoken(claim: Claim, now: Date): boolean {
   if (claim.overdueWokenAt === undefined) return false;
   const woken = Date.parse(claim.overdueWokenAt);
-  const grace = Date.parse(claim.claimedAt) >= woken ? timings().managerStartGraceMs : OVERDUE_UNSTARTED_GRACE_MS;
+  const grace = Date.parse(claim.claimedAt) >= woken ? timings().mailHoldMs : OVERDUE_UNSTARTED_GRACE_MS;
   return now.getTime() - woken < grace;
 }
 
@@ -804,7 +804,7 @@ export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr
     const head = await newestHead(db, tenantId, pr);
     const result = unread.get(key);
     if (result !== undefined) {
-      if (now.getTime() - Date.parse(result.receivedAt) >= timings().managerStartGraceMs) overdue.push({ pr, head: head ?? result.head });
+      if (now.getTime() - Date.parse(result.receivedAt) >= timings().mailHoldMs) overdue.push({ pr, head: head ?? result.head });
       continue;
     }
     if (head === undefined) continue;

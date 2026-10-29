@@ -1,7 +1,8 @@
 // Decides, from what the host and the managers' runs say now, which open pull
 // requests to queue again. Pure, so every recovery path is decided in one place.
-import { PR_TRIAGE_STUCK_RUN_MS, WAITING_FOR_CAPACITY, type AwaitedStage, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
+import { DEFAULT_TIMINGS, PR_TRIAGE_STUCK_RUN_MS, WAITING_FOR_CAPACITY, type AwaitedStage, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
 import { MODEL_NOT_ASKED } from "@corbits/triage-workflows/logic/settled";
+import { DEFAULT_MAIL_HOLD_MS } from "../timings.js";
 
 /** `labels` only where the host lists them. */
 export type OpenPr = { number: number; headSha: string; updatedAt: string; draft: boolean; labels?: string[] };
@@ -51,9 +52,18 @@ export type ReconcilePolicy = {
 
 const MINUTE = 60_000;
 
+/**
+ * A queued head counts as never started one reconcile pass after stock's mail hold, `mailHoldMs`, has dropped its
+ * manager's wake: by then the hub's start grace and deploy-ask hold, both the hold, have lapsed for a manager deployed
+ * after the head was queued.
+ */
+export function unstartedAfterMs(mailHoldMs: number, reconcileIntervalMs: number): number {
+  return mailHoldMs + reconcileIntervalMs;
+}
+
 export const DEFAULT_RECONCILE_POLICY: ReconcilePolicy = {
   webhookGraceMs: 2 * MINUTE,
-  unstartedAfterMs: 10 * MINUTE,
+  unstartedAfterMs: unstartedAfterMs(DEFAULT_MAIL_HOLD_MS, DEFAULT_TIMINGS.reconcileIntervalMs),
   stuckAfterMs: PR_TRIAGE_STUCK_RUN_MS,
   clockSkewMs: MINUTE,
   backoffBaseMs: 5 * MINUTE,
