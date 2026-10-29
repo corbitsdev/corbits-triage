@@ -17,6 +17,7 @@ import OutcomesCard from "./OutcomesCard.tsx";
 import PolicySection from "./PolicySection.tsx";
 import RemoveRepository from "./RemoveRepository.tsx";
 import RepoByline from "./RepoByline.tsx";
+import RepoName from "./RepoName.tsx";
 import TriageSwitch from "./TriageSwitch.tsx";
 
 type RepoPanelProps = { repo: RepoRecord; row: RepoRow; live: boolean; stats: StatsReader | null; onClose: () => void };
@@ -85,7 +86,7 @@ export default function RepoPanel({ repo, row, live, stats: statsReader, onClose
         <div className="pane-in">
           <header className="ph">
             <div className="crumb">
-              <h2 className="title rp-t" id="rp-title" title={repo.name} tabIndex={-1} ref={headingRef}>{repo.name}</h2>
+              <h2 className="title rp-t" id="rp-title" title={repo.name} tabIndex={-1} ref={headingRef}><RepoName name={repo.name} /></h2>
               <span className="sp" />
               {sourceLink()}
               <Button type="button" variant="ghost" size="icon" aria-label="Close repository settings" onClick={onClose}><CloseIcon /></Button>

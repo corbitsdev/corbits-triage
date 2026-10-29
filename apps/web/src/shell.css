@@ -366,8 +366,8 @@
   .settings .place-steps > summary { padding: 13px 0; }
   .inbox :is(.search, .tbtn) { height: 44px; }
   .inbox .seg button { flex: 1 1 auto; min-height: 44px; padding: 0 6px; white-space: nowrap; }
-  /* Each list control gets a row of its own; the slices scroll sideways rather than squeeze. */
-  .inbox .lh-top .seg { flex-basis: 100%; margin-left: 0; overflow-x: auto; }
+  /* Each list control gets a row of its own. */
+  .inbox .lh-top .seg { flex-basis: 100%; margin-left: 0; }
   .inbox .tools > * { flex-basis: 100%; }
   .inbox .tools .tbtn { width: 100%; justify-content: center; }
   .inbox .groups { padding: 4px 4px 24px; }
@@ -419,7 +419,10 @@
   .inbox .code-review .lbl-h { flex-wrap: wrap; column-gap: 16px; margin-top: 8px; white-space: normal; }
   .inbox .code-review .lbl-h .sp { flex-basis: 100%; }
   .inbox .desc { margin-top: 24px; padding-top: 16px; }
-  .inbox :is(.linkish, .desc-more, .dr, .disc3 .more) { min-height: 44px; }
+  .inbox :is(.code-review .linkish, .desc-more, .dr, .disc3 .more) { min-height: 44px; }
+  /* Pills and Clear keep their size; an overhang makes each a 44px touch target without the row growing. */
+  .inbox :is(.pill, .pills .linkish) { position: relative; }
+  .inbox :is(.pill, .pills .linkish)::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
   .inbox .disc3 .more { display: inline-flex; align-items: center; margin-top: 8px; }
 }
 

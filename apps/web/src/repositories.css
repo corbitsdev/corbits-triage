@@ -124,9 +124,11 @@
 
 @media (max-width: 700px) {
   .repos .rp .gh-link { display: none; }
-  .repos .rp .rp-t { font-size: 19px; white-space: normal; overflow-wrap: anywhere; }
-  .repos .rt td.c-name { white-space: normal; padding-block: 10px; }
-  .repos .rt .c-name b { overflow-wrap: anywhere; }
+  .repos .rp .rp-t { font-size: 19px; white-space: normal; }
+  /* The owner sits on its own line, so a name breaks only at its hyphens; its column takes the room its longest part needs. */
+  .repos .repo-own { display: block; font-size: 12px; font-weight: 400; color: var(--ink-mute); }
+  .repos .rt th { white-space: normal; }
+  .repos .rt td.c-name { max-width: none; white-space: normal; padding-block: 10px; }
   .repos .rt td.c-health { min-width: 0; }
   .repos .gcard { padding: 2px 12px 8px; }
   .repos .then { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }

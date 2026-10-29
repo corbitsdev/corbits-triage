@@ -4,6 +4,7 @@ import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-r
 import { ExternalLink } from "lucide-react";
 import { errorText } from "@corbits/common";
 import HealthMark from "../components/repo-panel/HealthMark.tsx";
+import RepoName from "../components/repo-panel/RepoName.tsx";
 import RepoPanel from "../components/repo-panel/RepoPanel.tsx";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
 import { useBitbucketDatacenterRepositories, useRepositories } from "../lib/bitbucket-datacenter.ts";
@@ -148,7 +149,7 @@ export default function Repositories() {
     return (
       <tr key={row.href} className={open ? "on" : undefined} onClick={openRow}>
         <td className="c-name">
-          <Link to={row.href} data-repo-link={row.href} aria-current={open ? "true" : undefined}><b title={row.name}>{row.name}</b></Link>
+          <Link to={row.href} data-repo-link={row.href} aria-current={open ? "true" : undefined}><b title={row.name}><RepoName name={row.name} /></b></Link>
           {row.source === "bitbucket-datacenter" && <small className="src">Bitbucket Data Center</small>}
           {pulls && pulls.awaiting > 0 && live(<small>{awaitingText(pulls.awaiting)}</small>)}
         </td>
