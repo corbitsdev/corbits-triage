@@ -195,7 +195,7 @@ test("PostgreSQL: done keeps each posted finding's comment, the first pass on a 
     const app = buildHub(db, { log });
     const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
     const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
-    const findings = ["a.ts", "b.ts", "c.ts"].map((path) => ({ path, start: 1, end: 1, title: `In ${path}`, body: "Wrong." }));
+    const findings = ["a.ts", "b.ts", "c.ts"].map((path) => ({ path, start: 1, end: 1, title: `In ${path}`, body: "Wrong.", priority: 2 }));
     await webhook(db, GITHUB);
     expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", threads: [] });
     await post(app, "reviewer-result", { ...GITHUB, kind: "code-review", head: "h1", result: { ...REVIEW, comments: findings } }, reviewer);
