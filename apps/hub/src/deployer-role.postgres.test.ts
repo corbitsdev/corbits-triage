@@ -45,7 +45,7 @@ test("PostgreSQL: the Deployer role holds exactly its grants, and only the works
     await db.insert(schema.principalRole).values(people.map((principalId) => ({ principalId, roleId })));
 
     const logged: Array<Record<string, unknown>> = [];
-    await revokeHumanDeployers(db, TENANT, (entry) => logged.push(entry));
+    await revokeHumanDeployers(writes, TENANT, (entry) => logged.push(entry));
 
     expect(await db.select({ principalId: schema.principalRole.principalId }).from(schema.principalRole).where(inArray(schema.principalRole.principalId, people))).toEqual([{ principalId: "prn_publisher" }]);
     expect(logged).toEqual([{ level: "info", msg: "deployer_role_revoked", tenantId: TENANT, people: 2 }]);

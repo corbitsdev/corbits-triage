@@ -4,15 +4,16 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 import { authorize } from "@intx/authz";
 import { createEnvKeyCredentialCipher, generateKeyPair } from "@intx/crypto";
 import { createDB, createGrantStore, createPrincipalKeyStore, runMigrations, schema } from "@intx/db";
 import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createAgentRepoStore, createAssetService, DEFAULT_ASSET_REF, type AssetService, type RepoStore } from "@intx/hub-sessions";
 import { DEPLOYER_GRANTS, REPO_SOURCES, type ModelInfo, type RepoSource, type SourceIndexEntry } from "@corbits/triage-contracts";
-import type { Bundle } from "./publish.js";
-import { createSystemWrites, type SystemWrites } from "../system-writes/writer.js";
+import { revokeHumanDeployers } from "../deployer-role.js";
+import { createSystemWrites, SYSTEM_WRITER, SystemWriteDenied, type SystemWrites } from "../system-writes/writer.js";
+import { publishRelease, type Bundle } from "./publish.js";
 import { setUpPublisher } from "./publisher.js";
 import { createWorkspaceLock } from "./reads.js";
 import { createListenerWatch, releaseWriteOf } from "./triggers.js";
@@ -91,7 +92,7 @@ async function workspace(name: string) {
     logs: [] as Array<Record<string, unknown>>,
   };
   const rollout = createWorkflowRollout({
-    db, assets, repoStore, bundle,
+    db, writes, assets, repoStore, bundle,
     async publisher(tenant) {
       await setUpPublisher(writes, tenant, principalId, new Date());
       return { tenantId: tenant, principalId };
@@ -557,4 +558,32 @@ test("PostgreSQL: a person keeps the Deployer role until a roll leaves every hos
   fake.starts = "live";
   expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
   expect(await holders()).toEqual([principalId]);
+}, 120_000);
+
+test("PostgreSQL: a roll run again grants each chain asset's read once, and a writer without admin writes neither that grant nor a Deployer revoke", async () => {
+  const { tenantId, principalId, fake, rollout } = await workspace("regrant");
+  async function readGrants() {
+    return handle.db.select({ id: schema.grant.id, resource: schema.grant.resource }).from(schema.grant)
+      .where(and(eq(schema.grant.tenantId, tenantId), eq(schema.grant.principalId, principalId), like(schema.grant.resource, "asset:%"), eq(schema.grant.action, "read")));
+  }
+  expect(await rollout.roll(tenantId, NO_REDEPLOY)).toEqual(SUCCEEDED);
+  const granted = await readGrants();
+  expect(granted).toHaveLength(2);
+  expect(await rollout.roll(tenantId, NO_REDEPLOY)).toEqual(SUCCEEDED);
+  expect(await readGrants()).toEqual(granted);
+
+  const [deployer] = await handle.db.select({ roleId: schema.principalRole.roleId }).from(schema.principalRole).where(eq(schema.principalRole.principalId, principalId));
+  await handle.db.insert(schema.user).values({ id: "usr_regrant_admin", email: "admin@regrant.test", name: "Admin" });
+  await handle.db.insert(schema.principal).values({ id: "prn_regrant_admin", tenantId, kind: "user", refId: "usr_regrant_admin", status: "active" });
+  await handle.db.insert(schema.principalRole).values({ principalId: "prn_regrant_admin", roleId: deployer!.roleId });
+  const [writer] = await handle.db.select({ id: schema.principal.id }).from(schema.principal).where(and(eq(schema.principal.tenantId, tenantId), eq(schema.principal.refId, SYSTEM_WRITER)));
+  await handle.db.delete(schema.principalRole).where(eq(schema.principalRole.principalId, writer!.id));
+  await handle.db.delete(schema.grant).where(eq(schema.grant.id, granted[0]!.id));
+
+  const deps = { db: handle.db, writes, assets, repoStore, now: () => new Date() };
+  await expect(publishRelease(deps, { tenantId, principalId }, bundle, fake.models)).rejects.toThrow(SystemWriteDenied);
+  expect(await readGrants()).toEqual(granted.slice(1));
+  await expect(revokeHumanDeployers(writes, tenantId, (entry) => fake.logs.push(entry))).rejects.toThrow(SystemWriteDenied);
+  const holders = await handle.db.select({ principalId: schema.principalRole.principalId }).from(schema.principalRole).where(eq(schema.principalRole.roleId, deployer!.roleId));
+  expect(holders.map((row) => row.principalId).sort()).toEqual(["prn_regrant_admin", principalId].sort());
 }, 120_000);

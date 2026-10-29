@@ -215,7 +215,7 @@ export function createWorkflowRollout(deps: RolloutDeps) {
         failures.push(...failed(tenantId, [source], error));
       }
     }
-    if (failures.length === 0 && running) await revokeHumanDeployers(deps.db, tenantId, deps.log);
+    if (failures.length === 0 && running) await revokeHumanDeployers(deps.writes, tenantId, deps.log);
     return failures;
   }
 
