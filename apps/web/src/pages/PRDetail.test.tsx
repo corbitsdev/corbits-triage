@@ -1,11 +1,15 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { VerdictDetail } from "@corbits/triage-contracts";
 import { projectQueue, type PrItem } from "../lib/hub-api.ts";
 import { actionMode } from "../lib/inbox-view.ts";
+import * as entities from "../lib/tenant-entities.ts";
 import { PullActions, PullHistory } from "./PRDetail.tsx";
 
 const WHEN = "2026-10-26T12:00:00.000Z";
+
+let holdsDo = true;
+mock.module("../lib/tenant-entities.ts", () => ({ ...entities, useHoldsDo: () => holdsDo }));
 
 test("commits come before conversation, and each section names itself when empty", () => {
   const html = renderToStaticMarkup(
@@ -57,8 +61,9 @@ function step(list: string, kind: string, target: Record<string, unknown>, rest:
   return { list, index: 0, effectId: "effect-0", kind, held: false, reason: "Size failed.", target, ...rest };
 }
 
-function actions(item: PrItem, closed = false): string {
-  const controls = { item, closed, approvalPending: false, gated: false, canMerge: true, locked: false, onDecide: () => {}, onWrite: () => {} };
+function actions(item: PrItem, closed = false, canMerge = true, grant = true): string {
+  holdsDo = grant;
+  const controls = { item, closed, approvalPending: false, gated: false, canMerge, locked: false, onDecide: () => {}, onWrite: () => {} };
   return renderToStaticMarkup(<PullActions mode={actionMode(item)} controls={controls} onApproveDo={() => {}} onSkipDo={() => {}} />);
 }
 
@@ -87,16 +92,35 @@ test("an automatic action that has not run is described as not posted yet, not a
   expect(html).not.toContain("Triage commented");
 });
 
-test("a held action waits on you with Approve and Skip beside your controls", () => {
-  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []));
-  expect(html).toContain(">Approve<");
-  expect(html).toContain(">Skip<");
-  expect(html).toContain(">Merge<");
+test("a held approve waits on you as Approve, with Skip beside your controls", () => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "approve", {}, { held: true })], []));
+  expect(html).toMatch(/<div class="suggest">.*>Approve<\/button>.*>Skip<.*>Merge</);
+});
+
+test("a held merge waiting on you is the one Merge, closed to you while the host can't merge", () => {
+  const held = triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []);
+  const html = actions(held);
+  expect(html.match(/>Merge</g)).toHaveLength(1);
+  expect(html).toMatch(/<div class="suggest">.*<button(?![^>]*disabled="")[^>]*>Merge<\/button>.*>Skip</);
+  expect(actions(held, false, false)).toMatch(/<button[^>]*disabled=""[^>]*>Merge</);
+});
+
+test("without the merge grant a held merge has no button of its own and the page keeps its Merge", () => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []), false, true, false);
+  expect(html.match(/>Merge</g)).toHaveLength(1);
+  expect(html).toMatch(/<div class="suggest">.*<\/div><\/div><div class="pr-actions-row">.*>Merge</);
+  expect(html).not.toMatch(/<div class="suggest">(?:(?!<\/div><\/div>).)*>Merge</);
+});
+
+test("a merge that runs once CI finishes has no button of its own, and the page keeps its Merge", () => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true, ci: "pending" })], ["merge"]));
+  expect(html).toContain("Will run when CI finishes: merge");
+  expect(html.match(/>Merge</g)).toHaveLength(1);
+  expect(html).toMatch(/<div class="suggest">.*<div class="pr-actions-row"><button[^>]*>Skip<\/button><\/div><\/div>/);
 });
 
 test("a closed pull request offers no held action and none of your controls", () => {
   const html = actions(triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []), true);
-  expect(html).not.toContain(">Approve<");
   expect(html).not.toContain(">Skip<");
   expect(html).not.toContain(">Merge<");
 });

@@ -296,7 +296,8 @@ are the detail of each step.
 The workspace's automation switch (`corbitsTriage.automation`, `policy` or
 `ask`) is a brake for the whole workspace: under `ask` the grants hold only
 posting, so every other action is held, and a repository earns automation
-one kind at a time through **Always, in this repository** on a held action.
+one kind at a time through **Always approve for this repository** (named after
+the kind) on a held action.
 
 ## Workflows
 
@@ -878,7 +879,7 @@ the host already shows it; a close, merge, comment or review is refused once
 the head has moved. The hub reads the approval run's outcome back onto the
 verdict that held it.
 
-"Always, in this repository" on a held action approves it as above, then calls
+"Always approve for this repository" (named after the kind) on a held action runs it as above, then calls
 `POST /api/integrations/triage-automation/:tenantId` with `{ repo, source,
 kind, list }` (`apps/hub/src/github/triage-automation.ts`), `list` being the
 held action's verdict. The route checks the caller's stock `create` on

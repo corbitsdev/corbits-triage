@@ -2,16 +2,16 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
 import { Button, Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
-import { BUILT_IN_CHECK_NAMES, DO_GRANT_ACTION, doResource, isCatalogId, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { BUILT_IN_CHECK_NAMES, isCatalogId, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
 import { errorText } from "@corbits/common";
 import { linearIssues } from "../lib/linked-issue.ts";
-import { checkLabel } from "../lib/pack-prose.ts";
+import { checkLabel, DO_NAMES } from "../lib/pack-prose.ts";
 import { heldText, lineText, passedChecks, type HeldChoice, type PaneStatus, type Problem, type Severity } from "../lib/pane-report.ts";
 import { heldOffer } from "../lib/pending-dos.ts";
-import { useAllowed } from "../lib/tenant-entities.ts";
-import { checkMeasuredText, prHref } from "../lib/triage-view.ts";
+import { useAllowed, useHoldsDo } from "../lib/tenant-entities.ts";
+import { checkMeasuredText, lowerFirst, prHref } from "../lib/triage-view.ts";
 import { CitedEvidence } from "./CitedEvidence.tsx";
 import { DetailsBoundary } from "./DetailsBoundary.tsx";
 import { ChevronIcon } from "./inbox-icons.tsx";
@@ -55,17 +55,17 @@ type HeldRowProps = { choice: HeldChoice; wanted: readonly ActionKind[]; disable
 /** One held action, run once as the person or, by one who may manage grants, left to Triage in this repository from now on. */
 function HeldRow({ choice, wanted, disabled, onApprove }: HeldRowProps) {
   const { pending } = choice;
-  const holdsDo = useAllowed(doResource(pending.kind, pending.ref.repo), DO_GRANT_ACTION);
+  const holdsDo = useHoldsDo(pending.kind, pending.ref.repo);
   const createsGrants = useAllowed("grant:*", "create");
-  const offer = heldOffer(pending, { holdsDo, createsGrants, wanted });
+  const offer = heldOffer(pending, { holdsDo, createsGrants, wanted, onPrimary: choice.primary });
   return (
     <li>
       <span className="held-what">
         {heldText(pending)}
         {pending.until === null ? <span className="held-why">{pending.reason}</span> : null}
       </span>
-      {offer.doIt && <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onApprove(choice, false)}>Do it</Button>}
-      {offer.always && <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onApprove(choice, true)}>Always, in this repository</Button>}
+      {offer.doIt && <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onApprove(choice, false)}>{DO_NAMES[pending.kind]}</Button>}
+      {offer.always && <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onApprove(choice, true)}>Always {lowerFirst(DO_NAMES[pending.kind])} for this repository</Button>}
     </li>
   );
 }

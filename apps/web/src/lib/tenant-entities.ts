@@ -1,6 +1,6 @@
 import { skipToken, useIsFetching, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiError, type Transport } from "@intx/hub-client";
-import type { DeployedVersions } from "@corbits/triage-contracts";
+import { DO_GRANT_ACTION, doResource, type ActionKind, type DeployedVersions } from "@corbits/triage-contracts";
 import {
   evaluateAccess,
   listApprovals,
@@ -127,4 +127,9 @@ export function useAccess(resource: string, action: string): UseQueryResult<bool
 
 export function useAllowed(resource: string, action: string): boolean {
   return useAccess(resource, action).data === true;
+}
+
+/** Whether you may run a held action of this kind in the repository yourself. */
+export function useHoldsDo(kind: ActionKind, repo: string): boolean {
+  return useAllowed(doResource(kind, repo), DO_GRANT_ACTION);
 }

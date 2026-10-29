@@ -129,7 +129,7 @@ describe("the one line", () => {
     ["why Triage could not check it", { state: "new", runId: null, verdict: null, untriaged: "Couldn't triage: the run never started" }, "Needs you: Couldn't triage: the run never started · Triage again"],
     ["a verdict Triage could not settle", { state: "stale", checks: [FAIL], comment: feedback }, "Done: Needs human review · Triage could not settle it · Triage again"],
     ["newer commits under a pass, which is never merged unchecked", { state: "ready", verdict: "pass", headSha: "head-2" }, "Done: Ready to merge · newer commits not yet checked · Triage again"],
-    ["newer commits under a pass with an action held for you", { state: "ready", verdict: "pass", headSha: "head-2", actions: [{ list: "pass", index: 0, effectId: "e1", kind: "merge", reason: "", target: {}, held: true }] }, "Needs you: Approve or hide the held action: Merge · newer commits not yet checked"],
+    ["newer commits under a pass with an action held for you", { state: "ready", verdict: "pass", headSha: "head-2", actions: [{ list: "pass", index: 0, effectId: "e1", kind: "merge", reason: "", target: {}, held: true }] }, "Needs you: merge this pull request? · newer commits not yet checked"],
     ["newer commits under a verdict that asks you", { state: "blocked", verdict: "fail", checks: [FAIL], headSha: "head-2" }, "Needs you: Request changes from @ada: Docs · newer commits not yet checked"],
     ["newer commits under a verdict that leaves it to the author", { state: "needs-author-update", verdict: "fail", posted: true, checks: [FAIL], headSha: "head-2" }, "Done: Not ready · waiting on @ada to fix: Docs · newer commits not yet checked · Triage again"],
     ["a re-review with a rule to decide", { state: "awaiting-review", reviewAnswered: true, checks: [requested, UNSURE] }, "Needs you: Re-review: @ada updated it · still to decide: Focused"],
@@ -164,8 +164,9 @@ describe("the one line", () => {
     ["the author's turn, with the verdict as its label says it", { state: "needs-author-update", verdict: "fail", posted: true, checks: [FAIL, failed("ci-green")] }, "Done: Not ready · waiting on @ada to fix: Docs +1 more"],
     ["the author's turn leaves a rule to decide below", { state: "needs-author-update", verdict: "fail", posted: true, checks: [FAIL, UNSURE] }, "Done: Not ready · waiting on @ada to fix: Docs"],
     ["the author's turn with what Triage posted", { state: "needs-author-update", verdict: "fail", posted: true, automatic: ["labels"], actions: [{ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "", target: { labels: ["risk: medium"] }, held: false, status: "done" }] }, "Done: Not ready · added label risk: medium · waiting on @ada"],
-    ["the author's turn with an action held for you", { state: "needs-author-update", verdict: "fail", posted: true, actions: [{ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "", target: { labels: ["bug"] }, held: true }] }, "Needs you: Approve or hide the held action: Add label bug"],
-    ["the author's turn with an action the hub holds without saying CI", { state: "needs-author-update", verdict: "fail", posted: true, automatic: ["labels"], actions: [{ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "", target: { labels: ["bug"] }, held: true }] }, "Needs you: Approve or hide the held action: Add label bug"],
+    ["the author's turn with an action held for you", { state: "needs-author-update", verdict: "fail", posted: true, actions: [{ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "", target: { labels: ["bug"] }, held: true }] }, "Needs you: add label bug?"],
+    ["a held comment that already ends its sentence", { state: "needs-author-update", verdict: "fail", posted: true, actions: [{ list: "fail", index: 0, effectId: "e1", kind: "comment", reason: "", target: { body: "Please split this." }, held: true }] }, 'Needs you: comment "Please split this."'],
+    ["the author's turn with an action the hub holds without saying CI", { state: "needs-author-update", verdict: "fail", posted: true, automatic: ["labels"], actions: [{ list: "fail", index: 0, effectId: "e1", kind: "labels", reason: "", target: { labels: ["bug"] }, held: true }] }, "Needs you: add label bug?"],
     ["the author's turn with Triage not allowed to post", { state: "needs-author-update", verdict: "fail", posted: false, notPosted: "no_grants", checks: [requested] }, "Done: Not ready · not posted on GitHub: Triage may not post here on its own; workspace settings list what it does on its own in each repository · waiting on @ada to fix: Requested changes"],
     ["a custom rule from the pack", { state: "blocked", checks: [RELEASE_NOTES] }, "Needs you: Request changes from @ada: Release notes describe the user-facing change", PACK],
   ];
@@ -180,7 +181,7 @@ describe("the one line", () => {
     expect(pending === undefined ? null : heldText(pending)).toBe("Will run when CI finishes: add label risk: medium");
     expect(statusOf({ state: "needs-author-update", verdict: "fail", posted: true, automatic: ["labels"], actions: [labels] }).form).toBe("done");
     const [asked] = pendingDos(item({ actions: [labels] }));
-    expect(asked === undefined ? null : heldText(asked)).toBe("Held: Add label risk: medium");
+    expect(asked === undefined ? null : heldText(asked)).toBe("Triage would add label risk: medium.");
   });
 
   test("only the host's own read changes the pane: what holds the merge, and what holds a pull request with nothing to fix", () => {
@@ -231,11 +232,11 @@ describe("paneBar", () => {
   test("a held action the primary carries out is still listed, so it can be read and hidden", () => {
     const merge = barOf(item({ state: "ready", verdict: "pass", actions: [{ ...held("e1", "merge", {}), list: "pass" }] }));
     expect(merge.primary).toMatchObject({ kind: "merge", held: { key: "e1" } });
-    expect(heldChoices(merge)).toMatchObject([{ pending: { key: "e1" }, entry: { kind: "merge" } }]);
+    expect(heldChoices(merge)).toMatchObject([{ pending: { key: "e1" }, entry: { kind: "merge" }, primary: true }]);
 
     const approve = barOf(item({ state: "awaiting-review", actions: [held("e2", "approve", {})] }));
     expect(approve.primary).toMatchObject({ kind: "approve", held: { key: "e2" } });
-    expect(heldChoices(approve)).toMatchObject([{ pending: { key: "e2" }, entry: { kind: "approve" } }]);
+    expect(heldChoices(approve)).toMatchObject([{ pending: { key: "e2" }, entry: { kind: "approve" }, primary: true }]);
   });
 });
 

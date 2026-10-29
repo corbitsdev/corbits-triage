@@ -1,11 +1,11 @@
-import { askRules, citationOf, NO_CHANGES_REQUESTED, type CheckPack, type VerdictWord } from "@corbits/triage-contracts";
+import { askRules, citationOf, NO_CHANGES_REQUESTED, type ActionKind, type CheckPack, type VerdictWord } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, HeldBlock, PrItem, RunFailure } from "./hub-api.ts";
 import { paneActions, paneFacts, type ActionBlocker, type MenuEntry, type PaneFacts, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, failedOnNewCommits, hasUncheckedCommits, primaryLabel, progressText, triageStoppedOn, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
-import { checkLabel } from "./pack-prose.ts";
+import { checkLabel, DO_NAMES } from "./pack-prose.ts";
 import { pendingDos, postedActions, type PendingDo } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
-import { upperFirst } from "./triage-view.ts";
+import { lowerFirst, upperFirst } from "./triage-view.ts";
 
 /**
  * A failed check is something to fix, unless the policy asks a maintainer about it; that and a model check the judge did
@@ -233,18 +233,31 @@ function doneText(item: PrItem, rest: string): string {
   return upperFirst([...verdict, ...postedActions(item), ...notPostedText(item), rest].join(" · "));
 }
 
-/** A held action waiting on you is the decision even where the rules leave the turn to the author. */
+/** A held comment or change request quotes what it posts, which may already end its sentence. */
+const ENDS_IN_A_STOP = /[.!?]"?$/;
+
+const ON_THE_PULL_REQUEST: ReadonlySet<ActionKind> = new Set(["approve", "close", "merge"]);
+
+/** What a held action does, lower case, naming the pull request after a verb that acts on it alone. */
+function heldAction({ kind, label }: Pick<PendingDo, "kind" | "label">): string {
+  const action = lowerFirst(label);
+  const verb = lowerFirst(DO_NAMES[kind]);
+  return ON_THE_PULL_REQUEST.has(kind) ? `${verb} this pull request${action.slice(verb.length)}` : action;
+}
+
+/** A held action waiting on you is the decision even where the rules leave the turn to the author, asked as a question in its own verb. */
 function heldForYouText(item: PrItem): string | null {
   const [pending] = pendingDos(item).filter((held) => held.until === null);
-  if (pending !== undefined) return `approve or hide the held action: ${pending.label}`;
-  return item.pendingApprovalId === null ? null : "confirm or dismiss the post Triage held, on the pull request's page";
+  if (pending === undefined) return item.pendingApprovalId === null ? null : "Confirm or dismiss the post Triage held, on the pull request's page";
+  const action = heldAction(pending);
+  return ENDS_IN_A_STOP.test(action) ? action : `${action}?`;
 }
 
 /** Without a rule left for you the turn is someone else's, unless an action waits on your approval. */
 function settled(item: PrItem, line: Said): PaneStatus {
   if (line.tone === "you" || line.tone === "ready") return { form: "you", ...line, live: false };
   const held = heldForYouText(item);
-  if (held !== null) return { form: "you", tone: "you", text: upperFirst(held), live: false };
+  if (held !== null) return { form: "you", tone: "you", text: held, live: false };
   return { form: "done", ...line, live: false };
 }
 
@@ -298,7 +311,7 @@ export function paneStatus({ item, detail, handled, pack }: StatusInput): PaneSt
   if (unsettled === null) return line;
   const held = heldForYouText(item);
   // Neither a verdict Triage could not settle nor a pass on unchecked commits asks you anything but the held action.
-  if (held !== null && (item.state === "stale" || inboxAction(item) === "merge")) return { form: "you", tone: "you", text: `${upperFirst(held)} · ${unsettled}`, live: false };
+  if (held !== null && (item.state === "stale" || inboxAction(item) === "merge")) return { form: "you", tone: "you", text: `${held} · ${unsettled}`, live: false };
   // Commits Triage has not checked are never merged, so a pass has nothing for you until Triage checks them.
   if (item.state !== "stale" && line.form === "you" && inboxAction(item) !== "merge") return { ...line, text: `${line.text} · ${unsettled}` };
   if (item.state !== "stale") return { ...line, form: "done", text: `${line.text} · ${unsettled} · Triage again` };
@@ -344,18 +357,19 @@ export function paneBar(gate: PaneGate, base: string | null, author: string | nu
   return { primary, rest, dos: dos.filter((pending) => !taken.includes(pending)) };
 }
 
-/** `entry` is the bar's button that carries the held action out, null for one with no button. */
-export type HeldChoice = { pending: PendingDo; entry: BarEntry | null };
+/** `entry` is the bar's button that carries the held action out, null for one with no button; `primary` when that is the primary. */
+export type HeldChoice = { pending: PendingDo; entry: BarEntry | null; primary: boolean };
 
 /** Every held action on the bar, the primary's included, so each can be read with its reason and hidden. */
 export function heldChoices(bar: PaneBar): HeldChoice[] {
   const entries: BarEntry[] = bar.primary === null ? bar.rest : [bar.primary, ...bar.rest];
-  const carried = entries.flatMap((entry) => entry.held === null ? [] : [{ pending: entry.held, entry }]);
-  return [...carried, ...bar.dos.map((pending) => ({ pending, entry: null }))];
+  const carried = entries.flatMap((entry) => entry.held === null ? [] : [{ pending: entry.held, entry, primary: entry === bar.primary }]);
+  return [...carried, ...bar.dos.map((pending) => ({ pending, entry: null, primary: false }))];
 }
 
-/** A held action as the line under the status says it: when it will run on its own, or that it waits on you. */
-export function heldText({ label, until }: Pick<PendingDo, "label" | "until">): string {
-  if (until === null) return `Held: ${label}`;
-  return `Will run when ${until}: ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+/** A held action as the line under the status says it: when it will run on its own, or what Triage would do once you let it. */
+export function heldText(pending: Pick<PendingDo, "kind" | "label" | "until">): string {
+  if (pending.until !== null) return `Will run when ${pending.until}: ${lowerFirst(pending.label)}`;
+  const said = heldAction(pending);
+  return `Triage would ${said}${ENDS_IN_A_STOP.test(said) ? "" : "."}`;
 }
