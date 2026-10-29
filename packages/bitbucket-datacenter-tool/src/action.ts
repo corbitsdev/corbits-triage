@@ -126,6 +126,7 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
       const result = await mirror(bb, request, user);
       // Closed between the read above and the mirror's own.
       if ("skipped" in result) return { status: "satisfied", result: { closed: true } };
+      if (result.failed?.comment) throw new Error(result.failed.comment);
       await declinePr(bb, { repo, number, version: pr.version });
       return { status: "done", result: { ...result, closed: true } };
     }
