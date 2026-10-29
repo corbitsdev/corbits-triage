@@ -98,12 +98,11 @@ function ruledItem(items: readonly object[]): Ruled {
 /**
  * Whether the pass deploys code review, and whether it posts. Code review runs once per head, when the policy turns it on,
  * triage's rules let it past as its `when.rules` says, the hub read the head's review request and the release publishes
- * a code review for the host. The pass that deploys
- * it, and every pass before its review is in, posts nothing, so the verdict and the review go up together; one that
- * reported a failure, ran past its deadline or whose run ended posts the verdict alone. A later pass on a head whose review settled posts
- * again and deploys no other. A Review again names itself as `again`, so its head is reviewed once more for it, whatever
- * earlier reviews of the head said. A pull request that failed rules, `for` or `when` leave out is not reviewed, and
- * `skipped` says why.
+ * a code review for the host. The pass that deploys it, and every pass before its review is in, posts nothing, so the
+ * verdict and the review go up together; one that reported a failure, ran past its deadline or whose run ended posts the
+ * verdict alone. A later pass on a head whose review settled posts again and deploys no other. A Review again names
+ * itself as `again`, so its head is reviewed once more for it, whatever earlier reviews of the head said. A pull request
+ * that failed rules, `for` or `when` leave out is not reviewed, and `skipped` says why.
  */
 export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean; reviewed: boolean; skipped?: string }> {
   const parsed = ScopeInput(input);

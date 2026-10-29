@@ -286,9 +286,8 @@ function reviewersAfter(take: TakeOutput, mailed: readonly Reviewer[]): Reviewer
 
 /**
  * The reviewers of the pass's head this run deployed that ran past their deadline, or whose run ended, with no report.
- * The hub stops one on
- * an older head when it records the newer one; one an earlier manager deployed runs out on its own, since only its
- * deployer may stop it.
+ * The hub stops one on an older head when it records the newer one; one an earlier manager deployed runs out on its own,
+ * since only its deployer may stop it.
  */
 function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
   return reviewers.filter((reviewer) => reviewer.deployedBy === runId && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
