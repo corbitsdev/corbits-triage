@@ -60,8 +60,8 @@ function reservedIn(workflow: PolicyWorkflow): string[] {
 function fromAnnotation(line: string): string {
   const parts = /^::\w+ (.*?)::(.*)$/.exec(line);
   if (!parts) throw new Error(`The Action printed an annotation it could not have written: ${line}`);
-  const [, at = "", message = ""] = parts;
-  const text = message.replaceAll("%0A", "\n").replaceAll("%0D", "\r").replaceAll("%25", "%");
+  const at = parts[1]!;
+  const text = parts[2]!.replaceAll("%0A", "\n").replaceAll("%0D", "\r").replaceAll("%25", "%");
   const fileLine = /(?:^|,)line=(\d+)/.exec(at)?.[1];
   return fileLine === undefined ? text : `Line ${fileLine}: ${text}`;
 }

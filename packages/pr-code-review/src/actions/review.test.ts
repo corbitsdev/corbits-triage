@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync,
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import type { EffectContext, PerformScope } from "@intx/workflow";
-import { createSizeCapTransform } from "@intx/inference";
-import type { ReactorCapabilities, ReactorDirector, StrategyContext, ToolCall, ToolResult } from "@intx/types/runtime";
+import type { ReactorCapabilities, ReactorDirector, ToolCall, ToolResult } from "@intx/types/runtime";
 import { linesOf } from "@corbits/repo-read-tool";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import { consolidateDirectorOf } from "../consolidate-director.js";
 import type { CodeReviewProfile, Effort, Role } from "../profile.js";
 import { DIFF_DIR, DIFF_INDEX, indexedFiles, MAX_PART_BYTES, shownTag, unreadLines } from "../diff-parts.js";
 import { BUDGET_EXHAUSTED, checkoutPath, checkoutUnder, diffDirOf } from "./checkout.js";
+import { assembled } from "../stock-assembly.test-helpers.js";
 import { candidates, checks, findersInput, review, reviewInputFor, writeInput } from "./review.js";
 
 const efforts: Record<Role, Effort> = { plan: "low", diffFinder: "low", repoFinder: "low", consolidate: "low", check: "low", write: "low" };
@@ -276,7 +276,7 @@ test("checks share the review's total budget in review order, and a finding it d
 
 const PROFILE = { packageName: "@corbits/pr-code-review" } as CodeReviewProfile;
 
-type ReadResult = { isError?: boolean; content: unknown };
+type ReadResult = Omit<ToolResult, "callId">;
 
 /** Drives the consolidate director over `message`, each read answered by `answer`, round after round, and the model replying `groups`. */
 async function consolidated(message: string, answer: (call: ToolCall) => ReadResult | Promise<ReadResult>, groups: unknown[] = []) {
@@ -352,12 +352,10 @@ test("a finding is unverified only when the model was shown none of its file's l
   expect((await reviewed([TOTAL], { "src/total.ts": fileWith("return total;") })).comments[0]).not.toHaveProperty("unverified");
 });
 
-const sizeCap = createSizeCapTransform({ maxChars: 10_000, contextStore: { async writeBlob() {} } });
-
 /** `answer` as the director gets it after the stock result assembly. */
 function sizeCapped(answer: (call: ToolCall) => ReadResult) {
   return async function capped(call: ToolCall): Promise<ReadResult> {
-    return (await sizeCap.apply({ call, result: { callId: call.id, ...answer(call) } as ToolResult }, {} as StrategyContext)).output;
+    return assembled(call, answer(call));
   };
 }
 
