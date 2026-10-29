@@ -17,7 +17,6 @@ let root: Root | undefined;
 let portal: ReturnType<typeof usePortal>;
 const originalFetch = globalThis.fetch;
 
-// Other DOM test files replace this module for the whole test process, so this file sets its own.
 mock.module("../../lib/portal.tsx", () => ({
   usePortal() {
     return portal;
