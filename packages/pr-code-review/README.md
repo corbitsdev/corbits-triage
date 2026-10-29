@@ -42,8 +42,8 @@ prompt carries it, and the steps read it from the checkout.
    findings by defect. A group none of whose findings had a line of its file shown to the model is marked `unverified`.
 5. **check** verifies the groups on every review, each given its finding, the diff hunks that change its lines, and the read
    tools on the checkout. The first `budgets.checks` groups in review order are checked, each on `budgets.check`; later
-   groups are not checked and not posted, and are kept as unsure, "not checked: checker cap reached"; the review is then
-   not `complete`, and its summary ends with a sentence saying how many findings were not checked. The check answers real when lines
+   groups are not checked and not posted, and are kept as unsure, "not checked: checker cap reached", and the
+   review's `unchecked` counts them. The check answers real when lines
    it read show the claimed behaviour, reached by the trigger with no guard and not intended by the description; not
    real only when a line of code disproves it; unsure when it cannot decide. A real or not real reason that cites, as
    path:line, no line it read (in the hunks or with the tools) is unsure, its reason led by "no cited line". Once a

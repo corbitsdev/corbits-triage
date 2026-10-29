@@ -232,7 +232,7 @@ test("a finding is posted when the check confirms it, or cannot decide and both 
   ]);
 });
 
-test("a review checks its most serious findings up to its number of checks, and one with a finding past them posts it nowhere and is not complete", async () => {
+test("a review checks its most serious findings up to its number of checks, and counts a finding past them, posted nowhere", async () => {
   const request = { kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout, budgets: { check: 100 } };
   const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail(request)) };
   const found = Array.from({ length: 13 }, (_, i) => ({ path: "src/a.ts", start: i + 1, end: i + 1, code: `line ${i + 1}`, title: `t${i + 1}`, priority: i === 0 ? 3 : i % 3 }));
@@ -245,7 +245,7 @@ test("a review checks its most serious findings up to its number of checks, and 
   expect(written.findings.map((f) => f.priority)).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]);
   expect(written.dropped.map(({ finding, verdict, reason }) => [finding.start, finding.priority, finding.agreement.finders, verdict, reason])).toEqual([[1, 3, 2, "unsure", "not checked: checker cap reached"]]);
   const reviewed = await review({ writeInput: { output: written }, write: reply({ summary: "s", comments: [] }) });
-  expect(reviewed).toMatchObject({ complete: false, summary: "s\n\n1 finding was not checked: the review reached its limit of checks." });
+  expect(reviewed).toMatchObject({ summary: "s", complete: true, unchecked: 1 });
 });
 
 const PROFILE = { packageName: "@corbits/pr-code-review" } as CodeReviewProfile;

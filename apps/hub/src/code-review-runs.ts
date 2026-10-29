@@ -30,6 +30,7 @@ const CompletedRun = type({
   comments: CodeReviewComment.array(),
   budgetExhausted: "boolean",
   "complete?": "boolean",
+  "unchecked?": "number.integer >= 0",
   "diffHash?": "string",
 });
 const ReviewRun = CompletedRun.or({ status: "'running' | 'failed'", headSha: "string", startedAt: "string" });
@@ -65,9 +66,9 @@ function reviewOf(record: CodeReviewRecord): Review {
   const reported = StageResult.assert({ ...withPriorities(record.payload), head: record.head });
   if ("failed" in reported) return { ...base, status: "failed" };
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
-  const { summary, budgetExhausted, complete } = reported.result;
+  const { summary, budgetExhausted, complete, unchecked } = reported.result;
   const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }) }));
-  return { ...base, status: "completed", summary, comments, budgetExhausted, ...(complete !== undefined && { complete }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
+  return { ...base, status: "completed", summary, comments, budgetExhausted, ...(complete !== undefined && { complete }), ...(unchecked !== undefined && { unchecked }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 
 type CodeReviewRunsDeps = {

@@ -1,4 +1,4 @@
-import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, INCOMPLETE_NOTE, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, INCOMPLETE_NOTE, uncheckedNote, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
@@ -918,6 +918,7 @@ export function summarize(results: Array<RenderOutput | null>): BacklogSummary {
 }
 
 /** A code review's posted body: the model's summary, then a fixed line per condition: it stopped early, or it is not complete. */
-export function codeReviewSummary(review: Pick<CodeReviewOutput, "summary" | "budgetExhausted" | "complete">): string {
-  return [review.summary, ...(review.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...(review.complete === true ? [] : [INCOMPLETE_NOTE])].filter(Boolean).join("\n\n");
+export function codeReviewSummary(review: Pick<CodeReviewOutput, "summary" | "budgetExhausted" | "complete" | "unchecked">): string {
+  const unchecked = review.unchecked ?? 0;
+  return [review.summary, ...(review.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...(review.complete === true ? [] : [INCOMPLETE_NOTE]), ...(unchecked > 0 ? [uncheckedNote(unchecked)] : [])].filter(Boolean).join("\n\n");
 }

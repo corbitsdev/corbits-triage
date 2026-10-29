@@ -6,6 +6,12 @@ export const BUDGET_EXHAUSTED_NOTE = "Stopped early: the reviewer reached its li
 /** Shown beside a review that is not complete. */
 export const INCOMPLETE_NOTE = "This review did not read the whole change; approve and merge are held until a review does.";
 
+/** Why approve and merge are held, shown beside a review that left `count` findings unchecked past its number of checks. */
+export function uncheckedNote(count: number): string {
+  const findings = count === 1 ? "1 finding" : `${count} findings`;
+  return `Code review left ${findings} unchecked on this head: it reached its limit of checks.`;
+}
+
 /** Shown with a finding none of whose file's lines could be read. */
 export const UNVERIFIED_FINDING = "Not checked against the file";
 
@@ -22,9 +28,11 @@ const CodeReviewDropped = CodeReviewComment.and({ verdict: "'not_real' | 'unsure
 /**
  * What a code review run answers: its summary, its findings, the findings its check dropped, whether its reader
  * stopped early, and `complete` when its finders between them were shown every line of the diff without either
- * spending its budget. A review without it, as one recorded before it was reported, is not complete.
+ * spending its budget. A review without it, as one recorded before it was reported, is not complete. `unchecked` counts
+ * the findings past the review's number of checks, which it neither checked nor posted; a review recorded before checks
+ * were counted has none, so its absence is 0.
  */
-export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean", "complete?": "boolean" });
+export const CodeReviewOutput = type({ summary: "string", comments: CodeReviewComment.array(), "dropped?": CodeReviewDropped.array(), budgetExhausted: "boolean", "complete?": "boolean", "unchecked?": "number.integer >= 0" });
 export type CodeReviewOutput = typeof CodeReviewOutput.infer;
 
 /** The title and priority of a finding, or of a comment a review posted before every finding carried a priority. */

@@ -105,7 +105,6 @@ interface Judged extends Verdict {
 
 interface WriteInput {
   budgetExhausted: boolean;
-  /** False when the finders were not shown the whole change or a group was past the review's number of checks. */
   complete: boolean;
   /** How many groups were past the review's number of checks. */
   unchecked: number;
@@ -339,7 +338,7 @@ export async function writeInput(steps: Steps): Promise<WriteInput> {
   const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
   const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
   const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nWrite the review.`;
-  return { budgetExhausted, complete: complete && unchecked.length === 0, unchecked: unchecked.length, findings, dropped, text, inference: inference.write };
+  return { budgetExhausted, complete, unchecked: unchecked.length, findings, dropped, text, inference: inference.write };
 }
 
 interface Written {
@@ -359,14 +358,9 @@ function commentOf(finding: Reported, { title, body }: { title: string; body: st
   return { path, start, end, title, body, priority, ...(code !== undefined && { quoted: code }), agreement, ...(unverified && { unverified }) };
 }
 
-function uncheckedNote(count: number): string {
-  const findings = count === 1 ? "1 finding was" : `${count} findings were`;
-  return `${findings} not checked: the review reached its limit of checks.`;
-}
-
 /**
  * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes, its
- * agreement and whether its lines went unread, whether it stopped early, whether it is complete, and each finding it left out, in its
+ * agreement and whether its lines went unread, whether it stopped early, whether it is complete, how many groups were past its number of checks, and each finding it left out, in its
  * finder's words with the check's verdict and reason. A finding the write step left without a comment gets one in its
  * finder's words.
  */
@@ -379,6 +373,5 @@ export async function review(steps: Steps) {
   function droppedOf({ finding, verdict, reason }: Judged) {
     return { ...commentOf(finding, ownWords(finding)), verdict, reason };
   }
-  const summary = unchecked === 0 ? written.summary : `${written.summary}\n\n${uncheckedNote(unchecked)}`;
-  return { summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, complete };
+  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, complete, unchecked };
 }

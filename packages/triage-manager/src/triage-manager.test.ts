@@ -612,6 +612,7 @@ describe("triage-manager with code review", () => {
     ["approve allowing any finding runs with a P0 finding", finding(0), [{ do: "approve", when: { findings: { any: true } } }], [undefined]],
     ["a comment allowing no finding holds for one", finding(3), [{ do: "comment", target: NOTE, when: { findings: { any: false } } }], [OPEN]],
     ["a clean review runs every Do", CLEAN.result, [{ do: "approve" }, { do: "comment", target: NOTE, when: { findings: { any: false } } }], [undefined, undefined]],
+    ["approve holds for a clean review that left a finding unchecked", { ...CLEAN.result, unchecked: 1 }, [{ do: "approve" }], ["Code review left 1 finding unchecked on this head: it reached its limit of checks."]],
   ] as const)("a Pass keeps its verdict whatever the review found, and %s", async (_name, review, pass, reasons) => {
     const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "completed", conclusion: "success" }] });
     const pack = { ...RULES, actions: { ...RULES.actions, pass: [...pass], fail: [{ do: "request-changes" }] } } as CheckPack;
