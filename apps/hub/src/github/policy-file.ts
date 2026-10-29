@@ -138,6 +138,15 @@ function stateOf({ path, read }: FoundFile, repo: string): PolicyFileState {
   return { status: "ok", file: { ...file, ...(checked.pending && { pending: policyFileReason(checked.pending) }) }, policy: checked.policy, workflow: checked.workflow };
 }
 
+/** Why the hub would refuse to write `text` as the repository's policy file, its `extends` resolved by `refusal`; undefined when it would write it. */
+export async function textRefusal(refusal: PolicyFileDeps["refusal"], tenantId: string, record: RepoRecord, text: string): Promise<Response | undefined> {
+  const checked = checkPolicyFile(text, record.name);
+  if (!checked.ok) return failure(422, "policy_file_invalid", policyFileReason(checked.problems));
+  if (checked.pending) return failure(422, "policy_file_invalid", policyFileReason(checked.pending));
+  const refused = await refusal(tenantId, record.name, sourceOf(record), checked.policy);
+  return refused === undefined ? undefined : failure(422, "policy_file_invalid", refused);
+}
+
 /** How long a read of a repository whose webhook the hub has not heard lately is kept. */
 const UNHEARD_MAX_AGE_MS = 60_000;
 
@@ -329,15 +338,6 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     return opened(member, record, { path: POLICY_FILE_PATH, text: exportPolicyFile(starterPack(record.name)).text, title: ADD_TITLE, body: STARTER_BODY });
   }
 
-  /** Why triage would refuse `text` as the repository's policy file, its `extends` resolved; undefined when it would run it. */
-  async function textRefusal(tenantId: string, record: RepoRecord, text: string): Promise<Response | undefined> {
-    const checked = checkPolicyFile(text, record.name);
-    if (!checked.ok) return failure(422, "policy_file_invalid", policyFileReason(checked.problems));
-    if (checked.pending) return failure(422, "policy_file_invalid", policyFileReason(checked.pending));
-    const refusal = await deps.refusal(tenantId, record.name, sourceOf(record), checked.policy);
-    return refusal === undefined ? undefined : failure(422, "policy_file_invalid", refusal);
-  }
-
   /** The default branch's file, read past the kept read: a file merged where no push is heard is not in it. */
   async function freshFile(tenantId: string, record: RepoRecord): Promise<PolicyFileStatus | null | Response> {
     const state = await cached(tenantId, record, 0);
@@ -352,7 +352,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
    * hold the maintainer's edits, so it is never written over.
    */
   async function chosenFile(member: Member, record: RepoRecord, text: string, sha: string | null): Promise<Response> {
-    const refused = await textRefusal(member.tenantId, record, text);
+    const refused = await textRefusal(deps.refusal, member.tenantId, record, text);
     if (refused) return refused;
     const pull = await openPull(member.tenantId, record);
     if (pull) return failure(409, "policy_pull_open", `${record.name}'s policy pull request is open; merge or close it first.`, pull);
@@ -440,7 +440,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
 
   async function pushRecord({ repo, text, sha }: typeof PolicyPushBody.infer, member: Member, record: RepoRecord): Promise<Response> {
     try {
-      const refused = await textRefusal(member.tenantId, record, text);
+      const refused = await textRefusal(deps.refusal, member.tenantId, record, text);
       if (refused) return refused;
       const access = await pushAccessOf(member.tenantId, record);
       if (!access.allowed) return failure(409, "push_refused", access.reason);

@@ -1,0 +1,3 @@
+rules:
+  - check: ci-green
+    text: [CI must pass.

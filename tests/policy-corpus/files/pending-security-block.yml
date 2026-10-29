@@ -1,0 +1,7 @@
+rules:
+  - check: ci-green
+    text: CI must pass.
+    reason: Required.
+    evidence: [maintainer-stated]
+security:
+  on: true
