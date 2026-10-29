@@ -238,8 +238,8 @@ for a repository takes back everything Triage did there on its own. Close
 never runs on its own on Unsure, and merge never on anything but Pass.
 
 That switch is a brake for the whole workspace. With it off, a repository
-earns more one action at a time: **Always, in this repository** on a held
-action lets Triage take that kind of action there on its own from then on.
+earns more one action at a time: **Always approve for this repository** (named
+after the held action's kind) lets Triage take that kind of action there on its own from then on.
 
 Approve runs only on a Pass with CI green. A merge waits until CI passes on
 the head (or runs without CI only when the policy switches CI green off), and

@@ -1,11 +1,11 @@
-import { askRules, citationOf, NO_CHANGES_REQUESTED, type CheckPack, type VerdictWord } from "@corbits/triage-contracts";
+import { askRules, citationOf, NO_CHANGES_REQUESTED, type ActionKind, type CheckPack, type VerdictWord } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, HeldBlock, PrItem, RunFailure } from "./hub-api.ts";
 import { paneActions, paneFacts, type ActionBlocker, type MenuEntry, type PaneFacts, type PaneGate, type PaneKind } from "./inbox-pane.ts";
 import { inboxAction, inboxStatus, isPostedToAuthor, isReReview, failedOnNewCommits, hasUncheckedCommits, primaryLabel, progressText, triageStoppedOn, waitsOn, waitsOnAuthor, type HandledMark } from "./inbox-view.ts";
-import { checkLabel } from "./pack-prose.ts";
+import { checkLabel, DO_NAMES } from "./pack-prose.ts";
 import { pendingDos, postedActions, type PendingDo } from "./pending-dos.ts";
 import { hostName } from "./pull-link.ts";
-import { upperFirst } from "./triage-view.ts";
+import { lowerFirst, upperFirst } from "./triage-view.ts";
 
 /**
  * A failed check is something to fix, unless the policy asks a maintainer about it; that and a model check the judge did
@@ -354,8 +354,13 @@ export function heldChoices(bar: PaneBar): HeldChoice[] {
   return [...carried, ...bar.dos.map((pending) => ({ pending, entry: null }))];
 }
 
-/** A held action as the line under the status says it: when it will run on its own, or that it waits on you. */
-export function heldText({ label, until }: Pick<PendingDo, "label" | "until">): string {
-  if (until === null) return `Held: ${label}`;
-  return `Will run when ${until}: ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+const ON_THE_PULL_REQUEST: ReadonlySet<ActionKind> = new Set(["approve", "close", "merge"]);
+
+/** A held action as the line under the status says it: when it will run on its own, or what Triage would do once you let it. */
+export function heldText({ kind, label, until }: Pick<PendingDo, "kind" | "label" | "until">): string {
+  const action = lowerFirst(label);
+  if (until !== null) return `Will run when ${until}: ${action}`;
+  const verb = lowerFirst(DO_NAMES[kind]);
+  const said = ON_THE_PULL_REQUEST.has(kind) ? `${verb} this pull request${action.slice(verb.length)}` : action;
+  return `Triage would ${said}${/[.!?]"?$/.test(said) ? "" : "."}`;
 }

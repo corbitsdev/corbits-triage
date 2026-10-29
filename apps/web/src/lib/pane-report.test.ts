@@ -180,7 +180,7 @@ describe("the one line", () => {
     expect(pending === undefined ? null : heldText(pending)).toBe("Will run when CI finishes: add label risk: medium");
     expect(statusOf({ state: "needs-author-update", verdict: "fail", posted: true, automatic: ["labels"], actions: [labels] }).form).toBe("done");
     const [asked] = pendingDos(item({ actions: [labels] }));
-    expect(asked === undefined ? null : heldText(asked)).toBe("Held: Add label risk: medium");
+    expect(asked === undefined ? null : heldText(asked)).toBe("Triage would add label risk: medium.");
   });
 
   test("only the host's own read changes the pane: what holds the merge, and what holds a pull request with nothing to fix", () => {

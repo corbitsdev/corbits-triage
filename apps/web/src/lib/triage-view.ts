@@ -4,7 +4,7 @@ import { type HubApproval, type PrItem } from "./hub-api.ts";
 
 export { relativeTime } from "./duration.ts";
 
-function lowerFirst(text: string): string {
+export function lowerFirst(text: string): string {
   return text.charAt(0).toLowerCase() + text.slice(1);
 }
 

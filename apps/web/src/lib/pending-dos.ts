@@ -133,7 +133,7 @@ export function pendingDos(item: PrItem): PendingDo[] {
 }
 
 /**
- * What a person is offered on a held Do: "Do it" runs it once as them, which needs the Do's grant; "Always" also lets
+ * What a person is offered on a held Do: its button runs it once as them, which needs the Do's grant; "Always" also lets
  * Triage do its kind on its own in the repository, which needs grant create and a kind the policy file names
  * (`wanted`), and never for a kind this verdict always holds.
  */

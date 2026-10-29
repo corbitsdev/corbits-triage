@@ -7,11 +7,11 @@ import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
 import { errorText } from "@corbits/common";
 import { linearIssues } from "../lib/linked-issue.ts";
-import { checkLabel } from "../lib/pack-prose.ts";
+import { checkLabel, DO_NAMES } from "../lib/pack-prose.ts";
 import { heldText, lineText, passedChecks, type HeldChoice, type PaneStatus, type Problem, type Severity } from "../lib/pane-report.ts";
 import { heldOffer } from "../lib/pending-dos.ts";
 import { useAllowed } from "../lib/tenant-entities.ts";
-import { checkMeasuredText, prHref } from "../lib/triage-view.ts";
+import { checkMeasuredText, lowerFirst, prHref } from "../lib/triage-view.ts";
 import { CitedEvidence } from "./CitedEvidence.tsx";
 import { DetailsBoundary } from "./DetailsBoundary.tsx";
 import { ChevronIcon } from "./inbox-icons.tsx";
@@ -64,8 +64,8 @@ function HeldRow({ choice, wanted, disabled, onApprove }: HeldRowProps) {
         {heldText(pending)}
         {pending.until === null ? <span className="held-why">{pending.reason}</span> : null}
       </span>
-      {offer.doIt && <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onApprove(choice, false)}>Do it</Button>}
-      {offer.always && <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onApprove(choice, true)}>Always, in this repository</Button>}
+      {offer.doIt && <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onApprove(choice, false)}>{DO_NAMES[pending.kind]}</Button>}
+      {offer.always && <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onApprove(choice, true)}>Always {lowerFirst(DO_NAMES[pending.kind])} for this repository</Button>}
     </li>
   );
 }

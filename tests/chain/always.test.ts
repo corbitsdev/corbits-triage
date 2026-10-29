@@ -1,4 +1,4 @@
-// A held Do the inbox's "Always, in this repository" lets Triage do on its own.
+// A held Do the inbox's "Always request review for this repository" lets Triage do on its own.
 import { expect, test } from "bun:test";
 import { allowTriageAutomation, approveHeldDo } from "../../apps/web/src/lib/hub-api.ts";
 import type { Write } from "./github.ts";
@@ -11,7 +11,7 @@ function reviewRequests(writes: readonly Write[]): Write[] {
   return writes.filter((write) => write.method === "POST" && write.path.endsWith("/requested_reviewers"));
 }
 
-/** As the inbox's "Always, in this repository" does, while the workspace still asks before every action but posting. */
+/** As the inbox's "Always request review for this repository" does, while the workspace still asks before every action but posting. */
 const alwaysAllowed = once(async function alwaysAllowed() {
   const { transport, tenantId } = chain.workspace;
   const missed = github.misses.length;

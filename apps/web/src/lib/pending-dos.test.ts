@@ -128,7 +128,7 @@ describe("pendingDos", () => {
 });
 
 describe("heldOffer", () => {
-  test("Do it needs the Do's grant; Always also needs grant create and a kind the policy names, and never shows for a kind the verdict always holds", () => {
+  test("Running it once needs the Do's grant; Always also needs grant create and a kind the policy names, and never shows for a kind the verdict always holds", () => {
     const wanted = ["request-review", "merge", "close"] as const;
     const both = { holdsDo: true, createsGrants: true, wanted };
     expect(heldOffer({ list: "fail", kind: "request-review" }, both)).toEqual({ doIt: true, always: true });
