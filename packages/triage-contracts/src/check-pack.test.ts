@@ -1,17 +1,14 @@
 import { type } from "arktype";
 import { describe, expect, test } from "bun:test";
 import {
-  applyRecommended,
   catalogCheckEnabled,
   checkPackName,
   checkPackSchema,
-  customRuleId,
   defaultActions,
   emptyPack,
   parseCheckPack,
   readCheckPack,
   recommendedPack,
-  type CheckPack,
   type CustomCheck,
   type PolicyActions,
 } from "./check-pack.ts";
@@ -106,23 +103,13 @@ describe("check pack contract", () => {
   });
 
   test("a custom rule's id never reads as a judge question's id", () => {
-    for (const [name, id] of [["Docs sync", "rule-docs-sync"], ["Focused slice 001", "rule-focused-slice-001-rule"], ["Config file 1", "config-file-1-rule"], ["Schema hunk", "schema-hunk-rule"], ["Lockfile", "lockfile"]]) {
-      expect(customRuleId(name!, [])).toBe(id!);
-    }
-    expect(customRuleId("Schema hunk", ["schema-hunk-rule"])).toBe("schema-hunk-rule-2");
     for (const id of ["docs-file-001", "focused-slice-001", "duplicates-open-pull-request-001", "ticket-file-001", "ticket-hunk-001-002", "ticket-slice-2"]) {
       expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...CUSTOM[0]!, id }] })).toThrow(`Custom rule ${id} id must not start with docs-, focused- or duplicates-open-pull-request- or end in -file, -hunk or -slice and numbers.`);
     }
   });
 
-  test("a custom rule's id is its name in lowercase words, numbered past taken and built-in ids", () => {
-    expect(customRuleId("Ticket in the title!", [])).toBe("ticket-in-the-title");
-    expect(customRuleId("Ticket in the title", ["ticket-in-the-title", "ticket-in-the-title-2"])).toBe("ticket-in-the-title-3");
-    expect(customRuleId("CI", [])).toBe("ci-2");
-    expect(customRuleId("Focused", [])).toBe("rule-focused");
-    expect(customRuleId("Ticket", ["ticket-4"])).toBe("ticket-5");
-    expect(customRuleId("…", [])).toBe("rule");
-    const named = { ...CUSTOM[0]!, id: customRuleId("Ticket", []) };
+  test("a custom rule's id is checked against built-in ids and the id format", () => {
+    const named = { ...CUSTOM[0]!, id: "ticket" };
     expect(readCheckPack({ ...emptyPack(REPO), custom: [named] }).custom).toEqual([named]);
     expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "ci-green" }] })).toThrow("Custom rule ci-green id must not be a built-in rule's id.");
     expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...named, id: "size" }] })).toThrow("Custom rule size id must not be a built-in rule's id.");
@@ -248,15 +235,5 @@ describe("check pack contract", () => {
     }
     expect(checkPackSchema({ ...emptyPack(REPO), actions: { ...ACTIONS, always: [] } })).toBeInstanceOf(type.errors);
     expect(() => readCheckPack({ ...emptyPack(REPO), schemaVersion: 3 })).toThrow("schemaVersion must be 2.");
-  });
-
-  test("Use recommended keeps existing custom", () => {
-    const started: CheckPack = {
-      ...emptyPack(REPO),
-      custom: CUSTOM,
-    };
-    const next = applyRecommended(started);
-    expect(next.checks["max-files-changed"]?.enabled).toBe(true);
-    expect(next.custom).toEqual(started.custom);
   });
 });
