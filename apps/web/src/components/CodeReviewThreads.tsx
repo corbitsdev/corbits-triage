@@ -52,7 +52,7 @@ function Thread({ comment, review }: { comment: CodeReviewComment; review: CodeR
           <p className="pb-w">{comment.title}</p>
           <Markdown text={comment.body} />
           <p className="pb-c">
-            {comment.priority === undefined ? null : <b>P{comment.priority}</b>}
+            <b>P{comment.priority}</b>
             <span className="mono">{location(comment)}</span>
             {comment.unverified ? <span>{UNVERIFIED_FINDING}</span> : null}
           </p>

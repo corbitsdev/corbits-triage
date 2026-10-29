@@ -788,7 +788,7 @@ export async function triagePullRequest(transport: Transport, tenantId: string, 
   await transport.fetch("POST", `/api/integrations/github-triage/${enc(requireTenantId(tenantId))}`, { repo: clean, number });
 }
 
-export type CodeReviewComment = { path: string; start: number; end: number; title: string; body: string; priority?: number; quoted?: string; unverified?: true };
+export type CodeReviewComment = { path: string; start: number; end: number; title: string; body: string; priority: number; quoted?: string; unverified?: true };
 export type CodeReviewRun = {
   status: "running" | "completed" | "failed";
   headSha: string;

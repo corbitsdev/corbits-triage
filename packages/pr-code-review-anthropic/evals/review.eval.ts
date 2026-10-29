@@ -538,10 +538,10 @@ function stageTotals(stage: Stage, results: readonly E2EResult[], keys: readonly
 function baselineCase(result: E2EResult, key: CaseKey) {
   const final = result.stages.final;
   const caught = final?.caught ?? [];
-  const review = result.outputs?.review as { comments: (Finding & { priority?: number })[] } | undefined;
-  function placed(comment: Finding & { priority?: number }, index: number) {
+  const review = result.outputs?.review as { comments: Finding[] } | undefined;
+  function placed(comment: Finding, index: number) {
     const outcome = final?.outcomes[index];
-    return { path: comment.path, line: comment.start, ...(comment.priority !== undefined && { priority: comment.priority }), ...(outcome?.kind === "caught" && { bug: outcome.bug }) };
+    return { path: comment.path, line: comment.start, priority: comment.priority, ...(outcome?.kind === "caught" && { bug: outcome.bug }) };
   }
   return {
     id: result.id,

@@ -117,8 +117,7 @@ alarms) and its total cost.
 `--e2e` run with no model calls. Each final review comment gets its group's top
 finder confidence, finder agreement and priority from the saved step outputs;
 every cutoff (a confidence for comments one finder reported, one for those both
-did, and a highest priority) is scored as the final review is. A comment
-without a priority passes only a cutoff that allows any priority. The run is
+did, and a highest priority) is scored as the final review is. The run is
 refused unless keeping every comment scores as the saved run did and every
 comment carries a confidence. It prints the precision and recall frontier and
 the loosest cutoff at a fixed 85% precision bar, with recall by reach, clean
