@@ -9,10 +9,10 @@ type ArtifactRef = { id: string; version: number };
  * What a Triage comment was written for, kept in its marker so a later run can tell what changed. `repo` is the stored
  * policy a comment written before the policy file was the only policy names, so the comment that replaces it says so.
  * `changed` is the note on what reached the head since the verdict before, so a rerun on the same head says it again.
- * `shows` is set by a verdict write, so a comment that shows progress under the header of the verdict it held, or was
- * written before the field, never reads as showing that verdict.
+ * `shows` says what the comment shows: its verdict, or progress under the header of the verdict it held. A comment
+ * written before the field shows its verdict.
  */
-export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string; changed?: string; shows?: "verdict" };
+export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string; changed?: string; shows?: "verdict" | "progress" };
 
 /** One of Triage's marked comments as a host lists it, oldest first. */
 export type MarkedComment = { id: number; body: string; updatedAt?: string };
@@ -40,7 +40,7 @@ const TriageHeaderShape = type({
   policy: type({ "repo?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) }).or("null"),
   verdict: "string",
   "changed?": "string",
-  "shows?": "'verdict'",
+  "shows?": "'verdict' | 'progress'",
 });
 
 /** How a host writes the header on a Triage comment's first line, so a later run can read it back. */
@@ -168,29 +168,24 @@ export async function upsertMarked(host: CommentHost, body: string, current: Mar
   return { commentId: await host.post(body), updated: false };
 }
 
-function shownless({ shows: _shows, ...header }: TriageHeader): TriageHeader {
-  return header;
-}
-
 /**
  * Edits the current comment to `text` without a verdict of its own, as while a verdict is in progress, and writes nothing
- * when it already says that. The comment keeps the header of the verdict it held, without `shows`, so the verdict that
- * replaces it still says what changed since that one. With `keepVerdictOn`, a comment that shows that
+ * when it already says that. The comment keeps the header of the verdict it held, showing progress, so the verdict
+ * that replaces it still says what changed since that one. With `keepVerdictOn`, a comment that shows that
  * verdict for that head under that policy is kept.
  */
 export async function writeUnheadedComment(host: CommentHost, markers: MarkerFormat, plainMarker: string, current: MarkedComment[], text: string, keepVerdictOn?: KeptVerdict): Promise<WrittenComment> {
   const latest = current[0];
   const kept = latest && markers.headerOf(latest.body);
-  if (kept?.shows === "verdict" && kept.head === keepVerdictOn?.head && kept.verdict === keepVerdictOn.verdict && samePolicy(kept.policy, keepVerdictOn.policy)) return { commentId: latest.id, updated: false, kept: "verdict" };
-  const body = `${kept ? markers.current(shownless(kept)) : plainMarker}\n${text}`;
+  if (kept && kept.shows !== "progress" && kept.head === keepVerdictOn?.head && kept.verdict === keepVerdictOn.verdict && samePolicy(kept.policy, keepVerdictOn.policy)) return { commentId: latest.id, updated: false, kept: "verdict" };
+  const body = `${kept ? markers.current({ ...kept, shows: "progress" }) : plainMarker}\n${text}`;
   if (latest?.body === body) return { commentId: latest.id, updated: false, ...(latest.updatedAt && { unchanged: `unchanged since ${latest.updatedAt}` }) };
   return upsertMarked(host, body, current);
 }
 
 /**
- * Writes nothing when Triage's own comment already says this for this head, policy versions and verdict, but its marker
- * when that does not yet say it shows the verdict; supersedes it when only the rules changed the verdict on the same
- * head; otherwise edits it in place. `own` holds only comments
+ * Writes nothing when Triage's own comment already says this for this head, policy versions and verdict; supersedes it
+ * when only the rules changed the verdict on the same head; otherwise edits it in place. `own` holds only comments
  * Triage itself wrote, so a copied marker never decides what Triage writes. The earlier comment is marked superseded
  * before the new one is posted, so a retry never leaves two current comments.
  */
@@ -202,13 +197,7 @@ export async function writeHeadedComment(host: CommentHost, markers: MarkerForma
   const shown = note ? `${text}\n\n${note}` : text;
   const noted: TriageHeader = { ...header, ...(note && { changed: note }), shows: "verdict" };
   const since = latest && unchangedSince(markers, latest, header, shown);
-  if (latest && since) {
-    const unchanged = { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
-    if (before?.shows === "verdict") return unchanged;
-    // A verdict written before `shows` existed gets the full marker in place, its text kept, so a later progress keeps it.
-    const upgraded = await host.edit(latest.id, `${markers.current(noted)}\n${latest.body.slice(latest.body.indexOf("\n") + 1)}`);
-    return upgraded === undefined ? unchanged : { commentId: upgraded, updated: true };
-  }
+  if (latest && since) return { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
   const superseded = before !== undefined && supersedes(before, header)
     && await host.edit(latest!.id, `${markers.superseded(before)}\nSuperseded by the comment below.`) !== undefined;
   const earlier = earlierHeader(markers, own, current, superseded);
