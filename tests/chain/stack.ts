@@ -1,7 +1,7 @@
 // The live chain on one machine: a migrated database of its own, the hub process with its local sidecars serving a
 // portal build, and a workspace set up through the same routes and portal code a person's browser uses.
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
@@ -15,6 +15,8 @@ import { connectGithubApp } from "../../apps/web/src/lib/github-manifest.ts";
 import type { FakeGithub } from "./github.ts";
 
 const ROOT = resolve(import.meta.dir, "../..");
+/** Each hub's full log, kept after the run for CI to upload; `tmp/` is gitignored. */
+export const LOG_DIR = join(ROOT, "tmp", "chain-logs");
 const ADMIN_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 // The hub and its sidecars shell out to bun, which needs it on PATH and a HOME for its cache.
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
@@ -84,17 +86,18 @@ function freePort(): number {
   return port;
 }
 
-async function collect(stream: ReadableStream<Uint8Array>, lines: string[]): Promise<void> {
+async function collect(stream: ReadableStream<Uint8Array>, lines: string[], file: string): Promise<void> {
   const decoder = new TextDecoder();
   let partial = "";
   for await (const chunk of stream) {
     const parts = (partial + decoder.decode(chunk, { stream: true })).split("\n");
     partial = parts.pop()!;
     lines.push(...parts);
+    if (parts.length > 0) appendFileSync(file, `${parts.join("\n")}\n`);
   }
 }
 
-export type Hub = { origin: string; dataDir: string; logs: string[]; stop: () => Promise<void> };
+export type Hub = { origin: string; dataDir: string; logs: string[]; logFile: string; stop: () => Promise<void> };
 
 /** The hub as the image starts it, serving the portal build in `portalDir`, with its sidecar a local process under its data directory. */
 export async function startHub(database: Database, github: FakeGithub, portalDir: string, env: Record<string, string> = {}): Promise<Hub> {
@@ -102,6 +105,8 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const origin = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "corbits-chain-"));
   const logs: string[] = [];
+  mkdirSync(LOG_DIR, { recursive: true });
+  const logFile = join(LOG_DIR, `hub-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}.log`);
   const child = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
     cwd: ROOT,
     env: {
@@ -124,8 +129,8 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
     stdout: "pipe",
     stderr: "pipe",
   });
-  void collect(child.stdout, logs);
-  void collect(child.stderr, logs);
+  void collect(child.stdout, logs, logFile);
+  void collect(child.stderr, logs, logFile);
   async function stop(): Promise<void> {
     child.kill("SIGTERM");
     await Promise.race([child.exited, Bun.sleep(STOP_MS)]);
@@ -135,14 +140,28 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const deadline = Date.now() + READY_MS;
   while (Date.now() < deadline && child.exitCode === null) {
     try {
-      if ((await fetch(`${origin}/api/me`)).status === 401) return { origin, dataDir, logs, stop };
+      if ((await fetch(`${origin}/api/me`)).status === 401) return { origin, dataDir, logs, logFile, stop };
     } catch {
       // Still binding its socket.
     }
     await Bun.sleep(POLL_MS);
   }
   await stop();
-  throw new Error(`The hub did not start:\n${logs.join("\n")}`);
+  throw new Error(`The hub did not start.\n${hubLogTail({ logs, logFile })}`);
+}
+
+/** Where the hub's full log is, and its last lines, for a failure message. */
+export function hubLogTail({ logs, logFile }: Pick<Hub, "logs" | "logFile">): string {
+  return `Hub log: ${logFile}\n${logs.slice(-80).join("\n")}`;
+}
+
+/** Thaws a frozen process from a `finally`, where a failure here (the process already gone) must not replace the error being thrown. */
+export function resume(pid: number): void {
+  try {
+    process.kill(pid, "SIGCONT");
+  } catch (err) {
+    console.error(`Could not resume process ${pid}: ${String(err)}`);
+  }
 }
 
 /** The portal's transport, signed in as one person by their session cookie. */

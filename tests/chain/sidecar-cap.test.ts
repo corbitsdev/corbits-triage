@@ -11,7 +11,7 @@ import { parseTriageState, triageStateName, WAITING_FOR_CAPACITY, type PrTriageR
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { DEFAULT_MAIL_HOLD_MS } from "../../apps/hub/src/timings.ts";
 import { stubModel } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, createDatabase, deliver, dropDatabase, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 setDefaultTimeout(10 * 60_000);
 
@@ -81,7 +81,7 @@ async function until<T>(what: string, read: () => Promise<T | undefined>, ms = 1
     if (value !== undefined) return value;
     await Bun.sleep(POLL_MS);
   }
-  throw new Error(`Timed out waiting for ${what}.\n${hub.logs.slice(-80).join("\n")}`);
+  throw new Error(`Timed out waiting for ${what}.\n${hubLogTail(hub)}`);
 }
 
 async function triageRow(repo: string): Promise<PrTriageRow | undefined> {

@@ -1,7 +1,7 @@
 // A listener whose sidecar stops answering.
 import { expect, test } from "bun:test";
 import { TRIAGE_LISTENERS, VERDICT_LABELS } from "@corbits/triage-contracts";
-import { TIMINGS } from "./stack.ts";
+import { resume, TIMINGS } from "./stack.ts";
 import { chainStack, SETTLE_MS, DISCONNECTED, isLiveDeployment, once } from "./chain.ts";
 import { sha, pullOf, comments, labelled } from "./github.ts";
 
@@ -33,7 +33,7 @@ const disconnected = once(async function disconnected() {
       return logged("listener_disconnected").find((entry) => entry["deployment"] === listener.id);
     }, DISCONNECT_MS);
   } finally {
-    process.kill(listener.pid, "SIGCONT");
+    resume(listener.pid);
   }
   const head = sha("disconnected-1");
   const missed = github.misses.length;

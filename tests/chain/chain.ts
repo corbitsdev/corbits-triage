@@ -12,7 +12,7 @@ import { parseTriageState, triageStateName, type PrTriageRow } from "@corbits/tr
 import { saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, createDatabase, deliver, dropDatabase, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 const MANAGER = "triage-manager-github";
 // The deadline on a manager settling: every deployment starts a sidecar process of its own, and a judged pull request
@@ -152,7 +152,7 @@ export function chainStack(env: Record<string, string> = {}) {
       if (value !== undefined) return value;
       await Bun.sleep(POLL_MS);
     }
-    throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}\nHub:\n${hub.logs.slice(-80).join("\n")}`);
+    throw new Error(`Timed out waiting for ${what}.\nRuns:\n${await runEvents()}\nGitHub misses: ${github.misses.join(", ")}\n${hubLogTail(hub)}`);
   }
 
   async function rows(query: string): Promise<Record<string, unknown>[]> {
