@@ -6,7 +6,7 @@ import { CircleDot, FileText, Info, type LucideIcon } from "lucide-react";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { usePortal } from "../lib/portal.tsx";
 import { useHandledMark, usePullPageItems, useQueueLoading } from "../lib/open-pulls.ts";
-import { useApprovals } from "../lib/tenant-entities.ts";
+import { useApprovals, useHoldsDo } from "../lib/tenant-entities.ts";
 import { QUEUE_STATE_LABEL, type CheckResult, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { errorText } from "@corbits/common";
@@ -329,11 +329,13 @@ export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
   onSkipDo: (pending: PendingDo) => void;
 }) {
   const { item, closed, locked, canMerge } = controls;
+  const holdsMerge = useHoldsDo("merge", item.repo);
   if (mode === null) return null;
   const dos = closed || mode.mode !== "waiting" ? [] : pendingDos(item);
+  const heldMerge = holdsMerge && dos.some((pending) => pending.kind === "merge" && pending.until === null);
   return (
     <PrActionCard mode={mode} dos={dos} disabled={closed || !item.number || item.running || locked} canMerge={canMerge} onApprove={onApproveDo} onSkip={onSkipDo}>
-      <PostingControls {...controls} heldMerge={dos.some((pending) => pending.kind === "merge")} />
+      <PostingControls {...controls} heldMerge={heldMerge} />
     </PrActionCard>
   );
 }
