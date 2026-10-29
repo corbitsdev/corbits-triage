@@ -1,10 +1,11 @@
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import { type } from "arktype";
-import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, triageEventsOf, trustedRequestOf, visibleText, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
+import { ACTION_KINDS, catalogCheckEnabled, classificationSources, customCheckEnabled, DEFAULT_RISK, emptyPack, isPatternsCheck, PolicySourceShape, repoPolicy, repoSourceOf, threadsUnread, triageEventsOf, trustedRequestOf, visibleText, type ActionKind, type CheckPack, type PolicySource, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { repoDocs, type ClosedPr, type IssueComment, type RepoDocsPage, type Review, type RuleSpan } from "@corbits/github-reads";
 import { isRecord } from "@corbits/common";
 import { DEPLOYMENT_UNREADABLE, hasModelChecks, NEEDS_SETUP_REASON, packFromInput, type PrFacts } from "../logic/checks.js";
+import { packMerges } from "../logic/actions.js";
 import { asText } from "../logic/extract.js";
 import { addFilesPage, assembleItem, fileFacts, FIRST_FILES_PAGE, optionalCount, namedTeams, type CheckRun, type FilesCursor, type FilesPage, type ListedFiles, type PrData, type PullData, type RepoDocs } from "../logic/facts.js";
 import { couldRepeat, MAX_OPEN_PULLS, overlapping, type OpenPull, type OpenPulls, type PullPrint } from "../logic/duplicates.js";
@@ -316,7 +317,12 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     return [{ number: n, title: visibleText(pr.title), headSha: pr.sha, base: pr.base, paths: files.map((file) => file.path) }];
   }
 
-  const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...teamsCalls()]);
+  const merges = packMerges(pack);
+  function threadsCall(n: number): ToolCall[] {
+    return merges ? [call(tool("review_threads_hold"), { repo, number: n }, `threads:${n}`)] : [];
+  }
+
+  const r2 = await runAll(host, [...numbers.flatMap(checkCall), ...numbers.flatMap(threadsCall), ...teamsCalls()]);
   for (const [id, result] of await runChunked(host, historyCalls())) r2.set(id, result);
   const duplicates: DuplicateReads = { prints: catalogCheckEnabled(pack, "no-duplicate"), paths: catalogCheckEnabled(pack, "duplicates-open-pull-request") };
   const openPulls = duplicates.prints || duplicates.paths ? await readOpenPulls(host, tool, repo, numbers.flatMap(ownPull), duplicates) : undefined;
@@ -329,6 +335,16 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
       if (!Array.isArray(read?.commits) || read.truncated !== false) return [path, null];
       return [path, fixCount(read.commits.map((commit) => commit.message ?? ""))];
     }));
+  }
+
+  /** A read that did not answer holds the merge as one that found threads open would. */
+  function mergeHoldOf(n: number): string | undefined {
+    if (!merges) return undefined;
+    const result = r2.get(`threads:${n}`);
+    const hold = data<{ hold?: unknown }>(result)?.hold;
+    if (hold === null) return undefined;
+    if (typeof hold === "string") return hold;
+    return threadsUnread(result?.isError ? asText(result.content) : `${tool("review_threads_hold")} result is unreadable`);
   }
 
   function unreadParts(n: number): ListPart[] {
@@ -365,7 +381,8 @@ async function fetchTargets({ host, stamp }: Host, repo: string, numbers: number
     const openPullsRead = openPulls?.get(n);
     // Only where CI green holds the verdict: the head waits as pending and its manager reads it again once the grace ends.
     const started = stamp.ciStarting && item.facts.checks === "none" && catalogCheckEnabled(pack, "ci-green") ? { ...item.facts, checks: "pending" as const } : item.facts;
-    const facts = openPullsRead ? { ...started, openPulls: openPullsRead } : started;
+    const mergeHold = mergeHoldOf(n);
+    const facts = { ...started, ...(openPullsRead && { openPulls: openPullsRead }), ...(mergeHold !== undefined && { mergeHold }) };
     return { ...item, facts, automatic: stamp.automatic, ...(stamp.source && { source: stamp.source }), ...(stamp.repoSource !== "github" && { repoSource: stamp.repoSource }), ...(stamp.noWait && { noWait: true as const }), ...(stamp.blocksOn && { blocksOn: true as const }), ...(stamp.appLogin && { appLogin: stamp.appLogin }) };
   }
 

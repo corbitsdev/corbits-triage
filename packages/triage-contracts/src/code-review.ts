@@ -9,8 +9,20 @@ export const INCOMPLETE_NOTE = "This review did not read the whole change; appro
 /** Shown with a finding none of whose file's lines could be read. */
 export const UNVERIFIED_FINDING = "Not checked against the file";
 
+/** Why a merge waits on the review threads, given who opened each unresolved one; undefined when none is. */
+export function threadsHold(openers: readonly string[]): string | undefined {
+  if (openers.length === 0) return undefined;
+  const noun = openers.length === 1 ? "thread" : "threads";
+  return `Merge waits for ${openers.length} unresolved review ${noun}, opened by ${[...new Set(openers)].join(", ")}.`;
+}
+
+/** Why a merge waits when the review threads could not be read: it never goes ahead unread. */
+export function threadsUnread(reason: string): string {
+  return `Merge waits: Triage couldn't read the review threads (${reason}).`;
+}
+
 /**
- * What became of a finding's thread on the host: the author resolved it, the code under it changed, someone other than
+ * What became of a finding's thread on the host:the author resolved it, the code under it changed, someone other than
  * Triage replied, or none of these yet.
  */
 export const THREAD_STATES = ["resolved", "outdated", "replied", "untouched"] as const;

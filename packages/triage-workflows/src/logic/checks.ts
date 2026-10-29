@@ -111,6 +111,8 @@ export interface PrFacts {
   patterns?: Record<string, PatternsResult>;
   /** Set only when a duplicate rule is on: the other open pull requests on the same base branch, or why they were not read. */
   openPulls?: OpenPulls;
+  /** Set only when the policy lists a merge: why the merge waits on the review threads, while it does. */
+  mergeHold?: string;
 }
 
 /** Requested changes the author has since pushed to or replied on, so they wait on the reviewer again. */

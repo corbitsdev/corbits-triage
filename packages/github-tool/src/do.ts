@@ -14,6 +14,7 @@ import {
   REQUEST_CHANGES_DO_MARKER,
   reviewedOnHead,
   summarizeChecks,
+  unresolvedThreadsHold,
   type GithubFetch,
 } from "@corbits/github-reads";
 import {
@@ -158,7 +159,7 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (posted) return { status: "satisfied", result: { commentId: posted.id } };
       return { status: "done", result: await createIssueComment(gh, { repo, number, body: `${marker}\n${target.body}` }) };
     }
-    // CI and reviews are read again here because a held merge can be approved long after its verdict; branch protection stays the backstop.
+    // CI, reviews and review threads are read again here because a held merge can be approved long after its verdict; branch protection stays the backstop.
     case "merge": {
       onHead(pr.sha, request, step);
       const ci = summarizeChecks(await getChecks(gh, repo, step.headSha));
@@ -166,6 +167,8 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       const reviews = await getReviews(gh, repo, number, login);
       const requested = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
       if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
+      const threads = await unresolvedThreadsHold(gh, repo, number);
+      if (threads !== undefined) throw new DoNotRunnableError(threads);
       // Execute runs before the mirror, and a protected branch refuses the merge while triage's own request on this head stands; one on an earlier head is the mirror's to take back.
       const ownRequest = reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha);
       const kept = ownRequest ? await takeBackOwnRequest(gh, { repo, number, login, sha: step.headSha }) : undefined;

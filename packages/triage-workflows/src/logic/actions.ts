@@ -35,7 +35,8 @@ type Place = { list: VerdictWord; index: number; kind: ActionKind; reason: strin
 /** `held` marks a Do the run does not write unattended: it waits for the approval mail of a person holding its grant. */
 export type SuggestedDo = Place & { effectId: string; target: ResolvedTarget; held?: true };
 
-export type SuggestedAction = SuggestedDo | (Place & { skipped: true });
+/** `waits` marks a step skipped until the pull request allows it, which the comment names. */
+export type SuggestedAction = SuggestedDo | (Place & { skipped: true; waits?: true });
 
 export interface ActionInput {
   facts: PrFacts;
@@ -277,6 +278,11 @@ export function packApproves(pack: CheckPack): boolean {
   return lists(pack, "approve");
 }
 
+/** Only a policy that merges reads the review threads that hold a merge. */
+export function packMerges(pack: CheckPack): boolean {
+  return lists(pack, "merge");
+}
+
 /**
  * Whether anything failed is still the author's to fix in a pack that requests changes; once nothing is, or the pack no
  * longer requests changes, the App's standing requests are taken back. Undefined when there is nothing to take back or decide.
@@ -286,13 +292,18 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
   return changesFor(input).length > 0;
 }
 
-/** An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. */
-export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, ci: PrFacts["checks"]): SuggestedAction[] {
+/**
+ * An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. A
+ * merge the review threads hold waits after the CI hold, skipped rather than held, so no person can approve it past
+ * them and a later pass writes it under the same effect id once they allow it.
+ */
+export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, { checks: ci, mergeHold }: Pick<PrFacts, "checks" | "mergeHold">): SuggestedAction[] {
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
     if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, ...approval };
     if (ci === "pending") return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
     if (ci !== "success" && action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
+    if (action.kind === "merge" && mergeHold !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, waits: true, reason: mergeHold };
     return action;
   });
 }

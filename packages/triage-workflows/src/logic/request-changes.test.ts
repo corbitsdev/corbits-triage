@@ -43,7 +43,7 @@ function input(over: Partial<PrFacts>, using = pack) {
 
 function suggested(over: Partial<PrFacts>, using = pack) {
   const { rendered, input: actionInput } = input(over, using);
-  return heldApprovals(evaluateActions(actionInput), approvalHeldBy(rendered.verdict, actionInput.facts.checks));
+  return heldApprovals(evaluateActions(actionInput), approvalHeldBy(rendered.verdict, actionInput.facts.checks), actionInput.facts);
 }
 
 const APP = "corbits-triage[bot]";

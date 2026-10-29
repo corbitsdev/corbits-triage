@@ -82,10 +82,19 @@ function refsChangedOf(p: Json): HookIntake | null {
   return repo !== null && branches.length > 0 ? { kind: "policy-push", push: { repo }, branches } : null;
 }
 
+/**
+ * Resolving or reopening a thread is a comment edit that leaves its text as it was; it is GitHub's review thread event.
+ * An edit of the text wakes nothing, as before.
+ */
+function threadMapped(p: Json): Mapped | undefined {
+  if (typeof p.comment?.text !== "string" || p.previousComment !== p.comment.text) return undefined;
+  return { event: "pull_request_review_thread", action: p.comment.threadResolved === true ? "resolved" : "unresolved", review: null };
+}
+
 export function normalizeBitbucket(eventKey: string, deliveryId: string, p: Json): HookIntake | null {
   if (eventKey === "pr:merged") return mergedOf(p);
   if (eventKey === "repo:refs_changed") return refsChangedOf(p);
-  const mapped = PULL_REQUEST[eventKey];
+  const mapped = eventKey === "pr:comment:edited" ? threadMapped(p) : PULL_REQUEST[eventKey];
   if (!mapped) return null;
   const mail = prMail(eventKey, deliveryId, p, mapped);
   return mail && { kind: "pr", mail };

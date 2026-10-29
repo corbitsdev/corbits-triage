@@ -165,8 +165,16 @@ and the hex HMAC of the raw body, in `X-Hub-Signature`, with the event in
 
 - Pull request: `pr:opened`, `pr:modified`, `pr:from_ref_updated`,
   `pr:reviewer:approved`, `pr:reviewer:unapproved`, `pr:reviewer:needs_work`,
-  `pr:comment:added`, `pr:merged`, `pr:declined`, `pr:deleted`
+  `pr:comment:added`, `pr:comment:edited`, `pr:merged`, `pr:declined`,
+  `pr:deleted`
 - Repository: `repo:refs_changed`
+
+Resolving or reopening a comment thread sends `pr:comment:edited` with the
+comment's text unchanged (`previousComment` equals `comment.text`); only that
+wakes triage, so a held merge goes ahead once its last inline thread is
+resolved. An edit of the text wakes nothing. A webhook created before
+`pr:comment:edited` was listed gets it when the instance is connected again,
+which saves every webhook Triage created; one set up by hand needs it added.
 
 Data Center sends no webhook when a build finishes, so for a head waiting for
 CI the hub's reconcile pass reads its build statuses every 5 minutes and wakes

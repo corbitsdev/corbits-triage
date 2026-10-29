@@ -5,10 +5,11 @@ import { doMarker, executeDo, HeadMovedError, type DoStep, type ResolvedTarget }
 
 type FakeComment = { id: number; user: { login: string; type: string }; body: string };
 type FakeReview = { id: number; user: { login: string; type: string }; state: string; commit_id: string; body?: string };
+type FakeThread = { isResolved: boolean; isOutdated: boolean; login: string };
 
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
-function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[] } = {}) {
+function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[]; threads?: FakeThread[] | "refused" } = {}) {
   const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc0000000000000000000000000000000000000" }, base: { repo: { id: 1 } }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" })), ...(seed.approvals ?? [])];
@@ -16,6 +17,11 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
   async function gh(path: string, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+    if (path === "/graphql") {
+      if (seed.threads === "refused") return new Response("{}", { status: 502 });
+      const nodes = (seed.threads ?? []).map(({ isResolved, isOutdated, login }) => ({ isResolved, isOutdated, opener: { nodes: [{ databaseId: 1, createdAt: "2026-10-29T00:00:00Z", author: { login } }] }, comments: { nodes: [] } }));
+      return Response.json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes } } } } });
+    }
     if (method !== "GET") writes.push({ method, path, body });
     if (path.endsWith("/pulls/8")) {
       if (method === "PATCH") pr.state = body.state;
@@ -116,6 +122,14 @@ describe("executeDo", () => {
     const changes = fakeGithub({ approvals: [{ id: 9, user: { login: "maya", type: "User" }, state: "CHANGES_REQUESTED", commit_id: "abc0000000000000000000000000000000000000" }] });
     await expect(run(changes.gh, step("merge", {}))).rejects.toThrow("changes are requested by maya");
     expect([...pending.writes, ...changes.writes]).toEqual([]);
+  });
+
+  test("a merge waits while a review thread is neither resolved nor outdated, or the threads cannot be read", async () => {
+    const open = fakeGithub({ threads: [{ isResolved: false, isOutdated: false, login: "maya" }, { isResolved: true, isOutdated: false, login: "li" }, { isResolved: false, isOutdated: true, login: "li" }] });
+    await expect(run(open.gh, step("merge", {}))).rejects.toThrow("Merge waits for 1 unresolved review thread, opened by maya.");
+    const refused = fakeGithub({ threads: "refused" });
+    await expect(run(refused.gh, step("merge", {}))).rejects.toThrow("Merge waits: Triage couldn't read the review threads");
+    expect([...open.writes, ...refused.writes]).toEqual([]);
   });
 
   test("triage's own request for changes does not stop a merge: one on this head is taken back first and marked as triage's, one on an earlier head is the mirror's", async () => {

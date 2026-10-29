@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { minimatch } from "minimatch";
-import { asRecord, compare } from "@corbits/common";
-import { parseFindingHeadline } from "@corbits/triage-contracts/code-review";
+import { asRecord, compare, errorText } from "@corbits/common";
+import { parseFindingHeadline, threadsHold, threadsUnread } from "@corbits/triage-contracts/code-review";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
 
@@ -453,6 +453,62 @@ export async function readMergeStates(gh: GithubFetch, repo: string, numbers: re
   if (errors.some((error) => typeof error.path?.[1] !== "string")) return [];
   const failed = new Set(errors.map((error) => error.path?.[1]));
   return Object.entries(data.repository).flatMap(([alias, node]) => (node === null || failed.has(alias) ? [] : [{ number: node.number, open: node.state === "OPEN", mergeable: MERGEABLE[node.mergeable], mergeableState: node.mergeStateStatus.toLowerCase(), reviewDecision: node.reviewDecision }]));
+}
+
+const ThreadComment = type({ databaseId: "number", createdAt: "string", author: type({ login: "string" }).or("null") });
+const ThreadsReply = type({
+  data: {
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          pageInfo: { hasNextPage: "boolean", endCursor: "string | null" },
+          nodes: type({ isResolved: "boolean", isOutdated: "boolean", opener: { nodes: ThreadComment.array() }, comments: { nodes: ThreadComment.array() } }).array(),
+        },
+      },
+    },
+  },
+});
+export type ReviewThread = (typeof ThreadsReply.infer)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][number];
+
+// A thread's state needs only the comment that opened it and its newest reply, so the newest page of comments is enough.
+const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      isResolved isOutdated
+      opener: comments(first: 1) { nodes { databaseId createdAt author { login } } }
+      comments(last: 100) { nodes { databaseId createdAt author { login } } }
+    }
+  } } }
+}`;
+
+/** Pages of 100 review threads read at most; a pull request with more is not read at all. */
+const THREAD_PAGES = 10;
+
+/** Every review thread of the pull request; only GraphQL tells whether a thread is resolved. */
+export async function listReviewThreads(gh: GithubFetch, repo: string, number: number): Promise<ReviewThread[]> {
+  const [owner, name] = repo.split("/");
+  const threads: ReviewThread[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < THREAD_PAGES; page++) {
+    const reply = await json(gh, "/graphql", { method: "POST", body: JSON.stringify({ query: THREADS_QUERY, variables: { owner, name, number, after } }), headers: { "content-type": "application/json" } });
+    const { reviewThreads } = ThreadsReply.assert(reply).data.repository.pullRequest;
+    threads.push(...reviewThreads.nodes);
+    after = reviewThreads.pageInfo.hasNextPage ? reviewThreads.pageInfo.endCursor : null;
+    if (after === null) return threads;
+  }
+  throw new Error(`more than ${THREAD_PAGES * 100} review threads`);
+}
+
+/** Why a merge waits on the review threads: one neither resolved nor outdated, or threads that could not be read. */
+export async function unresolvedThreadsHold(gh: GithubFetch, repo: string, number: number): Promise<string | undefined> {
+  try {
+    const open = (await listReviewThreads(gh, repo, number)).filter((thread) => !thread.isResolved && !thread.isOutdated);
+    // GitHub shows a deleted account as ghost.
+    return threadsHold(open.map((thread) => thread.opener.nodes[0]?.author?.login ?? "ghost"));
+  } catch (err) {
+    return threadsUnread(errorText(err));
+  }
 }
 
 /** Reviewers whose latest review still stands on the current head, when the review names its commit. */

@@ -33,15 +33,19 @@ export async function json(bb: BitbucketFetch, path: string): Promise<unknown> {
   return (await request(bb, path)).json();
 }
 
-/** Every page, or the first `maxPages`. */
-export async function jsonAll(bb: BitbucketFetch, path: string, limit = PAGE_LIMIT, maxPages = Infinity): Promise<unknown[]> {
+/** Every page, or the first `maxPages`; with `whole`, more pages than that throws rather than cutting the list short. */
+export async function jsonAll(bb: BitbucketFetch, path: string, limit = PAGE_LIMIT, maxPages = Infinity, whole = false): Promise<unknown[]> {
   const separator = path.includes("?") ? "&" : "?";
   const rows: unknown[] = [];
   let start = 0;
   for (let pages = 1; ; pages++) {
     const page = Page.assert(await json(bb, `${path}${separator}limit=${limit}&start=${start}`));
     rows.push(...page.values);
-    if (page.isLastPage || pages >= maxPages) return rows;
+    if (page.isLastPage) return rows;
+    if (pages >= maxPages) {
+      if (whole) throw new Error(`${path} has more than ${maxPages} pages`);
+      return rows;
+    }
     if (typeof page.nextPageStart !== "number") throw new Error(`bitbucket returned a page without nextPageStart for ${path}`);
     if (page.nextPageStart <= start) throw new Error(`bitbucket pagination for ${path} did not move past start ${start}`);
     start = page.nextPageStart;
