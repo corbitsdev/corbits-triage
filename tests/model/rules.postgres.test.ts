@@ -49,14 +49,14 @@ function replayOf(letters: readonly Letter[]): string {
 test(`every sequence up to ${LENGTH} events after an open keeps the rules`, async () => {
   const found: string[] = [];
   let level: Letter[][] = [[]];
-  for (let size = 1; size <= LENGTH; size++) {
+  for (let size = 0; size <= LENGTH; size++) {
     const next: Letter[][] = [];
-    for (const letters of level.flatMap((prefix) => LETTERS.map((letter) => [...prefix, letter]))) {
+    for (const letters of level) {
       const checked = await check(letters);
       // A sequence with an event that changed nothing is a shorter one already played, and so is every sequence after it.
       if (checked.played.length < letters.length) continue;
-      next.push(letters);
       found.push(...checked.breaks.map((rule) => `${replayOf(letters)}: ${rule}`));
+      if (size < LENGTH) next.push(...LETTERS.map((letter) => [...letters, letter]));
     }
     level = next;
   }
