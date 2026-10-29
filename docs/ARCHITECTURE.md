@@ -1157,7 +1157,7 @@ hold every grant. Nothing else creates the role, so a workspace without it has
 no automatic kinds. Stock's grant table has no unique index to insert
 against, so the hub writes every grant only after looking for it under a
 transaction advisory lock on its holder (`lockHolder`,
-`apps/hub/src/github/admin-github-grant.ts`): writing one twice leaves one
+`apps/hub/src/system-writes/grants.ts`): writing one twice leaves one
 row.
 
 What the role holds on a repository is decided by the policy file and the
