@@ -104,6 +104,7 @@ import { errorText } from "@corbits/common";
 import type { DatabaseConfig, InterchangeSettings } from "./env.js";
 import { createHubAuth, type HubAuthConfig } from "./auth.js";
 import { withBlobOutputs } from "./run-outputs.js";
+import { replaceUnstartedRuns } from "./sidecar/unstarted-run.js";
 import { resolveHubApiOrigin } from "../../../vendor/interchange/apps/hub/src/hub-api-origin.js";
 
 export type CreateHubServerOpts = {
@@ -392,7 +393,18 @@ export async function createInterchangeHub({
     const spec = await launchSpecs.get(anchorRunId);
     return spec?.frozenApprovalBundle.projection ?? null;
   }
-  const classifyParkedRun = createParkedRunClassifier({ runReader, addressForAnchor, projectionForAnchor });
+  async function publicKeyForAnchor(anchorRunId: string): Promise<string | null> {
+    const row = await db.query.workflowRun.findFirst({
+      where: (run, { eq }) => eq(run.id, anchorRunId),
+      columns: { publicKey: true },
+    });
+    if (row === undefined) throw new Error(`Workflow run ${anchorRunId} is gone`);
+    return row.publicKey;
+  }
+  const classifyParkedRun = replaceUnstartedRuns({
+    publicKeyForAnchor,
+    stock: createParkedRunClassifier({ runReader, addressForAnchor, projectionForAnchor }),
+  });
   const workflowLifecycleService = createWorkflowLifecycleService({
     db,
     retentionRouter: sidecarRouter,
