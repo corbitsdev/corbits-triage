@@ -893,6 +893,18 @@ describe("pr-triage body", () => {
     expect(github.labels).not.toContain("shipit");
   });
 
+  test("a check run again merges nothing on a head that failed at the event the policy's on: lists and passed only on one it leaves out", async () => {
+    const github = fakeGithub();
+    const empty = emptyPack(REPO);
+    const pack: CheckPack = { ...empty, checks: { "ci-green": { enabled: true } }, actions: { ...empty.actions, when: ["opened"], pass: [{ do: "merge" }] } };
+    github.pr.ci = "failure";
+    expect((await triage(pack, { github })).verdict).toMatchObject({ verdict: "fail" });
+    github.pr.ci = "success";
+    expect((await triage(pack, { github, events: ["updated"] })).verdict).toMatchObject({ verdict: "pass" });
+    await triage(pack, { github, events: ["checks"] });
+    expect(github.requests.filter((request) => request.method === "PUT")).toEqual([]);
+  });
+
   test("a dismissal GitHub refuses leaves the request standing without failing the mirror", async () => {
     const { github, pack } = requesting();
     await triage(pack, { github });

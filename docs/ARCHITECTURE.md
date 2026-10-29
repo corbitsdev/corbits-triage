@@ -917,6 +917,20 @@ label off that head, so it never stands on a head not yet triaged.
    is not a policy event: it runs only the policy's merge steps, whatever
    `on:` lists, since it releases a hold Triage added itself; every other
    action waits for an event `on:` lists.
+   A pass that waited for the head's CI or a reviewer acted on none of its
+   events, and the mail that ends the wait names only what ended it. The
+   manager's take therefore answers, as the newest mail's events, those of
+   every pull request mail on the head since its last pass that acted
+   (`unacted` in manager-state.ts), each read as the trigger reads it, so a
+   mail that names no event (the reconcile pass, Triage again, Review again)
+   is `catch-up`. A pass acted when it posted a verdict that held no Do for CI
+   (the verdict row's `detail.actions`, `held` with `ci: "pending"`); a
+   verdict given while CI still runs holds every Do for CI, so the pass after
+   CI finishes decides them again under the same events and effect ids.
+   Events on a head a push superseded are not carried, since effect ids are
+   per head. A pass the reconcile pass queues, after a CI wait or a build
+   status change (on Data Center, where no event reports a finished build),
+   names no event and is `catch-up`, which wakes every action.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
 `triage-do:<kind>:<owner>/<name>`), after the grant writer has followed that

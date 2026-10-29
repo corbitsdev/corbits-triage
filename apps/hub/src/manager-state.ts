@@ -7,9 +7,10 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, type AwaitedStage, type RepoSource, type ThreadRead } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, triageEventsOf, type AwaitedStage, type RepoSource, type ThreadRead, type TriageEvent } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
+import { verdictRecord } from "./github/verdict-record-store.js";
 import { timings } from "./timings.js";
 import { triageSchema } from "./triage-db.js";
 import { START_DEADLINE_MS } from "./workflow-release/rollout.js";
@@ -394,15 +395,41 @@ function waitingSince(history: Claim["history"], head: string): string | undefin
   return since;
 }
 
+/** The runs of `runIds` whose verdict on `head` held a Do until the head's CI finishes, which the pass after it decides again. */
+async function heldForCi(tx: Tx, tenantId: string, pr: PullRequestRef, head: string, runIds: readonly string[]): Promise<Set<string>> {
+  if (runIds.length === 0) return new Set();
+  const rows = await tx.select({ runId: verdictRecord.runId, detail: verdictRecord.detail }).from(verdictRecord)
+    .where(and(eq(verdictRecord.tenantId, tenantId), inArray(verdictRecord.runId, [...runIds]), eq(verdictRecord.repo, pr.repo), eq(verdictRecord.number, pr.number), eq(verdictRecord.headSha, head)));
+  return new Set(rows.filter((row) => row.detail?.actions?.some((action) => action.held === true && action.ci === "pending")).map((row) => row.runId));
+}
+
 /**
- * The newest pull request mail, the claim's reviewers, when the calling run claimed the pull request, and for `head`,
- * the pass's or else that mail's, since when it has waited for its CI and when its first closed pass was taken.
+ * The events of the pull request mails on `head` taken since its last pass that acted, and by `open`. A pass acted when
+ * it posted a verdict that held nothing for CI. A pass that waited for CI or a reviewer acted on none of its events, and
+ * the mail that ends the wait names only what ended it. Events on an older head are not carried: effect ids are per head.
  */
-async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head?: string): Promise<Latest> {
-  const request = await newestRequest(tx, tenantId, pr);
-  const named = head ?? request?.["headSha"];
-  const since = typeof named === "string" ? waitingSince(claim.history, named) : undefined;
-  const first = claim.history.find((pass) => pass.head === named)?.takenAt;
+async function unacted(tx: Tx, tenantId: string, pr: PullRequestRef, history: Claim["history"], head: string, open: Pass | undefined): Promise<TriageEvent[]> {
+  const passes = history.filter((pass) => pass.head === head);
+  const held = await heldForCi(tx, tenantId, pr, head, passes.flatMap((pass) => (pass.request === undefined ? [] : [pass.runId])));
+  const acted = passes.findLastIndex((pass) => pass.request !== undefined && !held.has(pass.runId));
+  const keys = [...passes.slice(acted + 1), ...(open ? [open] : [])].flatMap((pass) => pass.events);
+  const mails = (await eventsByKey(tx, tenantId, keys)).filter(({ event }) => event.type === "webhook" && event.head === head && event.payload["kind"] === "pr");
+  return mails.flatMap(({ event }) => triageEventsOf(event.payload));
+}
+
+/**
+ * The newest pull request mail, the claim's reviewers and when the calling run claimed the pull request. For the pass's
+ * head, or else the mail's, since when it has waited for its CI and when its first closed pass was taken. The mail names
+ * every event on the head no pass has acted on yet, so the pass that ends a wait acts on the events that started it.
+ */
+async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, open?: Pass): Promise<Latest> {
+  const newest = await newestRequest(tx, tenantId, pr);
+  const named = open?.head ?? newest?.["headSha"];
+  const head = typeof named === "string" ? named : undefined;
+  const since = head === undefined ? undefined : waitingSince(claim.history, head);
+  const carried = head === undefined ? [] : await unacted(tx, tenantId, pr, claim.history, head, open);
+  const request = newest && { ...newest, events: [...new Set([...carried, ...triageEventsOf(newest)])] };
+  const first = claim.history.find((pass) => pass.head === head)?.takenAt;
   return { ...(request && { request }), reviewers: claim.reviewers, claimedAt: claim.claimedAt, ...(since !== undefined && { waitingSince: since }), ...(first !== undefined && { headSince: first }) };
 }
 
@@ -541,7 +568,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
       const pass = { ...claim.pass, takes: claim.pass.takes + 1 };
       await writeClaim(tx, tenantId, pr, { ...claim, pass });
       const events = await eventsByKey(tx, tenantId, pass.events);
-      return { outcome: "pass", pass, events, resumed: true, threads: await threadsFor(tx, tenantId, pr, claim, pass.head), ...(await latest(tx, tenantId, pr, claim, pass.head)) };
+      return { outcome: "pass", pass, events, resumed: true, threads: await threadsFor(tx, tenantId, pr, claim, pass.head), ...(await latest(tx, tenantId, pr, claim, pass)) };
     }
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
       .where(pending(tenantId, pr))
@@ -558,7 +585,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     if (kept.length === 0) return { outcome: "idle", ...(await latest(tx, tenantId, pr, claim)) };
     const pass = { id, head, events: kept.map((row) => row.key), takenAt, takes: 1 };
     await writeClaim(tx, tenantId, pr, { ...claim, pass });
-    return { outcome: "pass", pass, events: kept, resumed: false, threads: await threadsFor(tx, tenantId, pr, claim, head), ...(await latest(tx, tenantId, pr, claim, head)) };
+    return { outcome: "pass", pass, events: kept, resumed: false, threads: await threadsFor(tx, tenantId, pr, claim, head), ...(await latest(tx, tenantId, pr, claim, pass)) };
   });
 }
 

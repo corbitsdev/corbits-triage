@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import type { Tx } from "./github/admin-github-grant.js";
 import { deploymentUp, done, endNeverRan, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
+import { replaceVerdict } from "./github/verdict-record-store.js";
 import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -141,6 +142,37 @@ test("PostgreSQL: take answers the pass's newest pull request mail, and on a pas
   });
 }, 120_000);
 
+function prMail(head: string, events?: string[]) {
+  return { type: "webhook" as const, head, payload: { kind: "pr", headSha: head, ...(events && { events }) } };
+}
+
+test("PostgreSQL: a mail that names no event, taken while the head waits, wakes as catch-up beside the events the waiting pass took", async () => {
+  await withDatabase(async function carried(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
+    await startManager(db, GITHUB, "run_a");
+    await take(db, TENANT, GITHUB, "run_a");
+    await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", waiting: true } });
+    await recordEvent(db, TENANT, GITHUB, "d2", prMail("h1"));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", request: { events: ["opened", "catch-up"] } });
+  });
+}, 120_000);
+
+test.each([
+  ["held a merge for CI", { held: true, ci: "pending" }, ["opened", "checks"]],
+  ["held nothing", {}, ["checks"]],
+] as const)("PostgreSQL: after a verdict that %s, the next mail on the head wakes the events its pass took only then", async (_held, hold, events) => {
+  await withDatabase(async function heldForCi(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
+    await startManager(db, GITHUB, "run_a");
+    await take(db, TENANT, GITHUB, "run_a");
+    await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", request: { comment: "Triage: Pass" } } });
+    const at = new Date();
+    await replaceVerdict(db, TENANT, { runId: "run_a", repo: GITHUB.repo, number: GITHUB.number, headSha: "h1", startedAt: at, verdictAt: at, settled: true, state: "ready-monitoring", actor: "triage", humanGated: false, checks: [], dos: [], commented: true, detail: { actions: [{ kind: "merge", effectId: "e1", ...hold }] } });
+    await recordEvent(db, TENANT, GITHUB, "d2", prMail("h1", ["checks"]));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", request: { events } });
+  });
+}, 120_000);
+
 test.each([["after"], ["before"]])("PostgreSQL: an approval for an older head recorded %s a push leaves the pass on the push's head and is taken with it", async (order) => {
   await withDatabase(async function approvals(db) {
     const push = { type: "webhook" as const, head: "h2", payload: { kind: "pr", headSha: "h2" } };
@@ -151,7 +183,7 @@ test.each([["after"], ["before"]])("PostgreSQL: an approval for an older head re
     if (taken.outcome !== "pass") throw new Error(`expected a pass, got ${taken.outcome}`);
     expect(taken.pass.head).toBe("h2");
     expect(taken.events.map((row) => row.key).toSorted()).toEqual(["evt:github:acme/widgets#7:a1", "evt:github:acme/widgets#7:d1"]);
-    expect(taken.request).toEqual({ kind: "pr", headSha: "h2" });
+    expect(taken.request).toEqual({ kind: "pr", headSha: "h2", events: ["catch-up"] });
   });
 }, 120_000);
 
