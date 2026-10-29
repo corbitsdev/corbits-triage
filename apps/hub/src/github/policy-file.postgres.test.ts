@@ -9,7 +9,7 @@ import { checkPolicyFile, type RepoSource } from "@corbits/triage-contracts";
 import { PROVIDER, TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
 import { fileRefusal, readRepoPolicy } from "./repo-policy.js";
 import { createPolicyFile, listedPolicyPull, PolicyPatchBody } from "./policy-file.js";
-import { POLICY_BRANCH } from "./policy-pull.js";
+import { POLICY_BRANCH, proposePolicy } from "./policy-pull.js";
 import { POLICY_PUSH_MESSAGE } from "./policy-push.js";
 import { createMemberOpenPulls, createOpenPullsCache } from "./open-pulls.js";
 import { createRepoActivity } from "./repo-activity.js";
@@ -33,6 +33,7 @@ const PATCH_LISTED = "acme/patch-listed";
 const RESERVED = "acme/reserved";
 const PULL_READ = "acme/pull-read";
 const REFRESHED = "acme/refreshed";
+const EXPORT_KEPT = "acme/export-kept";
 const BOTH = "acme/both";
 const UNHEARD = "acme/unheard";
 const BITBUCKET_UNHEARD = "PROJ/unheard";
@@ -201,7 +202,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, RESERVED, PULL_READ, REFRESHED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
+  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, RESERVED, PULL_READ, REFRESHED, EXPORT_KEPT, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -730,4 +731,18 @@ test("PostgreSQL: a policy pull request that was opened is answered when the lis
   listingFails = false;
   expect(opened).toMatchObject({ http: 200, status: "opened", number: expect.any(Number), refreshError: "listing failed" });
   expect(pulls.filter((row) => row.repo === REFRESHED)).toHaveLength(1);
+});
+
+test("PostgreSQL: an export that commits nothing keeps its own body beside the batch sections, once", async () => {
+  onMain(EXPORT_KEPT, YML, PATCH_FILE);
+  await policyFile.onPush(TENANT, EXPORT_KEPT, "github");
+  await patchOf({ repo: EXPORT_KEPT, changes: [{ kind: "rule", id: "focused", enabled: false }] });
+  const pull = pulls.find((row) => row.repo === EXPORT_KEPT)!;
+  const batch = pull.body;
+  const gh = (path: string, init?: RequestInit) => fetch(`${githubApiOrigin}${path}`, init);
+  const change = { path: YML, text: files.get(`${EXPORT_KEPT}@${POLICY_BRANCH}/${YML}`)!.text!, title: pull.title, body: "Exported from the portal.", append: false };
+  await proposePolicy(gh, EXPORT_KEPT, change);
+  expect(pull.body).toBe(`Exported from the portal.\n\n${batch}`);
+  await proposePolicy(gh, EXPORT_KEPT, change);
+  expect(pull.body.split("Exported from the portal.")).toHaveLength(2);
 });

@@ -185,12 +185,15 @@ export function bodyWith(body: string | null | undefined, added: readonly Sectio
 
 /**
  * The description a change that is not appended leaves: its own `body`, or, on a description holding batch sections,
- * those sections with the change added as one more, so later batches find every commit named.
+ * those sections with the change added as one more, so later batches find every commit named. A change that
+ * committed nothing has no commit to name, so its `body` joins the opening text unless the description holds it.
  */
 export function replacedBody(current: string | null | undefined, change: PolicyChange, committed: string | undefined): string {
   const read = sectionsOf(current);
   if (read.sections.length === 0 && read.omitted === undefined) return change.body;
-  return bodyWith(current, committed === undefined ? [] : [{ commit: committed, text: change.body }]);
+  if (committed !== undefined) return bodyWith(current, [{ commit: committed, text: change.body }]);
+  const opened = joined(read).includes(change.body) ? read.opened : [read.opened, change.body].filter((part) => part !== "").join("\n\n");
+  return bodyWith(joined({ ...read, opened }), []);
 }
 
 /** A section for each of the branch's batch commits, oldest first, that the description does not name or leave out yet. */
