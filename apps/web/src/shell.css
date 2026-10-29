@@ -420,7 +420,8 @@
   .inbox .code-review .lbl-h .sp { flex-basis: 100%; }
   .inbox .desc { margin-top: 24px; padding-top: 16px; }
   .inbox :is(.code-review .linkish, .desc-more, .dr, .disc3 .more) { min-height: 44px; }
-  /* Pills and Clear keep their size; an overhang makes each a 44px touch target without the row growing. */
+  /* Pills and Clear keep their size; an overhang makes each a 44px touch target, and wrapped rows sit far enough apart that targets meet without overlapping. */
+  .inbox .pills { row-gap: 20px; }
   .inbox :is(.pill, .pills .linkish) { position: relative; }
   .inbox :is(.pill, .pills .linkish)::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
   .inbox .disc3 .more { display: inline-flex; align-items: center; margin-top: 8px; }
