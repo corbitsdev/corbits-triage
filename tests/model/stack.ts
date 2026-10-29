@@ -71,13 +71,9 @@ const DeployBody = type({
   defaultSourceOfferingId: "string",
 });
 const MailText = type({ "prNumber?": "number", "items?": type({ prNumber: "number" }).array() });
-const Taken = type({ outcome: "string", "pass?": { id: "string" } });
-const Deployed = type({ number: "number", runId: "string" });
 
 type Db = ReturnType<typeof createDB>["db"];
 type Run = { definition: WorkflowDefinition; principalId: string; token: string };
-/** The writes GitHub received while the pass `pass` of pull request `number` ran, from its take to the next one. */
-export type PassWrites = { number: number; pass: string; writes: Write[] };
 
 const sessionService: SessionService = {
   stageWorkflowStep() {
@@ -101,11 +97,11 @@ function hubConsumers(definition: WorkflowDefinition): readonly string[] {
   return collectHubConsumers(WorkflowProjectionDefinition.assert(projectLiveToInert(definition)));
 }
 
-/** The pull request a mail names: a manager's mail, or the hub's mail to the listener. */
-export function pullOfMail(mail: Mail): number | undefined {
+/** The pull requests a mail names: a manager's mail names one, the hub's mail to the listener one or more. */
+function pullsOfMail(mail: Mail): number[] {
   const named = MailText(JSON.parse(mail.payload.parts[0]!.text));
   if (named instanceof type.errors) throw new Error(`mail to ${mail.to}: ${named.summary}`);
-  return named.prNumber ?? named.items?.[0]?.prNumber;
+  return named.items?.map((item) => item.prNumber) ?? (named.prNumber === undefined ? [] : [named.prNumber]);
 }
 
 /** A database of the hub's own schema with one tenant whose `repo` is connected, and the two triage definitions. */
@@ -195,14 +191,13 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
   const grantStore = createGrantStore(db);
   const queue: Mail[] = [];
   const runs = new Map<string, Run>();
-  /** Each manager run's pull request, as its listener named it to the hub. */
-  const managed = new Map<string, number>();
+  /** Each manager run's pull request, read off the mail its listener was deploying it for; none when that mail named several. */
+  const managed = new Map<string, number | undefined>();
   /** Mail dropped at a run that had ended, or refused when sent to one; one whose copy a run took is not lost. */
   const dropped: Mail[] = [];
   const delivered = new Set<string>();
   /** Each run whose body ended other than completed, or a step that threw. */
   const failed: { mail: Mail; status: string }[] = [];
-  const passes: { number: number; pass: string; from: number }[] = [];
   const directors = createWorkflowDirectorRegistry([mailDirector.factory]);
   const adapters = await loadAdapterRegistry([], { import: async function noAdapters() { return {}; } });
   const tokens = createRunTokenStore({ db, cipher: createNoopCredentialCipher() });
@@ -288,7 +283,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
   });
 
   /** Stock's deploy route: the caller must hold the deploy and the asset's read, and the body must name a published release exactly. */
-  async function deployRoute(runId: string, init?: RequestInit): Promise<Response> {
+  async function deployRoute(runId: string, serving: readonly number[], init?: RequestInit): Promise<Response> {
     const body = DeployBody(JSON.parse(String(init?.body)));
     if (body instanceof type.errors) return Response.json({ error: { code: "invalid_request", message: body.summary } }, { status: 400 });
     const { assetId, package: pkg } = body.source;
@@ -300,6 +295,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     }
     const id = `run_${randomBytes(6).toString("hex")}`;
     await deployRun(id, released.definition);
+    managed.set(id, serving.length === 1 ? serving[0] : undefined);
     return Response.json({ id }, { status: 201 });
   }
 
@@ -311,23 +307,17 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     return new Response(null, { status: 202 });
   }
 
-  /** The hub as `runId` reaches it: stock's deploy and stop-run routes stand in here, the rest is the hub's own app. */
-  async function hubFetch(runId: string, url: URL, init?: RequestInit): Promise<Response> {
+  /**
+   * The hub as `runId` reaches it while it runs mail naming `serving`: stock's deploy and stop-run routes stand in here,
+   * the rest is the hub's own app.
+   */
+  async function hubFetch(runId: string, serving: readonly number[], url: URL, init?: RequestInit): Promise<Response> {
     const method = init?.method ?? "GET";
     const runPath = /^\/api\/tenants\/[^/]+\/workflows\/runs\/([^/]+)$/.exec(url.pathname);
-    if (method === "POST" && url.pathname === `/api/tenants/${TENANT}/workflows/deployments`) return deployRoute(runId, init);
+    if (method === "POST" && url.pathname === `/api/tenants/${TENANT}/workflows/deployments`) return deployRoute(runId, serving, init);
     if (method === "DELETE" && runPath) return stopRoute(runId, decodeURIComponent(runPath[1]!));
     if (runPath) throw new Error(`${runId} read run ${runPath[1]}, which this stack does not serve`);
-    const answer = await app.request(url, init);
-    if (answer.ok && url.pathname.endsWith("/manager/deployed")) {
-      const deployed = Deployed.assert(JSON.parse(String(init?.body)));
-      managed.set(deployed.runId, deployed.number);
-    }
-    if (answer.ok && url.pathname.endsWith("/manager/take")) {
-      const taken = Taken.assert(await answer.clone().json());
-      passes.push({ number: managed.get(runId) ?? -1, pass: taken.pass?.id ?? `idle:${passes.length}`, from: github.writes.length });
-    }
-    return answer;
+    return app.request(url, init);
   }
 
   /** What the hub delivers `runId`: GitHub for its definition's bindings, and its run token for each consumer of the hub credential. */
@@ -357,13 +347,14 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     }
     delivered.add(mail.id);
     await db.update(schema.workflowRun).set({ status: "running" }).where(and(eq(schema.workflowRun.id, runId), eq(schema.workflowRun.status, "deployed")));
+    const serving = pullsOfMail(mail);
     const cell = { current: deliveryOf(run) };
     const requirements = await grantStore.collectGrants(run.principalId, TENANT);
     const snapshot = { current: createLocalCredentialsSnapshot({ definition: run.definition, directors, delivery: cell.current, grants: requirements }) };
     const workflowAuthorize = createCredentialsBackedAuthorize(snapshot, createGrantEvaluator({ floorFor: noFloor }));
     async function routed(input: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
-      if (url.origin === HUB_ORIGIN) return hubFetch(runId, url, init);
+      if (url.origin === HUB_ORIGIN) return hubFetch(runId, serving, url, init);
       return fetch(`${github.origin}${url.pathname}${url.search}`, init);
     }
     const providers = createCredentialProviderRegistry([createHttpCredentialProvider({ fetch: routed })]);
@@ -449,7 +440,7 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
 
   function ofPull(number: number) {
     return function named(mail: Mail): boolean {
-      return pullOfMail(mail) === number;
+      return pullsOfMail(mail).includes(number);
     };
   }
 
@@ -479,26 +470,23 @@ export async function modelStack(repo: string, { pack, automatic }: { pack: Chec
     async drain(): Promise<void> {
       for (let mail = queue.shift(); mail; mail = queue.shift()) await runMail(mail);
     },
-    /** What is left of pull request `number`'s runs and mail: managers still live, mail queued or lost, and runs that did not complete. */
+    /**
+     * What is left of pull request `number`'s runs and mail: its managers still live, live managers no pull request can
+     * be told for, mail no run took, and runs that did not complete.
+     */
     async leftover(number: number) {
       const rows = await db.select({ id: schema.workflowRun.id, status: schema.workflowRun.status }).from(schema.workflowRun).where(eq(schema.workflowRun.definitionId, `wfd_${TRIAGE_MANAGERS.github}`));
-      const live = rows.filter((row) => managed.get(row.id) === number && schema.isLiveWorkflowRunStatus(row.status)).map((row) => row.id);
+      const running = rows.filter((row) => schema.isLiveWorkflowRunStatus(row.status)).map((row) => row.id);
       const named = ofPull(number);
       const failures = failed.filter((failure) => named(failure.mail)).map((failure) => `${failure.mail.to} ${failure.status}`);
       const lost = dropped.filter((mail) => named(mail) && !delivered.has(mail.id));
-      return { live, queued: queue.filter(named), lost, failed: failures };
+      return { live: running.filter((id) => managed.get(id) === number), unattributed: running.filter((id) => managed.get(id) === undefined), lost, failed: failures };
     },
-    /** The writes to pull request `number`, by the pass that made them. */
-    passWrites(number: number): PassWrites[] {
-      const prefixes = [`/repos/${repo}/issues/${number}/`, `/repos/${repo}/pulls/${number}/`];
-      const byPass = new Map<string, Write[]>();
-      passes.forEach(function collect({ number: of, pass, from }, index) {
-        if (of !== number) return;
-        const to = passes[index + 1]?.from ?? github.writes.length;
-        const writes = github.writes.slice(from, to).filter((write) => prefixes.some((prefix) => write.path.startsWith(prefix)));
-        byPass.set(pass, [...(byPass.get(pass) ?? []), ...writes]);
-      });
-      return [...byPass].map(([pass, writes]) => ({ number, pass, writes }));
+    /** The writes to pull request `number` and to its comments, in the order GitHub received them. */
+    writes(number: number): Write[] {
+      const own = new Set(github.writesTo(repo, number));
+      const comments = new Set(github.pull(repo, number).comments.map((comment) => `/repos/${repo}/issues/comments/${comment.id}`));
+      return github.writes.filter((write) => own.has(write) || comments.has(write.path));
     },
     async stop(): Promise<void> {
       github.stop();

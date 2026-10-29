@@ -1,9 +1,10 @@
 // The rules in docs/INVARIANTS.md that a settled pull request is checked against: what GitHub ends up holding, the
-// writes each pass made, and what is left of its runs and mail.
+// writes it received, and what is left of its runs and mail.
 import { isTriageComment } from "@corbits/github-reads";
 import { HTML_MARKERS, WAITING_LABEL } from "@corbits/triage-contracts";
+import type { Write } from "../chain/github.ts";
 import type { Played } from "./events.ts";
-import type { modelStack, PassWrites } from "./stack.ts";
+import type { modelStack } from "./stack.ts";
 
 type Stack = Awaited<ReturnType<typeof modelStack>>;
 
@@ -27,25 +28,39 @@ function oneVerdict(stack: Stack, pull: Played): string[] {
   return breaks;
 }
 
-/** R3: no pass posts its comment twice or adds one label twice. */
-function onceEach({ pass, writes }: PassWrites): string[] {
-  const posts = writes.filter((write) => write.method === "POST");
-  const comments = posts.filter((write) => write.path.endsWith("/comments")).length;
-  const added = posts.filter((write) => write.path.endsWith("/labels")).flatMap((write) => (write.body as { labels: string[] }).labels);
-  const breaks = comments > 1 ? [`R3: pass ${pass} posted ${comments} comments`] : [];
-  for (const label of new Set(added)) {
-    const times = added.filter((name) => name === label).length;
-    if (times > 1) breaks.push(`R3: pass ${pass} added ${label} ${times} times`);
+/**
+ * R3, over every write the pull request received, whichever pass made it: a Triage comment is created only while none
+ * is current, so never twice unless the one before was superseded, and no label is added while it is on.
+ */
+function onceEach(writes: readonly Write[]): string[] {
+  const breaks: string[] = [];
+  let current = 0;
+  const on = new Set<string>();
+  for (const { method, path, body } of writes) {
+    const text = (body as { body?: unknown } | null)?.body;
+    if (method === "POST" && path.endsWith("/comments") && typeof text === "string" && isTriageComment(text)) {
+      if (current > 0) breaks.push("R3: a Triage comment was created while one was current");
+      current += 1;
+    } else if (method === "PATCH" && path.includes("/issues/comments/") && typeof text === "string" && HTML_MARKERS.isSuperseded(text)) {
+      current -= 1;
+    } else if (method === "POST" && path.endsWith("/labels")) {
+      for (const label of (body as { labels: string[] }).labels) {
+        if (on.has(label)) breaks.push(`R3: ${label} was added while it was on`);
+        on.add(label);
+      }
+    } else if (method === "DELETE" && path.includes("/labels/")) {
+      on.delete(decodeURIComponent(path.slice(path.lastIndexOf("/") + 1)));
+    }
   }
   return breaks;
 }
 
 /** Each rule the settled pull request breaks, by its number, saying how; `missed` is how many misses the fake GitHub had before it. */
 export async function broken(stack: Stack, pull: Played, missed: number): Promise<string[]> {
-  const { live, queued, lost, failed } = await stack.leftover(pull.number);
-  const breaks = [...oneVerdict(stack, pull), ...stack.passWrites(pull.number).flatMap(onceEach)];
+  const { live, unattributed, lost, failed } = await stack.leftover(pull.number);
+  const breaks = [...oneVerdict(stack, pull), ...onceEach(stack.writes(pull.number))];
   if (live.length > 0) breaks.push(`R5: managers still live: ${live.join(", ")}`);
-  if (queued.length > 0) breaks.push(`R5: ${queued.length} mails left undelivered`);
+  if (unattributed.length > 0) breaks.push(`R5: live managers deployed for no single pull request: ${unattributed.join(", ")}`);
   if (lost.length > 0) breaks.push(`R5: mail no run took: ${lost.map((mail) => mail.to).join(", ")}`);
   if (failed.length > 0) breaks.push(`runs that did not complete: ${failed.join(", ")}`);
   const misses = stack.github.misses.slice(missed);

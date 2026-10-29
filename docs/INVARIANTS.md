@@ -7,17 +7,17 @@ request that changes how Triage keeps a rule names the rule.
 
 - **R1** One final verdict per pull request head, for the current head. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles it has exactly one current Triage comment, which is a verdict naming the head, and no waiting label.
 - **R2** Triage approves or merges only on Pass with a complete code review that meets the policy's findings condition, all for the current head. No automated check yet.
-- **R3** Every host write happens once under its effect id. Checked by `tests/model/rules.postgres.test.ts`: no pass posts its comment twice or adds one label twice.
+- **R3** Every host write happens once under its effect id. Checked by `tests/model/rules.postgres.test.ts` over every write the pull request received, whichever pass made it: no Triage comment is created twice for one head, and no label is added while it is on.
 - **R4** Unreadable input never passes or approves. No automated check yet.
-- **R5** Nothing is left running after the final post. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles, none of its managers is live, no mail for it is waiting, and none was lost to a run that had ended.
+- **R5** Nothing is left running after the final post. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles, none of its managers is live, no live manager was deployed for no single pull request, and no mail for it was lost to a run that had ended. Settling delivers every queued mail, so no mail is left waiting by construction.
 - **R6** An older run never overwrites a newer head's comment, label, status or approval. No automated check yet.
 - **R7** A pull request waiting on CI or a reviewer always gets its verdict. No automated check yet; R1's check covers a head waiting on CI.
 - **R8** GitHub and Bitbucket Data Center behave the same except where documented. No automated check yet.
 - **R9** Every reader of the policy agrees on what it says. No automated check yet.
 - **R10** The portal shows only what the hub says. No automated check yet.
 
-A label may come off and go back on while a pass runs; R1 and R3 judge the labels a pull request ends with and the
-labels each pass adds.
+A label may come off and go back on while a pass runs; R1 judges the labels a pull request ends with, and R3 only an
+add while the label is on.
 
 ## How the model check works
 
@@ -37,7 +37,8 @@ Stand-ins, and what they leave out:
 
 - Stock's deploy route records the run, its definition's grant requirements as creator grants, and its run tokens. It
   checks the caller holds the deploy and the asset's read and refuses a body that names no published release, but it
-  does not resolve the requirements against the creator's own grants.
+  does not resolve the requirements against the creator's own grants. It ties each manager it deploys to the pull
+  request named by the mail the listener was running, which R5 reads.
 - Stock's stop-run route checks the caller's `manage` grant and ends the run at once, so the window while a cancelled
   run still runs is not played.
 - Mail waits in the test's queue. Stock's `mailAccept` check and its hold on mail to a just-deployed run are bypassed;
