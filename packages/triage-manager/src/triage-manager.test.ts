@@ -233,6 +233,15 @@ async function heldApproval() {
 }
 
 describe("triage-manager", () => {
+  test("the pass loop reads every done a pass can end on", () => {
+    const { body } = github.steps["events"] as OnTriggerPrimitive;
+    if (!("inline" in body)) throw new Error("the body is not inline");
+    const { steps } = (body.inline.steps["passes"] as unknown as { body: WorkflowDefinition }).body;
+    const dones = Object.entries(steps).filter(([, step]) => (step as { handler?: string }).handler === "done").map(([id]) => id);
+    expect(dones).toContain("doneReviewOut");
+    for (const id of dones) expect(loops.again({ [id]: { outcome: "more", wait: true } })).toBe(true);
+  });
+
   test.each([["new", PASS], ["resumed", RESUMED]])("a %s pass runs stage 1 on the mail the hub recorded, and the run's last step stops it once done ends its claim", async (_name, pass) => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [pass], dones: [ENDED] });
@@ -297,7 +306,7 @@ describe("triage-manager", () => {
     }
     const waiting = commented([{ name: "build", status: "in_progress", conclusion: null }]);
     await runMail(github, wake(), waiting.host, fakeHub({ takes: [PASS], dones: [ENDED] }).hub);
-    expect(comment.body).toStartWith(`<!-- corbits-triage ${JSON.stringify({ head: before, policy: null, verdict: "pass", progress: true })} -->\n**Triage: In progress**`);
+    expect(comment.body).toStartWith(`<!-- corbits-triage ${JSON.stringify({ head: before, policy: null, verdict: "pass" })} -->\n**Triage: In progress**`);
 
     const failed = commented([{ name: "build", status: "completed", conclusion: "failure" }]);
     await runMail(github, wake(), failed.host, fakeHub({ takes: [PASS], dones: [ENDED] }).hub);
@@ -779,6 +788,17 @@ describe("triage-manager with code review", () => {
     expect(hub.calls.at(-2)).toEqual(DONE_GAVE_UP);
   });
 
+  test("a pass with a code reviewer out and no other event keeps polling, and gives up on the review at its deadline", async () => {
+    const { writes, host } = githubHost();
+    const out = { ...PASS, request: ON, reviewers: [reviewer()] };
+    const late = { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] };
+    const hub = fakeHub({ takes: [out, late], dones: [{ outcome: "more", wait: true }, ENDED] });
+    const { passes, ran } = await runMail(reviewed, wake(), host, hub.hub, [], true, hurried());
+    expect(passes).toBe(2);
+    expect(ran).toContain("donePosted");
+    expect(writes).toContainEqual(READY);
+  });
+
   test("a pass while a code reviewer is out on the head keeps a verdict its rules still give, and writes progress over any other", async () => {
     const comment = { id: 1, user: { login: REQUEST["appLogin"] }, body: "" };
     const { host } = githubHost();
@@ -812,7 +832,7 @@ describe("triage-manager with code review", () => {
     ["CI running again replaces it", "pass", POLICY, {}, [{ facts: { checks: "pending", pendingChecks: ["ci"], mergeable: true }, pack: RULES }], true],
     ["a Review again replaces it", "pass", POLICY, { again: "again_1" }, [], true],
   ])("progress over a Pass on the head: %s", async (_name, passVerdict, policy, again, items, written) => {
-    const posted = { id: 42, user: { login: REQUEST["appLogin"], type: "Bot" }, body: `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy: POLICY, verdict: "pass" })} -->\n**Triage: Pass**` };
+    const posted = { id: 42, user: { login: REQUEST["appLogin"], type: "Bot" }, body: `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy: POLICY, verdict: "pass", shows: "verdict" })} -->\n**Triage: Pass**` };
     const writes: string[] = [];
     async function fetch(path: string, init?: RequestInit): Promise<Response> {
       if (init?.method !== undefined) {
@@ -874,7 +894,7 @@ describe("triage-manager with a judge", () => {
   ])("%s", async (_name, posted, written) => {
     // The policy file the rules read, as the verdict's header names it.
     const policy = { file: { path: ".corbits-triage.yml", sha: "eval-1" } };
-    const shown = `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy, verdict: posted })} -->\n**Triage: ${posted === "fail" ? "Fail" : "Unsure"}**`;
+    const shown = `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy, verdict: posted, shows: "verdict" })} -->\n**Triage: ${posted === "fail" ? "Fail" : "Unsure"}**`;
     const comment = { id: 1, user: { login: REQUEST["appLogin"] }, body: shown };
     const { host } = githubHost();
     async function withComment(input: string | URL | Request, init?: RequestInit): Promise<Response> {

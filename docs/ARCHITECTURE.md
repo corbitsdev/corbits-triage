@@ -606,9 +606,10 @@ any other tenant or an unknown sender.
   follows the pass's verdict is written with `keepVerdict` set to that
   verdict and its policy ref, so the host's mirror leaves a comment whose
   marker shows the same verdict and policy for that head as it is and reports
-  `kept: "verdict"`. A progress comment keeps the header of the verdict it
-  replaced, for the next verdict's note on what changed since, marked
-  `progress`, so it never counts as showing that verdict. While a judge is
+  `kept: "verdict"`. A verdict write marks its header `shows: "verdict"`; a
+  progress comment keeps the header of the verdict it replaced, for the next
+  verdict's note on what changed since, without it, so neither a progress
+  comment nor one written before the field counts as showing that verdict. While a judge is
   out on an automatic pass, its progress is written with `keepVerdict` set to
   the machine verdict, the one `verdict` would post were the judge to fail,
   made from the rules alone with no model call, so a verdict the rules still

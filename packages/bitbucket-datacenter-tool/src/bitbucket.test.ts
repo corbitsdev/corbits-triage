@@ -93,7 +93,7 @@ describe("mirror", () => {
     expect(first).toMatchObject({ commentId: 11, updated: false });
     expect(second).toMatchObject({ commentId: 11, updated: true });
     expect(third).toMatchObject({ commentId: 11, updated: false, unchanged: expect.stringContaining("unchanged since") });
-    expect(fake.comments.find((c) => c.id === 11)!.text).toBe(`[corbits-triage]: #${encodeURIComponent(JSON.stringify(HEADER))}\nStill pass`);
+    expect(fake.comments.find((c) => c.id === 11)!.text).toBe(`[corbits-triage]: #${encodeURIComponent(JSON.stringify({ ...HEADER, shows: "verdict" }))}\nStill pass`);
     expect(fake.comments.find((c) => c.id === 2)!.text).toBe("[corbits-triage]: #copied\nNot ours");
   });
 
@@ -102,6 +102,13 @@ describe("mirror", () => {
     await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
     await mirror(fake.bb, { ...REQUEST, comment: "In progress: CI", onHead: "abc" }, user);
     expect(await mirror(fake.bb, { ...REQUEST, comment: "In progress: code review", onHead: "abc", keepVerdict: { verdict: "pass", policy: null } }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(fake.comments[0]!.text).toEndWith("\nIn progress: code review");
+  });
+
+  test("a comment written before verdicts said what they show is never kept, whatever it shows", async () => {
+    const legacy = { id: 12, version: 0, text: `[corbits-triage]: #${encodeURIComponent(JSON.stringify(HEADER))}\nIn progress`, author: BOT };
+    const fake = fakeBitbucket({ comments: [legacy] });
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "In progress: code review", onHead: "abc", keepVerdict: { verdict: "pass", policy: null } }, user)).toMatchObject({ commentId: 12, updated: true });
     expect(fake.comments[0]!.text).toEndWith("\nIn progress: code review");
   });
 

@@ -9,9 +9,10 @@ type ArtifactRef = { id: string; version: number };
  * What a Triage comment was written for, kept in its marker so a later run can tell what changed. `repo` is the stored
  * policy a comment written before the policy file was the only policy names, so the comment that replaces it says so.
  * `changed` is the note on what reached the head since the verdict before, so a rerun on the same head says it again.
- * `progress` when the comment shows progress under the header of the verdict it held, rather than that verdict.
+ * `shows` is set by a verdict write, so a comment that shows progress under the header of the verdict it held, or was
+ * written before the field, never reads as showing that verdict.
  */
-export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string; changed?: string; progress?: true };
+export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string; changed?: string; shows?: "verdict" };
 
 /** One of Triage's marked comments as a host lists it, oldest first. */
 export type MarkedComment = { id: number; body: string; updatedAt?: string };
@@ -39,7 +40,7 @@ const TriageHeaderShape = type({
   policy: type({ "repo?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) }).or("null"),
   verdict: "string",
   "changed?": "string",
-  "progress?": "true",
+  "shows?": "'verdict'",
 });
 
 /** How a host writes the header on a Triage comment's first line, so a later run can read it back. */
@@ -167,17 +168,21 @@ export async function upsertMarked(host: CommentHost, body: string, current: Mar
   return { commentId: await host.post(body), updated: false };
 }
 
+function shownless({ shows: _shows, ...header }: TriageHeader): TriageHeader {
+  return header;
+}
+
 /**
  * Edits the current comment to `text` without a verdict of its own, as while a verdict is in progress, and writes nothing
- * when it already says that. The comment keeps the header of the verdict it held, marked as showing progress, so the
- * verdict that replaces it still says what changed since that one. With `keepVerdictOn`, a comment that shows that
+ * when it already says that. The comment keeps the header of the verdict it held, without `shows`, so the verdict that
+ * replaces it still says what changed since that one. With `keepVerdictOn`, a comment that shows that
  * verdict for that head under that policy is kept.
  */
 export async function writeUnheadedComment(host: CommentHost, markers: MarkerFormat, plainMarker: string, current: MarkedComment[], text: string, keepVerdictOn?: KeptVerdict): Promise<WrittenComment> {
   const latest = current[0];
   const kept = latest && markers.headerOf(latest.body);
-  if (kept && !kept.progress && kept.head === keepVerdictOn?.head && kept.verdict === keepVerdictOn.verdict && samePolicy(kept.policy, keepVerdictOn.policy)) return { commentId: latest.id, updated: false, kept: "verdict" };
-  const body = `${kept ? markers.current({ ...kept, progress: true }) : plainMarker}\n${text}`;
+  if (kept?.shows === "verdict" && kept.head === keepVerdictOn?.head && kept.verdict === keepVerdictOn.verdict && samePolicy(kept.policy, keepVerdictOn.policy)) return { commentId: latest.id, updated: false, kept: "verdict" };
+  const body = `${kept ? markers.current(shownless(kept)) : plainMarker}\n${text}`;
   if (latest?.body === body) return { commentId: latest.id, updated: false, ...(latest.updatedAt && { unchanged: `unchanged since ${latest.updatedAt}` }) };
   return upsertMarked(host, body, current);
 }
@@ -194,7 +199,7 @@ export async function writeHeadedComment(host: CommentHost, markers: MarkerForma
   const before = latest && markers.headerOf(latest.body);
   const note = await changedSince(host, before, header);
   const shown = note ? `${text}\n\n${note}` : text;
-  const noted = note ? { ...header, changed: note } : header;
+  const noted: TriageHeader = { ...header, ...(note && { changed: note }), shows: "verdict" };
   const since = latest && unchangedSince(markers, latest, header, shown);
   if (latest && since) return { commentId: latest.id, updated: false, unchanged: `unchanged since ${since}` };
   const superseded = before !== undefined && supersedes(before, header)
