@@ -86,7 +86,7 @@ function CheckRow({ check, name, source, repo, sha }: { check: CheckResult; name
 }
 
 function CheckList({ source, repo, sha, checks, fallback }: { source: RepoSource; repo: string; sha: string | null; checks: CheckResult[]; fallback: string[] }) {
-  const pack = useRepoPack(repo);
+  const pack = useRepoPack(repo, source);
   if (checks.length === 0) {
     return fallback.length === 0 ? <p className="muted">No triage findings.</p> : <ul>{fallback.map((reason) => <li key={reason}>{reason}</li>)}</ul>;
   }
@@ -342,7 +342,7 @@ export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
 
 /** The one line the reading pane opens with: what Triage is at, what it needs from you, or what it did. */
 function PullLine({ item, detail }: { item: PrItem; detail: GithubPullDetail | undefined }) {
-  const pack = useRepoPack(item.repo);
+  const pack = useRepoPack(item.repo, item.source);
   const handled = useHandledMark(item);
   return <p role="status" className="pr-composer pr-line">{lineText(paneStatus({ item, detail, handled, pack }))}</p>;
 }

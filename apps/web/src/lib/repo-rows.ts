@@ -19,10 +19,13 @@ function policyRuns(state: PackState | undefined): boolean {
   return found !== undefined && found !== null && "pack" in found && hasRuleOn(found.pack);
 }
 
-/** Repositories whose policy cannot run: refused, missing, unreadable or with no rule on. One still loading or failing to load is not named. */
-export function reposNeedingSetup(packs: ReadonlyMap<string, PackState>): Set<string> {
-  const needing = [...packs].filter(([, state]) => !state.pending && state.error === null && !policyRuns(state));
-  return new Set(needing.map(([repo]) => repo));
+/** A policy that cannot run: refused, missing, unreadable or with no rule on. One still loading or failing to load is not. */
+function needsSetup(state: PackState | undefined): boolean {
+  return state !== undefined && !state.pending && state.error === null && !policyRuns(state);
+}
+
+export function reposNeedingSetup(repos: RepoRecord[], packs: ReadonlyMap<string, PackState>): Set<string> {
+  return new Set(repos.filter((repo) => needsSetup(packs.get(repoKey(repo)))).map((repo) => repo.name));
 }
 
 export function packsPending(packs: ReadonlyMap<string, PackState>): boolean {
@@ -34,6 +37,11 @@ export type RepoId = { name: string; source?: RepoSource };
 
 export function sameRepo(a: RepoId, b: RepoId): boolean {
   return a.name === b.name && repoSourceOf(a.source) === repoSourceOf(b.source);
+}
+
+/** The key a repository's entry in a map such as `useCheckPacks` sits under. */
+export function repoKey(repo: RepoId): string {
+  return `${repoSourceOf(repo.source)}:${repo.name}`;
 }
 
 /** The hub names a repository on its host as `{ repo, source }`. */
@@ -72,12 +80,16 @@ export function mergeRepositories(stored: RepoRecord[], listed: RepoRecord[] | u
   return [...stored, ...(listed ?? []).filter((repo) => !stored.some((row) => sameRepo(row, repo)))];
 }
 
+export function enabledRepos(repos: RepoRecord[]): RepoRecord[] {
+  return repos.filter((repo) => repoPolicy(repo).enabled);
+}
+
 export function triageEnabledRepos(repos: RepoRecord[]): Set<string> {
-  return new Set(repos.filter((repo) => repoPolicy(repo).enabled).map((repo) => repo.name));
+  return new Set(enabledRepos(repos).map((repo) => repo.name));
 }
 
 export function triageReadyRepos(repos: RepoRecord[], packs: ReadonlyMap<string, PackState>): Set<string> {
-  return new Set(repos.filter((repo) => repoPolicy(repo).enabled && policyRuns(packs.get(repo.name))).map((repo) => repo.name));
+  return new Set(enabledRepos(repos).filter((repo) => policyRuns(packs.get(repoKey(repo)))).map((repo) => repo.name));
 }
 
 type RepoPulls =
@@ -118,18 +130,18 @@ export function repoRows(
   openPulls: OpenPulls | undefined,
   pullsError: Error | null,
 ): RepoRow[] {
-  const needsSetup = reposNeedingSetup(packs);
   return repos.map(function repoRow(repo) {
     const { enabled } = repoPolicy(repo);
     const listing = openPulls?.repos.find((row) => row.error !== undefined && sameRepo({ name: row.repo, source: row.source }, repo));
     const error = pullsError?.message ?? listing?.error;
     const open = items.filter((item) => sameRepo({ name: item.repo, source: item.source }, repo));
+    const pack = packs.get(repoKey(repo));
     return {
       name: repo.name,
       source: repo.source,
       href: repoHref(repo),
-      pulls: error === undefined ? pullsOf(open, enabled && policyRuns(packs.get(repo.name))) : { error },
-      health: repoHealth({ needsSetup: needsSetup.has(repo.name), enabled, catchingUp: catchingUp.some((row) => sameRepo(row, repo)), receivingEvents: active.some((row) => sameRepo(row, repo)) }),
+      pulls: error === undefined ? pullsOf(open, enabled && policyRuns(pack)) : { error },
+      health: repoHealth({ needsSetup: needsSetup(pack), enabled, catchingUp: catchingUp.some((row) => sameRepo(row, repo)), receivingEvents: active.some((row) => sameRepo(row, repo)) }),
     };
   });
 }

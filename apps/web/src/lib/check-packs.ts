@@ -1,9 +1,10 @@
 import { useCallback } from "react";
 import { queryOptions, skipToken, useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { CATALOG_IDS, catalogCheckEnabled, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { CATALOG_IDS, catalogCheckEnabled, repoSourceOf, type ActionKind, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { createHubTransport } from "./hub-transport.ts";
 import { loadRepoCheckPack, type CheckPackArtifact } from "./hub-api.ts";
 import { usePortal } from "./portal.tsx";
+import { repoKey, type RepoId } from "./repo-rows.ts";
 
 export function checkPackQuery(tenantId: string | undefined, repo: string, source: RepoSource) {
   return queryOptions({
@@ -17,9 +18,9 @@ export function checkPackQuery(tenantId: string | undefined, repo: string, sourc
   });
 }
 
-export function useRepoPack(repo: string): CheckPack | null {
+export function useRepoPack(repo: string, source: RepoSource): CheckPack | null {
   const { snapshot } = usePortal();
-  return packOf(useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, "github")).data);
+  return packOf(useQuery(checkPackQuery(snapshot?.workspace.tenantId, repo, source)).data);
 }
 
 /** Whether the repository's policy file turns code review on. */
@@ -47,12 +48,13 @@ export function enabledCheckCount(pack: CheckPack): number {
 
 export type PackState = { found: CheckPackArtifact | null; pending: boolean; error: Error | null };
 
-export function useCheckPacks(repos: string[]): Map<string, PackState> {
+/** Each repository's pack under its `repoKey`. */
+export function useCheckPacks(repos: readonly RepoId[]): Map<string, PackState> {
   const { snapshot } = usePortal();
   const tenantId = snapshot?.workspace.tenantId;
   // A stable combine lets TanStack hand back the same Map until a result changes.
   const byRepo = useCallback(function byRepo(results: Array<UseQueryResult<CheckPackArtifact | null>>): Map<string, PackState> {
-    return new Map(results.map((result, i) => [repos[i]!, { found: result.data ?? null, pending: result.isLoading, error: result.error }]));
+    return new Map(results.map((result, i) => [repoKey(repos[i]!), { found: result.data ?? null, pending: result.isLoading, error: result.error }]));
   }, [repos]);
-  return useQueries({ queries: repos.map((repo) => checkPackQuery(tenantId, repo, "github")), combine: byRepo });
+  return useQueries({ queries: repos.map((repo) => checkPackQuery(tenantId, repo.name, repoSourceOf(repo.source))), combine: byRepo });
 }

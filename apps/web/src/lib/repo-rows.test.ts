@@ -3,7 +3,7 @@ import { emptyPack, recommendedPack } from "@corbits/triage-contracts";
 import type { PackState } from "./check-packs.ts";
 import { projectQueue, type OpenPulls, type PrItem, type RepoRecord } from "./hub-api.ts";
 import { groupInbox, regroupInbox } from "./inbox-view.ts";
-import { findRepo, hostedRepos, mergeRepositories, packsPending, repoHealth, repoRows, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
+import { findRepo, hostedRepos, mergeRepositories, packsPending, repoHealth, repoKey, repoRows, selectedRepo, triageReadyRepos } from "./repo-rows.ts";
 
 function item(repo: string, number: number, extra: Partial<PrItem>): PrItem {
   const base: PrItem = {
@@ -43,7 +43,13 @@ function twoHosts(github: number[], bitbucket: number[]): OpenPulls {
   return { repos: [{ repo: "acme/api", prs: prs(github) }, { repo: "acme/api", source: "bitbucket-datacenter", prs: prs(bitbucket) }] };
 }
 
-const packs = new Map([["acme/api", policyFile("acme/api")], ["acme/web", read(null)]]);
+/** Packs of GitHub repositories, by name. */
+function githubPacks(entries: Array<[string, PackState]>): Map<string, PackState> {
+  return new Map(entries.map(([name, state]) => [repoKey({ name }), state]));
+}
+
+const packEntries: Array<[string, PackState]> = [["acme/api", policyFile("acme/api")], ["acme/web", read(null)]];
+const packs = githubPacks(packEntries);
 
 describe("repository rows", () => {
   test("Needs you is the inbox's pile for the repository, and owners come from that pile", () => {
@@ -64,7 +70,7 @@ describe("repository rows", () => {
 
   test("only enabled repositories whose policy file runs count pull requests awaiting triage, and the inbox header and Settings agree", () => {
     const all = [...repos, repoRecord("acme/off", false), repoRecord("acme/raw", true), repoRecord("acme/loading", true)];
-    const states = new Map([...packs, ["acme/off", policyFile("acme/off")], ["acme/raw", read(null)], ["acme/loading", { found: null, pending: true, error: null }]]);
+    const states = githubPacks([...packEntries, ["acme/off", policyFile("acme/off")], ["acme/raw", read(null)], ["acme/loading", { found: null, pending: true, error: null }]]);
     const items = [
       item("acme/api", 1, {}),
       item("acme/api", 2, {}),
@@ -92,15 +98,15 @@ describe("repository rows", () => {
   });
 
   test("a repository whose policy file reads with a rule on is set up", () => {
-    const states = new Map([
+    const entries: Array<[string, PackState]> = [
       ["acme/file", policyFile("acme/file")],
       ["acme/off", read({ kind: "file", path: ".corbits-triage.yml", pack: emptyPack("acme/off"), codeReview: false, ...NO_KINDS })],
       ["acme/refused", read({ kind: "invalid", path: ".corbits-triage.yml", reason: "bad yaml" })],
       ["acme/none", read(null)],
       ["acme/loading", { found: null, pending: true, error: null }],
-    ]);
-    const all = [...states.keys()].map((name) => repoRecord(name, true));
-    const rows = repoRows(all, states, [], [], [], undefined, null);
+    ];
+    const all = entries.map(([name]) => repoRecord(name, true));
+    const rows = repoRows(all, githubPacks(entries), [], [], [], undefined, null);
     expect(rows.map((row) => [row.name, row.health.label === "Needs setup"])).toEqual([
       ["acme/file", false], ["acme/off", true], ["acme/refused", true], ["acme/none", true], ["acme/loading", false],
     ]);
@@ -167,7 +173,7 @@ describe("merged repositories", () => {
       { name: "acme/api", connected: true, source: "bitbucket-datacenter" as const, enabled: false },
     ];
     const items = projectQueue([], [], twoHosts([1], [2]));
-    const [, bitbucket] = repoRows(merged, new Map([["acme/api", policyFile("acme/api")]]), items, [], [], undefined, null);
+    const [, bitbucket] = repoRows(merged, githubPacks([["acme/api", policyFile("acme/api")]]), items, [], [], undefined, null);
     expect(bitbucket!.pulls).toMatchObject({ awaiting: 0 });
   });
 
@@ -176,7 +182,7 @@ describe("merged repositories", () => {
       { name: "acme/api", connected: true, source: "github" as const, enabled: true },
       { name: "acme/api", connected: true, source: "bitbucket-datacenter" as const, enabled: true },
     ];
-    const packs = new Map([["acme/api", policyFile("acme/api")]]);
+    const packs = githubPacks([["acme/api", policyFile("acme/api")]]);
     const active = hostedRepos([{ repo: "acme/api", source: "github" }]);
     const [github, bitbucket] = repoRows(merged, packs, [], active, [{ name: "acme/api", source: "bitbucket-datacenter" }], undefined, null);
     expect([github!.health.label, bitbucket!.health.label]).toEqual(["Webhooks OK", "Catching up"]);

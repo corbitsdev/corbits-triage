@@ -3,7 +3,7 @@ import { Button } from "@corbits/react-ui";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@corbits/react-ui/ui/menu";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { AuthorKind, CheckPack } from "@corbits/triage-contracts";
-import { lacksDecisionModel, type GithubPullDetail, type PrItem } from "../lib/hub-api.ts";
+import { lacksDecisionModel, type GithubPullDetail, type PrItem, type RepoRecord } from "../lib/hub-api.ts";
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { useMediaQuery } from "../lib/media-query.ts";
@@ -70,7 +70,7 @@ import { NO_FILTERS, activeFilters, filtersFromParams, filtersToParams, matchesF
 import { leavesOpen, useOpenPulls, useOpenPullsUnanswered, useQueueLoading, useMarkedItems } from "../lib/open-pulls.ts";
 import { usePortal } from "../lib/portal.tsx";
 import { isInteractiveShortcutTarget } from "../lib/queue-workflow.ts";
-import { packsPending, repoHref, reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
+import { enabledRepos, packsPending, repoHref, repoKey, reposNeedingSetup, triageEnabledRepos, triageReadyRepos } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
 import { upgradeLabel, usePolicyUpgrades } from "../lib/policy-upgrades.ts";
 import { findPrItem } from "../lib/triage-view.ts";
@@ -176,7 +176,7 @@ function Pile({ byRepo, pile, packs, selectedKey, search }: PileProps) {
   return (
     <>
       <div className="gh">{pile.label}<span className="n">{pile.items.length}</span></div>
-      {pile.items.map((entry) => <Row key={entry.item.key} byRepo={byRepo} entry={entry} pack={packOf(packs.get(entry.item.repo)?.found)} selected={entry.item.key === selectedKey} search={search} />)}
+      {pile.items.map((entry) => <Row key={entry.item.key} byRepo={byRepo} entry={entry} pack={packOf(packs.get(repoKey({ name: entry.item.repo, source: entry.item.source }))?.found)} selected={entry.item.key === selectedKey} search={search} />)}
     </>
   );
 }
@@ -290,7 +290,7 @@ function BottomBar({ bar, draft, onChoose, onEdit }: BottomBarProps) {
 function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }: PaneProps) {
   const { triagePullRequest, readOnly } = usePortal();
   const pull = useGithubPull(item.repo, item.number);
-  const pack = useRepoPack(item.repo);
+  const pack = useRepoPack(item.repo, item.source);
   const wanted = useRepoWanted(item.repo, item.source);
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);
   const [editing, setEditing] = useState(restored !== null && restored.reply !== draftText(item));
@@ -473,15 +473,15 @@ function ListEmpty({ title, text, action }: { title: string; text: string; actio
 type EmptyListProps = { view: TriageView; waiting: boolean; waitingCount: number; loading: boolean; denied: boolean; noRepos: boolean; filtered: boolean; onClear: () => void; onShowWaiting: () => void };
 
 /** A repository whose policy file triage refuses runs nothing, so its pull requests wait here without a verdict. */
-function RefusedPolicies({ repos }: { repos: string[] }) {
+function RefusedPolicies({ repos }: { repos: RepoRecord[] }) {
   const packs = useCheckPacks(repos);
-  function refusedPath(repo: string): string | undefined {
-    const found = packs.get(repo)?.found;
+  function refusedPath(repo: RepoRecord): string | undefined {
+    const found = packs.get(repoKey(repo))?.found;
     return found?.kind === "invalid" ? found.path : undefined;
   }
   const refused = repos.filter((repo) => refusedPath(repo) !== undefined);
   return refused.map((repo) => (
-    <p key={repo} role="status" className="note">Triage runs nothing on <Link to={`/repositories/${repo}`}>{repo}</Link> until its {refusedPath(repo)} is fixed.</p>
+    <p key={repoKey(repo)} role="status" className="note">Triage runs nothing on <Link to={repoHref(repo)}>{repo.name}</Link> until its {refusedPath(repo)} is fixed.</p>
   ));
 }
 
@@ -591,10 +591,10 @@ export default function Inbox() {
   const filterRef = useRef<HTMLButtonElement>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const enabled = useMemo(() => triageEnabledRepos(snapshot?.repos ?? []), [snapshot]);
-  const enabledNames = useMemo(() => [...enabled], [enabled]);
-  const packs = useCheckPacks(enabledNames);
+  const enabledRecords = useMemo(() => enabledRepos(snapshot?.repos ?? []), [snapshot]);
+  const packs = useCheckPacks(enabledRecords);
   const ready = useMemo(() => triageReadyRepos(snapshot?.repos ?? [], packs), [snapshot, packs]);
-  const needsSetup = useMemo(() => reposNeedingSetup(packs), [packs]);
+  const needsSetup = useMemo(() => reposNeedingSetup(enabledRecords, packs), [enabledRecords, packs]);
   const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
   const waiting = view === "needs-you" && searchParams.has(WAITING_PARAM);
   const listsRest = listsOpen(view) || waiting;
@@ -776,7 +776,7 @@ export default function Inbox() {
           {searchable || activeFilters(filters).length > 0 ? <FilterPills filters={filters} onChange={setFilters} triggerRef={filterRef} /> : null}
         </div>
         <PullToRefresh className="scroll" id="main">
-          <RefusedPolicies repos={enabledNames} />
+          <RefusedPolicies repos={enabledRecords} />
           <StoppedNotes items={open.map((entry) => entry.item)} />
           <PolicyUpgradeNotice />
           {verdictsError && <p role="alert" className="error">Could not read triage results. {verdictsError.message}</p>}

@@ -9,7 +9,7 @@ import { connectedSources, currentDeployment, isActiveCredential, lacksDecisionM
 import { counted } from "../../lib/plural.ts";
 import { usePortal } from "../../lib/portal.tsx";
 import { hostFullName } from "../../lib/pull-link.ts";
-import { packsPending, triageEnabledRepos, triageReadyRepos } from "../../lib/repo-rows.ts";
+import { enabledRepos, packsPending, triageReadyRepos } from "../../lib/repo-rows.ts";
 import type { DeployedSection } from "../../lib/tenant-entities.ts";
 import { DecisionModelForm } from "../DecisionModelForm.tsx";
 import { AutomationModeCard } from "./AutomationModeCard.tsx";
@@ -90,7 +90,7 @@ function DecisionModel({ snapshot }: { snapshot: PortalSnapshot }) {
 
 export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot; deployed: DeployedSection }) {
   const { refresh } = usePortal();
-  const enabled = useMemo(() => [...triageEnabledRepos(snapshot.repos)], [snapshot.repos]);
+  const enabled = useMemo(() => enabledRepos(snapshot.repos), [snapshot.repos]);
   const packs = useCheckPacks(enabled);
   const ready = !deployed.denied && !deployed.loading && !deployed.unavailable && !packsPending(packs);
   const sources = connectedSources(snapshot.credentials);
