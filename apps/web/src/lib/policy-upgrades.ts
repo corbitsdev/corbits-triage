@@ -28,11 +28,15 @@ function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyU
   return before.filter((row) => starting(row) && rowFor(now, idOf(row))?.upgrade?.state === "ok");
 }
 
-/** Where the hub could not list a repository's pull requests, the policy pull request last seen open is kept for its link. */
+/**
+ * Where the hub could not list a repository's pull requests, the policy pull request last seen open is kept for its link,
+ * unless the repository's standing moved meanwhile, as when the pull request adding its file merged.
+ */
 function withLastKnownPulls(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): PolicyUpgradeRow[] {
   return now.map(function lastKnownPull(row) {
-    const pull = row.pullUnread ? rowFor(before, idOf(row))?.pull : undefined;
-    return pull ? { ...row, pull } : row;
+    const last = row.pullUnread ? rowFor(before, idOf(row)) : undefined;
+    const moved = row.upgrade !== undefined && row.upgrade.state !== last?.upgrade?.state;
+    return last?.pull && !moved ? { ...row, pull: last.pull } : row;
   });
 }
 

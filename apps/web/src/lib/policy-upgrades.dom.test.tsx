@@ -78,6 +78,13 @@ function relist() {
   return settle(() => client.refetchQueries({ queryKey: ["policy-upgrades"] }));
 }
 
+/** Whether the upgrades listing is read again on its timer, as it is while a policy pull request is open. */
+function polling(): boolean {
+  const query = client.getQueryCache().find({ queryKey: ["policy-upgrades", "tenant"] });
+  const interval = query?.observers[0]?.options.refetchInterval;
+  return typeof interval === "function" && query !== undefined ? interval(query) !== false : Boolean(interval);
+}
+
 function standing(source: RepoSource) {
   return document.getElementById(source)?.textContent;
 }
@@ -140,4 +147,30 @@ test("a pull request listing the hub could not read keeps the policy pull reques
   expect(client.getQueryState(["policy-upgrades", "tenant"])?.data).toMatchObject({ rows: [{ pull }] });
   await relist();
   expect(reads.file.github).toBe(2);
+});
+
+test("a policy file merged while the listing could not be read settles the repository and stops waiting on its pull request", async () => {
+  hub([
+    [{ repo: REPO, source: "github", upgrade: { state: "start" }, pull }],
+    [{ repo: REPO, source: "github", upgrade: { state: "ok" }, pullUnread: true }],
+  ]);
+  await mount();
+  expect(polling()).toBe(true);
+  await relist();
+  expect(standing("github")).toBe("Has a policy file, merged just now");
+  expect(client.getQueryState(["policy-upgrades", "tenant"])?.data).toMatchObject({ rows: [{ upgrade: { state: "ok" }, pullUnread: true }] });
+  expect(client.getQueryState<{ rows: Array<{ pull?: unknown }> }>(["policy-upgrades", "tenant"])?.data?.rows[0]?.pull).toBeUndefined();
+  expect(polling()).toBe(false);
+});
+
+test("a pull request changing a policy file stays open while the listing could not be read", async () => {
+  const reads = hub([
+    [{ repo: REPO, source: "github", upgrade: { state: "ok" }, pull }],
+    [{ repo: REPO, source: "github", upgrade: { state: "ok" }, pullUnread: true }],
+  ]);
+  await mount();
+  await relist();
+  expect(client.getQueryState(["policy-upgrades", "tenant"])?.data).toMatchObject({ rows: [{ pull, pullUnread: true }] });
+  expect(reads.file.github).toBe(1);
+  expect(polling()).toBe(true);
 });
