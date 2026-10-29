@@ -124,7 +124,10 @@
 
 @media (max-width: 700px) {
   .repos .rp .gh-link { display: none; }
-  .repos .rp .rp-t { font-size: 19px; }
+  .repos .rp .rp-t { font-size: 19px; white-space: normal; overflow-wrap: anywhere; }
+  .repos .rt td.c-name { white-space: normal; padding-block: 10px; }
+  .repos .rt .c-name b { overflow-wrap: anywhere; }
+  .repos .rt td.c-health { min-width: 0; }
   .repos .gcard { padding: 2px 12px 8px; }
   .repos .then { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
   .repos .pr-row { flex-wrap: wrap; }

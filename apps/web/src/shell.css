@@ -365,12 +365,20 @@
   .ws-menu [role="menuitem"], .ws-new :is(input, [data-slot="button"]) { min-height: 44px; }
   .settings .place-steps > summary { padding: 13px 0; }
   .inbox :is(.search, .tbtn) { height: 44px; }
-  .inbox .seg button { min-height: 36px; padding: 0 12px; }
+  .inbox .seg button { flex: 1 1 auto; min-height: 44px; padding: 0 6px; white-space: nowrap; }
+  /* Each list control gets a row of its own; the slices scroll sideways rather than squeeze. */
+  .inbox .lh-top .seg { flex-basis: 100%; margin-left: 0; overflow-x: auto; }
+  .inbox .tools > * { flex-basis: 100%; }
+  .inbox .tools .tbtn { width: 100%; justify-content: center; }
   .inbox .groups { padding: 4px 4px 24px; }
-  .inbox .row { grid-template-columns: 8px auto minmax(0, 1fr) auto auto; min-height: 56px; padding: 9px 8px; }
+  /* The title wraps in full; the repository and age sit under it, and the status wraps on a line of its own. */
+  .inbox .row { grid-template-columns: 8px minmax(0, 1fr) auto; grid-template-areas: "dot tw tw" ". num age" ". st st"; min-height: 56px; padding: 10px 8px; }
+  .inbox .row .tw { display: block; overflow: visible; overflow-wrap: anywhere; }
   .inbox .row .who { display: none; }
-  /* A long repository name gives way before the status, so its count is never pushed over the age. */
-  .inbox .row .num { max-width: 16ch; }
+  .inbox .row .num { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+  .inbox .row .age { align-self: start; }
+  .inbox .row .st { white-space: normal; }
+  .inbox .row .st-text { overflow: visible; }
   .settings { padding: 24px 16px 100px; }
   .settings h1 { font-size: 28px; }
   .settings nav.byline a { display: inline-block; padding: 12px 0; }
@@ -380,7 +388,6 @@
   .settings .sec tbody td { padding: 0; border: 0; }
   .settings .sec td:last-child { margin-left: auto; }
   .inbox .tools { flex-wrap: wrap; }
-  .inbox .search { flex-basis: 100%; }
   .inbox .filter-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.24); }
   .inbox .pop { position: fixed; top: auto; bottom: 0; max-height: 80dvh; border-radius: var(--r-lg) var(--r-lg) 0 0; display: flex; flex-direction: column; }
   .inbox .pop .facets { flex: 1; min-height: 0; }
@@ -394,6 +401,26 @@
   .inbox .pane .bar { position: fixed; left: 0; right: 0; bottom: calc(68px + env(safe-area-inset-bottom)); z-index: 21; }
   .inbox .pane-in { padding: 16px 16px 160px; }
   .inbox.has-selection .toasts { bottom: calc(148px + env(safe-area-inset-bottom)); }
+  .inbox .pane-back { min-height: 44px; margin-left: 16px; }
+  .inbox .crumb { flex-wrap: wrap; height: auto; }
+  .inbox .crumb > span.mono { flex: none; }
+  .inbox .repo-link { white-space: normal; overflow-wrap: anywhere; }
+  /* A byline wraps on a phone, so its parts are spaced instead of dotted, leaving no dot to open a line. */
+  .inbox .byline { flex-wrap: wrap; gap: 4px 12px; white-space: normal; }
+  .inbox .byline > * + *::before { content: none; }
+  .inbox .byline > .tag { margin-left: 0; }
+  .inbox .byline .who .nm { overflow-wrap: anywhere; }
+  /* Verdict, then what to do, then the review: each section opens under a strong hairline. */
+  .inbox .st3 { margin-bottom: 0; padding-bottom: 20px; }
+  .inbox .held { margin: 0; padding: 16px 0; border-top: 1px solid var(--rule-strong); }
+  .inbox .held-what { flex-basis: 100%; }
+  .inbox .st3 + .pbs .pb:first-child, .inbox :is(.code-review, .desc) { border-top: 1px solid var(--rule-strong); }
+  .inbox .code-review { margin-top: 24px; }
+  .inbox .code-review .lbl-h { flex-wrap: wrap; column-gap: 16px; margin-top: 8px; white-space: normal; }
+  .inbox .code-review .lbl-h .sp { flex-basis: 100%; }
+  .inbox .desc { margin-top: 24px; padding-top: 16px; }
+  .inbox :is(.linkish, .desc-more, .dr, .disc3 .more) { min-height: 44px; }
+  .inbox .disc3 .more { display: inline-flex; align-items: center; margin-top: 8px; }
 }
 
 /* With nothing selected the list takes the whole width; the pane only appears for a selection. */

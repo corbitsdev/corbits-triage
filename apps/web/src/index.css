@@ -1132,7 +1132,7 @@ textarea {
 
 /* Touch screens get buttons big enough to tap. */
 @media (max-width: 720px), (pointer: coarse) {
-  [data-slot="button"] { min-height: 40px; min-width: 40px; }
+  [data-slot="button"] { min-height: 44px; min-width: 44px; }
 }
 
 .workspace {
