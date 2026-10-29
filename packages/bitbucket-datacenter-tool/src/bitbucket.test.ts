@@ -105,6 +105,17 @@ describe("mirror", () => {
     expect(fake.comments[0]!.text).toEndWith("\nIn progress: code review");
   });
 
+  test("progress that keeps any verdict holds one under the same policy, and writes under another or over progress", async () => {
+    const fake = fakeBitbucket();
+    await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    const progress = { ...REQUEST, comment: "In progress", onHead: "abc" };
+    expect(await mirror(fake.bb, { ...progress, keepVerdict: { policy: null } }, user)).toMatchObject({ commentId: 10, updated: false, kept: "verdict" });
+    expect(fake.comments[0]!.text).toEndWith("\nPass");
+    expect(await mirror(fake.bb, { ...progress, keepVerdict: { policy: { repo: { id: "art_policy", version: 2 } } } }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(await mirror(fake.bb, { ...progress, comment: "In progress again", keepVerdict: { policy: null } }, user)).toMatchObject({ commentId: 10, updated: true });
+    expect(fake.comments[0]!.text).toEndWith("\nIn progress again");
+  });
+
   test("progress over a verdict made under another policy writes, though the verdict is the same", async () => {
     const fake = fakeBitbucket();
     await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);

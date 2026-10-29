@@ -4,13 +4,29 @@ import { asRecord } from "@corbits/common";
 import { repoSourceOf, type KeptVerdict } from "@corbits/triage-contracts";
 import { progressMark } from "@corbits/triage-workflows/actions/waiting";
 import { writeMark, type MirrorOutcome } from "@corbits/triage-workflows/actions/mirror";
+import type { Item } from "@corbits/triage-workflows/logic/item";
 import type { Awaits } from "@corbits/triage-workflows/logic/render";
 import { managerMailOf } from "./hub.js";
 import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
 
 const Mailed = { output: { "reviewer?": Reviewer } } as const;
-const ProgressInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, "cleared?": { output: { request: { "header?": type({ verdict: "string", policy: "object | null" }).as<Omit<KeptVerdict, "head">>() } } }, "judgeMailed?": Mailed, "earlyReviewMailed?": Mailed, "reviewMailed?": Mailed });
+const ProgressInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: type("object[]").as<Item[]>() } }, "cleared?": { output: { request: { "header?": type({ verdict: "string", policy: "object | null" }).as<Omit<KeptVerdict, "head">>() } } }, "judgeMailed?": Mailed, "earlyReviewMailed?": Mailed, "reviewMailed?": Mailed });
 const Granted = type({ automatic: "string[]", "appLogin?": "string", "codeReview?": "unknown" });
+type Parsed = typeof ProgressInput.infer;
+
+/**
+ * What the progress leaves in place of itself: on an automatic pass, the pass's verdict where one is posted under the
+ * same policy, or while the judge is out, any verdict posted under the pass's policy, until the judge reports. CI
+ * running again on the head, or a Review again, shows progress over a verdict.
+ */
+function keptBy(parsed: Parsed, awaits: readonly Awaits[], again: unknown): Omit<KeptVerdict, "head"> | undefined {
+  if (awaits.includes("ci") || again !== undefined) return undefined;
+  const header = parsed.cleared?.output.request.header;
+  if (header) return { verdict: header.verdict, policy: header.policy };
+  // The policy the verdict's header is built from, none when the rules read none.
+  if (awaits.includes("judge")) return { policy: parsed.rules.output.items[0]?.source ?? null };
+  return undefined;
+}
 
 /**
  * Shows the in-progress comment while the pass's head waits for its judge or code review, naming what it waits for,
@@ -31,8 +47,6 @@ export async function progress(input: unknown, ctx: EffectContext, _signal: Abor
   if (awaits.length === 0) return { skipped: true };
   const { pullRequest } = managerMailOf(parsed.payload);
   const pull = { repo: pullRequest.repo, number: pullRequest.number, onHead: head };
-  // Only CI running again on the head, or a Review again, shows progress over the pass's verdict already posted on it.
-  const header = !awaits.includes("ci") && asRecord(granted.codeReview)?.["again"] === undefined ? parsed.cleared?.output.request.header : undefined;
-  const keepVerdict = header && { verdict: header.verdict, policy: header.policy };
+  const keepVerdict = keptBy(parsed, awaits, asRecord(granted.codeReview)?.["again"]);
   return writeMark(progressMark(repoSourceOf(pullRequest.source), pull, awaits, granted.appLogin, keepVerdict), ctx);
 }
