@@ -3,7 +3,7 @@
 import { type } from "arktype";
 import { isMap, isScalar, isSeq, parseDocument, type Document, type YAMLSeq } from "yaml";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, emptyPack, isSizeRule, readCheckPack, type CatalogId } from "./check-pack.js";
+import { emptyPack, isCatalogId, isSizeRule, readCheckPack, type CatalogId } from "./check-pack.js";
 import { checkPolicyFile, policyFileReason } from "./policy-file.js";
 import { policyRuleSchema } from "./policy-rules.js";
 import { withoutReserved } from "./policy-workflow.js";
@@ -39,10 +39,6 @@ export function fileRuleId(rule: PolicyRule): string {
 
 function refused(message: string): PolicyPatchOutcome {
   return { ok: false, message };
-}
-
-function isCatalogId(id: string): id is CatalogId {
-  return (CATALOG_IDS as readonly string[]).includes(id);
 }
 
 function unknown(id: string): string {

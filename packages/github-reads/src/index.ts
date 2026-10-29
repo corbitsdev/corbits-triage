@@ -194,7 +194,7 @@ export async function listOrgMembersForRepo(gh: GithubFetch, repo: string): Prom
   return { organization: owner.login, members: [...new Set(members)].sort((a, b) => a.localeCompare(b)) };
 }
 
-export const MAX_AUTHOR_TEAMS = 20;
+const MAX_AUTHOR_TEAMS = 20;
 
 export type AuthorTeams = { teams: string[]; unknown: string[] };
 
@@ -676,7 +676,7 @@ export async function listPrFilesPage(gh: GithubFetch, repo: string, number: num
   return page;
 }
 
-type RepoDoc = {
+export type RepoDoc = {
   path: string;
   text: string;
 };

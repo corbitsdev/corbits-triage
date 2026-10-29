@@ -1,5 +1,6 @@
 import { schema, type DB } from "@intx/db";
 import type { SidecarProvisioner, SidecarProvisionerChooser } from "@intx/hub-sessions";
+import { settled } from "@corbits/common";
 import type { DeployedVersions } from "@corbits/triage-contracts";
 import { CAPACITY_UNAVAILABLE } from "./host-capacity.js";
 import { and, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
@@ -17,14 +18,6 @@ export type CreatePlacementChooserOpts = {
  * so once it lands the pick counts twice until this passes, which sends a deployment to a sandbox early, never late.
  */
 const RESERVATION_MS = 30_000;
-
-async function settle(decision: Promise<unknown>): Promise<void> {
-  try {
-    await decision;
-  } catch {
-    // The caller observes the failure; the queue only needs ordering.
-  }
-}
 
 const allocation = schema.sidecarAllocation;
 const probe = schema.workflowProbe;
@@ -126,7 +119,7 @@ export function createPlacementChooser({ db, local, maxSidecars, now = Date.now 
 
   return function choosePlacement(candidates) {
     const decision = after(queue, candidates);
-    queue = settle(decision);
+    queue = settled(decision);
     return decision;
   };
 }

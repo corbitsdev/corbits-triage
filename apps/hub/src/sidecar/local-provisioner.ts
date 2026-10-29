@@ -4,7 +4,7 @@
 // allocation it was started for, and none outlives the hub: boot retires every sidecar an earlier boot started.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { errorText } from "@corbits/common";
+import { errorText, settled } from "@corbits/common";
 import type {
   DestroySidecarRequest,
   DestroySidecarResult,
@@ -92,14 +92,6 @@ async function exitedWithin(managed: ManagedProcess, timeoutMs: number): Promise
   }
 }
 
-async function settle(operation: Promise<unknown>): Promise<void> {
-  try {
-    await operation;
-  } catch {
-    // The caller observes the failure; the queue only needs ordering.
-  }
-}
-
 export function createLocalProcessSidecarProvisioner({
   dataRoot,
   spawnSidecar,
@@ -127,16 +119,16 @@ export function createLocalProcessSidecarProvisioner({
   // Ensure and destroy wait for boot to retire the sidecars earlier boots started; a failed boot fails them rather than
   // letting an ensure start a sidecar beside ones the hub still counts.
   const booted = Promise.withResolvers<void>();
-  void settle(booted.promise);
+  void settled(booted.promise);
 
   async function runAfter<R, T>(previous: Promise<void> | undefined, request: R, run: (request: R) => Promise<T>): Promise<T> {
     await previous;
     return run(request);
   }
 
-  async function releaseWhenSettled(allocationId: string, settled: Promise<void>): Promise<void> {
-    await settled;
-    if (operations.get(allocationId) === settled) operations.delete(allocationId);
+  async function releaseWhenSettled(allocationId: string, tail: Promise<void>): Promise<void> {
+    await tail;
+    if (operations.get(allocationId) === tail) operations.delete(allocationId);
   }
 
   // Operations on one allocation run in order, so cleanup stays behind a late ensure stock stopped awaiting.
@@ -145,9 +137,9 @@ export function createLocalProcessSidecarProvisioner({
       throw new Error("Local sidecar provisioner is shutting down");
     }
     const pending = runAfter(operations.get(request.allocationId), request, run);
-    const settled = settle(pending);
-    operations.set(request.allocationId, settled);
-    void releaseWhenSettled(request.allocationId, settled);
+    const tail = settled(pending);
+    operations.set(request.allocationId, tail);
+    void releaseWhenSettled(request.allocationId, tail);
     return pending;
   }
 
