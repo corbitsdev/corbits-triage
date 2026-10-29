@@ -209,7 +209,7 @@ const DoneInput = type({
   "reviewScope?": { output: { "skipped?": "string" } },
   "mirrorRules?": Output,
   "executeRules?": Output,
-  "reviewMailed?": { output: { "reviewer?": Reviewer } },
+  "reviewMailed?": { output: { reviewer: Reviewer } },
   "earlyReviewMailed?": { output: { "reviewer?": Reviewer } },
   "judgeMailed?": { output: { "reviewer?": Reviewer } },
   "postReview?": { output: { "threads?": { runId: "string", ids: "(number | null)[]" }, "unread?": "string" } },

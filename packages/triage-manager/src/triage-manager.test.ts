@@ -1041,6 +1041,23 @@ describe("triage-manager with a judge and code review", () => {
     expect(mailed).toHaveLength(1);
   });
 
+  test("code review whose mail with the judge failed is deployed again once the judge reports, and nothing posts until it reports", async () => {
+    const { writes, host } = githubHost();
+    const mailed: unknown[] = [];
+    const request = hubRequest(JUDGED, { ...CODE_REVIEW, ...REVIEW_REQUEST });
+    const first = fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] });
+    await runMail(github, wake(), host, first.hub, mailed, [true, false]);
+    expect(doneBody(first.calls)).toMatchObject({ reviewers: [expect.objectContaining({ kind: "judge" })] });
+    const verdict = await judgeVerdict(JSON.parse((mailed[0] as { content: string }).content).rules);
+
+    const second = fakeHub({ takes: [{ ...judgeReported(verdict, request), reviewers: [JUDGE] }], dones: [ENDED] });
+    const { ran } = await runMail(github, wake(), host, second.hub, mailed);
+    expect(ran).toContain("deployReview");
+    expect(ran).not.toContain("mirrorRules");
+    expect(writes).not.toContainEqual(JUDGE_POSTED);
+    expect(doneBody(second.calls)).toMatchObject({ wait: true, reviewers: [{ ...JUDGE, result: verdict }, expect.objectContaining({ kind: "code-review" })] });
+  });
+
   test("deploys code review with the judge once the rules gate opens, and posts the judge's verdict and the review together once both have reported, a finding leaving the judge's verdict as it is", async () => {
     const { writes, host } = githubHost();
     const mailed: unknown[] = [];

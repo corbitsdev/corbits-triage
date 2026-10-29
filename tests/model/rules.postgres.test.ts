@@ -92,7 +92,7 @@ test.each([
   const missed = model.github.misses.length;
   const pull = await open(model, ++pulls);
   await settle(model, pull);
-  await play(model, pull, "edit");
+  expect(await play(model, pull, "edit")).toBe(true);
   await settle(model, pull);
   expect([...(await broken(model, pull, missed)), ...verdictKept(model, pull)]).toEqual([]);
   expect(model.reviewRuns(pull.number)).toHaveLength(1);

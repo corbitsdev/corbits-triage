@@ -31,8 +31,13 @@ function oneVerdict(stack: Stack, pull: Played): string[] {
   return breaks;
 }
 
-/** R1 on a pull request that kept its first head: once a verdict is up on it, no later write turns it back into a progress comment. */
+/**
+ * R1 on a pull request that kept its first head: once a verdict is up on it, no later write turns it back into a progress
+ * comment. Only sequences that play no Review again are checked with it, since one rightly shows code review in progress
+ * again on the same head.
+ */
 export function verdictKept(stack: Stack, pull: Played): string[] {
+  if (pull.heads.length !== 1) throw new Error(`verdictKept checks a pull request on one head, not ${pull.heads.length}`);
   let posted = false;
   for (const { body } of stack.writes(pull.number)) {
     const text = (body as { body?: unknown } | null)?.body;
