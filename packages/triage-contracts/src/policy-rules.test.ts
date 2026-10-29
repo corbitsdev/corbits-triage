@@ -134,6 +134,8 @@ actions:
     expect(checkPolicyFile(`rules:\n${rule}    label: docs\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label needs onFail: label.", line: 2 }] });
     expect(checkPolicyFile(`rules:\n${rule}    onFail: label\n    label: "rule: docs"\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label rule: docs is one Triage takes back; name another." }] });
     expect(checkPolicyFile(`rules:\n${rule}    onFail: label\n    label: "sensitive: medium"\n`, REPO)).toEqual({ ok: false, problems: [{ message: "Rule docs label sensitive: medium is one Triage takes back; name another." }] });
+    const step = `rules:\n${rule}actions:\n  pass: [{ do: comment, target: { body: Hi } }, { do: labels, target: { from: list, labels: ["Risk: High", needs-qa] } }]\n`;
+    expect(checkPolicyFile(step, REPO)).toEqual({ ok: false, problems: [{ message: "Pass step 2 label Risk: High is one Triage takes back; name another." }] });
   });
 
   test("sensitive-paths reads its groups and risk its levels, both ask unless the file says, survive export, and a bad group name, signal or count is refused", () => {

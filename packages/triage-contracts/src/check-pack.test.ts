@@ -236,9 +236,14 @@ describe("check pack contract", () => {
 
   test("a labels step holding a level label is left out and named, and the rest of the pack loads", () => {
     const level = { do: "labels", target: { from: "list", labels: ["Risk: High"] } };
-    const read = readCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, pass: [level, COMMENT] } });
+    const withOthers = { do: "labels", target: { from: "list", labels: ["needs-qa", "Risk: High"] } };
+    const read = readCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, pass: [COMMENT, COMMENT, level, withOthers] } });
     expect(read.actions.pass).toEqual([COMMENT]);
-    expect(read.dropped).toEqual(["Pass step 1 label Risk: High is one Triage takes back; name another"]);
+    expect(read.dropped).toEqual([
+      "Pass step 3 label Risk: High is one Triage takes back, so the whole step is skipped",
+      "Pass step 4 label Risk: High is one Triage takes back, so the whole step is skipped; its other labels (needs-qa) are not added either",
+    ]);
+    expect(() => readCheckPack({ ...emptyPack(REPO), actions: { ...ACTIONS, pass: [level] } }, REPO, true)).toThrow("Pass step 1 label Risk: High is one Triage takes back; name another.");
   });
 
   test("the schema accepts what the parser reads, and a rejection says why", () => {

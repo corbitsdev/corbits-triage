@@ -113,7 +113,7 @@ function policyOf(file: Record<string, unknown>, repo: string): { policy: Record
   const header = { kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION } as const;
   const { policy: body, workflow } = readFile(file);
   if (body.extends !== undefined) return { policy: { ...header, ...overrideOf({ ...body, ...header, repo }, repo) }, workflow };
-  const { dropped, ...pack } = readCheckPack({ ...body, ...header, repo }, repo);
+  const { dropped, ...pack } = readCheckPack({ ...body, ...header, repo }, repo, true);
   if (dropped) throw new Error(`The policy file holds what no longer runs: ${refusalNames(dropped)}.`);
   return { policy: pack, workflow: { ...workflow, decide: workflow.decide ?? decideOf(pack.actions) } };
 }

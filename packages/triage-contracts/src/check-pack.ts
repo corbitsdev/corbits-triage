@@ -1129,15 +1129,23 @@ function parseStep(row: Record<string, unknown>, where: string): Step {
   }
 }
 
-/** Repository roles were removed, so a step for one is left out and named in `dropped`. */
-function parseList(raw: unknown, where: string, dropped: string[]): Step[] {
+/** The first label of a labels step that Triage takes back, which a step naming would flip on and off across runs. */
+function levelLabelOf(step: Step): string | undefined {
+  return step.do === "labels" && step.target.from === "list" ? step.target.labels.find((label) => levelLabelRule(label) !== undefined) : undefined;
+}
+
+/**
+ * Repository roles were removed, so a step for one is left out and named in `dropped`. A step naming a level label is
+ * left out and named the same way, or refused when `refuse` is set, as a policy file is.
+ */
+function parseList(raw: unknown, where: string, dropped: string[], refuse: boolean): Step[] {
   if (!Array.isArray(raw)) throw new Error(`${where} must be a list.`);
   if (raw.length > STEPS_MAX) throw new Error(`${where} must list at most ${STEPS_MAX} steps.`);
   return raw.flatMap(function stepAt(item, i) {
     const at = `${where} ${i + 1}`;
     const row = record(item, at);
     const role = asRecord(row.target)?.to === "role" ? asRecord(row.target)?.role : undefined;
-    if (role === undefined) return [parseStep(row, at)];
+    if (role === undefined) return stepWithoutLevelLabel(parseStep(row, at), at, dropped, refuse);
     dropped.push(`${at} (${String(row.do)} role ${String(role)}) no longer runs`);
     return [];
   });
@@ -1176,17 +1184,26 @@ function parseLabels(raw: unknown): Record<VerdictWord, string> {
   return Object.fromEntries(VERDICTS.map((verdict) => [verdict, row[verdict] === undefined ? VERDICT_LABELS[verdict] : text(row[verdict], `labels ${verdict}`, LABEL_MAX)])) as Record<VerdictWord, string>;
 }
 
+function stepWithoutLevelLabel(step: Step, at: string, dropped: string[], refuse: boolean): Step[] {
+  const level = levelLabelOf(step);
+  if (level === undefined) return [step];
+  if (refuse) throw new Error(`${at} label ${level} is one Triage takes back; name another.`);
+  const others = step.do === "labels" && step.target.from === "list" ? step.target.labels.filter((label) => label !== level) : [];
+  dropped.push(`${at} label ${level} is one Triage takes back, so the whole step is skipped${others.length > 0 ? `; its other labels (${others.join(", ")}) are not added either` : ""}`);
+  return [];
+}
+
 /** Packs written before verdicts stored an empty list of actions; one that is not empty is no longer read. */
-function parseActions(raw: unknown, dropped: string[]): PolicyActions {
+function parseActions(raw: unknown, dropped: string[], refuse: boolean): PolicyActions {
   if (raw === undefined || (Array.isArray(raw) && raw.length === 0)) return { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] };
   if (Array.isArray(raw)) throw new Error("Actions must be { when, pass, fail, unsure }; a list of actions with yes, no, unsure and always branches is no longer read.");
   const row = record(raw, "Actions");
   exactKeys(row, ["when", ...VERDICTS], "Actions");
   return {
     when: parseEvents(row.when, "Actions when"),
-    pass: distinctSteps(parseList(row.pass, "Pass step", dropped)),
-    fail: distinctSteps(parseList(row.fail, "Fail step", dropped)),
-    unsure: distinctSteps(parseList(row.unsure, "Unsure step", dropped)),
+    pass: distinctSteps(parseList(row.pass, "Pass step", dropped, refuse)),
+    fail: distinctSteps(parseList(row.fail, "Fail step", dropped, refuse)),
+    unsure: distinctSteps(parseList(row.unsure, "Unsure step", dropped, refuse)),
   };
 }
 
@@ -1283,21 +1300,8 @@ function withDropped<T extends object>(read: T, dropped: string[]): T & { droppe
   return { ...read, ...(dropped.length > 0 && { dropped }) };
 }
 
-/** A labels step naming a label Triage takes back would flip it across runs, so it is left out and named, and the rest of the pack still loads. */
-function withoutLevelLabelSteps(actions: PolicyActions, dropped: string[]): PolicyActions {
-  const kept = { ...actions };
-  for (const list of VERDICTS) {
-    kept[list] = actions[list].filter(function keepStep(step, i) {
-      const level = step.do === "labels" && step.target.from === "list" ? step.target.labels.find((label) => levelLabelRule(label) !== undefined) : undefined;
-      if (level !== undefined) dropped.push(`${STEP_WHERE[list]} ${i + 1} label ${level} is one Triage takes back; name another`);
-      return level === undefined;
-    });
-  }
-  return kept;
-}
-
-/** Reads a stored pack, throwing an Error whose message says why it is rejected. Version 1 reads as version 2. */
-export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
+/** Reads a stored pack, throwing an Error whose message says why it is rejected. Version 1 reads as version 2. A policy file passes `refuse`, so a step naming a label Triage takes back is refused where a stored pack leaves it out and names it in `dropped`. */
+export function readCheckPack(raw: unknown, expectedRepo?: string, refuse = false): CheckPack {
   const stored = policyObject(raw);
   if (stored.schemaVersion !== LEGACY_SCHEMA_VERSION) currentVersion(stored);
   const dropped: string[] = [];
@@ -1306,7 +1310,7 @@ export function readCheckPack(raw: unknown, expectedRepo?: string): CheckPack {
   const repo = readRepo(body, expectedRepo);
   const checks = readChecks(body.checks);
   const custom = parseCustom(body.custom);
-  const actions = withoutLevelLabelSteps(parseActions(body.actions, dropped), dropped);
+  const actions = parseActions(body.actions, dropped, refuse);
   const labels = parseLabels(body.labels);
   const groups = parseGroups(body.groups);
   return withDropped(refuseTriageLabels({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels, ...(groups && { groups }) }), dropped);
@@ -1335,7 +1339,7 @@ export function readSharedPolicy(raw: unknown): SharedPolicy {
   const checks = readChecks(body.checks);
   const dropped: string[] = [];
   const custom = parseCustom(body.custom);
-  const actions = parseActions(body.actions, dropped);
+  const actions = parseActions(body.actions, dropped, false);
   const labels = parseLabels(body.labels);
   return withDropped({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, checks, custom, actions, labels }, dropped);
 }
@@ -1357,7 +1361,7 @@ function parseOverrideActions(row: Partial<Record<"when" | VerdictWord, unknown>
   const actions: Partial<PolicyActions> = {};
   if (row?.when !== undefined) actions.when = parseEvents(row.when, "Actions when");
   for (const verdict of VERDICTS) {
-    if (row?.[verdict] !== undefined) actions[verdict] = distinctSteps(parseList(row[verdict], STEP_WHERE[verdict], []));
+    if (row?.[verdict] !== undefined) actions[verdict] = distinctSteps(parseList(row[verdict], STEP_WHERE[verdict], [], true));
   }
   return actions;
 }
@@ -1455,13 +1459,6 @@ export function refuseTriageLabels(pack: CheckPack): CheckPack {
     const lower = label.toLowerCase();
     const level = levelLabelRule(lower);
     if (lower.startsWith("triage:") || lower.startsWith(RULE_LABEL_PREFIX) || verdictLabels.includes(lower) || (level !== undefined && level !== id)) throw new Error(`Rule ${id} label ${label} is one Triage takes back; name another.`);
-  }
-  for (const list of VERDICTS) {
-    for (const [i, step] of pack.actions[list].entries()) {
-      if (step.do !== "labels" || step.target.from !== "list") continue;
-      const level = step.target.labels.find((label) => levelLabelRule(label) !== undefined);
-      if (level !== undefined) throw new Error(`${STEP_WHERE[list]} ${i + 1} label ${level} is one Triage takes back; name another.`);
-    }
   }
   return pack;
 }
