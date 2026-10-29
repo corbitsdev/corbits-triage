@@ -172,24 +172,25 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
 const MailedInput = type({ deployReview: { output: { reviewer: Reviewer } }, mailReview: { output: { reply: "string" } } });
 const EarlyMailedInput = type({ deployEarlyReview: { output: { reviewer: Reviewer } }, mailEarlyReview: { output: { reply: "string" } } });
 
-function mailedReview(reviewer: Reviewer, reply: string): { reviewer?: Reviewer; post: boolean } {
+function mailedReview(reviewer: Reviewer, reply: string): { reviewer: Reviewer; post: boolean } {
   const mailed = Mailed(reply);
   if (mailed instanceof type.errors) throw new Error(`reviewMailed: ${mailed.summary}`);
-  return mailed.mailed ? { reviewer, post: false } : { post: true };
+  return mailed.mailed ? { reviewer, post: false } : { reviewer: { ...reviewer, result: { failed: "not mailed" } }, post: true };
 }
 
 /**
  * The review becomes a reviewer to wait for once its mail went. A mail that failed, because the run ended before it
- * was ready or its deadline passed, leaves the pass to post the verdict without code review.
+ * was ready or its deadline passed, leaves the pass to post the verdict without code review, and the review stays
+ * failed on its head, so a later pass on the head deploys no other.
  */
-export async function reviewMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
+export async function reviewMailed(input: unknown): Promise<{ reviewer: Reviewer; post: boolean }> {
   const parsed = MailedInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewMailed: ${parsed.summary}`);
   return mailedReview(parsed.deployReview.output.reviewer, parsed.mailReview.output.reply);
 }
 
 /** `reviewMailed` for a review deployed with the judge. */
-export async function earlyReviewMailed(input: unknown): Promise<{ reviewer?: Reviewer; post: boolean }> {
+export async function earlyReviewMailed(input: unknown): Promise<{ reviewer: Reviewer; post: boolean }> {
   const parsed = EarlyMailedInput(input);
   if (parsed instanceof type.errors) throw new Error(`earlyReviewMailed: ${parsed.summary}`);
   return mailedReview(parsed.deployEarlyReview.output.reviewer, parsed.mailEarlyReview.output.reply);

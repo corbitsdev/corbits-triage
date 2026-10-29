@@ -187,12 +187,14 @@ function githubHost(head = HEAD, { pr = PR, pull = {}, checkRuns }: { pr?: Snaps
 
 const TAKE = { method: "POST", path: `${TENANT_PATH}/manager/take`, body: PULL };
 const DONE = { method: "POST", path: `${TENANT_PATH}/manager/done`, body: expect.objectContaining({ ...PULL, reviewers: [] }) };
+/** A done that keeps the code review that gave up on the head, so a later pass on it deploys no other. */
+const DONE_GAVE_UP = { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [expect.objectContaining({ kind: "code-review", result: { failed: expect.any(String) } })] }) };
 
 /** What the pass reported to the hub as done. */
 function doneBody(calls: readonly HubCall[]): Record<string, unknown> {
   return calls.find((call) => call.path === DONE.path)?.body as Record<string, unknown>;
 }
-const STAGE_1 = ["approvals", "cleared", "donePosted", "evaluateRules", "executeRules", "facts", "findingThreads", "markUnready", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "runsEnded", "take", "triaged", "unready"];
+const STAGE_1 = ["approvals", "cleared", "donePosted", "evaluateRules", "executeRules", "facts", "findingThreads", "markUnready", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "runsEnded", "take", "triaged", "unmailed", "unready"];
 
 /** A Bitbucket Data Center pull request at head `abc`, recording the build statuses posted on it. */
 function bitbucketHost() {
@@ -575,8 +577,8 @@ describe("triage-manager with code review", () => {
   });
 
   test.each([
-    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON), [TAKE, DONE, END]],
-    ["the review ran past its deadline, which is stopped,", { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] }, [TAKE, DONE, STOP_REVIEW, END]],
+    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON), [TAKE, DONE_GAVE_UP, END]],
+    ["the review ran past its deadline, which is stopped,", { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] }, [TAKE, DONE_GAVE_UP, STOP_REVIEW, END]],
     ["the hub read no review request", { ...PASS, request: hubRequest(RULES, CODE_REVIEW) }, [TAKE, DONE, END]],
   ])("when %s the verdict goes up without code review", async (_name, taken, calls) => {
     const { writes, host } = githubHost();
@@ -774,7 +776,7 @@ describe("triage-manager with code review", () => {
     expect(ran).toContain("deployReview");
     expect(ran).not.toContain("doneReviewing");
     expect(writes).toContainEqual(READY);
-    expect(hub.calls.at(-2)).toEqual(DONE);
+    expect(hub.calls.at(-2)).toEqual(DONE_GAVE_UP);
   });
 });
 

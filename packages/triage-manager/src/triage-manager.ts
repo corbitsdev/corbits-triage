@@ -137,7 +137,10 @@ function passOf(id: string, sources: Sources) {
       executeRules: { ...executeRules, input: CLEARED, after: ["postReview"] },
       // A skipped step is missing from every selector, so the branches that report a posted verdict, or a head triaged
       // while a reviewer is out, have their own done.
-      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "cleared", "reviewScope", "mirrorRules", "postReview", "executeRules")] }, ["executeRules"]),
+      // A pass that deployed code review posts only once the review's mail failed; its done records that review as failed.
+      unmailed: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "doneUnmailed", else: "donePosted", after: ["executeRules"] }),
+      doneUnmailed: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "cleared", "reviewScope", "reviewMailed", "mirrorRules", "postReview", "executeRules")] }, ["unmailed"]),
+      donePosted: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "cleared", "reviewScope", "mirrorRules", "postReview", "executeRules")] }, ["unmailed"]),
       progressAwaiting: progressAction(sources, [], ["judgeWait", "posting"]),
       doneAwaiting: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules")] }, ["progressAwaiting"]),
       done: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals")] }, ["ran", "triaged"]),

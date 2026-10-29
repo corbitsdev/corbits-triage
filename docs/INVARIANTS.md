@@ -34,7 +34,9 @@ changes nothing is extended; then 300 seeded random walks of ten. A pull request
 review, CI on its head has finished and every mail has been delivered. A failure names its
 sequence, and a walk's seed, so it replays; a run that ends other than completed, or a sequence that throws, fails too.
 Every sequence of none or one event is played again with code review on, once with its run failing before it is ready
-and once with it dying after it takes its mail.
+and once with it dying after it takes its mail; with each, a pull request whose verdict went up without the review gets
+an edit on the same head, and R1 also checks that no later write replaced that verdict with a progress comment and no
+other review was deployed.
 
 Stand-ins, and what they leave out:
 

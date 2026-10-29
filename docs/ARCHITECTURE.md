@@ -624,7 +624,9 @@ any other tenant or an unknown sender.
   decided verdict, so a later pass on that head whose rules still let code
   review past posts it with the verdict and deploys no other; a review that
   could not be mailed, reported a failure or ran past its deadline leaves the
-  verdict to go up alone and is deployed again on the next event. Each
+  verdict to go up alone and stays on its reviewer as failed, so a later pass
+  on that head keeps the verdict and deploys no other until the head changes
+  or a Review again asks for one. Each
   reviewer keeps its head and deadline on the claim, so whichever manager
   takes the next pass on that head sees a deadline that passed with no
   report. A pass after one that left reviewers out first reads each one's
