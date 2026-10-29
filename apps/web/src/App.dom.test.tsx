@@ -89,6 +89,7 @@ mock.module("./lib/user-cache.tsx", () => ({ UserQueryCache: Passthrough }));
 let snapshot = connectedSnapshot;
 let connected = true;
 let refreshes = 0;
+let finishRefresh: () => void = function noRefresh() {};
 
 beforeEach(function connect() {
   snapshot = connectedSnapshot;
@@ -96,11 +97,18 @@ beforeEach(function connect() {
   refreshes = 0;
 });
 
+function refreshNow() {
+  refreshes += 1;
+  return new Promise<PortalSnapshot>((resolve) => {
+    finishRefresh = () => resolve(snapshot);
+  });
+}
+
 mock.module("./lib/portal.tsx", () => ({
   ...portal,
   PortalProvider: Passthrough,
   usePortal() {
-    return { configured: true, loading: false, connected, readOnly: false, snapshot, invitations: [], unverified: false, loadError: "", warn() {}, notify() {}, refresh() { refreshes += 1; } };
+    return { configured: true, loading: false, connected, readOnly: false, snapshot, invitations: [], unverified: false, loadError: "", warn() {}, notify() {}, refreshNow };
   },
 }));
 
@@ -207,15 +215,26 @@ test("Triage reads no policy when the workspace has no Triage role to allow acti
   expect(requested.filter((url) => url.includes("/policy"))).toEqual([]);
 });
 
-test("a connected workspace whose keys could not be read sees a notice with Try again, not onboarding", () => {
+test("a connected workspace whose keys could not be read sees a notice with Try again, not onboarding", async () => {
   snapshot = { ...connectedSnapshot, credentialsError: "The hub is unavailable." };
   connected = false;
   renderAt("/");
 
-  expect(document.querySelector("[role=alert]")?.textContent).toContain("Couldn't read your workspace's keys.");
+  expect(document.querySelector(".page-notice")?.textContent).toContain("Couldn't read your workspace's keys.");
+  expect(document.querySelector("[role=alert]")?.textContent).toBe("The hub is unavailable.");
   expect(document.querySelector("#setup-title")).toBeNull();
-  act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click());
+  await act(async () => {
+    [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   expect(refreshes).toBe(1);
+  const pending = [...document.querySelectorAll("button")].find((button) => button.textContent === "Trying again…");
+  expect(pending?.disabled).toBe(true);
+  await act(async () => {
+    finishRefresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect([...document.querySelectorAll("button")].some((button) => button.textContent === "Try again")).toBe(true);
 });
 
 test("a workspace with no keys stored is sent to onboarding", () => {
