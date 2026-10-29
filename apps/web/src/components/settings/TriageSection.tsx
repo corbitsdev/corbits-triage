@@ -28,11 +28,9 @@ function undeployedSources(deployments: readonly DeployedWorkflow[], sources: re
 
 type Status = { sources: RepoSource[]; undeployed: RepoSource[]; needsModel: boolean; triaging: number; total: number };
 
-/** Whether Triage runs depends on the keys and the decision model, so a failed read of either leaves it unknown. */
-function unreadText({ credentialsError, modelsError }: PortalSnapshot): string | null {
-  if (credentialsError !== undefined) return "Couldn't read your keys. Triage can't tell whether it is running.";
-  if (modelsError !== undefined) return "Couldn't read your decision model. Triage can't tell whether it is running.";
-  return null;
+/** Whether Triage runs depends on the decision model, so a failed read of it leaves that unknown. */
+function unreadText({ modelsError }: PortalSnapshot): string | null {
+  return modelsError === undefined ? null : "Couldn't read your decision model. Triage can't tell whether it is running.";
 }
 
 function statusText({ sources, undeployed, needsModel, triaging, total }: Status): string {

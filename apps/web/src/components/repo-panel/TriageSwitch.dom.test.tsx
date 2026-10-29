@@ -170,11 +170,8 @@ test("the same policy with a saved model shows no model prompt", async () => {
   expect(document.body.textContent ?? "").not.toContain("needs a model");
 });
 
-test.each([
-  ["model catalog", { modelsError: "The hub is unavailable." }],
-  ["key", { credentialsError: "The hub is unavailable." }],
-])("a failed %s read shows no model prompt", async (_read, changes) => {
-  await mountSwitch(changes);
+test("a failed model catalog read shows no model prompt", async () => {
+  await mountSwitch({ modelsError: "The hub is unavailable." });
   expect(document.body.textContent ?? "").not.toContain("needs a model");
 });
 

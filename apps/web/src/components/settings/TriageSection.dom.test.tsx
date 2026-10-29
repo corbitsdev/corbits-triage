@@ -63,12 +63,9 @@ function show(changes: Partial<PortalSnapshot>) {
   });
 }
 
-test.each([
-  ["keys", { credentialsError: "The hub is unavailable." }, "Couldn't read your keys. Triage can't tell whether it is running."],
-  ["decision model", { modelsError: "The hub is unavailable." }, "Couldn't read your decision model. Triage can't tell whether it is running."],
-])("when the %s cannot be read, the status line says so and offers Try again", (_read, changes, sentence) => {
-  show(changes);
-  expect(document.body.textContent).toContain(sentence);
+test("when the decision model cannot be read, the status line says so and offers Try again", () => {
+  show({ modelsError: "The hub is unavailable." });
+  expect(document.body.textContent).toContain("Couldn't read your decision model. Triage can't tell whether it is running.");
   expect(document.body.textContent).not.toContain("no source is connected");
   expect(document.body.textContent).not.toContain("Triage is starting");
   const retry = [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again");

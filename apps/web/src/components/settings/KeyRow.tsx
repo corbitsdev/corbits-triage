@@ -15,7 +15,7 @@ type KeyRowProps = {
   error: string | undefined;
 };
 
-/** One model and its key: a stored key can be rotated or removed; without one, its form is open. Without access to credentials, or when they could not be read, only the sentence shows. */
+/** One model and its key: a stored key can be rotated or removed; without one, its form is open. Without access to credentials, only the sentence shows. */
 export function KeyRow({ words, name, keys, denied, remove, editor, error }: KeyRowProps) {
   const { readOnly } = usePortal();
   const [editing, setEditing] = useState(false);
@@ -28,12 +28,7 @@ export function KeyRow({ words, name, keys, denied, remove, editor, error }: Key
   const stored = keys.length > 0;
 
   if (denied) return <div className="sentence"><span className="txt">{words}</span></div>;
-  if (error) {
-    return <>
-      <p role="alert" className="field-error">Triage could not read the saved keys: {error}</p>
-      <div className="sentence"><span className="txt">{words}</span></div>
-    </>;
-  }
+  if (error) return <p role="alert" className="field-error">Triage could not read the saved keys: {error}</p>;
 
   return (
     <>
