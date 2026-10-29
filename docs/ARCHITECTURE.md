@@ -1047,7 +1047,12 @@ nested `comments`) follow its REST reference and have not been checked against a
 running instance. The portal shows it
 from `GET …/code-review`; a finding held in the summary, one a person sent from
 the portal that the manager never posts again on that head, or one posted
-before Triage kept its comment is `not-tracked`. A
+before Triage kept its comment is `not-tracked`. Each finding's `open` and
+each finished review's count of open findings follow that record through
+`findingOpen` in triage-contracts: a finding whose thread is resolved or
+outdated is no longer open; replied, untouched and `not-tracked` ones are.
+With `at`, the route answers only that head's reviews and carries none over to
+it, so an older head's review reads with the states recorded for it. A
 closed or merged pull request is not read again.
 
 The steps, the provider profile and how to add a provider are in

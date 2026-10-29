@@ -24,6 +24,11 @@ export type ThreadRead = typeof ThreadRead.infer;
 export const FindingThread = type({ id: "number", state: type.enumerated(...THREAD_STATES), "at?": "string" });
 export type FindingThread = typeof FindingThread.infer;
 
+/** A finding is open until its thread is resolved on the host or the code under it changed on a later head. */
+export function findingOpen(thread: FindingThread | undefined): boolean {
+  return thread?.state !== "resolved" && thread?.state !== "outdated";
+}
+
 /**
  * One finding of a code review: its lines in the reviewed head, what is wrong, its priority (0 is the most severe), the
  * code it quotes, when none of its lines could be read, `unverified`, and once it is posted inline, its `thread`.

@@ -4,7 +4,7 @@
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema, type DB } from "@intx/db";
-import { CodeReviewComment, REPO_SOURCES, repoSourceOf, StageResult, THREAD_STATES, type FindingThread, type RepoSource } from "@corbits/triage-contracts";
+import { CodeReviewComment, findingOpen, REPO_SOURCES, repoSourceOf, StageResult, THREAD_STATES, type FindingThread, type RepoSource } from "@corbits/triage-contracts";
 import { asRecord } from "@corbits/common";
 import { diffHash } from "@corbits/common/diff-hash";
 import type { PullRequestToReview } from "./pull-request-reader.js";
@@ -19,15 +19,18 @@ const UNREAD_RETRY_MS = 5 * 60_000;
 
 const Source = type.enumerated(...REPO_SOURCES);
 
-/** `head` is the pull request's head as the asker last read it, which the newest finished review may stand for. */
-export const CodeReviewQuery = type({ repo: "string > 0", "source?": Source, number: "string.integer.parse", "head?": "string > 0" });
+/**
+ * `head` is the pull request's head as the asker last read it, which the newest finished review may stand for; `at`
+ * narrows the reviews to that head's, which no other head's review stands for.
+ */
+export const CodeReviewQuery = type({ repo: "string > 0", "source?": Source, number: "string.integer.parse", "head?": "string > 0", "at?": "string > 0" });
 
 /**
  * What became of a finding's thread as last read: `not-tracked` for one held in the review's summary, sent from the
  * portal and never posted again by the manager, or posted before Triage kept its comment, `untouched` for one nobody acted on, including one not read since it was posted; `at` is when it changed, when the host says.
  */
 const Thread = type({ state: type.enumerated(...THREAD_STATES, "not-tracked"), "at?": "string" });
-const ShownFinding = CodeReviewComment.omit("thread").and({ thread: Thread });
+const ShownFinding = CodeReviewComment.omit("thread").and({ thread: Thread, open: "boolean" });
 
 const CompletedRun = type({
   status: "'completed'",
@@ -35,6 +38,7 @@ const CompletedRun = type({
   startedAt: "string",
   summary: "string",
   comments: ShownFinding.array(),
+  open: "number",
   budgetExhausted: "boolean",
   "complete?": "boolean",
   "diffHash?": "string",
@@ -78,8 +82,9 @@ function reviewOf(record: CodeReviewRecord): Review {
   if ("failed" in reported) return { ...base, status: "failed" };
   if (reported.kind !== "code-review") throw new Error(`a code review result names ${reported.kind}`);
   const { summary, budgetExhausted, complete } = reported.result;
-  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified, thread }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }), thread: threadOf(thread) }));
-  return { ...base, status: "completed", summary, comments, budgetExhausted, ...(complete !== undefined && { complete }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
+  const comments = reported.result.comments.map(({ path, start, end, title, body, priority, quoted, unverified, thread }) => ({ path, start, end, title, body, priority, ...(quoted !== undefined && { quoted }), ...(unverified && { unverified }), thread: threadOf(thread), open: findingOpen(thread) }));
+  const open = comments.filter((comment) => comment.open).length;
+  return { ...base, status: "completed", summary, comments, open, budgetExhausted, ...(complete !== undefined && { complete }), ...(reported.diffHash && { diffHash: reported.diffHash }) };
 }
 
 type CodeReviewRunsDeps = {
@@ -114,8 +119,9 @@ export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
     return tenant;
   }
 
-  async function reviewsOf(tenantId: string, source: RepoSource, repo: string, number: number): Promise<Found> {
-    const reviews = (await codeReviews(deps.db, tenantId, { source, repo, number })).map(reviewOf);
+  async function reviewsOf(tenantId: string, source: RepoSource, repo: string, number: number, at: string | undefined): Promise<Found> {
+    const records = await codeReviews(deps.db, tenantId, { source, repo, number });
+    const reviews = records.filter((record) => at === undefined || record.head === at).map(reviewOf);
     return { review: reviews[0] ?? null, completed: reviews.find((review) => review.status === "completed") ?? null };
   }
 
@@ -156,7 +162,8 @@ export function createCodeReviewRuns(deps: CodeReviewRunsDeps) {
 
   async function latest(tenantId: string, query: typeof CodeReviewQuery.infer): Promise<typeof CodeReviewFound.infer> {
     const tenant = await tenantOf(tenantId);
-    const reviews = await reviewsOf(tenantId, repoSourceOf(query.source), query.repo, query.number);
+    const reviews = await reviewsOf(tenantId, repoSourceOf(query.source), query.repo, query.number, query.at);
+    if (query.at !== undefined) return { ...reviews, carriedTo: null };
     return { ...reviews, carriedTo: await carriedTo(tenantId, tenant.config, query, reviews) };
   }
 

@@ -44,9 +44,10 @@ const FINISHED = {
   summary: "Fixes the widget.",
   budgetExhausted: true,
   comments: [
-    { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1, thread: { state: "not-tracked" as const } },
-    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it.", priority: 3, thread: { state: "not-tracked" as const } },
+    { path: "src/widget.ts", start: 1, end: 3, title: "Unchecked input", body: "Validate it first.", priority: 1, thread: { state: "not-tracked" as const }, open: true },
+    { path: "src/other.ts", start: 5, end: 5, title: "Stale import", body: "Remove it.", priority: 3, thread: { state: "not-tracked" as const }, open: true },
   ],
+  open: 2,
 };
 let completed: CompletedReview | null = FINISHED;
 let carriedTo: string | null = null;
@@ -299,7 +300,7 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   expect(outdated.status).toBe(409);
   expect(await outdated.json()).toMatchObject({ error: { code: "code_review_outdated" } });
 
-  completed = { ...FINISHED, headSha: "newer", summary: "", comments: [], budgetExhausted: false, complete: true };
+  completed = { ...FINISHED, headSha: "newer", summary: "", comments: [], open: 0, budgetExhausted: false, complete: true };
   expect(await (await prActions({ ...send, headSha: "newer" }, member("usr_approver"))).json()).toMatchObject({ error: { code: "code_review_empty" } });
   completed = null;
   expect(await (await prActions(send, member("usr_approver"))).json()).toMatchObject({ error: { code: "no_code_review" } });
