@@ -43,17 +43,22 @@ export async function keepDeploymentsAlive(w: WriteTx, stamp: Date): Promise<voi
     .where(eq(tenant.id, w.tenantId));
 }
 
-export async function assignRole(w: WriteTx, principalId: string, roleId: string): Promise<void> {
-  check(w, ASSIGNS_ROLE);
+async function inWorkspace(w: WriteTx, principalId: string, roleId: string): Promise<void> {
   const { principal, role } = schema;
   const [held] = await w.tx.select({ id: principal.id }).from(principal).where(and(eq(principal.id, principalId), eq(principal.tenantId, w.tenantId)));
   const [given] = await w.tx.select({ id: role.id }).from(role).where(and(eq(role.id, roleId), eq(role.tenantId, w.tenantId)));
   if (!held || !given) throw new Error(`Principal ${principalId} and role ${roleId} must both belong to workspace ${w.tenantId}.`);
+}
+
+export async function assignRole(w: WriteTx, principalId: string, roleId: string): Promise<void> {
+  check(w, ASSIGNS_ROLE);
+  await inWorkspace(w, principalId, roleId);
   await w.tx.insert(schema.principalRole).values({ principalId, roleId }).onConflictDoNothing();
 }
 
 export async function unassignRole(w: WriteTx, principalId: string, roleId: string): Promise<void> {
   check(w, ASSIGNS_ROLE);
+  await inWorkspace(w, principalId, roleId);
   const { principalRole } = schema;
   await w.tx.delete(principalRole).where(and(eq(principalRole.principalId, principalId), eq(principalRole.roleId, roleId)));
 }

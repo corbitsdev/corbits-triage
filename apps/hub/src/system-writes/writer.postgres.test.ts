@@ -8,7 +8,7 @@ import { createDB, createPrincipalKeyStore, resolveSenderKey, runMigrations, sch
 import { DEPLOYER_ROLE } from "@corbits/triage-contracts";
 import { ensureDeployerRole } from "../deployer-role.js";
 import { setUpPublisher } from "../workflow-release/publisher.js";
-import { assignRole, ASSIGNS_ROLE, keepDeploymentsAlive, managesTenant, SETS_ROLE_GRANTS } from "./tenant.js";
+import { assignRole, ASSIGNS_ROLE, keepDeploymentsAlive, managesTenant, SETS_ROLE_GRANTS, unassignRole } from "./tenant.js";
 import { createSystemWrites, SYSTEM_WRITER, SystemWriteDenied } from "./writer.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -202,7 +202,7 @@ test("PostgreSQL: concurrent first writes in one process share a single mint of 
   });
 }, 60_000);
 
-test("PostgreSQL: a role is assigned only when the principal and the role are both in the transaction's workspace", async () => {
+test("PostgreSQL: a role is assigned or taken only when the principal and the role are both in the transaction's workspace", async () => {
   await withDatabase(async function scoped(db) {
     const writes = writesOn(db);
     const home = await workspace(db, "home");
@@ -211,6 +211,9 @@ test("PostgreSQL: a role is assigned only when the principal and the role are bo
     await expect(writes.transaction(home, [ASSIGNS_ROLE], (w) => assignRole(w, "prn_home_person", "rol_away_reviewer"))).rejects.toThrow("must both belong");
     expect(await rolesOf(db, "prn_away_person")).toEqual([]);
     expect(await rolesOf(db, "prn_home_person")).toEqual([]);
+    await db.insert(schema.principalRole).values({ principalId: "prn_away_person", roleId: "rol_away_reviewer" });
+    await expect(writes.transaction(home, [ASSIGNS_ROLE], (w) => unassignRole(w, "prn_away_person", "rol_away_reviewer"))).rejects.toThrow("must both belong");
+    expect(await rolesOf(db, "prn_away_person")).toEqual(["rol_away_reviewer"]);
   });
 }, 60_000);
 
