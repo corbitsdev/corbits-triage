@@ -3,7 +3,7 @@
 import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { ApiError, type Transport } from "@intx/hub-client";
@@ -15,8 +15,8 @@ import { connectGithubApp } from "../../apps/web/src/lib/github-manifest.ts";
 import type { FakeGithub } from "./github.ts";
 
 const ROOT = resolve(import.meta.dir, "../..");
-/** Each hub's full log, kept after the run for CI to upload; `tmp/` is gitignored. */
-export const LOG_DIR = join(ROOT, "tmp", "chain-logs");
+/** The logs of every chain file, kept after the run for CI to upload; `tmp/` is gitignored. */
+const LOG_ROOT = join(ROOT, "tmp", "chain-logs");
 const ADMIN_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 // The hub and its sidecars shell out to bun, which needs it on PATH and a HOME for its cache.
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
@@ -63,7 +63,7 @@ export async function createDatabase(): Promise<Database> {
   try {
     await admin.db.execute(sql.raw(`create database ${name}`));
   } finally {
-    await admin.close();
+    await cleanup("close the admin connection", () => admin.close());
   }
   const url = `postgres://postgres:postgres@localhost:5432/${name}`;
   await Bun.$`${process.execPath} --conditions=intx-src apps/hub/src/migrate.ts`.cwd(ROOT).env({ PATH: CHILD_PATH, HOME: homedir(), DATABASE_URL: url }).quiet();
@@ -75,7 +75,7 @@ export async function dropDatabase(database: Database): Promise<void> {
   try {
     await admin.db.execute(sql.raw(`drop database if exists ${database.name} with (force)`));
   } finally {
-    await admin.close();
+    await cleanup("close the admin connection", () => admin.close());
   }
 }
 
@@ -105,8 +105,9 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const origin = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "corbits-chain-"));
   const logs: string[] = [];
-  mkdirSync(LOG_DIR, { recursive: true });
-  const logFile = join(LOG_DIR, `hub-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}.log`);
+  const logDir = join(LOG_ROOT, basename(Bun.main, ".test.ts"));
+  mkdirSync(logDir, { recursive: true });
+  const logFile = join(logDir, `hub-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(3).toString("hex")}.log`);
   const child = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
     cwd: ROOT,
     env: {
@@ -150,17 +151,20 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   throw new Error(`The hub did not start.\n${hubLogTail({ logs, logFile })}`);
 }
 
-/** Where the hub's full log is, and its last lines, for a failure message. */
+/**
+ * Where the logs are and the hub's last lines, for a failure message. The hub's log holds its sidecars' and their
+ * workflow processes' output too, which they inherit.
+ */
 export function hubLogTail({ logs, logFile }: Pick<Hub, "logs" | "logFile">): string {
-  return `Hub log: ${logFile}\n${logs.slice(-80).join("\n")}`;
+  return `Logs: ${dirname(logFile)}\nHub log: ${logFile}\n${logs.slice(-80).join("\n")}`;
 }
 
-/** Thaws a frozen process from a `finally`, where a failure here (the process already gone) must not replace the error being thrown. */
-export function resume(pid: number): void {
+/** Runs a cleanup step from a `finally` or `afterAll`, where its failure must not replace the error being thrown. */
+export async function cleanup(what: string, step: () => unknown): Promise<void> {
   try {
-    process.kill(pid, "SIGCONT");
+    await step();
   } catch (err) {
-    console.error(`Could not resume process ${pid}: ${String(err)}`);
+    console.error(`Could not ${what}: ${String(err)}`);
   }
 }
 
@@ -199,7 +203,7 @@ export async function signUp(hub: Hub, database: Database): Promise<Workspace> {
   try {
     await db.update(schema.user).set({ emailVerified: true }).where(eq(schema.user.email, email));
   } finally {
-    await close();
+    await cleanup("close the database connection", close);
   }
   const cookie = signUp.headers.getSetCookie().map((value) => value.split(";")[0]).join("; ");
   const transport = cookieTransport(hub.origin, cookie);

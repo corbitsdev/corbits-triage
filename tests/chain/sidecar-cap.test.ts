@@ -11,7 +11,7 @@ import { parseTriageState, triageStateName, WAITING_FOR_CAPACITY, type PrTriageR
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { DEFAULT_MAIL_HOLD_MS } from "../../apps/hub/src/timings.ts";
 import { stubModel } from "./model.ts";
-import { buildPortal, createDatabase, deliver, dropDatabase, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, cleanup, createDatabase, deliver, dropDatabase, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 setDefaultTimeout(10 * 60_000);
 
@@ -41,11 +41,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await hub?.stop();
-  if (database) await dropDatabase(database);
-  github.stop();
-  model.stop();
-  rmSync(portalDir, { recursive: true, force: true });
+  await cleanup("stop the hub", () => hub?.stop());
+  await cleanup("drop the database", () => database && dropDatabase(database));
+  await cleanup("stop the fake GitHub", () => github.stop());
+  await cleanup("stop the stub model", () => model.stop());
+  await cleanup("remove the portal build", () => rmSync(portalDir, { recursive: true, force: true }));
 });
 
 function sha(seed: string): string {
@@ -70,7 +70,7 @@ async function rows(query: string): Promise<Record<string, unknown>[]> {
   try {
     return [...await db.execute(sql.raw(query))] as Record<string, unknown>[];
   } finally {
-    await close();
+    await cleanup("close the database connection", close);
   }
 }
 

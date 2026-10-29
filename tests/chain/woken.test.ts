@@ -1,6 +1,7 @@
 // A manager that waits for the judge it mailed, and the judge's report reaching it through the hub.
 import { expect, test } from "bun:test";
 import { VERDICT_LABELS } from "@corbits/triage-contracts";
+import { cleanup } from "./stack.ts";
 import { chainStack, WOKEN, isLiveDeployment, type Claim, once } from "./chain.ts";
 import { sha, pullOf, comments, labelled } from "./github.ts";
 
@@ -30,7 +31,7 @@ const woken = once(async function woken() {
     const polled = await takes() + 1;
     await until("the manager to poll again with its judge still out", async () => (await takes()) >= polled || undefined);
   } finally {
-    release();
+    await cleanup("release the judge", release);
   }
   const live = (await managers()).slice(before);
   const claim = await settled(WOKEN, 1, whileJudging.history.length + 1);
