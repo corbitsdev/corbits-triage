@@ -225,7 +225,7 @@ export interface MirrorInput {
   statusHead?: string;
   /** Writes nothing once the pull request has moved past this head. */
   onHead?: string;
-  /** The pass's policy, and its verdict when it has one: a comment that already shows them for `onHead` is kept rather than written over. */
+  /** The pass's verdict and policy: a comment that already shows them for `onHead` is kept rather than written over. */
   keepVerdict?: Omit<KeptVerdict, "head">;
   /** While this is the head, which may not be approved, the token user's approval is taken back. */
   notReadyHead?: string;

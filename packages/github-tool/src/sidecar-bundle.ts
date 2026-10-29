@@ -175,7 +175,7 @@ const MIRROR_FIELDS = {
   notReadyHead: str,
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
-  keepVerdict: { ...obj({ verdict: str, policy: POLICY_REF }, ["policy"]), description: "The pass's policy, and its verdict when it has one: a comment that already shows a verdict for onHead under that policy, that verdict when one is named, is kept rather than written over" },
+  keepVerdict: { ...obj({ verdict: str, policy: POLICY_REF }), description: "The pass's verdict and policy: a comment that already shows them for onHead is kept rather than written over" },
 };
 const MIRROR_REQUIRED = ["repo", "number", "labels"];
 const MIRROR_INPUT = obj({ ...MIRROR_FIELDS, appLogin: APP_LOGIN }, [...MIRROR_REQUIRED, "appLogin"]);

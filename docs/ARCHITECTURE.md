@@ -609,10 +609,10 @@ any other tenant or an unknown sender.
   `kept: "verdict"`. A progress comment keeps the header of the verdict it
   replaced, for the next verdict's note on what changed since, marked
   `progress`, so it never counts as showing that verdict. While a judge is
-  out on an automatic pass, its progress is written with `keepVerdict` naming
-  only the rules' policy, so any verdict already shown for the head under that
-  policy stays until the judge reports; the first judge on a head finds none
-  and writes progress; a verdict the rules no longer give, or one made under
+  out on an automatic pass, its progress is written with `keepVerdict` set to
+  the machine verdict, the one `verdict` would post were the judge to fail,
+  made from the rules alone with no model call, so a verdict the rules still
+  give stays until the judge reports, and one they no longer give is replaced; a verdict the rules no longer give, or one made under
   another policy, is replaced as before, and CI running again on the
   head or a Review again shows progress over a verdict. A judge the release does not publish posts nothing.
   When the policy turns code review on, the verdict's rules let it past, the

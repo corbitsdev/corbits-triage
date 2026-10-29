@@ -868,28 +868,25 @@ const JUDGE_POSTED = expect.objectContaining({ method: "POST", path: `/repos/${P
 describe("triage-manager with a judge", () => {
   beforeEach(() => publish({ github: { judge: JUDGE_RELEASE } }));
 
-  test("a judge deployed again on a head whose verdict is posted keeps that verdict until it reports, and the first judge writes progress", async () => {
+  test.each([
+    ["a judge deployed again on unchanged facts keeps the verdict the rules alone give until it reports", "unsure", false],
+    ["a first judge over a Fail its rules no longer give writes progress", "fail", true],
+  ])("%s", async (_name, posted, written) => {
     // The policy file the rules read, as the verdict's header names it.
     const policy = { file: { path: ".corbits-triage.yml", sha: "eval-1" } };
-    const shown = `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy, verdict: "unsure" })} -->\n**Triage: Unsure**`;
+    const shown = `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy, verdict: posted })} -->\n**Triage: ${posted === "fail" ? "Fail" : "Unsure"}**`;
     const comment = { id: 1, user: { login: REQUEST["appLogin"] }, body: shown };
     const { host } = githubHost();
     async function withComment(input: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
       const method = init?.method ?? "GET";
-      if (url.pathname === `/repos/${PR.repo}/issues/${PR.number}/comments` && method === "GET") return Response.json(comment.body ? [comment] : []);
-      if (url.pathname === `/repos/${PR.repo}/issues/${PR.number}/comments` && method === "POST") comment.body = (JSON.parse(String(init!.body)) as { body: string }).body;
+      if (url.pathname === `/repos/${PR.repo}/issues/${PR.number}/comments` && method === "GET") return Response.json([comment]);
       if (url.pathname === `/repos/${PR.repo}/issues/comments/1` && method === "PATCH") comment.body = (JSON.parse(String(init!.body)) as { body: string }).body;
       return host(input, init);
     }
-    const take = { ...PASS, request: hubRequest(JUDGED) };
-    const { ran } = await runMail(github, wake(), withComment, fakeHub({ takes: [take], dones: [ENDED] }).hub);
+    const { ran } = await runMail(github, wake(), withComment, fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] }).hub);
     expect(ran).toContain("progressJudging");
-    expect(comment.body).toBe(shown);
-
-    comment.body = "";
-    await runMail(github, wake(), withComment, fakeHub({ takes: [take], dones: [ENDED] }).hub);
-    expect(comment.body).toContain("**Triage: In progress**");
+    expect(comment.body.includes("**Triage: In progress**")).toBe(written);
   });
 
   test("the first pass deploys the judge and mails it the rules, posting nothing; the pass that collects its report posts its verdict as reported and keeps it on the head", async () => {
