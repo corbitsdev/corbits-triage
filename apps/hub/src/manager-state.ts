@@ -425,7 +425,8 @@ async function latest(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim
   const named = open?.head ?? newest?.["headSha"];
   const head = typeof named === "string" ? named : undefined;
   const since = head === undefined ? undefined : waitingSince(claim.history, head);
-  const carried = head === undefined ? [] : await unacted(tx, tenantId, claim.history, head, open);
+  // A push after the open pass's head names a newer head, whose mail carries nothing of the older one.
+  const carried = head !== undefined && newest?.["headSha"] === head ? await unacted(tx, tenantId, claim.history, head, open) : [];
   const request = newest && { ...newest, events: [...new Set([...carried, ...triageEventsOf(newest)])] };
   const first = claim.history.find((pass) => pass.head === head)?.takenAt;
   return { ...(request && { request }), reviewers: claim.reviewers, claimedAt: claim.claimedAt, ...(since !== undefined && { waitingSince: since }), ...(first !== undefined && { headSince: first }) };

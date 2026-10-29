@@ -156,6 +156,16 @@ test("PostgreSQL: a mail that names no event, taken while the head waits, wakes 
   });
 }, 120_000);
 
+test("PostgreSQL: a push while a pass on the older head is open carries none of that head's events into the push's mail", async () => {
+  await withDatabase(async function pushed(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
+    await startManager(db, GITHUB, "run_a");
+    await take(db, TENANT, GITHUB, "run_a");
+    await recordEvent(db, TENANT, GITHUB, "d2", prMail("h2", ["updated"]));
+    expect(await take(db, TENANT, GITHUB, "run_a")).toMatchObject({ outcome: "pass", resumed: true, request: { headSha: "h2", events: ["updated"] } });
+  });
+}, 120_000);
+
 test.each([
   ["held an action for CI", { heldForCi: true } as const, ["opened", "checks"]],
   ["held nothing", {}, ["checks"]],
