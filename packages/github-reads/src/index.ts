@@ -502,8 +502,8 @@ export async function listReviewThreads(gh: GithubFetch, repo: string, number: n
 
 /** The ids of the code reviews `appLogin`, the App's bot account, sent: its own reviews that carry the marker. */
 async function ownCodeReviews(gh: GithubFetch, repo: string, number: number, appLogin: string): Promise<Set<number>> {
-  const reviews = await jsonAll<any>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
-  return new Set(reviews.filter((review) => review.user?.login === appLogin && carries(review, CODE_REVIEW_MARKER)).map((review) => review.id as number));
+  const reviews = await jsonAll<{ id: number; user: { login: string } | null; body: string }>(gh, `/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+  return new Set(reviews.filter((review) => review.user?.login === appLogin && carries(review, CODE_REVIEW_MARKER)).map((review) => review.id));
 }
 
 /**
