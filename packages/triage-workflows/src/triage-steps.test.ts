@@ -622,7 +622,7 @@ describe("mirror grants", () => {
     expect(call).toEqual({
       id: "mirror:acme--widgets:8",
       name: "bitbucket_datacenter_mirror_auto",
-      arguments: { ...pull, labels: [], owned: [], status: { state: "failure", description: "Fail: rule: ci-green" } },
+      arguments: { ...pull, labels: [], owned: [], status: { state: "failure", description: "Fail: rule: ci-green" }, statusHead: verdict.headSha },
     });
   });
 
@@ -641,9 +641,9 @@ describe("mirror grants", () => {
     expect(await marked(["comment"])).toEqual([{
       id: "waiting:acme--widgets:8:abc",
       name: "bitbucket_datacenter_mirror_auto",
-      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], status: { state: "pending", description: "Triage: Waiting for CI" }, comment: progressComment(["ci"]) },
+      arguments: { repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], status: { state: "pending", description: "Triage: Waiting for CI" }, statusHead: "abc", comment: progressComment(["ci"]) },
     }]);
-    expect((await marked([]))[0]?.arguments).toEqual({ repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], status: { state: "pending", description: "Triage: Waiting for CI" } });
+    expect((await marked([]))[0]?.arguments).toEqual({ repo: "acme/widgets", number: 8, onHead: "abc", labels: [], owned: [], status: { state: "pending", description: "Triage: Waiting for CI" }, statusHead: "abc" });
   });
 
   test("comment alone posts the reply and leaves labels alone; approve alone still runs it to take approvals back", async () => {

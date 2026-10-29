@@ -153,7 +153,7 @@ function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, au
   if (headSha === "" || !marksWaiting(source, automatic)) return undefined;
   const pull = { repo, number, onHead: headSha, ...(appLogin && { appLogin }) };
   const args = source === "bitbucket-datacenter"
-    ? { ...pull, labels: [], owned: [], status: UNREAD_STATUS }
+    ? { ...pull, labels: [], owned: [], status: UNREAD_STATUS, statusHead: headSha }
     : { ...pull, labels: [FAILED_LABEL], owned };
   return { effectId: `degraded:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
 }

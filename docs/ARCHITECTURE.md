@@ -837,9 +837,10 @@ label off that head, so it never stands on a head not yet triaged.
    attempts, since the head did not fail, and sets `noWait` on its last.
 7. **mirror** (manager): writes the verdict label when the `pr-triage` role holds
    Labels, and the marker comment when it holds Comment; on Bitbucket it
-   writes the verdict as the `Corbits Triage` build status whatever the role
-   holds, from the host-neutral state `verdictStatus` (triage-contracts) gives,
-   linked to the comment, or to the pull request without one. It runs
+   writes the verdict as the `Corbits Triage` build status on the verdict's own
+   head whatever the role holds, from the host-neutral state `verdictStatus`
+   (triage-contracts) gives, linked to the comment, or to the pull request
+   without one; each of its writes runs even when another fails. It runs
    before execute, so a merge or close finds the final verdict on the head. A
    waiting verdict writes only its waiting marker: the waiting label or
    pending build status, and, where the role holds Comment, the

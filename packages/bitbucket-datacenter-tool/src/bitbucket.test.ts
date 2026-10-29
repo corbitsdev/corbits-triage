@@ -9,8 +9,8 @@ const REPO_PATH = "/rest/api/1.0/projects/TRI/repos/widgets";
 const PR_PATH = `${REPO_PATH}/pull-requests/1`;
 
 // Shapes recorded from Bitbucket Data Center 10.5, trimmed to the fields read.
-function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number } = {}) {
-  const pr = { id: 1, version: 4, state: "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: [] as unknown[] };
+function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number; failBuild?: boolean; participants?: unknown[] } = {}) {
+  const pr = { id: 1, version: 4, state: "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: seed.participants ?? [] };
   const comments: Comment[] = seed.comments ?? [];
   const builds: Array<Record<string, unknown>> = [];
   const writes: Array<{ method: string; path: string; body: any }> = [];
@@ -44,10 +44,14 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
       return Response.json(edited);
     }
     if (path.startsWith("/rest/build-status/1.0/commits/abc?")) return Response.json({ values: [...builds, ...(seed.builds ?? ["SUCCESSFUL"]).map((state) => ({ state, key: state.toLowerCase() }))], isLastPage: true });
+    if (method === "POST" && seed.failBuild && path.startsWith("/rest/build-status/1.0/commits/")) return Response.json({ errors: [{ message: "unavailable" }] }, { status: 503 });
     if (method === "POST" && path === "/rest/build-status/1.0/commits/abc") {
       builds.splice(0, builds.length, body);
       return new Response(null, { status: 204 });
     }
+    if (path.startsWith("/rest/build-status/1.0/commits/old?")) return Response.json({ values: [], isLastPage: true });
+    if (method === "POST" && path === "/rest/build-status/1.0/commits/old") return new Response(null, { status: 204 });
+    if (method === "PUT" && path === `${PR_PATH}/participants/triage-bot`) return Response.json({ status: body.status });
     if (method === "GET" && path === `${PR_PATH}/merge`) return Response.json(seed.merge ?? { canMerge: true, conflicted: false, outcome: "CLEAN", vetoes: [] });
     if (method === "POST" && path === `${PR_PATH}/merge?version=4`) return Response.json({ ...pr, state: "MERGED" });
     throw new Error(`unexpected ${method} ${path}`);
@@ -80,9 +84,9 @@ function step(kind: ActionStep["kind"], target: ActionStep["target"]): ActionSte
 describe("mirror", () => {
   test("creates the Triage comment, edits it in place with its version, then leaves it alone", async () => {
     const fake = fakeBitbucket({ comments: [{ id: 2, version: 0, text: "[corbits-triage]: #copied\nNot ours", author: AUTHOR }] });
-    const first = await mirror(fake.bb, { ...REQUEST, header: HEADER, close: false }, user);
-    const second = await mirror(fake.bb, { ...REQUEST, comment: "Still pass", header: HEADER, close: false }, user);
-    const third = await mirror(fake.bb, { ...REQUEST, comment: "Still pass", header: HEADER, close: false }, user);
+    const first = await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    const second = await mirror(fake.bb, { ...REQUEST, comment: "Still pass", header: HEADER }, user);
+    const third = await mirror(fake.bb, { ...REQUEST, comment: "Still pass", header: HEADER }, user);
     expect(first).toMatchObject({ commentId: 11, updated: false });
     expect(second).toMatchObject({ commentId: 11, updated: true });
     expect(third).toMatchObject({ commentId: 11, updated: false, unchanged: expect.stringContaining("unchanged since") });
@@ -92,8 +96,8 @@ describe("mirror", () => {
 
   test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun", async () => {
     const fake = fakeBitbucket();
-    await mirror(fake.bb, { ...REQUEST, header: HEADER, close: false }, user);
-    const failed = { ...REQUEST, comment: "Fail", header: { head: "d36740c", policy: null, verdict: "fail" }, close: false };
+    await mirror(fake.bb, { ...REQUEST, header: HEADER }, user);
+    const failed = { ...REQUEST, comment: "Fail", header: { head: "d36740c", policy: null, verdict: "fail" } };
     await mirror(fake.bb, failed, user);
     await mirror(fake.bb, failed, user);
     expect(fake.comments).toHaveLength(1);
@@ -107,17 +111,32 @@ describe("mirror build status", () => {
   test("writes the verdict build status on the head once, linking to the verdict comment", async () => {
     const fake = fakeBitbucket();
     const status = { state: "failure" as const, description: "Fail: rule: ci-green" };
-    expect(await mirror(fake.bb, { ...REQUEST, comment: "Fail", header: HEADER, status, close: false }, user)).toMatchObject({ commentId: 10, build: "FAILED", buildWritten: true });
-    expect(await mirror(fake.bb, { ...REQUEST, comment: "Fail", header: HEADER, status, close: false }, user)).toMatchObject({ build: "FAILED", buildWritten: false });
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "Fail", header: HEADER, status, statusHead: "abc" }, user)).toMatchObject({ commentId: 10, build: "FAILED", buildWritten: true });
+    expect(await mirror(fake.bb, { ...REQUEST, comment: "Fail", header: HEADER, status, statusHead: "abc" }, user)).toMatchObject({ build: "FAILED", buildWritten: false });
     expect(fake.builds).toEqual([{ state: "FAILED", key: "corbits-triage", name: "Corbits Triage", url: `${PR_URL}/overview?commentId=10`, description: "Fail: rule: ci-green" }]);
   });
 
   test("without a comment it links to the pull request page", async () => {
     const fake = fakeBitbucket();
     const { comment: _comment, ...uncommented } = REQUEST;
-    expect(await mirror(fake.bb, { ...uncommented, status: { state: "pending", description: "Needs review" }, close: false }, user)).toMatchObject({ commentId: null, build: "INPROGRESS", buildWritten: true });
+    expect(await mirror(fake.bb, { ...uncommented, status: { state: "pending", description: "Needs review" }, statusHead: "abc" }, user)).toMatchObject({ commentId: null, build: "INPROGRESS", buildWritten: true });
     expect(fake.builds).toEqual([{ state: "INPROGRESS", key: "corbits-triage", name: "Corbits Triage", url: PR_URL, description: "Needs review" }]);
     expect(fake.writes.map((w) => w.path)).toEqual(["/rest/build-status/1.0/commits/abc"]);
+  });
+
+  test("a verdict on an older head writes its status on that head, never on the head the pull request has now", async () => {
+    const fake = fakeBitbucket();
+    const { comment: _comment, ...uncommented } = REQUEST;
+    await mirror(fake.bb, { ...uncommented, status: { state: "success", description: "Pass" }, statusHead: "old" }, user);
+    expect(fake.writes.map((w) => w.path)).toEqual(["/rest/build-status/1.0/commits/old"]);
+    expect(fake.builds).toEqual([]);
+  });
+
+  test("a status Bitbucket refuses is named in the result, and the comment and the take-back still go through", async () => {
+    const fake = fakeBitbucket({ failBuild: true, participants: [{ user: BOT, role: "REVIEWER", status: "APPROVED" }] });
+    const result = await mirror(fake.bb, { ...REQUEST, header: HEADER, status: { state: "failure", description: "Fail" }, statusHead: "abc", notReadyHead: "abc" }, user);
+    expect(result).toMatchObject({ commentId: 10, dismissed: ["APPROVED"], failed: { status: expect.stringContaining("503") } });
+    expect(fake.writes.map((w) => `${w.method} ${w.path}`)).toEqual([`POST ${PR_PATH}/comments`, "POST /rest/build-status/1.0/commits/abc", `PUT ${PR_PATH}/participants/triage-bot`]);
   });
 });
 

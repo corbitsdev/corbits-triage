@@ -128,9 +128,9 @@ A few things work differently from GitHub, because Bitbucket works differently:
 
 #### Requiring Triage before merge on Bitbucket
 
-Every verdict also sets the **Corbits Triage** build status on the pull request's latest commit: successful on Pass, failed on Fail, in progress on Unsure and while Triage waits for CI, and failed with **Triage couldn't run** when Triage could not read the pull request. Its description names the failed rules, such as **Fail: rule: linked-issue**, and its link opens Triage's comment on the pull request, or the pull request itself when Triage does not comment there.
+Every verdict also sets the **Corbits Triage** build status on the commit it was given on: successful on Pass, failed on Fail, and in progress on Unsure and while Triage waits for CI. When Triage could not read the pull request or the repository's policy, it shows failed with **Triage couldn't run**. Its description names the failed rules, such as **Fail: rule: linked-issue**, and its link opens Triage's comment on the pull request, or the pull request itself when Triage does not comment there.
 
-To block a merge until Triage passes, a repository admin opens **Repository settings → Required builds** and adds **Corbits Triage**, or turns on **Minimum successful builds** under **Repository settings → Merge checks**. Bitbucket then refuses the merge while the build has failed or is in progress, so an Unsure verdict holds the merge until a later verdict passes or someone allowed to bypass the check merges anyway.
+To block a merge until Triage passes, a repository admin opens **Repository settings → Required builds** (Bitbucket Data Center 7.14 or later) and adds **Corbits Triage**, or turns on **Minimum successful builds** under **Repository settings → Merge checks**. Bitbucket then refuses the merge while the build has failed or is in progress, so an Unsure verdict holds the merge until a later verdict passes or someone allowed to bypass the check merges anyway.
 
 ### Policy
 

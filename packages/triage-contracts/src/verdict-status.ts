@@ -1,7 +1,7 @@
 import { ruleLabel, WAITING_LABEL, type VerdictWord } from "./check-pack.js";
 
 /** The verdict as a status on the head, which a host shows beside it and can require before merge; each host maps the state to its own. */
-export type StatusState = "success" | "failure" | "pending" | "error";
+type StatusState = "success" | "failure" | "pending" | "error";
 export type VerdictStatus = { state: StatusState; description: string };
 
 const STATUS_STATES: Record<VerdictWord, StatusState> = { pass: "success", fail: "failure", unsure: "pending" };

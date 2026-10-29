@@ -39,25 +39,35 @@ function notPosted(v: Verdict): NotPostedReason | undefined {
   if (v.waiting) return "waiting";
   if (!v.request) return "no_request";
   if (!Array.isArray(v.automatic)) return "no_grants";
-  if (repoSourceOf(v.repoSource) === "bitbucket-datacenter") return undefined;
+  if (repoSourceOf(v.repoSource) === "bitbucket-datacenter" && v.headSha !== null) return undefined;
   if (MIRRORED_KINDS.some((kind) => v.automatic.includes(kind)) || Object.keys(dismissals(v)).length > 0) return undefined;
   return "no_grants";
 }
 
+/** The verdict's status on its own head, which a newer head read when it is written must never take. */
 function headStatus(v: Verdict) {
-  return verdictStatus(v.verdict, v.checks.filter((c) => c.result === "fail").map((c) => c.check));
+  if (v.headSha === null) return {};
+  return { status: verdictStatus(v.verdict, v.checks.filter((c) => c.result === "fail").map((c) => c.check)), statusHead: v.headSha };
 }
 
 function mirrorCallId(v: Verdict): string {
   return `mirror:${v.repo.replace("/", "--")}:${v.number}`;
 }
 
+/** A host error, or each write the mirror tool names failed while the others went through. */
+function errorOf(r: ToolResult, failed: unknown): string | undefined {
+  if (r.isError) return asText(r.content);
+  if (!isRecord(failed)) return undefined;
+  return Object.entries(failed).map(([write, error]) => `${write}: ${String(error)}`).join("; ");
+}
+
 function outcome(r: ToolResult): MirrorOutcome {
-  const { changeRequestsKept: kept, unchanged, skipped } = data<{ changeRequestsKept?: unknown; unchanged?: unknown; skipped?: unknown }>(r) ?? {};
+  const { changeRequestsKept: kept, unchanged, skipped, failed } = data<{ changeRequestsKept?: unknown; unchanged?: unknown; skipped?: unknown; failed?: unknown }>(r) ?? {};
+  const error = errorOf(r, failed);
   return {
     call: r.callId,
-    ok: !r.isError,
-    ...(r.isError ? { error: asText(r.content) } : {}),
+    ok: error === undefined,
+    ...(error !== undefined && { error }),
     ...(typeof kept === "string" ? { changeRequestsKept: kept } : {}),
     ...(typeof unchanged === "string" ? { unchanged } : {}),
     ...(typeof skipped === "string" ? { skipped } : {}),
@@ -73,7 +83,7 @@ function mirrorCall(v: Verdict): ToolCall {
   const source = repoSourceOf(v.repoSource);
   const labels = v.automatic.includes("labels") ? { labels: r.labels, owned: r.owned } : { labels: [], owned: [] };
   const comment = v.automatic.includes("comment") ? { comment: r.comment, ...(r.header && { header: r.header }) } : {};
-  const status = source === "bitbucket-datacenter" ? { status: headStatus(v) } : {};
+  const status = source === "bitbucket-datacenter" ? headStatus(v) : {};
   const appLogin = v.appLogin ? { appLogin: v.appLogin } : {};
   return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...status, ...dismissals(v), ...appLogin }, mirrorCallId(v));
 }
