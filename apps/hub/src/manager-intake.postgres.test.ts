@@ -370,7 +370,7 @@ test("PostgreSQL: every pull request a mail names passes the gate, whatever sent
     expect(await toListener(TENANT, { ...decided, kind: "backlog" })).toBe(true);
     const recorded = await events(db);
     expect(recorded.map((row) => row.state.head)).toEqual(["h1", "h1"]);
-    expect(recorded.every((row) => JSON.stringify(row.state.payload["automatic"]) === JSON.stringify(["comment"]))).toBe(true);
+    expect(recorded.every((row) => JSON.stringify(row.state.payload["automatic"]) === JSON.stringify(["comment", "approve", "merge"]))).toBe(true);
     expect(mailed.flatMap((mail) => (mail.payload as { items: { prNumber: number }[] }).items.map((item) => item.prNumber))).toEqual([7]);
   });
 }, 120_000);
