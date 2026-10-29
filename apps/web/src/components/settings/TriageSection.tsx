@@ -130,7 +130,7 @@ export function TriageSection({ snapshot, deployed }: { snapshot: PortalSnapshot
                 <span className="txt">{sidecarText(deployed.sidecar)}</span>
               </div>
             )}
-            {sources.length > 0 && !status.needsModel && <TriageVersions deployed={deployed} sources={sources} />}
+            {sources.length > 0 && !status.needsModel && !unread && <TriageVersions deployed={deployed} sources={sources} />}
           </div>
         )}
         <GithubSource snapshot={snapshot} />

@@ -70,6 +70,7 @@ test.each([
   show(changes);
   expect(document.body.textContent).toContain(sentence);
   expect(document.body.textContent).not.toContain("no source is connected");
+  expect(document.body.textContent).not.toContain("Triage is starting");
   const retry = [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again");
   if (!retry) throw new Error("no Try again button");
   act(() => retry.click());
