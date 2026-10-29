@@ -159,13 +159,25 @@ export function hubLogTail({ logs, logFile }: Pick<Hub, "logs" | "logFile">): st
   return `Logs: ${dirname(logFile)}\nHub log: ${logFile}\n${logs.slice(-80).join("\n")}`;
 }
 
-/** Runs a cleanup step from a `finally` or `afterAll`, where its failure must not replace the error being thrown. */
+const cleanupFailures: string[] = [];
+
+/**
+ * Runs a cleanup step from a `finally` or `afterAll`. Its failure is logged and kept rather than thrown, so it cannot
+ * replace the error the scenario is already throwing; `failOnCleanupErrors` raises what was kept.
+ */
 export async function cleanup(what: string, step: () => unknown): Promise<void> {
   try {
     await step();
   } catch (err) {
     console.error(`Could not ${what}: ${String(err)}`);
+    cleanupFailures.push(`Could not ${what}: ${String(err)}`);
   }
+}
+
+/** The last line of a file's `afterAll`, so a cleanup that failed fails the file even when every scenario passed. */
+export function failOnCleanupErrors(): void {
+  const failed = cleanupFailures.splice(0);
+  if (failed.length > 0) throw new Error(failed.join("\n"));
 }
 
 /** The portal's transport, signed in as one person by their session cookie. */

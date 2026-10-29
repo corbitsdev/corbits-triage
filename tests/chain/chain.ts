@@ -12,7 +12,7 @@ import { parseTriageState, triageStateName, type PrTriageRow } from "@corbits/tr
 import { saveAutomationMode } from "../../apps/web/src/lib/hub-api.ts";
 import { fakeGithub, OWNER, type Pull } from "./github.ts";
 import { stubModel, type Answer, type Question } from "./model.ts";
-import { buildPortal, cleanup, createDatabase, deliver, dropDatabase, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
+import { buildPortal, cleanup, createDatabase, deliver, dropDatabase, failOnCleanupErrors, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
 
 const MANAGER = "triage-manager-github";
 // The deadline on a manager settling: every deployment starts a sidecar process of its own, and a judged pull request
@@ -100,6 +100,7 @@ export function chainStack(env: Record<string, string> = {}) {
     await cleanup("stop the fake GitHub", () => github.stop());
     await cleanup("stop the stub model", () => model.stop());
     await cleanup("remove the portal build", () => rmSync(portalDir, { recursive: true, force: true }));
+    failOnCleanupErrors();
   });
 
   /** GitHub's webhook for a pull request opened or pushed to, after the fake shows that head; the hub's answer to it. */
