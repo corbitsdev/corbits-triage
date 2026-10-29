@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { RepoSource } from "@corbits/triage-contracts";
 import { PolicyFiles } from "../components/settings/PolicyFiles.tsx";
 import type { PortalSnapshot, PrItem, RepoRecord } from "../lib/hub-api.ts";
+import * as policyUpgrades from "../lib/policy-upgrades.ts";
 import type { PolicyUpgradeRow } from "../lib/policy-upgrades.ts";
 import { findRepo, selectedRepo } from "../lib/repo-rows.ts";
 import Inbox from "./Inbox.tsx";
@@ -98,15 +99,15 @@ mock.module("../lib/policy-file.ts", () => ({
   },
 }));
 
+const realPolicyUpgrades = { ...policyUpgrades };
+
 mock.module("../lib/policy-upgrades.ts", () => ({
+  ...realPolicyUpgrades,
   usePolicyUpgrade() {
     return { repo: NAME, source: "github" satisfies RepoSource, upgrade: { state: "start" } };
   },
   usePolicyUpgrades() {
     return upgrades;
-  },
-  upgradeLabel(row: PolicyUpgradeRow) {
-    return row.pull ? "Waiting for merge" : "Add a policy file";
   },
 }));
 
@@ -233,11 +234,8 @@ test("the same repository name on GitHub and Bitbucket Data Center opens each ho
   expect(opened(document.querySelector("a.repo-link")?.getAttribute("href") ?? "")?.source).toBe("bitbucket-datacenter");
 });
 
-test("the repositories list gives each host's repository of the same name its own policy standing", () => {
-  upgrades = [
-    { repo: NAME, source: "github", upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 } },
-    { repo: NAME, source: "bitbucket-datacenter", upgrade: { state: "start" } },
-  ];
+/** Each row of the repositories list as its host and its health mark. */
+function repositoriesHealth(): Array<[RepoSource, string | null | undefined]> {
   open = [];
   const host = document.createElement("div");
   document.body.append(host);
@@ -251,6 +249,21 @@ test("the repositories list gives each host's repository of the same name its ow
       </QueryClientProvider>,
     );
   });
-  const health = [...document.querySelectorAll("tbody tr")].map((row) => [row.querySelector(".c-name small.src") ? "bitbucket-datacenter" : "github", row.querySelector(".c-health .hl")?.className]);
-  expect(health).toEqual([["github", "hl wait"], ["bitbucket-datacenter", "hl warn"]]);
+  return [...document.querySelectorAll("tbody tr")].map((row) => [row.querySelector(".c-name small.src") ? "bitbucket-datacenter" : "github", row.querySelector(".c-health .hl")?.textContent]);
+}
+
+test("the repositories list gives each host's repository of the same name its own policy standing", () => {
+  upgrades = [
+    { repo: NAME, source: "github", upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 } },
+    { repo: NAME, source: "bitbucket-datacenter", upgrade: { state: "start" } },
+  ];
+  expect(repositoriesHealth()).toEqual([["github", "Waiting for merge"], ["bitbucket-datacenter", "!Add a policy file"]]);
+});
+
+test("a policy pull request the hub could not check is not shown as waiting for merge", () => {
+  upgrades = [
+    { repo: NAME, source: "github", upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 }, pullUnread: true },
+    { repo: NAME, source: "bitbucket-datacenter", upgrade: { state: "start" }, pull: { url: "https://bitbucket.example/pull/1", number: 1 } },
+  ];
+  expect(repositoriesHealth()).toEqual([["github", "!Couldn't check the policy pull request."], ["bitbucket-datacenter", "Waiting for merge"]]);
 });

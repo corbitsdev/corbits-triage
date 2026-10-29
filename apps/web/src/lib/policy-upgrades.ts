@@ -19,7 +19,7 @@ function idOf(row: PolicyUpgradeRow): RepoId {
   return { name: row.repo, source: row.source };
 }
 
-function rowFor(rows: readonly PolicyUpgradeRow[], repo: RepoId): PolicyUpgradeRow | undefined {
+export function rowFor(rows: readonly PolicyUpgradeRow[], repo: RepoId): PolicyUpgradeRow | undefined {
   return rows.find((row) => sameRepo(idOf(row), repo));
 }
 
@@ -28,7 +28,7 @@ function newlySettled(before: readonly PolicyUpgradeRow[], now: readonly PolicyU
   return before.filter((row) => starting(row) && rowFor(now, idOf(row))?.upgrade?.state === "ok");
 }
 
-/** Where the hub could not list a repository's pull requests, the policy pull request last seen open is taken as still open. */
+/** Where the hub could not list a repository's pull requests, the policy pull request last seen open is kept for its link. */
 function withLastKnownPulls(before: readonly PolicyUpgradeRow[], now: readonly PolicyUpgradeRow[]): PolicyUpgradeRow[] {
   return now.map(function lastKnownPull(row) {
     const pull = row.pullUnread ? rowFor(before, idOf(row))?.pull : undefined;
@@ -45,16 +45,23 @@ const PULL_POLL_MS = 30_000;
 
 export const POLICY_UPGRADES_QUERY_KEY = "policy-upgrades";
 
+/**
+ * The rows just listed, set against the last listing: a merge on the host gives a repository its file or changes it, and
+ * a close leaves it as it was, so each such repository's policy is read again on its host.
+ */
+async function reconcile(queryClient: QueryClient, tenantId: string, before: Upgrades | undefined, listed: PolicyUpgradeRow[]): Promise<Upgrades> {
+  const rows = withLastKnownPulls(before?.rows ?? [], listed);
+  const settled = newlySettled(before?.rows ?? [], rows);
+  const reread = [...new Set([...settled, ...pullsClosed(before?.rows ?? [], rows)])];
+  await Promise.all(reread.flatMap((row) => [POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, row.repo, row.source] }))));
+  return { rows, settled: [...(before?.settled ?? []), ...settled.map(idOf)] };
+}
+
 function policyUpgradesQuery(tenantId: string | undefined, queryClient: QueryClient) {
   const queryKey = [POLICY_UPGRADES_QUERY_KEY, tenantId];
   const queryFn = tenantId === undefined ? skipToken : async function readPolicyUpgrades(): Promise<Upgrades> {
-    const before = queryClient.getQueryData<Upgrades>(queryKey);
-    const rows = withLastKnownPulls(before?.rows ?? [], await loadPolicyUpgrades(createHubTransport(), tenantId));
-    const settled = newlySettled(before?.rows ?? [], rows);
-    // A merge on the host gives the repository its file or changes it, and a close leaves it as it was, so its policy is read again.
-    const reread = [...new Set([...settled, ...pullsClosed(before?.rows ?? [], rows)])];
-    await Promise.all(reread.flatMap((row) => [POLICY_FILE_QUERY_KEY, "check-pack"].map((key) => queryClient.invalidateQueries({ queryKey: [key, tenantId, row.repo, row.source] }))));
-    return { rows, settled: [...(before?.settled ?? []), ...settled.map(idOf)] };
+    const listed = await loadPolicyUpgrades(createHubTransport(), tenantId);
+    return reconcile(queryClient, tenantId, queryClient.getQueryData<Upgrades>(queryKey), listed);
   };
   // A merge on the host changes a repository's standing without the portal knowing, so each load reads it again, and
   // while a policy pull request is open it is read again until it merges or closes.
@@ -83,7 +90,7 @@ export function useSettled(repo: RepoId): boolean {
 
 /** The repository's standing in a few words, wherever it is listed; undefined once it has a policy file. */
 export function upgradeLabel(row: PolicyUpgradeRow): string | undefined {
-  if (row.pull) return "Waiting for merge";
+  if (row.pull) return row.pullUnread ? "Couldn't check the policy pull request." : "Waiting for merge";
   return starting(row) ? "Add a policy file" : undefined;
 }
 
