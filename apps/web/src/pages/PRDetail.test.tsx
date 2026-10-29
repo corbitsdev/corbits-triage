@@ -57,8 +57,8 @@ function step(list: string, kind: string, target: Record<string, unknown>, rest:
   return { list, index: 0, effectId: "effect-0", kind, held: false, reason: "Size failed.", target, ...rest };
 }
 
-function actions(item: PrItem, closed = false): string {
-  const controls = { item, closed, approvalPending: false, gated: false, canMerge: true, locked: false, onDecide: () => {}, onWrite: () => {} };
+function actions(item: PrItem, closed = false, canMerge = true): string {
+  const controls = { item, closed, approvalPending: false, gated: false, canMerge, locked: false, onDecide: () => {}, onWrite: () => {} };
   return renderToStaticMarkup(<PullActions mode={actionMode(item)} controls={controls} onApproveDo={() => {}} onSkipDo={() => {}} />);
 }
 
@@ -87,10 +87,17 @@ test("an automatic action that has not run is described as not posted yet, not a
   expect(html).not.toContain("Triage commented");
 });
 
-test.each([["merge", "Merge"], ["approve", "Approve"]])("a held %s waits on you with its own name and Skip beside your controls", (kind, name) => {
-  const html = actions(triaged("pass", "ready-monitoring", [step("pass", kind, {}, { held: true })], []));
-  expect(html).toMatch(new RegExp(`<div class="suggest">.*>${name}</button>.*>Skip<`));
-  expect(html).toContain(">Merge<");
+test("a held approve waits on you as Approve, with Skip beside your controls", () => {
+  const html = actions(triaged("pass", "ready-monitoring", [step("pass", "approve", {}, { held: true })], []));
+  expect(html).toMatch(/<div class="suggest">.*>Approve<\/button>.*>Skip<.*>Merge</);
+});
+
+test("a held merge is the one Merge, closed to you while the host can't merge", () => {
+  const held = triaged("pass", "ready-monitoring", [step("pass", "merge", {}, { held: true })], []);
+  const html = actions(held);
+  expect(html.match(/>Merge</g)).toHaveLength(1);
+  expect(html).toMatch(/<div class="suggest">.*<button(?![^>]*disabled="")[^>]*>Merge</);
+  expect(actions(held, false, false)).toMatch(/<button[^>]*disabled=""[^>]*>Merge</);
 });
 
 test("a closed pull request offers no held action and none of your controls", () => {

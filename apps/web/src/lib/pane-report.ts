@@ -233,6 +233,9 @@ function doneText(item: PrItem, rest: string): string {
   return upperFirst([...verdict, ...postedActions(item), ...notPostedText(item), rest].join(" · "));
 }
 
+/** A held comment or change request quotes what it posts, which may already end its sentence. */
+const ENDS_IN_A_STOP = /[.!?]"?$/;
+
 const ON_THE_PULL_REQUEST: ReadonlySet<ActionKind> = new Set(["approve", "close", "merge"]);
 
 /** What a held action does, lower case, naming the pull request after a verb that acts on it alone. */
@@ -245,8 +248,9 @@ function heldAction({ kind, label }: Pick<PendingDo, "kind" | "label">): string 
 /** A held action waiting on you is the decision even where the rules leave the turn to the author, asked as a question in its own verb. */
 function heldForYouText(item: PrItem): string | null {
   const [pending] = pendingDos(item).filter((held) => held.until === null);
-  if (pending !== undefined) return `${heldAction(pending)}?`;
-  return item.pendingApprovalId === null ? null : "Confirm or dismiss the post Triage held, on the pull request's page";
+  if (pending === undefined) return item.pendingApprovalId === null ? null : "Confirm or dismiss the post Triage held, on the pull request's page";
+  const action = heldAction(pending);
+  return ENDS_IN_A_STOP.test(action) ? action : `${action}?`;
 }
 
 /** Without a rule left for you the turn is someone else's, unless an action waits on your approval. */
@@ -367,5 +371,5 @@ export function heldChoices(bar: PaneBar): HeldChoice[] {
 export function heldText(pending: Pick<PendingDo, "kind" | "label" | "until">): string {
   if (pending.until !== null) return `Will run when ${pending.until}: ${lowerFirst(pending.label)}`;
   const said = heldAction(pending);
-  return `Triage would ${said}${/[.!?]"?$/.test(said) ? "" : "."}`;
+  return `Triage would ${said}${ENDS_IN_A_STOP.test(said) ? "" : "."}`;
 }

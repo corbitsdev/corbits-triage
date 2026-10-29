@@ -9,6 +9,8 @@ type PrActionCardProps = {
   mode: ActionMode;
   dos: PendingDo[];
   disabled: boolean;
+  /** The host's merge gate, which a held merge's button keeps. */
+  canMerge: boolean;
   onApprove: (pending: PendingDo) => void;
   onSkip: (pending: PendingDo) => void;
   /** Your controls, shown unless Triage carries the pull request on its own. */
@@ -16,7 +18,7 @@ type PrActionCardProps = {
 };
 
 /** One card for the policy's mode: what Triage did, the action waiting on you, and your controls when the next step is yours. */
-export function PrActionCard({ mode, dos, disabled, onApprove, onSkip, children }: PrActionCardProps) {
+export function PrActionCard({ mode, dos, disabled, canMerge, onApprove, onSkip, children }: PrActionCardProps) {
   if (mode.mode !== "waiting") {
     return (
       <section className="pr-composer" aria-label="What Triage did">
@@ -32,7 +34,7 @@ export function PrActionCard({ mode, dos, disabled, onApprove, onSkip, children 
         <p className="suggest-text">{pending.reason}</p>
         {pending.error !== null ? <p role="alert" className="error">{pending.label} failed last time: {pending.error}</p> : null}
         <div className="pr-actions-row">
-          <Button type="button" disabled={disabled} onClick={() => onApprove(pending)}>{DO_NAMES[pending.kind]}</Button>
+          <Button type="button" disabled={disabled || (pending.kind === "merge" && !canMerge)} onClick={() => onApprove(pending)}>{DO_NAMES[pending.kind]}</Button>
           <Button type="button" variant="outline" onClick={() => onSkip(pending)}>Skip</Button>
         </div>
       </div>

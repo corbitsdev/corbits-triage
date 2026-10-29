@@ -290,7 +290,8 @@ type PullControls = {
   onWrite: (kind: "merge" | "approve" | "changes" | "close") => void;
 };
 
-function PostingControls({ item, closed, approvalPending, gated, canMerge, locked, onDecide, onWrite }: PullControls) {
+/** `heldMerge` drops Merge, since the held merge's own button is the merge. */
+function PostingControls({ item, closed, approvalPending, gated, canMerge, locked, onDecide, onWrite, heldMerge }: PullControls & { heldMerge: boolean }) {
   return (
     <>
       {approvalPending && (
@@ -301,7 +302,7 @@ function PostingControls({ item, closed, approvalPending, gated, canMerge, locke
       )}
       {!closed && (
         <>
-          <Button type="button" variant={canMerge && !gated ? "primary" : "outline"} disabled={!canMerge} onClick={() => onWrite("merge")}>Merge</Button>
+          {heldMerge ? null : <Button type="button" variant={canMerge && !gated ? "primary" : "outline"} disabled={!canMerge} onClick={() => onWrite("merge")}>Merge</Button>}
           <Menu>
             <MenuTrigger asChild><Button type="button" variant="outline" aria-label="More actions">More</Button></MenuTrigger>
             <MenuContent align="end">
@@ -327,11 +328,12 @@ export function PullActions({ mode, controls, onApproveDo, onSkipDo }: {
   onApproveDo: (pending: PendingDo) => void;
   onSkipDo: (pending: PendingDo) => void;
 }) {
-  const { item, closed, locked } = controls;
+  const { item, closed, locked, canMerge } = controls;
   if (mode === null) return null;
+  const dos = closed || mode.mode !== "waiting" ? [] : pendingDos(item);
   return (
-    <PrActionCard mode={mode} dos={closed ? [] : pendingDos(item)} disabled={closed || !item.number || item.running || locked} onApprove={onApproveDo} onSkip={onSkipDo}>
-      <PostingControls {...controls} />
+    <PrActionCard mode={mode} dos={dos} disabled={closed || !item.number || item.running || locked} canMerge={canMerge} onApprove={onApproveDo} onSkip={onSkipDo}>
+      <PostingControls {...controls} heldMerge={dos.some((pending) => pending.kind === "merge")} />
     </PrActionCard>
   );
 }
@@ -580,7 +582,7 @@ export default function PRDetail() {
           <div className="pr-actions">
             <div className="pr-actions-row">
               {closed ? null : <Button type="button" variant="outline" disabled={!item.number || busy || readOnly} onClick={() => void requestWrite("comment")}>Comment</Button>}
-              {policy === null ? <PostingControls {...controls} /> : null}
+              {policy === null ? <PostingControls {...controls} heldMerge={false} /> : null}
             </div>
           </div>
         </header>
