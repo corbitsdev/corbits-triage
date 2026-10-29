@@ -292,8 +292,7 @@ export type PolicyValidated = typeof PolicyValidated.infer;
 /** `headSha`: the GitHub pull request's head, which a merge from the portal pins; a Bitbucket one is merged there. */
 const PolicyPull = type({ url: "string", number: "number", "headSha?": "string" });
 
-/** `refreshError`: the pull request is open, but the listing that shows it elsewhere could not be refreshed. */
-export const PolicyExported = type({ status: "'opened'", "refreshError?": "string" }).and(PolicyPull);
+export const PolicyExported = type({ status: "'opened'" }).and(PolicyPull);
 export type PolicyExported = typeof PolicyExported.infer;
 
 /** No diff library is a dependency, so a preview is the file before the patch and the patched file. */

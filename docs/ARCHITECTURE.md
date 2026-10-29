@@ -52,7 +52,8 @@ GitHub, Bitbucket DC ──webhook──► Hub ◄──── portal (/api)
     the first hub start after the change (`archiveStoredPolicies`, through the
     artifact package's archive). Routes:
     `GET …/policy/file` (the file, its text and why it is refused, and
-    while a policy pull request is open, its branch's copy as `pull`),
+    while a policy pull request is open, its branch's copy as `pull`, or
+    `pullUnread` when the pull request or its branch could not be read),
     `POST …/policy/preview` (edited text read as the policy read would read
     it once it is the file, merge risks included; writes nothing),
     `POST /api/integrations/policy/validate` (open, reads only its body),

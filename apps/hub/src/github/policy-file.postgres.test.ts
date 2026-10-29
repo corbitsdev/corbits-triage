@@ -54,6 +54,10 @@ const files = new Map<string, { sha: string; text: string | null }>();
 let readFails = false;
 /** Set, the workspace's open pull request listing throws. */
 let listingFails = false;
+/** Set to a repository, the workspace's open pull request listing leaves it out. */
+let listingOmits: string | undefined;
+/** Set, GitHub fails the lookup of a repository's open pull request by branch. */
+let pullLookupFails = false;
 /** Keyed by `repo:branch`, to the commit it points at. */
 const refs = new Map<string, string>();
 const pulls: Array<{ repo: string; number: number; head: string; base: string; title: string; body: string; open: boolean }> = [];
@@ -133,6 +137,7 @@ async function github(req: Request): Promise<Response> {
     return Response.json(open.map((pull) => ({ number: pull.number, title: pull.title, user: { login: "triage", type: "Bot" }, draft: false, head: { ref: pull.head, sha: "head-sha", repo: { id: 1 } }, base: { repo: { id: 1 } }, updated_at: "2026-10-17T00:00:00Z", labels: [], html_url: `https://github.com/${repo}/pull/${pull.number}` })));
   }
   if (req.method === "GET" && path === "pulls") {
+    if (pullLookupFails) return new Response(null, { status: 502 });
     const head = url.searchParams.get("head");
     return Response.json(pulls.filter((pull) => pull.repo === repo && pull.open && `${owner}:${pull.head}` === head).map((pull) => ({ number: pull.number, title: pull.title, body: pull.body, html_url: `https://github.com/${repo}/pull/${pull.number}`, head: { sha: "head-sha" } })));
   }
@@ -228,7 +233,8 @@ beforeAll(async () => {
     db,
     async openPulls(member, fresh) {
       if (listingFails) throw new Error("listing failed");
-      return listed(member, fresh);
+      const read = await listed(member, fresh);
+      return read instanceof Response ? read : { ...read, repos: read.repos.filter((row) => row.repo !== listingOmits) };
     },
     changed() {},
     refusal: refused,
@@ -675,6 +681,14 @@ test("PostgreSQL: the policy file read carries the open policy pull request's co
   listingFails = false;
   expect(await fileOf(PULL_READ)).not.toHaveProperty("pullUnread");
 
+  // A repository the listing does not cover is asked of the host.
+  listingOmits = PULL_READ;
+  expect(await fileOf(PULL_READ)).toMatchObject({ pull: { text: branchText, headSha: "head-sha" } });
+  pullLookupFails = true;
+  expect(await fileOf(PULL_READ)).toMatchObject({ text: PATCH_FILE, pullUnread: true });
+  pullLookupFails = false;
+  listingOmits = undefined;
+
   onMain(PULL_READ, YML, branchText);
   pulls.find((row) => row.repo === PULL_READ)!.open = false;
   await policyFile.onPush(TENANT, PULL_READ, "github");
@@ -728,6 +742,7 @@ test("PostgreSQL: a policy pull request that was opened is answered when the lis
   listingFails = true;
   const opened = await patchOf({ repo: REFRESHED, changes: [{ kind: "rule", id: "focused", enabled: false }] });
   listingFails = false;
-  expect(opened).toMatchObject({ http: 200, status: "opened", number: expect.any(Number), refreshError: "listing failed" });
+  expect(opened).toMatchObject({ http: 200, status: "opened", number: expect.any(Number) });
+  expect(opened).not.toHaveProperty("refreshError");
   expect(pulls.filter((row) => row.repo === REFRESHED)).toHaveLength(1);
 });

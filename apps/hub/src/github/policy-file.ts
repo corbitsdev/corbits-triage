@@ -292,19 +292,21 @@ export function createPolicyFile(deps: PolicyFileDeps) {
   }
 
   /**
-   * The open policy pull request's copy of the file, found through the shared listing; none while its branch holds no
-   * readable file. A listing or branch read that fails is `pullUnread`, never none, and leaves the default branch's file
-   * to answer on its own.
+   * The open policy pull request's copy of the file, found through the shared listing, or asked of the host where the
+   * listing does not cover the repository; none while its branch holds no readable file. A listing, host or branch read
+   * that fails is `pullUnread`, never none, and leaves the default branch's file to answer on its own.
    */
   async function pullCopy(member: Member, record: RepoRecord): Promise<Pick<PolicyFileStatus, "pull" | "pullUnread">> {
     try {
-      const listed = listedRepo(await deps.openPulls(member, false), record.name, sourceOf(record));
-      if (!listed || listed.error !== undefined) return { pullUnread: true };
-      const pr = policyPr(listed);
-      if (!pr?.sha) return {};
+      const listing = await deps.openPulls(member, false);
+      if (listing instanceof Response) return { pullUnread: true };
+      const listed = listedRepo(listing, record.name, sourceOf(record));
+      if (listed?.error !== undefined) return { pullUnread: true };
+      const headSha = listed ? policyPr(listed)?.sha : (await openPull(member.tenantId, record))?.headSha;
+      if (!headSha) return {};
       const found = await findFile(member.tenantId, record, github.POLICY_BRANCH);
       if (found?.read.kind !== "file" || found.read.text === null) return {};
-      return { pull: { text: found.read.text, headSha: pr.sha } };
+      return { pull: { text: found.read.text, headSha } };
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_pull_file_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
       return { pullUnread: true };
@@ -340,7 +342,6 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       await deps.openPulls(member, true);
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_pull_listing_refresh_failed", tenantId, repo: record.name, error: errorText(err) });
-      return Response.json({ status: "opened", ...pull, refreshError: errorText(err) });
     }
     return Response.json({ status: "opened", ...pull });
   }
