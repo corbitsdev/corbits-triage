@@ -1,9 +1,9 @@
 import type { ContentScriptContext } from "wxt/utils/content-script-context";
 import { createShadowRootUi, type ShadowRootContentScriptUi } from "wxt/utils/content-script-ui/shadow-root";
-import { errorText } from "@corbits/common";
 import { send } from "../messages.ts";
 import type { FileNote } from "../notes.ts";
 import { prFromUrl, prKey, type PrRef } from "../pr.ts";
+import { settle } from "../settle.ts";
 import { runStates, views, type RunState } from "../storage.ts";
 import type { TriageView } from "../view.ts";
 import { scoreChip } from "./chip.ts";
@@ -17,14 +17,6 @@ const TITLE_ANCHOR = '[class*="titleWithAction"] > [class*="titleSuffix"], .gh-h
 const SIDEBAR_ANCHOR = "#partial-discussion-sidebar";
 
 type Marker = { marker: FileMarker; ui?: ShadowRootContentScriptUi<void>; shown?: FileNote[] };
-
-async function settle(work: Promise<unknown>): Promise<void> {
-  try {
-    await work;
-  } catch (cause) {
-    console.warn(errorText(cause));
-  }
-}
 
 function notesByPath(view: TriageView | undefined): Map<string, FileNote[]> {
   const notes = new Map<string, FileNote[]>();

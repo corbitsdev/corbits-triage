@@ -21,11 +21,8 @@ import { createHubTransport } from "../lib/hub-transport.ts";
 import { repoKey } from "../lib/repo-id.ts";
 import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
+import { counted } from "../lib/plural.ts";
 import { relativeTime } from "../lib/triage-view.ts";
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
 
 function listed(words: string[]): string {
   if (words.length <= 1) return words.join("");
@@ -43,7 +40,7 @@ function checksLabel(state: PackState | undefined): string {
   if (!state || state.pending) return "";
   if (state.error) return "Could not read";
   if (state.found?.kind === "invalid") return "Policy file refused";
-  return state.found ? `${plural(enabledCheckCount(state.found.pack), "rule")} on` : "Not set up";
+  return state.found ? `${counted(enabledCheckCount(state.found.pack), "rule", "rules")} on` : "Not set up";
 }
 
 function ownersLabel(owners: string[]): string {

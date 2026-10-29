@@ -10,6 +10,18 @@ export function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+export function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function decodedSegment(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Rejects values that could traverse paths. */
 export function asRepo(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;

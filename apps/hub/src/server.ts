@@ -34,7 +34,7 @@ import {
 import { E2B_PLACE } from "@corbits/provisioner-e2b";
 import { RAILWAY_PLACE } from "@corbits/provisioner-railway";
 import { policyKinds, REPO_SOURCES, repoSourceOf, timingsFrom, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
-import { asRecord, errorText } from "@corbits/common";
+import { asRecord, decodedSegment, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
@@ -994,14 +994,6 @@ const servePortal = env.PORTAL_DIR === undefined ? undefined : createPortalHandl
 /** A stock credential write: App JSON it leaves in `github` is moved to the hub and taken back from sidecars at once. */
 const CREDENTIAL_WRITE = /^\/api\/tenants\/([^/]+)\/credentials(?:\/([^/]+))?$/;
 const PROVIDER_WRITE = /^\/api\/tenants\/([^/]+)\/providers(?:\/([^/]+))?$/;
-
-function decodedSegment(segment: string): string | undefined {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return undefined;
-  }
-}
 
 /** Rolls the workspace after a release write succeeds, starting again the listeners of the hosts the write reaches. */
 async function forwardReleaseWrite(req: Request, path: string, forward: () => Promise<Response> | Response): Promise<Response> {

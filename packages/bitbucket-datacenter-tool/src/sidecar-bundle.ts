@@ -21,6 +21,7 @@ import {
 } from "@corbits/bitbucket-datacenter-reads";
 import { cachedLoads, checkTarget } from "@corbits/repo-read-tool/host-reads";
 import { linesOf, MAX_LINES } from "@corbits/repo-read-tool/lines";
+import { errorText } from "@corbits/common";
 import { diffHash } from "@corbits/common/diff-hash";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
@@ -214,7 +215,7 @@ function createBitbucketTools(definitions: ToolDefinition[], getFetch: () => Pro
       const content = await dispatch(bb, call, user, reads);
       return { callId: call.id, content: content as Record<string, unknown> };
     } catch (err) {
-      return { callId: call.id, content: err instanceof Error ? err.message : String(err), isError: true };
+      return { callId: call.id, content: errorText(err), isError: true };
     }
   }
   return { definitions, run };

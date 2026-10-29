@@ -3,7 +3,7 @@ import { authorAssociation, authorKindOf, isGeneratedPath, policyTeams, shownBod
 import { hiddenIn, hiddenMarkup, nothingRemoved, writtenDescription } from "./hidden-content.js";
 import type { PrFacts, PrFileFacts } from "./checks.js";
 import { MAX_CODE_RULES_PATCH_CHARS } from "./quality.js";
-import { isRecord } from "@corbits/common";
+import { isRecord, optionalString } from "@corbits/common";
 
 export type RepoDocs = Pick<PrFacts, "docs" | "rules">;
 
@@ -144,10 +144,6 @@ export function addFilesPage(listed: ListedFiles, cursor: FilesCursor, page: Fil
   }
   if (page.next <= cursor.offset) return `github_list_pr_files did not advance past offset ${cursor.offset}`;
   return { offset: page.next, ...next };
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 export function optionalCount(value: unknown): number | undefined {

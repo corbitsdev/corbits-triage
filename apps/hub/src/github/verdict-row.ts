@@ -3,6 +3,7 @@
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
 import { VerdictDetail, type RepoSource } from "@corbits/triage-contracts";
+import { mirrorCallId } from "@corbits/triage-workflows/actions/mirror";
 import { NOT_ASKED_REASON } from "@corbits/triage-workflows/logic/render";
 import { unsettledBy } from "@corbits/triage-workflows/logic/settled";
 import type { RecordedDo, RecordedVerdict } from "./verdict-record-store.js";
@@ -72,10 +73,6 @@ function recorded(c: { kind?: string; reason?: string; gate?: boolean }): boolea
 /** Why the mirror posted nothing for the verdict, when it said. */
 function notPostedOf(outcome: Record<string, unknown> | undefined): string | undefined {
   return outcome?.["skipped"] === true && typeof outcome["reason"] === "string" ? outcome["reason"] : undefined;
-}
-
-function mirrorCallId(repo: string, number: number): string {
-  return `mirror:${repo.replace("/", "--")}:${number}`;
 }
 
 const SummaryFields = type({

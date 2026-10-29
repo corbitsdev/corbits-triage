@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, sep } from "node:path";
+import { errorText } from "@corbits/common";
 import { defineTool } from "@intx/agent";
 import type { ToolDefinition } from "@intx/types/runtime";
 import { checkoutsUnder, sidecarDataDir } from "./checkouts";
@@ -117,7 +118,7 @@ export function repoReadUnder(dataDir: () => string) {
     try {
       return { callId: call.id, content: (await dispatch(call, checkoutsUnder(dataDir()))) as Record<string, unknown> };
     } catch (err) {
-      return { callId: call.id, content: err instanceof Error ? err.message : String(err), isError: true };
+      return { callId: call.id, content: errorText(err), isError: true };
     }
   }
   return defineTool({

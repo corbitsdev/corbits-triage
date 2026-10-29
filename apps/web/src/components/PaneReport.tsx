@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
 import { Button, Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
+import { counted } from "../lib/plural.ts";
 import { BUILT_IN_CHECK_NAMES, isCatalogId, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
@@ -35,10 +36,6 @@ function problemText(name: string, reason: string | null): string {
   if (reason === null) return name;
   const opensWithName = reason.toLowerCase().startsWith(name.toLowerCase()) && /^(?:$|[\s\p{P}])/u.test(reason.slice(name.length));
   return opensWithName ? sentence(reason) : `${name}: ${sentence(reason)}`;
-}
-
-function plural(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
 }
 
 export function StatusLine({ status }: { status: PaneStatus }) {
@@ -271,10 +268,10 @@ export function ReportRows({ item, pull, pack }: { item: PrItem; pull: PullState
       {detail === undefined ? <PullStatus pull={pull} /> : (
         <>
           <Disclosure label={issueLabel(detail)}><LinkedIssues detail={detail} /></Disclosure>
-          <Disclosure label={plural(detail.pr.changedFiles, "file", "files")}><Files files={detail.files} changed={detail.pr.changedFiles} /></Disclosure>
+          <Disclosure label={counted(detail.pr.changedFiles, "file", "files")}><Files files={detail.files} changed={detail.pr.changedFiles} /></Disclosure>
         </>
       )}
-      {passed.length > 0 ? <Disclosure label={`Checked and fine: ${plural(passed.length, "rule", "rules")}`}><Passed checks={passed} pack={pack} /></Disclosure> : null}
+      {passed.length > 0 ? <Disclosure label={`Checked and fine: ${counted(passed.length, "rule", "rules")}`}><Passed checks={passed} pack={pack} /></Disclosure> : null}
       <Link className="more" to={prHref(item)}>Commits and conversation</Link>
     </div>
   );

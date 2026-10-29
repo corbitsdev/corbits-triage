@@ -51,8 +51,8 @@ function headStatus(v: Verdict) {
   return { status: verdictStatus(v.verdict, v.checks.filter((c) => c.result === "fail").map((c) => c.check)), statusHead: v.headSha };
 }
 
-function mirrorCallId(v: Verdict): string {
-  return `mirror:${v.repo.replace("/", "--")}:${v.number}`;
+export function mirrorCallId(repo: string, number: number): string {
+  return `mirror:${repo.replace("/", "--")}:${number}`;
 }
 
 /** A host error, or each write the mirror tool names failed while the others went through. */
@@ -87,7 +87,7 @@ function mirrorCall(v: Verdict): ToolCall {
   const comment = v.automatic.includes("comment") ? { comment: r.comment, ...(r.header && { header: r.header }) } : {};
   const status = source === "bitbucket-datacenter" ? headStatus(v) : {};
   const appLogin = v.appLogin ? { appLogin: v.appLogin } : {};
-  return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...status, ...dismissals(v), ...appLogin }, mirrorCallId(v));
+  return call(toolName(source, "mirror_auto"), { repo: r.repo, number: r.number, ...labels, ...comment, ...status, ...dismissals(v), ...appLogin }, mirrorCallId(v.repo, v.number));
 }
 
 /**
@@ -105,7 +105,7 @@ export async function mirrorVerdicts(input: unknown, write: HostWrite): Promise<
   const { verdicts, batch } = verdictsOf(input);
   async function written(v: Verdict): Promise<MirrorOutcome | MirrorSkip> {
     const reason = notPosted(v);
-    if (reason) return { call: mirrorCallId(v), skipped: true, reason };
+    if (reason) return { call: mirrorCallId(v.repo, v.number), skipped: true, reason };
     if (v.mark) return outcome(await write(v.mark.repoSource, markCall(v.mark)));
     return outcome(await write(repoSourceOf(v.repoSource), mirrorCall(v)));
   }

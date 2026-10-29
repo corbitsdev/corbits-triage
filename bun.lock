@@ -319,6 +319,7 @@
       "name": "@corbits/repo-read-tool",
       "version": "0.1.0",
       "dependencies": {
+        "@corbits/common": "workspace:*",
         "@intx/agent": "workspace:*",
         "@intx/types": "workspace:*",
         "minimatch": "10.2.6",

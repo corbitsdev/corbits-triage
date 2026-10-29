@@ -1,4 +1,5 @@
 import { errorText } from "@corbits/common";
+import { settle } from "./settle.ts";
 import { checkPr, pullOf } from "./check-pr.ts";
 import { GITHUB_API, githubApi } from "./github-api.ts";
 import type { Reply, Request } from "./messages.ts";
@@ -12,14 +13,6 @@ import { FRESH_MS, type TriageView } from "./view.ts";
 type Triage = Extract<Request, { type: "triage" }>;
 
 const running = new Map<string, Promise<null>>();
-
-async function settle(work: Promise<unknown>): Promise<void> {
-  try {
-    await work;
-  } catch (cause) {
-    console.warn(errorText(cause));
-  }
-}
 
 /** Opened in the same turn as the click's message: the side panel opens only inside a user gesture. */
 function openPanel(windowId: number | undefined): void {

@@ -2,7 +2,7 @@ import type { EffectContext, PerformScope } from "@intx/workflow";
 import { WorkflowRunResponse } from "@intx/types";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { type, type Type } from "arktype";
-import { asRecord } from "@corbits/common";
+import { asRecord, errorText } from "@corbits/common";
 import { repoSourceOf, triggerRequestOf } from "@corbits/triage-contracts";
 import type { Release } from "../release.js";
 
@@ -96,7 +96,7 @@ export async function runEnded(ctx: EffectContext, effectId: string, tenantId: s
     const answer = await callHub(ctx, effectId, tenantPath(tenantId, `/workflows/runs/${encodeURIComponent(runId)}`), "GET");
     return { ended: hasEnded(answered(answer, `reading run ${runId}`, RunStatus)) };
   } catch (err) {
-    return { unread: err instanceof Error ? err.message : String(err) };
+    return { unread: errorText(err) };
   }
 }
 
