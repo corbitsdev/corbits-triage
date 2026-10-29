@@ -13,7 +13,6 @@ let root: Root | undefined;
 let client: QueryClient;
 const originalFetch = globalThis.fetch;
 
-// Other DOM test files replace this module for the whole test process, so this file sets its own.
 mock.module("./portal.tsx", () => ({
   usePortal() {
     return { snapshot: { workspace: { tenantId: "tenant" } } } as ReturnType<typeof usePortal>;

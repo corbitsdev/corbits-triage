@@ -540,7 +540,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       return { ...row, upgrade: { state }, ...listedPolicyPull(await listed(), record.name, row.source) };
     } catch (err) {
       deps.log({ level: "warn", msg: "policy_upgrade_read_failed", tenantId: member.tenantId, repo: record.name, error: errorText(err) });
-      return { ...row, error: `Could not read ${record.name}'s policy from ${HOST_NAMES[row.source]}.` };
+      return { ...row, pullUnread: true, error: `Could not read ${record.name}'s policy from ${HOST_NAMES[row.source]}.` };
     }
   }
 

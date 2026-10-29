@@ -341,6 +341,8 @@ test("PostgreSQL: the policy file is the policy while it is there, a refused one
   files.delete(`${FROM_FILE}@main/${YAML}`);
   readFails = true;
   await expect(policyFile.onPush(TENANT, FROM_FILE, "github")).rejects.toThrow("502");
+  // Its upgrade row says its policy pull request is unread, so the portal does not take it as closed.
+  expect(await upgradeOf(FROM_FILE)).toEqual({ repo: FROM_FILE, source: "github", pullUnread: true, error: "Could not read acme/from-file's policy from GitHub." });
   readFails = false;
   expect(await readPack(FROM_FILE)).toEqual({ status: "missing" });
 }, 60_000);
