@@ -29,8 +29,9 @@ recorded for it at deploy.
 
 Events played: open, push, CI pending, success, failure or cancelled on the head, CI finishing on an older head, an
 edit, conversion to draft and back to ready, a mail delivered twice, and which queued mail is delivered next. Every
-sequence of none to two of them after the open is played, and 300 seeded random walks of ten. A pull request settles
-once it is ready for review, CI on its head has finished and every mail has been delivered. A failure names its
+sequence of none to two of them after the open is played and checked, 121 in all, as no sequence with an event that
+changes nothing is extended; then 300 seeded random walks of ten. A pull request settles once it is ready for
+review, CI on its head has finished and every mail has been delivered. A failure names its
 sequence, and a walk's seed, so it replays; a run that ends other than completed, or a sequence that throws, fails too.
 
 Stand-ins, and what they leave out:

@@ -7,7 +7,7 @@ import { LETTERS, open, play, settle, walk, type Letter } from "./events.ts";
 import { broken } from "./rules.ts";
 import { MANAGER_RELEASE, modelStack } from "./stack.ts";
 
-/** Every sequence up to this many events after the open is played, less those with an event that changes nothing. */
+/** Every sequence of up to this many events after the open is played and checked; one with an event that changes nothing is not extended. */
 const LENGTH = 2;
 const WALKS = 300;
 const WALK_LENGTH = 10;
