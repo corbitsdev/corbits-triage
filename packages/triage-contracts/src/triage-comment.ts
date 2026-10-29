@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { counted } from "@corbits/common";
 import type { VerdictWord } from "./check-pack.js";
 import { VERDICT_NAMES } from "./policy-export.js";
 import type { PolicyFileRef, PolicySource } from "./resolve-policy.js";
@@ -122,13 +123,9 @@ function supersedesNote(before: TriageHeader, after: TriageHeader): string {
   return `${SUPERSEDES_NOTE}: ${changes.join(", ")}.`;
 }
 
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
-}
-
 function changedNote(before: TriageHeader, change: HeadChange): string {
   const merged = change.merged.length > 0 ? `, merging ${change.merged.map((number) => `#${number}`).join(", ")} into this branch` : "";
-  return `${CHANGED_NOTE} (${VERDICT_NAMES[before.verdict as VerdictWord]} at \`${before.head.slice(0, 7)}\`): ${plural(change.commits, "new commit")}${merged}.`;
+  return `${CHANGED_NOTE} (${VERDICT_NAMES[before.verdict as VerdictWord]} at \`${before.head.slice(0, 7)}\`): ${counted(change.commits, "new commit", "new commits")}${merged}.`;
 }
 
 /**

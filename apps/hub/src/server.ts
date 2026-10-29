@@ -1038,12 +1038,8 @@ async function routeRequest(req: Request, server: Parameters<typeof stock.fetch>
   if (req.method === "PATCH") {
     const tenantMatch = /^\/api\/tenants\/([^/]+)$/.exec(path);
     if (tenantMatch) {
-      let tenantId = tenantMatch[1]!;
-      try {
-        tenantId = decodeURIComponent(tenantId);
-      } catch {
-        return Response.json({ error: "not_found" }, { status: 404 });
-      }
+      const tenantId = decodedSegment(tenantMatch[1]!);
+      if (tenantId === undefined) return Response.json({ error: "not_found" }, { status: 404 });
       const principalId = await tenantManager({ db: composition.db, getSession: composition.getSession, authorize: authorizePortal }, tenantId, req.headers);
       if (principalId instanceof Response) return principalId;
       let switchedOn = false;

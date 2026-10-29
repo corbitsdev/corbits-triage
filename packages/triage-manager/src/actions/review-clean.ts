@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { counted } from "@corbits/common";
 import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
 import { DO_NAMES } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
@@ -46,8 +47,8 @@ function openUnder(condition: FindingsCondition, findings: readonly Finding[]): 
 }
 
 function findingsText(condition: FindingsCondition, count: number): string {
-  const noun = count === 1 ? "finding" : "findings";
-  return "above" in condition ? `${count} ${noun} at ${condition.above} or above` : `${count} ${noun}`;
+  const found = counted(count, "finding", "findings");
+  return "above" in condition ? `${found} at ${condition.above} or above` : found;
 }
 
 /** Why the review does not meet `condition`, if it does not. */

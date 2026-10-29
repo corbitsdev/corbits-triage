@@ -7,7 +7,7 @@ import { lacksDecisionModel, type GithubPullDetail, type PrItem, type RepoRecord
 import { DeniedNotice } from "../lib/denied.tsx";
 import { useGithubPull } from "../lib/github-pull.ts";
 import { useMediaQuery } from "../lib/media-query.ts";
-import { errorText } from "@corbits/common";
+import { counted, errorText } from "@corbits/common";
 import { HOLD_MS, type Notices } from "../lib/held-actions.ts";
 import { useHeldInbox } from "../lib/held-inbox.tsx";
 import { pendingDos, type PendingDo } from "../lib/pending-dos.ts";
@@ -454,16 +454,12 @@ function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }
   );
 }
 
-function repositoriesText(count: number): string {
-  return `${count} ${count === 1 ? "repository" : "repositories"}`;
-}
-
 /** None open is only true when GitHub answered for every repository; a failed read says nothing about its pull requests. */
 function NoneOpen({ title }: { title: string }) {
   const openPulls = useOpenPulls();
   const repos = openPulls.data?.repos;
   if (repos === undefined || openPulls.isError || repos.some((repo) => repo.error !== undefined)) return null;
-  return <ListEmpty title={title} text={`${repositoriesText(repos.length)} checked.`} />;
+  return <ListEmpty title={title} text={`${counted(repos.length, "repository", "repositories")} checked.`} />;
 }
 
 /** An empty list names the condition in a left-aligned mute sentence under its heading. */
@@ -502,7 +498,7 @@ function PolicyUpgradeNotice() {
   return (
     <>
       {waiting.length ? <p role="status" className="note">{waiting.map((row, at) => <Fragment key={repoKey({ name: row.repo, source: row.source })}>{at > 0 ? " · " : null}<Link to={repoHref({ name: row.repo, source: row.source })}>{row.repo}</Link>: {upgradeLabel(row)}</Fragment>)}</p> : null}
-      {starting ? <p role="status" className="note"><Link to="/repositories">{repositoriesText(starting)}</Link> {starting === 1 ? "has" : "have"} no policy file yet, so Triage runs nothing there.</p> : null}
+      {starting ? <p role="status" className="note"><Link to="/repositories">{counted(starting, "repository", "repositories")}</Link> {starting === 1 ? "has" : "have"} no policy file yet, so Triage runs nothing there.</p> : null}
     </>
   );
 }

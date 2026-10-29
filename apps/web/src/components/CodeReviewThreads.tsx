@@ -1,4 +1,4 @@
-import { errorText } from "@corbits/common";
+import { counted, errorText } from "@corbits/common";
 import { BUDGET_EXHAUSTED_NOTE, INCOMPLETE_NOTE, UNVERIFIED_FINDING } from "@corbits/triage-contracts";
 import { useCodeReview, useReviewAgain, useSendCodeReview } from "../lib/code-review.ts";
 import { useCodeReviewOn } from "../lib/check-packs.ts";
@@ -21,7 +21,7 @@ function hint(review: CodeReviewRun, completed: CodeReviewRun | null): string {
   if (review.status === "failed") return "The last review did not finish";
   const count = completed?.comments?.length ?? 0;
   if (count === 0) return "No findings";
-  return count === 1 ? "1 finding" : `${count} findings`;
+  return counted(count, "finding", "findings");
 }
 
 const MAX_NAMED_UNREAD = 5;

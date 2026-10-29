@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { Button } from "@corbits/react-ui";
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
-import { errorText } from "@corbits/common";
+import { counted, errorText } from "@corbits/common";
 import HealthMark from "../components/repo-panel/HealthMark.tsx";
 import RepoPanel from "../components/repo-panel/RepoPanel.tsx";
 import { catchingUpRepos } from "../lib/backlog-status.ts";
@@ -21,7 +21,6 @@ import { createHubTransport } from "../lib/hub-transport.ts";
 import { repoKey } from "../lib/repo-id.ts";
 import { findRepo, hostedRepos, repoRows, selectedRepo, type RepoRow } from "../lib/repo-rows.ts";
 import { useTriageVerdicts } from "../lib/triage-verdicts.ts";
-import { counted } from "../lib/plural.ts";
 import { relativeTime } from "../lib/triage-view.ts";
 
 function listed(words: string[]): string {

@@ -2,11 +2,10 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { flushSync } from "react-dom";
 import { Link } from "react-router-dom";
 import { Button, Skeleton, Table, TableBody, TableCell, TableRow } from "@corbits/react-ui";
-import { counted } from "../lib/plural.ts";
 import { BUILT_IN_CHECK_NAMES, isCatalogId, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { CheckResult, GithubPullDetail, PrItem } from "../lib/hub-api.ts";
 import { checkLimitText } from "../lib/check-limit.ts";
-import { errorText } from "@corbits/common";
+import { counted, errorText } from "@corbits/common";
 import { linearIssues } from "../lib/linked-issue.ts";
 import { checkLabel, DO_NAMES } from "../lib/pack-prose.ts";
 import { heldText, lineText, passedChecks, type HeldChoice, type PaneStatus, type Problem, type Severity } from "../lib/pane-report.ts";

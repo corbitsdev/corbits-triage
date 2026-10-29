@@ -1,11 +1,11 @@
 import { errorText } from "@corbits/common";
-import { settle } from "./settle.ts";
 import { checkPr, pullOf } from "./check-pr.ts";
 import { GITHUB_API, githubApi } from "./github-api.ts";
 import type { Reply, Request } from "./messages.ts";
 import { policyFor } from "./policy-source.ts";
 import { prKey } from "./pr.ts";
 import { browserSession, sessionGithub, sessionLogin, type SessionReads } from "./session-reads.ts";
+import { settle } from "./settle.ts";
 import { openPanelOnActionClick, openSidePanel } from "./side-panel.ts";
 import { clearRunning, clearSaved, githubToken, readAs, saveView, setRunState, tokenSaved, views } from "./storage.ts";
 import { FRESH_MS, type TriageView } from "./view.ts";

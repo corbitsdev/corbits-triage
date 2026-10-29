@@ -6,7 +6,7 @@ import { useCheckPacks } from "../../lib/check-packs.ts";
 import { modelSecrets } from "../../lib/credential-actions.ts";
 import { DeniedNotice } from "../../lib/denied.tsx";
 import { connectedSources, currentDeployment, isActiveCredential, lacksDecisionModel, type DeployedWorkflow, type PortalSnapshot } from "../../lib/hub-api.ts";
-import { counted } from "../../lib/plural.ts";
+import { counted } from "@corbits/common";
 import { usePortal } from "../../lib/portal.tsx";
 import { hostFullName } from "../../lib/pull-link.ts";
 import { enabledRepos, packsPending, triageReadyRepos } from "../../lib/repo-rows.ts";

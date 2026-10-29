@@ -6,6 +6,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function counted(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
 export function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
