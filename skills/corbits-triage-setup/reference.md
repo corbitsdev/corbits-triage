@@ -11,7 +11,7 @@ Every rule has:
 - `reason`: one line on why the rule exists.
 - `evidence`: a list of `maintainer-stated`, pull request references (`"#44"`, `"owner/name#44"`) or `https://` links. Quote `#` references.
 - `enabled: false` (optional) keeps a rule written down but off.
-- `onFail` (optional) is what a failing rule does: `fail` (the default, except `label` for the size rules) fails the pull request for its author, `ask` makes it Unsure and leaves it to a maintainer, and `label` makes the rule label the pull request instead of deciding its verdict. A top-level `onFail` sets the default for every rule in the file. With `label`, when it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and takes the label off once the rule passes. A label a `labels` step in the policy also names is left alone. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `onFail: label` is refused, and so is one starting `Triage:` or `rule: `, naming a verdict label, or naming a level label of sensitive paths or risk (`sensitive: medium`, `risk: high`) other than the rule's own.
+- `onFail` (optional) is what a failing rule does: `fail` (the default, except `label` for the size rules, regression risk and focused, and `ask` for sensitive paths, risk and duplicates-open-pull-request) fails the pull request for its author, `ask` makes it Unsure and leaves it to a maintainer, and `label` makes the rule label the pull request instead of deciding its verdict. A top-level `onFail` sets the default for every rule in the file. With `label`, when it fails, or the model can't tell, the verdict is unchanged; Triage adds its label and a line under **Notes:** in its comment, and takes the label off once the rule passes. A label a `labels` step in the policy also names is left alone. The label is `size: large` for the size rules, `docs: check` for `docs` and `<id>: check` otherwise; `label:` (at most 50 characters) names another. `label` without `onFail: label` is refused, and so is one starting `Triage:` or `rule: `, naming a verdict label, or naming a level label of sensitive paths or risk (`sensitive: medium`, `risk: high`) other than the rule's own.
 
 The five `max-` rules are the size rules. Lockfiles are left out of their counts (on Bitbucket Data Center, out of the file count only).
 
@@ -37,7 +37,7 @@ A built-in rule is named only by `check`, never `id`, and each built-in may appe
 | `risk` | `medium:`, `high:` a number of signals from 1 to 5, or a list of signals where a nested list needs all of its own (optional, default `1` and `[[size, no-tests]]`); `failAt:`, `labelAt:` `medium` or `high` (optional, default `high` and `medium`) | no | Rates the pull request low, medium or high from five signals: `sensitive` (a medium `sensitive-paths` group, default groups if unset; a high group makes it high on its own unless `sensitive-paths` is on), `size` (over the `max-files-changed` or `max-lines-changed` limit, default 30 and 3,000), `no-tests` (source code in a common language changed, not `*.d.ts`, `docs/` or `examples/`, and no test file, `e2e/`, `cypress/` or `__snapshots__/` file), `hot-files` (a file `regression-risk` counts as hot) and `first-time` (a first-time contributor; never on Bitbucket Data Center). Fails at `failAt`; below it, from `labelAt`, passes and labels `risk: <level>`. Unconfirmed when unread history could make a file hot and the rule fail. Default `onFail` is `ask`. |
 | `no-duplicate` | none | no | Fails when an earlier open pull request on the same base branch, drafts left out, has the same diff or the same commits, and names it. |
 | `duplicates-open-pull-request` | none | yes | The decision model checks the change is not already made by another open pull request on the same base branch that shares a changed path or title words with it. Default `onFail` is `ask`. |
-| `focused` | none | yes | The decision model checks the change is focused on one thing. |
+| `focused` | none | yes | The decision model checks the change is focused on one thing. Default `onFail` is `label`: a review hint, not a gate. |
 | `docs` | none | yes | The decision model checks docs are updated when behaviour changes. |
 
 ### Rules of your own
@@ -72,13 +72,13 @@ The starter file is the baseline. Each extra fits when the repository shows its 
 | The user names TypeScript or JavaScript code conventions the preset lacks | A `code-patterns` rule of patterns, in the shape of `invented-fallbacks` |
 | Pull requests for the same change are opened more than once | `no-duplicate` |
 | The maintainer wants added TypeScript to use no `any` type; never suggested from language alone | `no-any` below; its `onFail: ask` makes such a pull request Unsure for a maintainer to accept, rather than failing it |
-| A decision model is set up and pull requests often mix changes | `focused` |
+| A decision model is set up and pull requests often mix changes | `focused` with `onFail: label` |
 | A decision model is set up and the repository keeps user docs beside its code | `docs` |
 | A decision model is set up and contributors often open overlapping pull requests | `duplicates-open-pull-request` |
 
 `no-forbidden-paths` fails maintainers too, so never list `.github/**` or another path the team edits on purpose unless the user asks.
 
-When the user wants a rule to flag pull requests without failing them, such as a docs reminder, add `onFail: label` to it; size rules do this already. When they want a person to decide instead of the author fixing it, use `onFail: ask`. When they want a size limit to block, give it `onFail: fail` or `onFail: ask`.
+When the user wants a rule to flag pull requests without failing them, such as a docs reminder, add `onFail: label` to it; size rules and focused do this already. Keep focused advisory unless the maintainer explicitly asks for a blocking rule. Existing files that omit both rule and top-level `onFail` also use this advisory default; explicit rule values and top-level defaults still win. When they want a person to decide instead of the author fixing it, use `onFail: ask`. When they want a size limit to block, give it `onFail: fail` or `onFail: ask`.
 
 To add a group to `sensitive-paths`, change the starter's rule. Writing `groups` replaces the default groups, `schema`, `auth`, `ci` and `locks`, so list each one to keep:
 
