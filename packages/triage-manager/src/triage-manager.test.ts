@@ -474,9 +474,9 @@ describe("triage-manager with code review", () => {
     expect(mailed).toHaveLength(1);
   });
 
-  /** GitHub answering the review's inline comments and its review threads as GraphQL gives them. */
-  function threadedHost(threads?: object[]) {
-    const { writes, host } = githubHost();
+  /** GitHub answering the review's inline comments and its review threads as GraphQL gives them. `checkRuns` is the head's CI. */
+  function threadedHost(threads?: object[], checkRuns?: object[]) {
+    const { writes, host } = githubHost(HEAD, { checkRuns });
     async function threaded(input: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
       if (/\/pulls\/\d+\/comments$/.test(url.pathname)) {
@@ -884,6 +884,100 @@ describe("triage-manager with code review", () => {
     const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: { ...REVIEW, budgetExhausted: true }, taken: { blocks: ["code-review"], ...CODE_REVIEW } };
     const { actions: [merge] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { ...PASSED, actions: [waiting] } }, reviewScope: { output: { reviewed: true } } }) as { actions: Record<string, unknown>[] };
     expect(merge).toEqual(waiting);
+  });
+
+  const CI_GREEN = [{ name: "ci", status: "completed", conclusion: "success" }];
+  /** Approve and merge, woken by the policy's own events, which do not include threads. */
+  const RELEASING: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: [{ do: "approve" }, { do: "merge" }] } };
+  const SUMMARY = { ...REVIEW.comments[0]!, title: "In the summary", body: "This finding was not posted inline." };
+
+  function inline(state: "untouched" | "resolved") {
+    return { ...REVIEW.comments[0]!, thread: { id: 501, state } };
+  }
+
+  function wroteMerge(writes: readonly Write[]): boolean {
+    return writes.some((write) => write.method === "PUT" && write.path === `/repos/${PR.repo}/pulls/${PR.number}/merge`);
+  }
+
+  type Suggested = { kind: string; effectId?: string; held?: boolean; reason?: string };
+
+  /**
+   * A later pass on the head whose review is already stored, woken by a review-thread webhook. The pack's `on:` does not
+   * name threads, so approve and merge are suggested only because that wake releases them. No second review is deployed.
+   */
+  async function threadsWake(hostThreads: object[] | undefined, comments: ReturnType<typeof inline>[]) {
+    const request = { ...hubRequest(RELEASING, { ...CODE_REVIEW, ...REVIEW_REQUEST }), event: "pull_request_review_thread", action: "resolved", events: ["threads"] };
+    const { writes, host } = threadedHost(hostThreads, CI_GREEN);
+    const take = { ...PASS, request, events: [mailEvent(HEAD, { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: HEAD }, "evt_threads")], threads: [501], reviewers: [{ ...reviewer(), result: { ...REVIEW, comments } }] };
+    const hub = fakeHub({ takes: [take], dones: [ENDED] });
+    const run = await runMail(reviewed, wake(), host, hub.hub);
+    return { writes, ...run, calls: hub.calls };
+  }
+
+  function suggested(outputs: Record<string, unknown>, step: "evaluateRules" | "cleared") {
+    return (outputs[step] as { approvable?: boolean; actions: Suggested[] });
+  }
+
+  /** Approve and merge are on the list only because the threads wake released them: the pack's `on:` does not name threads. */
+  function releasedOnly(outputs: Record<string, unknown>) {
+    const [item] = (outputs["rules"] as { items: { facts: { events: string[] }; pack: CheckPack }[] }).items;
+    expect(item!.pack.actions.when).not.toContain("threads");
+    expect(item!.facts.events).toEqual(["threads"]);
+    expect(suggested(outputs, "evaluateRules").actions.map((action) => action.kind)).toEqual(["approve", "merge"]);
+  }
+
+  test("a resolved host thread on a threads wake writes approve and merge under the effect ids evaluateRules assigned", async () => {
+    const { writes, outputs, ran, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [inline("untouched")]);
+    expect(terminalStatus).toBe("completed");
+    expect(ran).not.toContain("deployReview");
+    releasedOnly(outputs);
+    const evaluated = suggested(outputs, "evaluateRules");
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.map((action) => action.held)).toEqual([undefined, undefined]);
+    expect(cleared.actions.map((action) => action.effectId)).toEqual(evaluated.actions.map((action) => action.effectId));
+    expect(cleared.approvable).toBe(true);
+    expect(cleared.approvable).toBe(evaluated.approvable);
+    expect(approved(writes)).toBe(true);
+    expect(wroteMerge(writes)).toBe(true);
+  });
+
+  test("an outdated host thread holds approve and merge for the open finding and writes neither", async () => {
+    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isOutdated: true })], [inline("untouched")]);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    const evaluated = suggested(outputs, "evaluateRules");
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions).toEqual([
+      { ...evaluated.actions[0], held: true, reason: OPEN },
+      { ...evaluated.actions[1], held: true, reason: OPEN },
+    ]);
+    expect(cleared.actions.map((action) => action.reason)).not.toContain(INCOMPLETE);
+    expect(cleared.approvable).toBe(false);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+  });
+
+  test("a resolved thread does not release a summary finding, so approve is not written", async () => {
+    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [inline("untouched"), SUMMARY]);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.map((action) => action.held === true ? action.reason : undefined)).toEqual([OPEN, OPEN]);
+    expect(cleared.approvable).toBe(false);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+  });
+
+  test("a thread read the host refuses holds approve even when the stored thread was resolved", async () => {
+    const { writes, outputs, calls, terminalStatus } = await threadsWake(undefined, [inline("resolved")]);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    expect(doneBody(calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.find((action) => action.kind === "approve")).toMatchObject({ held: true, reason: OPEN });
+    expect(cleared.approvable).toBe(false);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
   });
 
   test("a review that could not be mailed by its deadline leaves the verdict to go up alone, waiting for no reviewer", async () => {
