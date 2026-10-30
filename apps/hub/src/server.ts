@@ -919,7 +919,7 @@ const integrations = createIntegrationsApp({ db: composition.db, getSession: com
     now,
     log: logJson,
   }),
-  triageTimeline: createTriageTimeline({ verdicts: verdictRecordStore }),
+  triageTimeline: createTriageTimeline({ db: composition.db, verdicts: verdictRecordStore }),
   triageVerdicts: createTriageVerdicts({
     ...credentialDeps,
     authorize: authorizePortal,

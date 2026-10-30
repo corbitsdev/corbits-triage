@@ -1,6 +1,8 @@
 // GitHub reads shared by a tenant's members, kept until a webhook or the hub's own write says the repository changed.
 // A webhook that never arrives costs at most KEPT_MS of its scope: no read is served older than that.
 
+import type { RepoSource } from "@corbits/triage-contracts";
+
 /** `pulls` reads change with a repository's pull requests; `all` reads also with its checks and branches. */
 export type ReadScope = "pulls" | "all";
 
@@ -19,16 +21,17 @@ const UNLISTED_EVENTS = new Set(["check_run", "check_suite", "status", "workflow
 export type RepoRead<T> = {
   scope: ReadScope;
   tenantId: string;
-  /** `owner/name` on GitHub. */
+  /** `owner/name` on `source`. The same name on two hosts is two repositories. */
   repo: string;
+  source: RepoSource;
   key: string;
   /** A kept value this rejects is read again, e.g. a mergeability the host had not worked out yet. */
   usable?: (value: T) => boolean;
 };
 
 export type RepoReads = {
-  /** `event` names the webhook; the hub's own writes name none and change every read of the repository. */
-  changed(tenantId: string, repo: string, event?: string): void;
+  /** `event` names the webhook; the hub's own writes name none and change every read of that host's repository. */
+  changed(tenantId: string, repo: string, source: RepoSource, event?: string): void;
   read<T>(at: RepoRead<T>, readNow: () => Promise<T>): Promise<T>;
 };
 
@@ -65,23 +68,28 @@ export function createRepoReads(now: () => Date): RepoReads {
     }
   }
 
+  /** A repository's reads on one host. Another host of the same name keeps its own. */
+  function repoId(tenantId: string, source: RepoSource, repo: string): string {
+    return `${tenantId}\n${source}\n${repo}`;
+  }
+
   return {
-    changed(tenantId, repo, event) {
-      const id = `${tenantId}\n${repo}`;
+    changed(tenantId, repo, source, event) {
+      const id = repoId(tenantId, source, repo);
       const was = versions.get(id) ?? { pulls: 0, all: 0 };
       versions.set(id, { pulls: event !== undefined && UNLISTED_EVENTS.has(event) ? was.pulls : was.pulls + 1, all: was.all + 1 });
     },
-    async read<T>({ scope, tenantId, repo, key, usable }: RepoRead<T>, readNow: () => Promise<T>): Promise<T> {
+    async read<T>({ scope, tenantId, repo, source, key, usable }: RepoRead<T>, readNow: () => Promise<T>): Promise<T> {
       sweep(now().getTime());
-      const repoId = `${tenantId}\n${repo}`;
-      const id = [scope, repoId, key].join("\n");
-      const version = versionOf(scope, repoId);
-      const entry = kept.get(id);
+      const id = repoId(tenantId, source, repo);
+      const keptId = [scope, id, key].join("\n");
+      const version = versionOf(scope, id);
+      const entry = kept.get(keptId);
       if (entry?.version === version) {
         const value = (await entry.value) as T;
         if (!usable || usable(value)) return value;
       }
-      return readAndKeep(id, { repo: repoId, scope, version }, readNow);
+      return readAndKeep(keptId, { repo: id, scope, version }, readNow);
     },
   };
 }

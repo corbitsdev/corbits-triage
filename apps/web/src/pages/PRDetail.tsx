@@ -143,7 +143,7 @@ export function PullHistory({ host, pending, error, commits, comments }: {
 }
 
 function About({ item }: { item: PrItem }) {
-  const pull = useGithubPull(item.repo, item.number);
+  const pull = useGithubPull(item.repo, item.number, item.source);
   const pr = pull.data?.pr;
   const facts = paneFacts(item, pull.data);
   const checks = (pull.data?.checks ?? []).map((row) => ({ name: row.name, status: row.conclusion ?? row.status }));
@@ -370,7 +370,7 @@ export default function PRDetail() {
   const approvals = useApprovals();
   const approval = approvals.rows.find((row) => row.id === (item?.pendingApprovalId ?? id));
   const denied = approvals.denied;
-  const pull = useGithubPull(item?.repo ?? "", item?.number ?? null);
+  const pull = useGithubPull(item?.repo ?? "", item?.number ?? null, item?.source);
   const pullPending = pull.isPending && pull.fetchStatus !== "idle";
   const files = pull.data?.files ?? [];
   const selected = useMemo(() => files.find((file) => file.path === filePath) ?? files[0], [files, filePath]);

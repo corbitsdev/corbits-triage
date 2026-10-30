@@ -38,7 +38,7 @@ export function useSendCodeReview({ repo, source, number }: Pull) {
       return writeGithub({ action: "code-review", repo, number, headSha }, "now");
     },
     onSuccess: function readPullAgain() {
-      return queryClient.invalidateQueries({ queryKey: [GITHUB_PULL_QUERY_KEY, tenantId, repo, number] });
+      return queryClient.invalidateQueries({ queryKey: [GITHUB_PULL_QUERY_KEY, tenantId, source, repo, number] });
     },
   });
 }

@@ -290,7 +290,7 @@ function BottomBar({ bar, draft, onChoose, onEdit }: BottomBarProps) {
 
 function Pane({ item, handled, listTitle, restored, sectionRef, onHold, onBack }: PaneProps) {
   const { triagePullRequest, readOnly } = usePortal();
-  const pull = useGithubPull(item.repo, item.number);
+  const pull = useGithubPull(item.repo, item.number, item.source);
   const pack = useRepoPack(item.repo, item.source);
   const wanted = useRepoWanted(item.repo, item.source);
   const [reply, setReply] = useState(restored === null ? draftText(item) : restored.reply);

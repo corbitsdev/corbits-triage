@@ -893,8 +893,9 @@ export type TimelineEntry = {
 
 export type TriageTimeline = { repo: string; number: number; entries: TimelineEntry[] };
 
-export async function loadTriageTimeline(transport: Transport, tenantId: string, repo: string, number: number): Promise<TriageTimeline> {
-  return transport.fetch<TriageTimeline>("GET", `/api/integrations/triage-timeline/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`);
+export async function loadTriageTimeline(transport: Transport, tenantId: string, repo: string, number: number, source?: RepoSource): Promise<TriageTimeline> {
+  const host = source === undefined ? "" : `&source=${enc(source)}`;
+  return transport.fetch<TriageTimeline>("GET", `/api/integrations/triage-timeline/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}${host}`);
 }
 
 export type PullTriage = TriageVerdicts["pulls"][number];
@@ -952,21 +953,24 @@ export async function loadGithubPull(
   tenantId: string,
   repo: string,
   number: number,
+  source?: RepoSource,
 ): Promise<GithubPullDetail> {
   if (!Number.isInteger(number) || number < 1) throw new Error("Pull request number must be a positive integer.");
+  const host = source === undefined ? "" : `&source=${enc(source)}`;
   return transport.fetch<GithubPullDetail>(
     "GET",
-    `/api/integrations/github-pull/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`,
+    `/api/integrations/github-pull/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}${host}`,
   );
 }
 
 /** Whether the host would merge a pull request now: GitHub's `mergeableState` and `reviewDecision`, or Bitbucket's `canMerge` and `mergeVetoes`. */
 export type MergeState = Pick<GithubPullDetail["pr"], "mergeable" | "mergeableState" | "reviewDecision" | "canMerge" | "mergeVetoes"> & { number: number };
 
-export async function loadMergeStates(transport: Transport, tenantId: string, repo: string, numbers: number[]): Promise<MergeState[]> {
+export async function loadMergeStates(transport: Transport, tenantId: string, repo: string, numbers: number[], source?: RepoSource): Promise<MergeState[]> {
+  const host = source === undefined ? "" : `&source=${enc(source)}`;
   const { prs } = await transport.fetch<{ prs: MergeState[] }>(
     "GET",
-    `/api/integrations/merge-states/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&numbers=${numbers.join(",")}`,
+    `/api/integrations/merge-states/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&numbers=${numbers.join(",")}${host}`,
   );
   return prs;
 }

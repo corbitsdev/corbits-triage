@@ -9,18 +9,18 @@ import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { getChecks, getPr, getReviews, listIssueComments, listPrCommits, listPrFiles, listReferencedIssues, readMergeStates, type GithubFetch, type ReviewDecision } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
-import { shownBody, visibleText } from "@corbits/triage-contracts";
+import { shownBody, visibleText, REPO_SOURCES } from "@corbits/triage-contracts";
 import { githubLimited } from "./github-refusal.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import type { RepoReads } from "./repo-reads.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
-import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
+import { repoRecords, connectedNamed, sourceOf, triageNs, type RepoRecord } from "./tenant-config.js";
 
 export const GITHUB_PR_DETAILS_PATH = "/api/integrations/github-pull";
 
-const Query = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "string.integer.parse" }).pipe((q, ctx) => (q.number > 0 ? q : ctx.error("number must be positive")));
+const Query = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "string.integer.parse", "source?": type.enumerated(...REPO_SOURCES) }).pipe((q, ctx) => (q.number > 0 ? q : ctx.error("number must be positive")));
 
 type Log = (entry: Record<string, unknown>) => void;
 
@@ -89,19 +89,20 @@ export function createGithubPrDetails(deps: SourceFetchDeps & { reads: RepoReads
     if (!source) throw new Error(`no readable ${sourceOf(record)} credential`);
     if ("bb" in source) return bitbucketDetails(source.bb, record.name, number);
     const { gh, login } = source;
-    return deps.reads.read({ scope: "all", tenantId, repo: record.name, key: `details:${number}`, usable: mergeabilityKnown }, function readNow() {
+    return deps.reads.read({ scope: "all", tenantId, repo: record.name, source: sourceOf(record), key: `details:${number}`, usable: mergeabilityKnown }, function readNow() {
       return githubDetails(gh, login, record.name, number, deps.log);
     });
   }
 
   return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {
     const url = new URL(req.url);
-    const query = Query({ repo: url.searchParams.get("repo"), number: url.searchParams.get("number") });
+    const asked = url.searchParams.get("source");
+    const query = Query({ repo: url.searchParams.get("repo"), number: url.searchParams.get("number"), ...(asked !== null && { source: asked }) });
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
 
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
-    const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === query.repo && row.connected);
+    const record = connectedNamed(repoRecords(triageNs(tenant.config)), query.repo, query.source);
     if (!record) return failure(409, "repo_not_connected", `${query.repo} is not connected to this workspace.`);
     const refused = await sourceCredentialGrant(deps, principalId, tenantId, record, "read");
     if (refused) return refused;

@@ -326,7 +326,7 @@ test("PostgreSQL: every verdict route needs workflow-run read, which holding the
   const unused = {} as never;
   const app = guardedApp(handle.db, sessionOf, grants, {
     triageVerdicts: createTriageVerdicts({ ...deps, list, verdicts: unused, managerRuns: unused, openPulls: unused, triageState: unused, now: unused }),
-    triageTimeline: createTriageTimeline({ verdicts: unused }),
+    triageTimeline: createTriageTimeline({ db: unused, verdicts: unused }),
     triageStats: createTriageStats({ verdicts: unused, outcomes: unused, now: unused, log: unused }),
     audit: createAuditLog({ db: unused, runReader: unused, authorize: unused, workflows: ["pr-triage"] }),
   });

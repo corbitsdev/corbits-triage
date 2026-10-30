@@ -36,7 +36,7 @@ export function createBitbucketCodeReviewSend(deps: PortalCredentialDeps & {
         });
       }, body, completed, carriedTo);
       if (result instanceof Response) return result;
-      deps.changed(tenantId, repo);
+      deps.changed(tenantId, repo, "bitbucket-datacenter");
       deps.log({ level: "info", msg: "bitbucket_code_review_sent", tenantId, principalId, repo, number });
       return Response.json(result);
     } catch (err) {

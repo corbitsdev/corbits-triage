@@ -161,7 +161,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
       const { repo, number } = body;
       const result = await act(gh, app.login, tenantId, body);
       if (result instanceof Response) return result;
-      deps.changed(tenantId, repo);
+      deps.changed(tenantId, repo, "github");
       deps.log({ level: "info", msg: "github_pr_action", tenantId, principalId, action: body.action, repo, number });
       return Response.json(result);
     } catch (err) {

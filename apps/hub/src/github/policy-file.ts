@@ -343,7 +343,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
     const pull = await propose(tenantId, record, { ...change, body });
     deps.log({ level: "info", msg, tenantId, repo: record.name, number: pull.number });
     // The listing is where the repository's standing and the upgrades read find the new pull request.
-    deps.changed(tenantId, record.name);
+    deps.changed(tenantId, record.name, sourceOf(record));
     try {
       await deps.openPulls(member, true);
     } catch (err) {
@@ -473,7 +473,7 @@ export function createPolicyFile(deps: PolicyFileDeps) {
       deps.log({ level: "info", msg: "policy_file_pushed_from_portal", tenantId: member.tenantId, principalId: member.principalId, repo, path: file.path, commit: pushed.commit });
       // The push's webhook reads the file again; until it is heard, the kept read would be the file before.
       cache.delete(repoKey(member.tenantId, record));
-      deps.changed(member.tenantId, record.name);
+      deps.changed(member.tenantId, record.name, sourceOf(record));
       return Response.json({ status: "pushed", path: file.path, ...pushed });
     } catch (err) {
       if (err instanceof github.PolicyFileMoved) return fileMoved(err.path);

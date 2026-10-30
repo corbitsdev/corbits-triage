@@ -1,10 +1,13 @@
 // A pull request's readiness history, from the recorded verdicts only: one
 // entry per verdict that changed the head or a check result, with the checks
 // that changed since the judged verdict before it.
-import { currentRows } from "@corbits/triage-contracts";
+import { currentRows, REPO_SOURCES } from "@corbits/triage-contracts";
 import { type } from "arktype";
+import { eq } from "drizzle-orm";
+import { schema, type DB } from "@intx/db";
 import { failure } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
+import { connectedNamed, repoRecords, sourceOf, triageNs } from "./tenant-config.js";
 import { evidenceOf, type RecordedCheck, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
 
 export const TRIAGE_TIMELINE_PATH = "/api/integrations/triage-timeline";
@@ -12,6 +15,7 @@ export const TRIAGE_TIMELINE_PATH = "/api/integrations/triage-timeline";
 const TimelineQuery = type({
   repo: /^[\w.-]+\/[\w.-]+$/,
   number: type("string.integer.parse").to("1 <= number.integer <= 2147483647"),
+  "source?": type.enumerated(...REPO_SOURCES),
 });
 
 const SCORE = new Map([["pass", 1], ["unconfirmed", 0.5], ["fail", 0]]);
@@ -38,7 +42,8 @@ export const TriageTimeline = type({ repo: "string", number: "number", entries: 
 export type TriageTimeline = typeof TriageTimeline.infer;
 
 export type TriageTimelineDeps = {
-  verdicts: Pick<VerdictRecordStore, "forPull">;
+  db: DB["db"];
+  verdicts: Pick<VerdictRecordStore, "forHostedPull">;
 };
 
 function readiness(checks: readonly RecordedCheck[]): number | null {
@@ -96,10 +101,15 @@ function timeline(records: readonly VerdictRecord[]): TimelineEntry[] {
 export function createTriageTimeline(deps: TriageTimelineDeps) {
   return async function handle(req: Request, { tenantId }: Member): Promise<Response> {
     const url = new URL(req.url);
-    const query = TimelineQuery({ repo: url.searchParams.get("repo"), number: url.searchParams.get("number") });
+    const asked = url.searchParams.get("source");
+    const query = TimelineQuery({ repo: url.searchParams.get("repo"), number: url.searchParams.get("number"), ...(asked !== null && { source: asked }) });
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
     const { repo, number } = query;
-    const entries = timeline(await deps.verdicts.forPull(tenantId, repo, number));
+    const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
+    if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
+    const record = connectedNamed(repoRecords(triageNs(tenant.config)), repo, query.source);
+    if (!record) return failure(409, "repo_not_connected", `${repo} is not connected to this workspace.`);
+    const entries = timeline(await deps.verdicts.forHostedPull(tenantId, { repo: record.name, number, source: sourceOf(record) }));
     return Response.json({ repo, number, entries } satisfies TriageTimeline);
   };
 }
