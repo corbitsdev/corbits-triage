@@ -914,9 +914,9 @@ label off that head, so it never stands on a head not yet triaged.
    GitHub's `pull_request_review_thread` (`resolved`, `unresolved`) and Data
    Center's `pr:comment:edited` whose text is unchanged (a resolve or reopen,
    checked against Bitbucket 10.5) wake the pull request as `threads`, which
-   is not a policy event: it runs only the policy's merge steps, whatever
-   `on:` lists, since it releases a hold Triage added itself; every other
-   action waits for an event `on:` lists.
+   is not a policy event: it re-suggests merge and approve, not labels or
+   every other action, whatever `on:` lists, since it releases a hold Triage
+   added itself; every other action waits for an event `on:` lists.
    A pass that waited for the head's CI or a reviewer acted on none of its
    events, and the mail that ends the wait names only what ended it. The
    manager's take therefore answers, as the newest mail's events, those of
@@ -1117,24 +1117,31 @@ not line up with the review's findings are logged and left out. A GitHub
 read-back that fails, or that matches fewer comments to findings than the
 review holds inline, leaves the ids unknown and is logged as
 `finding_threads_unread`; the review counts as posted, and a later send of it
-reads them again. The first pass on a newer head gets from take at most 100
-ids, the newest unresolved findings' first and then the newest resolved ones,
-so a reopened thread is seen, reads them in one `findingThreads`
-step through the host read tool (`finding_thread_states`: GitHub's GraphQL
-`reviewThreads`, Data Center's comment by id), and done writes each state on its
-finding: resolved, outdated, replied (by someone other than Triage) or
-untouched, with `at` only when the host names the time of the change (a reply's
-time on both hosts, a resolve's on Data Center). A read the host refuses is
-logged as `finding_threads_unread` and leaves the findings as they were; on Data
-Center, where each comment is its own read, only the comments that failed stay
-unread. On Data
+reads them again. Take no longer names thread ids only on the first pass of a
+newer head. A pass whose webhook triages as `threads` also names this head's
+inline finding ids, numeric only, those not stored resolved first and then those
+stored resolved, then other heads' ids only on the first pass, still at most
+100, an id past that left out. A later pass that does not triage as `threads`
+names none. It reads the named ids in one `findingThreads` step through the
+host read tool (`finding_thread_states`: GitHub's GraphQL `reviewThreads`, Data
+Center's comment by id), and done writes each state onto the finding in the
+reviewer-result row: resolved, outdated, replied (by someone other than Triage)
+or untouched, with `at` only when the host names the time of the change (a
+reply's time on both hosts, a resolve's on Data Center). Host thread state is
+the source. A read the host refuses is logged as `finding_threads_unread` and
+leaves that finding holding; on Data Center, where each comment is its own
+read, only the comments that failed stay unread. On Data
 Center the fields read (`threadResolved`, `threadResolvedDate`, `anchor.orphaned`,
 nested `comments`) were checked against Bitbucket 10.5. The portal shows it
 from `GET …/code-review`; a finding held in the summary, one a person sent from
 the portal that the manager never posts again on that head, or one posted
 before Triage kept its comment is `not-tracked`. Each finding's `open` follows
 that record through `findingOpen` in triage-contracts: a finding whose thread is resolved or
-outdated is no longer open; replied, untouched and `not-tracked` ones are.
+outdated is no longer open in the portal; replied, untouched and `not-tracked` ones are.
+The approve and merge hold does not follow `findingOpen`: only `resolved` releases
+the hold on that same commit, with no new push; outdated, replied, untouched, a
+finding with no thread, and a thread this pass could not read stay open. A later
+pass that did not read this head trusts a stored `resolved`.
 With `at`, the route answers only that head's reviews and carries none over to
 it, so an older head's review reads with the states recorded for it. A
 closed or merged pull request is not read again.
@@ -1161,7 +1168,11 @@ review does not meet the step's `when.findings`: `{ above: P<n> }` allows only
 findings less severe than P<n>, `{ any: false }` none and `{ any: true }` any.
 A step
 without one is held only when it approves or merges and the review has any
-finding open. A review that did not run, failed, ran past its deadline, read
+finding open. The approve and merge hold does not follow `findingOpen`: only
+`resolved` releases the hold on that same commit, with no new push; outdated,
+replied, untouched, a finding with no thread, and a thread this pass could not
+read stay open. A later pass that did not read this head trusts a stored
+`resolved`. A review that did not run, failed, ran past its deadline, read
 only part of the change or reviewed another head meets no condition. Each Do
 it holds adds one line to the verdict's comment naming the action and why, and
 a held approve makes the head not approvable, so Triage takes back an earlier
