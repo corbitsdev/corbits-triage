@@ -43,7 +43,7 @@ const BB_REPO = "ACME/widgets";
 const BB_PULL = "/rest/api/1.0/projects/ACME/repos/widgets/pull-requests/8";
 const BB_BUILDS = "/rest/build-status/1.0/commits/abc";
 
-const RELEASE = { workflow: { assetId: "ast_review", commitSha: "c0ffee", packageName: "@corbits/pr-code-review-anthropic", entry: "./pr-code-review-reviewer-github.mjs" }, offerings: { ids: ["off_a"], defaultId: "off_a" } };
+const RELEASE = { name: "pr-code-review-reviewer-github", workflow: { assetId: "ast_review", commitSha: "c0ffee", packageName: "@corbits/pr-code-review-anthropic", entry: "./pr-code-review-reviewer-github.mjs" }, offerings: { ids: ["off_a"], defaultId: "off_a" } };
 const JUDGE_RELEASE = { workflow: { assetId: "ast_judge", commitSha: "c0ffee", packageName: "@corbits/triage-judge-github-workflow", entry: "./triage-judge-github.mjs" }, offerings: { ids: ["off_d"], defaultId: "off_d" } };
 const CODE_REVIEW = { codeReview: { on: true, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "any" }, blocks: ["code-review"] };
 const REVIEW_REQUEST = { codeReviewRequest: { kind: "code-review", number: PR.number, title: PR.title, description: PR.body, diff: "diff --git a/src/flag.ts b/src/flag.ts", checkout: { source: "github", repo: PR.repo, sha: HEAD } } };
@@ -648,6 +648,31 @@ describe("triage-manager with code review", () => {
     const { ran } = await runMail(reviewed, wake(), host, hub.hub);
     expect(ran).not.toContain("deployReview");
     expect(ran).toContain("mirrorRules");
+  });
+
+  test("a published reviewer for another workflow is never deployed", async () => {
+    publish({ github: { codeReview: { ...RELEASE, name: "wrong-reviewer" } } });
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(RULES, { ...CODE_REVIEW, ...REVIEW_REQUEST }) }], dones: [ENDED] });
+    const { ran } = await runMail(reviewed, wake(), host, hub.hub);
+    expect(ran).not.toContain("deployReview");
+  });
+
+  test.each(["github", "bitbucket-datacenter"])("provider routing verifies published identity on %s in both paths", async (source) => {
+    const name = `pr-code-review-reviewer-${source}`;
+    const payload = wake({ source, repo: PR.repo, number: PR.number });
+    const take = { output: { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { ...CODE_REVIEW, ...REVIEW_REQUEST } } };
+    const rules = { output: { items: [{ facts: { author: "octocat", authorTeams: [], authorTeamsUnknown: [], changedFiles: 1, files: [{ path: "src/flag.ts" }] }, pack: RULES }] } };
+    for (const [identity, expected] of [[undefined, false], ["wrong-reviewer", false], [name, true]] as const) {
+      const { name: _name, ...unnamed } = RELEASE;
+      publish({ [source]: { codeReview: identity === undefined ? unnamed : { ...RELEASE, name: identity } } });
+      expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(expected);
+      expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(expected);
+      if (!expected) await expect(actions.deployReview({ payload, take }, {} as EffectContext, new AbortController().signal)).rejects.toThrow("no matching code review");
+    }
+    publish({ [source]: {} });
+    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(false);
+    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(false);
   });
 
   test("deployReview refuses an unknown code review provider rather than defaulting", async () => {

@@ -1,7 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { AUTHOR_KINDS, authorGroupsOf, checkName, CODE_REVIEW_REVIEWERS, EVERYONE, readCheckPack, repoSourceOf, RULE_GATES, rulesGate, VERDICTS, type CheckPack } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, authorGroupsOf, checkName, CODE_REVIEW_REVIEWERS, EVERYONE, readCheckPack, repoSourceOf, RULE_GATES, rulesGate, VERDICTS, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import { call, hostWrite, toolName } from "@corbits/triage-workflows/logic/host";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
@@ -20,6 +20,13 @@ type CodeReviewPart = typeof CodeReviewPart.infer;
 function providerOf(part: CodeReviewPart | undefined): string | undefined {
   const provider = part?.provider ?? "anthropic";
   return Object.hasOwn(CODE_REVIEW_REVIEWERS, provider) ? provider : undefined;
+}
+/** A provider may deploy only the workflow published for it on this host. */
+function reviewerFor(source: RepoSource, provider: string | undefined) {
+  if (provider === undefined || !Object.hasOwn(CODE_REVIEW_REVIEWERS, provider)) return undefined;
+  const expected = CODE_REVIEW_REVIEWERS[provider as keyof typeof CODE_REVIEW_REVIEWERS][source];
+  const release = publishedFor(source, "codeReview");
+  return release?.name === expected ? release : undefined;
 }
 const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, evaluateRules: { output: "unknown" } });
 const EarlyInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } } });
@@ -120,8 +127,7 @@ export async function reviewScope(input: unknown): Promise<{ deploy: boolean; po
   const scope = part instanceof type.errors || !part.on ? off : scopeOf(part, asRecord(parsed.evaluateRules.output), ruledItem(parsed.rules.output.items));
   const reviewed = scope.open;
   if (scope.skipped !== undefined) return { deploy: false, post: true, reviewed, skipped: scope.skipped };
-  const known = part instanceof type.errors ? true : providerOf(part) !== undefined;
-  const published = known && publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") !== undefined;
+  const published = reviewerFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), part instanceof type.errors ? undefined : providerOf(part)) !== undefined;
   const own = reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.head === head && (again === undefined || reviewer.again === again));
   const settled = own.some((reviewer) => reviewer.result !== undefined || Date.parse(reviewer.deadline) <= Date.now());
   // A report on this pass is from an earlier review until the one deployed for this Review again is out.
@@ -148,7 +154,7 @@ export async function reviewEarly(input: unknown): Promise<{ deploy: boolean }> 
   if (part instanceof type.errors || !part.on || part.rules !== "any" || part.again !== undefined || byVerdict || providerOf(part) === undefined) return no;
   const item = ruledItem(parsed.rules.output.items);
   if ("error" in item || outOfScope(part, item, undefined) !== undefined) return no;
-  if (publishedFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), "codeReview") === undefined) return no;
+  if (reviewerFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), providerOf(part)) === undefined) return no;
   const reported = review !== undefined || reviewFailed !== undefined;
   const own = reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);
   return { deploy: !reported && !own && taken?.["codeReviewRequest"] !== undefined };
@@ -169,8 +175,8 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   if (head === undefined || !taken) throw new Error("deployReview: the pass names no head");
   const provider = asRecord(taken["codeReview"])?.["provider"];
   if (provider !== undefined && (typeof provider !== "string" || !Object.hasOwn(CODE_REVIEW_REVIEWERS, provider))) throw new Error(`deployReview: unknown code review provider ${JSON.stringify(provider)}`);
-  const release = publishedFor(repoSourceOf(pullRequest.source), "codeReview");
-  if (!release) throw new Error("deployReview: release.json publishes no code review for the host");
+  const release = reviewerFor(repoSourceOf(pullRequest.source), typeof provider === "string" ? provider : "anthropic");
+  if (!release) throw new Error("deployReview: release.json publishes no matching code review for the provider and host");
   const again = asRecord(taken["codeReview"])?.["again"];
   const reviewRun = await deploy(ctx, "deploy", tenantId, release);
   const deadline = new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString();

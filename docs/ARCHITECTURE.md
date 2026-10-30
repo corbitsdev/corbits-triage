@@ -383,7 +383,12 @@ any other tenant or an unknown sender.
   running, the role is taken from every person who holds it. Each host's code review, judge, manager and
   listener publish in that order: the manager's tree gets a `release.json`
   naming the code review and judge just published and the offerings each runs
-  on, the listener's the same for the manager. A chain workflow publishes
+  on, the listener's the same for the manager. Before either early or normal
+  review deployment, the manager verifies the
+  published reviewer name against the policy provider and host mapping. A missing
+  or mismatched name cannot deploy; the manager grants remain limited to the
+  published asset. Older releases without that identity must be republished.
+  A chain workflow publishes
   only while the workspace has every model it names, so code review publishes
   once its key is saved, and the release after that gives the manager and the
   listener new assets. An asset is named `<workflow>-<publisher>-<8 hex>`,

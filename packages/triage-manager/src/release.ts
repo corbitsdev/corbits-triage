@@ -9,7 +9,7 @@ const PublishedWorkflow = type({ assetId: "string > 0", commitSha: "string > 0",
 const Offerings = type({ ids: type("string > 0").array().atLeastLength(1), defaultId: "string > 0" });
 
 /** What a workflow deploys next, fixed when the release is published: the published workflow and the offerings it runs on. */
-export const Release = type({ workflow: PublishedWorkflow, offerings: Offerings });
+export const Release = type({ "name?": "string > 0", workflow: PublishedWorkflow, offerings: Offerings });
 export type Release = typeof Release.infer;
 
 /** What each host's listener and manager deploy: the hub writes `release.json` into each published tree; a source run has none. */
