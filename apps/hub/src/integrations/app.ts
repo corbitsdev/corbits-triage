@@ -347,7 +347,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${GITHUB_PR_ACTIONS_PATH}/:tenantId`,
     describeRoute({
       summary: "Act on a pull request",
-      description: "Needs `use` on the GitHub App credential and `invoke` on `triage-do:<kind>:<owner/name>` for the Do kind the action is: comment (comment, reply and code-review), labels, assign, request-review, approve or request-changes (review), close or merge. `code-review` sends the pull request's newest finished code review, which must be of `headSha`, as one COMMENT review on that head: findings the diff shows are inline comments (one whose lines run past its hunk names the rest, and one marked `unverified` says it was not checked against the file), the others are in the review's body, as many as fit GitHub's limit and then how many more the portal holds. It is sent once per head; sending it again answers `sent: false` with the review already there.",
+      description: "Needs `use` on the GitHub App credential and `invoke` on `triage-do:<kind>:github:<owner/name>` for the Do kind the action is: comment (comment, reply and code-review), labels, assign, request-review, approve or request-changes (review), close or merge. `code-review` sends the pull request's newest finished code review, which must be of `headSha`, as one COMMENT review on that head: findings the diff shows are inline comments (one whose lines run past its hunk names the rest, and one marked `unverified` says it was not checked against the file), the others are in the review's body, as many as fit GitHub's limit and then how many more the portal holds. It is sent once per head; sending it again answers `sent: false` with the review already there.",
       tags: TAGS,
       responses: {
         200: json("GitHub's answer", type("unknown")),
@@ -391,7 +391,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${TRIAGE_AUTOMATION_PATH}/:tenantId`,
     describeRoute({
       summary: "Let Triage do one kind of action on its own in a repository",
-      description: "Needs stock `create` on `grant:*`, and the repository enabled on `source`. `kind` must be one the repository's policy file has Triage take on its own (the policy read's `wanted`), and `list` the verdict of the held action it was chosen from, on which `kind` must not always wait for a person (close on `unsure`, merge on anything but `pass`). Gives the workspace's pr-triage role `invoke` on `triage-do:<kind>:<owner/name>`, at most once however often it is asked, and answers what Triage now does on its own there. Held Dos already recorded stay held until the next triage pass on their pull request, which finds the kind automatic and runs it. The kinds a host cannot write are refused: Bitbucket Data Center has no `labels` or `assign`.",
+      description: "Needs stock `create` on `grant:*`, and the repository enabled on `source`. `kind` must be one the repository's policy file has Triage take on its own (the policy read's `wanted`), and `list` the verdict of the held action it was chosen from, on which `kind` must not always wait for a person (close on `unsure`, merge on anything but `pass`). Gives the workspace's pr-triage role `invoke` on `triage-do:<kind>:<source>:<owner/name>`, at most once however often it is asked, and answers what Triage now does on its own there. Held Dos already recorded stay held until the next triage pass on their pull request, which finds the kind automatic and runs it. The kinds a host cannot write are refused: Bitbucket Data Center has no `labels` or `assign`.",
       tags: TAGS,
       responses: {
         200: json("What Triage does on its own in the repository", TriageAutomated),
@@ -1063,7 +1063,7 @@ export function createIntegrationsApp(guards: IntegrationGuards, handlers: Integ
     `${BITBUCKET_PATH}/:tenantId/code-review`,
     describeRoute({
       summary: "Send a code review to a Bitbucket pull request",
-      description: "Needs `use` on the `bitbucket-datacenter` credential and `invoke` on `triage-do:comment:<PROJECT/slug>`. Sends the pull request's newest finished code review, which must be of `headSha`, as the token user: each finding the diff shows is an inline comment on its first shown line (one whose lines run past it names the rest, and one marked `unverified` says it was not checked against the file), the others are in one summary comment, posted last. It is sent once per head; sending it again posts only what is missing, and once the summary stands answers `sent: false`.",
+      description: "Needs `use` on the `bitbucket-datacenter` credential and `invoke` on `triage-do:comment:bitbucket-datacenter:<PROJECT/slug>`. Sends the pull request's newest finished code review, which must be of `headSha`, as the token user: each finding the diff shows is an inline comment on its first shown line (one whose lines run past it names the rest, and one marked `unverified` says it was not checked against the file), the others are in one summary comment, posted last. It is sent once per head; sending it again posts only what is missing, and once the summary stands answers `sent: false`.",
       tags: TAGS,
       requestBody: { required: true, content: { "application/json": { schema: resolver(CodeReviewSendBody) } } },
       responses: {

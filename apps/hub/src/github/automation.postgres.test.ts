@@ -1,6 +1,6 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { createDB, runMigrations, schema, type DB } from "@intx/db";
 import { DO_GRANT_ACTION, doResource, emptyPack, readCheckPack, TRIAGE_ROLE, type AutomationMode, type Step } from "@corbits/triage-contracts";
@@ -10,6 +10,7 @@ import { connectTriage, createAutomation, grantEnabledKinds } from "./automation
 import { createPolicyGrants } from "./policy-grants.js";
 import { previewRepoPolicy, type CheckPackRead } from "./repo-policy.js";
 import { patchCorbitsTriage, type RepoRecord } from "./tenant-config.js";
+import { migrateTriageTables } from "../triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_automation";
@@ -42,7 +43,7 @@ test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its k
     const automation = createAutomation({ db });
     async function held(): Promise<boolean> {
       const suggested: SuggestedDo = { list: "pass", index: 0, kind: "labels", reason: "", effectId: "e-labels", target: { labels: ["api"] } };
-      const [step] = holdDos([suggested], await automation.automaticKinds(TENANT, REPO));
+      const [step] = holdDos([suggested], await automation.automaticKinds(TENANT, REPO, "github"));
       return (step as SuggestedDo).held === true;
     }
 
@@ -57,7 +58,7 @@ test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its k
     expect(await held()).toBe(true);
 
     await Promise.all(Array.from({ length: 8 }, function racingAllow() {
-      return db.transaction((tx) => allowRole(tx, TENANT, role!.id, doResource("labels", REPO), DO_GRANT_ACTION, new Date()));
+      return db.transaction((tx) => allowRole(tx, TENANT, role!.id, doResource("labels", "github", REPO), DO_GRANT_ACTION, new Date()));
     }));
     expect(await db.select().from(schema.grant).where(eq(schema.grant.roleId, role!.id))).toHaveLength(1);
 
@@ -69,15 +70,15 @@ test("PostgreSQL: a Do runs unattended only while the pr-triage role holds its k
       });
     }
     await store({ ...off, enabled: true });
-    expect(await automation.automaticKinds(TENANT, REPO)).toEqual(["labels", "comment"]);
+    expect(await automation.automaticKinds(TENANT, REPO, "github")).toEqual(["labels", "comment"]);
     await store(off);
-    expect(await automation.automaticKinds(TENANT, REPO)).toEqual([]);
+    expect(await automation.automaticKinds(TENANT, REPO, "github")).toEqual([]);
     // A grant left on a switched-off repository, as one from before grants followed the policy, does not come back on enable.
-    await db.transaction((tx) => allowRole(tx, TENANT, role!.id, doResource("merge", REPO), DO_GRANT_ACTION, new Date()));
+    await db.transaction((tx) => allowRole(tx, TENANT, role!.id, doResource("merge", "github", REPO), DO_GRANT_ACTION, new Date()));
     await store({ ...off, enabled: true });
-    expect(await automation.automaticKinds(TENANT, REPO)).toEqual(["labels", "comment"]);
+    expect(await automation.automaticKinds(TENANT, REPO, "github")).toEqual(["labels", "comment"]);
     await store(undefined);
-    expect(await automation.automaticKinds(TENANT, REPO)).toEqual([]);
+    expect(await automation.automaticKinds(TENANT, REPO, "github")).toEqual([]);
     expect(await db.select().from(schema.role).where(eq(schema.role.tenantId, TENANT))).toHaveLength(1);
   });
 }, 120_000);
@@ -96,11 +97,13 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
       isNewest: (_tenantId, _repo, _source, sha) => sha === newest,
       now: () => new Date(),
     });
-    const BITBUCKET = "PROJ/api";
-    const repos: RepoRecord[] = [{ name: REPO, connected: true, installationId: 7, enabled: true }, { name: BITBUCKET, source: "bitbucket-datacenter", connected: true, enabled: true }];
+    const repos: RepoRecord[] = [
+      { name: REPO, connected: true, installationId: 7, enabled: true },
+      { name: REPO, source: "bitbucket-datacenter", connected: true, enabled: true },
+    ];
     await patchCorbitsTriage(db, TENANT, async function enable(ns, tx) {
       await grantEnabledKinds(tx, TENANT, REPO, "github", new Date());
-      await grantEnabledKinds(tx, TENANT, BITBUCKET, "bitbucket-datacenter", new Date());
+      await grantEnabledKinds(tx, TENANT, REPO, "bitbucket-datacenter", new Date());
       return { ...ns, repos, automation: "ask" };
     });
     async function setMode(automation: AutomationMode | undefined): Promise<void> {
@@ -117,7 +120,8 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
 
     // Under ask a read writes nothing, and a policy pull request names what will wait.
     expect(await grants.followPolicy(TENANT, REPO, "github", assignAndMerge)).toEqual(assignAndMerge);
-    expect(await automation.automaticKinds(TENANT, REPO)).toEqual(["labels", "comment"]);
+    expect(await automation.automaticKinds(TENANT, REPO, "github")).toEqual(["labels", "comment"]);
+    expect(await automation.automaticKinds(TENANT, REPO, "bitbucket-datacenter")).toEqual(["comment"]);
     expect(await grants.waitingKinds(TENANT, REPO, "github", assignFile)).toEqual(["assign"]);
 
     // Absent is policy: the next read grants what the policy uses and carries it, and reading it again touches no row.
@@ -136,14 +140,15 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
     newest = "v2";
     await grants.followPolicy(TENANT, REPO, "github", { ...read(REPO, []), source: { file: { path: ".corbits-triage.yml", sha: "v1" } } });
     expect(await rows()).toEqual(granted);
+
+    // Bitbucket holds approve before a GitHub read drops a kind, so a shared grant would lose it.
+    await grants.followPolicy(TENANT, REPO, "bitbucket-datacenter", read(REPO, [{ do: "assign", target: { to: "author" } }, { do: "approve" }]));
+    expect(await automation.automaticKinds(TENANT, REPO, "bitbucket-datacenter")).toEqual(["comment", "approve"]);
     await grants.followPolicy(TENANT, REPO, "github", read(REPO, [{ do: "merge" }]));
-    expect(await automation.automaticKinds(TENANT, REPO)).toEqual(["labels", "comment", "merge"]);
+    expect(await automation.automaticKinds(TENANT, REPO, "github")).toEqual(["labels", "comment", "merge"]);
+    expect(await automation.automaticKinds(TENANT, REPO, "bitbucket-datacenter")).toEqual(["comment", "approve"]);
 
-    // Bitbucket Data Center the same, with only the kinds it can write.
-    await grants.followPolicy(TENANT, BITBUCKET, "bitbucket-datacenter", read(BITBUCKET, [{ do: "assign", target: { to: "author" } }, { do: "approve" }]));
-    expect(await automation.automaticKinds(TENANT, BITBUCKET)).toEqual(["comment", "approve"]);
-
-    // Under ask a read grants nothing, and a repository switched off is not granted again.
+    // Under ask a read grants nothing, and switching GitHub off leaves the other host's grants.
     await setMode("ask");
     const held = await rows();
     await grants.followPolicy(TENANT, REPO, "github", assignAndMerge);
@@ -151,7 +156,77 @@ test("PostgreSQL: under policy automation each read of an enabled repository gra
     await setMode("policy");
     await patchCorbitsTriage(db, TENANT, (ns) => ({ ...ns, repos: [{ ...repos[0]!, enabled: false }, repos[1]!] }));
     await grants.followPolicy(TENANT, REPO, "github", assignAndMerge);
-    expect(await automation.automaticKinds(TENANT, REPO)).toEqual([]);
+    expect(await automation.automaticKinds(TENANT, REPO, "github")).toEqual([]);
+    expect(await automation.automaticKinds(TENANT, REPO, "bitbucket-datacenter")).toEqual(["comment", "approve"]);
     expect((await db.select().from(schema.grant).where(eq(schema.grant.tenantId, TENANT))).every((row) => row.principalId === null)).toBe(true);
+  });
+}, 120_000);
+
+function hostCopyId(id: string, source: string): string {
+  return `grt_${createHash("md5").update(`${id}:${source}`).digest("hex")}`;
+}
+
+test("PostgreSQL: re-running the host migration splits a same-named pair, rewrites one host, and leaves wildcards and orphans", async () => {
+  await inFreshDatabase(async function splitHostGrants(db) {
+    await migrateTriageTables(db, "public");
+    const shared = "acme/widgets";
+    const roleId = "rol_host_grants";
+    const principalId = "prn_host_grants";
+    const roleGrant = "grt_shared_role";
+    const personGrant = "grt_shared_person";
+    const bitbucketOnly = "grt_bb_only";
+    const githubOnly = "grt_gh_only";
+    const orphan = "grt_orphan";
+    const kept = { kept: true };
+    await db.update(schema.tenant).set({
+      config: {
+        corbitsTriage: {
+          repos: [
+            { name: shared, connected: true },
+            { name: "ACME/widgets", connected: false, source: "bitbucket-datacenter" },
+            { name: "PROJ/only", connected: true, source: "bitbucket-datacenter" },
+            { name: "acme/only-gh", connected: false },
+            { name: "", connected: true },
+            { connected: true },
+            "nope",
+            { name: "skip/me", connected: "yes" },
+          ],
+        },
+      },
+    }).where(eq(schema.tenant.id, TENANT));
+    await db.insert(schema.role).values({ id: roleId, tenantId: TENANT, name: "grants", isSystem: false });
+    await db.insert(schema.principal).values({ id: principalId, tenantId: TENANT, kind: "user", refId: "usr_host_grants", status: "active" });
+    await db.insert(schema.grant).values([
+      { id: roleGrant, tenantId: TENANT, roleId, resource: "triage-do:comment:Acme/Widgets", action: "invoke", effect: "allow", origin: "role", conditions: kept },
+      { id: personGrant, tenantId: TENANT, principalId, resource: `triage-do:approve:${shared}`, action: "invoke", effect: "allow", origin: "system" },
+      { id: bitbucketOnly, tenantId: TENANT, roleId, resource: "triage-do:comment:PROJ/only", action: "invoke", effect: "allow", origin: "role" },
+      { id: githubOnly, tenantId: TENANT, roleId, resource: "triage-do:labels:Acme/Only-GH", action: "invoke", effect: "allow", origin: "role" },
+      { id: orphan, tenantId: TENANT, principalId, resource: "triage-do:merge:Ghost/Missing", action: "invoke", effect: "allow", origin: "system" },
+      { id: "grt_wild_all", tenantId: TENANT, roleId, resource: "triage-do:*", action: "invoke", effect: "allow", origin: "role" },
+      { id: "grt_wild_kind", tenantId: TENANT, principalId, resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "system" },
+    ]);
+
+    await migrateTriageTables(db, "public");
+    const rows = await db.select().from(schema.grant).where(eq(schema.grant.tenantId, TENANT));
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const roleCopy = hostCopyId(roleGrant, "bitbucket-datacenter");
+    const personCopy = hostCopyId(personGrant, "bitbucket-datacenter");
+    expect(byId.get(roleGrant)?.resource).toBe(`triage-do:comment:github:${shared}`);
+    expect(byId.get(roleCopy)).toMatchObject({ roleId, principalId: null, resource: `triage-do:comment:bitbucket-datacenter:${shared}`, action: "invoke", effect: "allow", origin: "role", conditions: kept });
+    expect(byId.get(personGrant)?.resource).toBe(`triage-do:approve:github:${shared}`);
+    expect(byId.get(personCopy)).toMatchObject({ principalId, roleId: null, resource: `triage-do:approve:bitbucket-datacenter:${shared}`, action: "invoke", effect: "allow", origin: "system" });
+    expect(byId.get(roleCopy)?.createdAt).toEqual(byId.get(roleGrant)?.createdAt);
+    expect(byId.get(bitbucketOnly)?.resource).toBe("triage-do:comment:bitbucket-datacenter:proj/only");
+    expect(byId.get(githubOnly)?.resource).toBe("triage-do:labels:github:acme/only-gh");
+    expect(byId.get(orphan)?.resource).toBe("triage-do:merge:Ghost/Missing");
+    expect(byId.get("grt_wild_all")?.resource).toBe("triage-do:*");
+    expect(byId.get("grt_wild_kind")?.resource).toBe("triage-do:approve:*");
+    expect(rows).toHaveLength(9);
+
+    const settled = rows.map((row) => ({ id: row.id, resource: row.resource })).sort((a, b) => a.id.localeCompare(b.id));
+    await migrateTriageTables(db, "public");
+    const again = await db.select().from(schema.grant).where(eq(schema.grant.tenantId, TENANT));
+    expect(again.map((row) => ({ id: row.id, resource: row.resource })).sort((a, b) => a.id.localeCompare(b.id))).toEqual(settled);
+    expect(again).toHaveLength(settled.length);
   });
 }, 120_000);

@@ -82,15 +82,15 @@ test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enable
     });
     const automation = createAutomation({ db });
 
-    expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual([]);
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets", "bitbucket-datacenter")).toEqual([]);
     const res = await integration.enable(MEMBER, "TRI", "widgets");
     expect(res.status).toBe(200);
-    expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual(["comment"]);
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets", "bitbucket-datacenter")).toEqual(["comment"]);
     expect(await (await integration.webhook(MEMBER, "TRI", "widgets")).json()).toEqual({ webhook: "registered", webhookId: 9 });
     expect((await integration.disable(MEMBER, "TRI", "widgets")).status).toBe(200);
-    expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual([]);
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets", "bitbucket-datacenter")).toEqual([]);
     expect((await integration.enable(MEMBER, "TRI", "widgets")).status).toBe(200);
-    expect(await automation.automaticKinds(TENANT, "TRI/widgets")).toEqual(["comment"]);
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets", "bitbucket-datacenter")).toEqual(["comment"]);
   });
 }, 120_000);
 

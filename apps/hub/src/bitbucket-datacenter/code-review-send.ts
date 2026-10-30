@@ -22,7 +22,7 @@ export function createBitbucketCodeReviewSend(deps: PortalCredentialDeps & {
 }) {
   return async function send(body: typeof CodeReviewSendBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const { repo, number, headSha } = body;
-    const refused = (await sourceCredentialGrant(deps, principalId, tenantId, { source: "bitbucket-datacenter" }, "use")) ?? (await doRefused(deps, principalId, tenantId, repo, "comment"));
+    const refused = (await sourceCredentialGrant(deps, principalId, tenantId, { source: "bitbucket-datacenter" }, "use")) ?? (await doRefused(deps, principalId, tenantId, "bitbucket-datacenter", repo, "comment"));
     if (refused) return refused;
     const connected = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).some((row) => row.name === repo && sourceOf(row) === "bitbucket-datacenter");
     if (!connected) return failure(409, "repo_not_connected", "This Bitbucket repository is not connected.");

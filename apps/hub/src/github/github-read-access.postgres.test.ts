@@ -1,6 +1,7 @@
 // Requires PostgreSQL at TEST_DB.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { and, eq, inArray } from "drizzle-orm";
 import { authorize } from "@intx/authz";
 import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
@@ -9,6 +10,7 @@ import { credentialAad } from "@intx/types";
 import { TRIAGE_ROLE, triageStopped, type ActionKind, type PrTriageRow } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { guardedApp } from "../integrations/test-app.js";
+import { migrateTriageTables } from "../triage-db.js";
 import { createAuditLog } from "../audit-log.js";
 import { ListenerUnroutedError } from "./deployment.js";
 import { createGithubHeldDos } from "./held-dos.js";
@@ -22,7 +24,7 @@ import { createRepoReads } from "./repo-reads.js";
 import { createTriageStats } from "./triage-stats.js";
 import { createTriageTimeline } from "./triage-timeline.js";
 import { createTriageVerdicts } from "./triage-verdicts.js";
-import type { VerdictRecord } from "./verdict-record-store.js";
+import { createVerdictRecordStore, replaceVerdict, verdictRecord, type RecordedVerdict, type VerdictRecord } from "./verdict-record-store.js";
 import type { CompletedReview } from "../code-review-runs.js";
 
 /** No deployment holds the credential in these tests. */
@@ -150,7 +152,7 @@ beforeAll(async () => {
   const db = handle.db;
   await db.insert(schema.tenant).values({
     id: TENANT, name: "Read access", slug: "read-access", domain: "read-access.test",
-    config: { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true, installationId: 1 }, { name: "acme/other", connected: false }] } },
+    config: { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true, installationId: 1 }, { name: "acme/other", connected: false }, { name: "PROJ/api", source: "bitbucket-datacenter", connected: true, enabled: true }] } },
   });
   await db.insert(schema.principal).values([
     { id: "prn_member", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" },
@@ -158,6 +160,7 @@ beforeAll(async () => {
     { id: "prn_admin", tenantId: TENANT, kind: "user", refId: "usr_admin", status: "active" },
     { id: "prn_approver", tenantId: TENANT, kind: "user", refId: "usr_approver", status: "active" },
     { id: "prn_lent", tenantId: TENANT, kind: "user", refId: "usr_lent", status: "active" },
+    { id: "prn_bb", tenantId: TENANT, kind: "user", refId: "usr_bb", status: "active" },
   ]);
   await db.insert(schema.role).values([
     { id: "rol_member", tenantId: TENANT, name: "member", isSystem: true },
@@ -176,10 +179,11 @@ beforeAll(async () => {
     { id: "grt_user_use", tenantId: TENANT, principalId: "prn_user", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
     { id: "grt_approver_use", tenantId: TENANT, principalId: "prn_approver", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
     { id: "grt_approver_approve", tenantId: TENANT, principalId: "prn_approver", resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "system" },
-    { id: "grt_approver_labels", tenantId: TENANT, principalId: "prn_approver", resource: `triage-do:labels:${REPO}`, action: "invoke", effect: "allow", origin: "system" },
-    { id: "grt_approver_comment", tenantId: TENANT, principalId: "prn_approver", resource: `triage-do:comment:${REPO}`, action: "invoke", effect: "allow", origin: "system" },
+    { id: "grt_approver_labels", tenantId: TENANT, principalId: "prn_approver", resource: `triage-do:labels:github:${REPO}`, action: "invoke", effect: "allow", origin: "system" },
+    { id: "grt_approver_comment", tenantId: TENANT, principalId: "prn_approver", resource: `triage-do:comment:github:${REPO}`, action: "invoke", effect: "allow", origin: "system" },
     { id: "grt_lent_use", tenantId: TENANT, principalId: "prn_lent", resource: "credential:crd_github", action: "use", effect: "allow", origin: "system" },
     { id: "grt_triage_approve", tenantId: TENANT, roleId: "rol_triage", resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "role" },
+    { id: "grt_bb_comment", tenantId: TENANT, principalId: "prn_bb", resource: "triage-do:comment:bitbucket-datacenter:proj/api", action: "invoke", effect: "allow", origin: "system" },
   ]);
   await db.insert(schema.provider).values({ id: "prv_github", tenantId: TENANT, name: "github", plugin: "http", apiBaseUrl: githubApiOrigin });
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
@@ -207,7 +211,7 @@ test("PostgreSQL: holding read or use on the GitHub credential reads pull reques
   for (const user of ["usr_member", "usr_user"]) {
     const pulls = await openPulls(member(user));
     expect(pulls.status).toBe(200);
-    expect(await pulls.json()).toMatchObject({ repos: [{ repo: REPO, prs: [{ number: 8 }, { number: 12, byTriage: true }] }] });
+    expect(await pulls.json()).toMatchObject({ repos: [{ repo: REPO, prs: [{ number: 8 }, { number: 12, byTriage: true }] }, { repo: "PROJ/api", source: "bitbucket-datacenter", prs: [] }] });
 
     const details = await prDetails(new Request(`http://hub.test/pull?repo=${REPO}&number=8`), member(user));
     expect(details.status).toBe(200);
@@ -356,7 +360,7 @@ test("PostgreSQL: approving a held Do needs its kind's grant and hands the liste
     ...deps,
     ...NOT_HELD,
     runReader: { async readRunEvents() { return events; } },
-    verdicts: { async forPull() { return recorded as VerdictRecord[]; } },
+    verdicts: { async forPull() { return recorded as VerdictRecord[]; }, async forHostedPull() { return recorded as VerdictRecord[]; } },
     async toListener(_tenantId, payload) {
       if (listening) mailed.push(payload);
       return listening;
@@ -405,7 +409,7 @@ test("PostgreSQL: a held Do approved while the listener is starting answers 202,
       kicked += 1;
     },
     runReader: { async readRunEvents() { return events; } },
-    verdicts: { async forPull() { return [{ runId: "wfr_gap", degraded: null, runStatus: "completed" }] as VerdictRecord[]; } },
+    verdicts: { async forPull() { return [{ runId: "wfr_gap", degraded: null, runStatus: "completed" }] as VerdictRecord[]; }, async forHostedPull() { return [{ runId: "wfr_gap", degraded: null, runStatus: "completed" }] as VerdictRecord[]; } },
     async toListener() {
       throw new ListenerUnroutedError("github", "wfr_listener@tenant.example");
     },
@@ -435,7 +439,7 @@ test("PostgreSQL: a held Do of a verdict a manager reported is approved from the
     ...deps,
     ...NOT_HELD,
     runReader: { async readRunEvents() { return [{ seq: 0, type: "RunStarted", body: { type: "RunStarted", seq: 0 } }]; } },
-    verdicts: { async forPull() { return recorded as VerdictRecord[]; } },
+    verdicts: { async forPull() { return recorded as VerdictRecord[]; }, async forHostedPull() { return recorded as VerdictRecord[]; } },
     async toListener(_tenantId, payload) {
       listened.push(payload);
       return true;
@@ -455,4 +459,87 @@ test("PostgreSQL: a held Do of a verdict a manager reported is approved from the
   const replaced = await heldDos({ runId: "wfr_manager", repo: REPO, number: 8, effectId: tag.effectId, kind: "labels" }, member("usr_approver"));
   expect({ status: replaced.status, body: await replaced.json() }).toMatchObject({ status: 409, body: { error: { code: "verdict_superseded" } } });
   expect(listened).toHaveLength(1);
+});
+
+test("PostgreSQL: approving a held Do on Bitbucket checks that host's grant and mails its source, and a post without a source still checks GitHub", async () => {
+  const bb = "PROJ/api";
+  const target = { body: "Please split this." };
+  const comment = { list: "pass" as const, index: 0, kind: "comment" as const, target, held: true, effectId: doEffectId({ repo: bb, number: 1, headSha: HEAD, list: "pass", index: 0, kind: "comment", target }) };
+  const verdict = { repo: bb, number: 1, headSha: HEAD, request: { repo: bb, number: 1, labels: [], owned: [], comment: "" }, actions: [comment] };
+  const events = [{ seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } } }];
+  const mailed: unknown[] = [];
+  const heldDos = createGithubHeldDos({
+    ...deps,
+    ...NOT_HELD,
+    runReader: { async readRunEvents() { return events; } },
+    verdicts: { async forPull() { return []; }, async forHostedPull() { return []; } },
+    async toListener(_tenantId, payload) {
+      mailed.push(payload);
+      return true;
+    },
+    async passRequest() { throw new Error("pr-triage's verdict is in its run's log"); },
+    log() {},
+  });
+  await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_bb", tenantId: TENANT, name: "pr-triage-bb", status: "stopped" });
+  await handle.db.insert(schema.workflowRun).values({ id: "wfr_bb", definitionId: "wfd_bb", anchorRunId: "wfr_bb", tenantId: TENANT, status: "completed" });
+  const body = { runId: "wfr_bb", repo: bb, number: 1, effectId: comment.effectId, kind: "comment" as const };
+
+  const sent = await heldDos({ ...body, source: "bitbucket-datacenter" }, member("usr_bb"));
+  expect({ status: sent.status, body: await sent.json() }).toEqual({ status: 202, body: { status: "sent" } });
+  expect(mailed).toEqual([expect.objectContaining({ repoSource: "bitbucket-datacenter" })]);
+
+  const github = await heldDos(body, member("usr_bb"));
+  expect({ status: github.status, body: await github.json() }).toMatchObject({ status: 403, body: { error: { code: "forbidden" } } });
+  expect(mailed).toHaveLength(1);
+});
+
+test("PostgreSQL: a later completed verdict on the other host does not supersede a held Do, and one on the same host does", async () => {
+  const target = { labels: ["api"] };
+  const tag = { list: "pass" as const, index: 0, kind: "labels" as const, target, held: true, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "labels", target }) };
+  const verdict = { repo: REPO, number: 8, headSha: HEAD, request: { repo: REPO, number: 8, labels: [], owned: [], comment: "" }, actions: [tag] };
+  const events = [{ seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } } }];
+  const mailed: unknown[] = [];
+  await migrateTriageTables(handle.db, testSchema);
+  const heldDos = createGithubHeldDos({
+    ...deps,
+    ...NOT_HELD,
+    runReader: { async readRunEvents() { return events; } },
+    verdicts: createVerdictRecordStore(handle.db),
+    async toListener(_tenantId, payload) {
+      mailed.push(payload);
+      return true;
+    },
+    async passRequest() { throw new Error("pr-triage's verdict is in its run's log"); },
+    log() {},
+  });
+  await handle.db.insert(schema.workflowDefinition).values([
+    { id: "wfd_host_gh", tenantId: TENANT, name: "pr-triage", status: "stopped" },
+    { id: "wfd_host_bb", tenantId: TENANT, name: "pr-triage-bitbucket-datacenter", status: "stopped" },
+  ]);
+  await handle.db.insert(schema.workflowRun).values([
+    { id: "wfr_host_gh", definitionId: "wfd_host_gh", anchorRunId: "wfr_host_gh", tenantId: TENANT, status: "completed" },
+    { id: "wfr_host_bb", definitionId: "wfd_host_bb", anchorRunId: "wfr_host_bb", tenantId: TENANT, status: "completed" },
+  ]);
+  function row(runId: string, at: string): RecordedVerdict {
+    return {
+      runId, repo: REPO, number: 8, headSha: HEAD, startedAt: new Date(at), verdictAt: new Date(at), settled: true,
+      state: "ready", actor: "author", humanGated: false, degraded: null, checks: [], dos: [], commented: false, runStatus: "completed",
+    };
+  }
+  // The interchange schema drop does not remove these rows, and a run that is gone is read as GitHub.
+  const planted = ["wfr_host_gh", "wfr_host_bb", "wfr_host_gh_later"];
+  try {
+    await replaceVerdict(handle.db, TENANT, row("wfr_host_gh", "2026-10-01T00:00:00Z"));
+    await replaceVerdict(handle.db, TENANT, row("wfr_host_bb", "2026-10-02T00:00:00Z"));
+
+    const sent = await heldDos({ runId: "wfr_host_gh", repo: REPO, number: 8, effectId: tag.effectId, kind: "labels" }, member("usr_approver"));
+    expect({ status: sent.status, body: await sent.json(), mailed }).toEqual({ status: 202, body: { status: "sent" }, mailed: [expect.anything()] });
+
+    await replaceVerdict(handle.db, TENANT, row("wfr_host_gh_later", "2026-10-03T00:00:00Z"));
+    const replaced = await heldDos({ runId: "wfr_host_gh", repo: REPO, number: 8, effectId: tag.effectId, kind: "labels" }, member("usr_approver"));
+    expect({ status: replaced.status, body: await replaced.json() }).toMatchObject({ status: 409, body: { error: { code: "verdict_superseded" } } });
+    expect(mailed).toHaveLength(1);
+  } finally {
+    await handle.db.delete(verdictRecord).where(and(eq(verdictRecord.tenantId, TENANT), inArray(verdictRecord.runId, planted)));
+  }
 });

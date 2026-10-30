@@ -152,7 +152,7 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
   return async function handle(body: typeof ActionBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     const app = await githubAppCredential(deps, principalId, tenantId, "use");
     if (app instanceof Response) return app;
-    const refused = await doRefused(deps, principalId, tenantId, body.repo, doKind(body));
+    const refused = await doRefused(deps, principalId, tenantId, "github", body.repo, doKind(body));
     if (refused) return refused;
     const record = repoRecords(triageNs(await tenantConfigOf(deps, tenantId))).find((row) => row.name === body.repo && sourceOf(row) === "github");
     const gh = forInstallation(appGithubFetch(appFetch, deps.githubApiOrigin, app.appJson), record?.installationId);

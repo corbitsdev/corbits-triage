@@ -111,7 +111,7 @@ async function holdsTriageRole(db: DB["db"], principalId: string, tenantId: stri
 }
 
 /**
- * The response to return when the member does not hold the grant for Dos of `kind` in `repo`. Stock lets an admin
+ * The response to return when the member does not hold the grant for Dos of `kind` on `source` in `repo`. Stock lets an admin
  * assign any role, so a member given triage's own role is refused every Do until it is removed: what triage may do
  * unattended never becomes what a person may do.
  */
@@ -119,6 +119,7 @@ export async function doRefused(
   d: PortalCredentialDeps & { log: (entry: Record<string, unknown>) => void },
   principalId: string,
   tenantId: string,
+  source: RepoSource,
   repo: string,
   kind: ActionKind,
 ): Promise<Response | undefined> {
@@ -126,7 +127,7 @@ export async function doRefused(
     d.log({ level: "warn", msg: "do_refused_triage_role", tenantId, principalId, repo, kind });
     return failure(403, "forbidden", "Triage's own role cannot act for a person. Remove it from this member first.");
   }
-  if (await d.authorize(principalId, tenantId, doResource(kind, repo), DO_GRANT_ACTION)) return undefined;
+  if (await d.authorize(principalId, tenantId, doResource(kind, source, repo), DO_GRANT_ACTION)) return undefined;
   return failure(403, "forbidden", "You do not have the grant for this kind of Do in this repository.");
 }
 

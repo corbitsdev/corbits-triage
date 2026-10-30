@@ -1,7 +1,7 @@
 import { useId } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorText } from "@corbits/common";
-import { DO_GRANT_ACTION, doResource, repoPolicy, type ActionKind } from "@corbits/triage-contracts";
+import { DO_GRANT_ACTION, doResource, repoPolicy, repoSourceOf, type ActionKind } from "@corbits/triage-contracts";
 import { findTriageRole } from "../../lib/automation-grid.ts";
 import { checkPackQuery } from "../../lib/check-packs.ts";
 import { deleteGrant, type HubGrant, type PortalSnapshot, type RepoRecord } from "../../lib/hub-api.ts";
@@ -35,7 +35,7 @@ function AutomationRow({ tenantId, repo, grants, ask, disabled }: RowProps) {
   const automatic = read?.automatic;
 
   function grantOf(kind: ActionKind): HubGrant | undefined {
-    const resource = doResource(kind, repo.name);
+    const resource = doResource(kind, repoSourceOf(repo.source), repo.name);
     return grants.find((grant) => grant.resource === resource && grant.action === DO_GRANT_ACTION && grant.effect === "allow");
   }
 

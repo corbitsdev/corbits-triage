@@ -30,7 +30,7 @@ export type PolicyReader = (tenantId: string, repo: string, source: RepoSource) 
 
 export type RepoPolicyDeps = {
   policyFile: PolicyFileReader;
-  automaticKinds: (tenantId: string, repo: string) => Promise<ActionKind[]>;
+  automaticKinds: (tenantId: string, repo: string, source: RepoSource) => Promise<ActionKind[]>;
 };
 
 /** Over the policy file of the repository `extends` names, read with this workspace's own access to it. */
@@ -66,23 +66,23 @@ async function resolvedRead(deps: RepoPolicyDeps, tenantId: string, repo: string
     read = await fileResolved(deps, tenantId, repo, source, policy);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
-    return { status: "invalid", reason: error.message, path, automatic: await deps.automaticKinds(tenantId, repo) };
+    return { status: "invalid", reason: error.message, path, automatic: await deps.automaticKinds(tenantId, repo, source) };
   }
   const { pack, ...from } = read;
   const resolved: PolicySource = { ...(file && { file }), ...from };
-  return { status: "ok", pack, source: resolved, automatic: await deps.automaticKinds(tenantId, repo), ...withPrWorkflowKeys(workflow, pack), ...(workflow.pauseLabel && { pauseLabel: workflow.pauseLabel }) };
+  return { status: "ok", pack, source: resolved, automatic: await deps.automaticKinds(tenantId, repo, source), ...withPrWorkflowKeys(workflow, pack), ...(workflow.pauseLabel && { pauseLabel: workflow.pauseLabel }) };
 }
 
 export async function readRepoPolicy(deps: RepoPolicyDeps, tenantId: string, repo: string, source: RepoSource): Promise<CheckPackRead> {
   const file = await deps.policyFile(tenantId, repo, source);
   if (file.status === "absent") return { status: "missing" };
-  if (file.status === "invalid") return { status: "invalid", reason: file.reason, path: file.path, automatic: await deps.automaticKinds(tenantId, repo) };
+  if (file.status === "invalid") return { status: "invalid", reason: file.reason, path: file.path, automatic: await deps.automaticKinds(tenantId, repo, source) };
   return resolvedRead(deps, tenantId, repo, source, file.file.path, { path: file.file.path, sha: file.file.sha }, file.policy, file.workflow);
 }
 
 /** The policy triage would run on once `text` is the repository's policy file, read as a pushed file is. */
 export async function previewRepoPolicy(deps: RepoPolicyDeps, tenantId: string, repo: string, source: RepoSource, text: string): Promise<CheckPackRead> {
   const checked = checkPolicyFile(text, repo);
-  if (!checked.ok) return { status: "invalid", reason: policyFileReason(checked.problems), path: POLICY_FILE_PATH, automatic: await deps.automaticKinds(tenantId, repo) };
+  if (!checked.ok) return { status: "invalid", reason: policyFileReason(checked.problems), path: POLICY_FILE_PATH, automatic: await deps.automaticKinds(tenantId, repo, source) };
   return resolvedRead(deps, tenantId, repo, source, POLICY_FILE_PATH, undefined, checked.policy, checked.workflow);
 }

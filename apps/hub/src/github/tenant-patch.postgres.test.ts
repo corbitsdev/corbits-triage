@@ -118,9 +118,9 @@ test("PostgreSQL: a manager's tenant patch keeps the connection, code review and
     async function roleGrants(): Promise<string[]> {
       return (await db.select({ resource: schema.grant.resource }).from(schema.grant).where(and(eq(schema.grant.tenantId, T), isNotNull(schema.grant.roleId)))).map((row) => row.resource).sort();
     }
-    expect(await roleGrants()).toEqual(["triage-do:comment:acme/widgets", "triage-do:labels:acme/widgets", "triage-do:merge:acme/widgets"]);
+    expect(await roleGrants()).toEqual(["triage-do:comment:github:acme/widgets", "triage-do:labels:github:acme/widgets", "triage-do:merge:github:acme/widgets"]);
     current = await patched({ ...current, automation: "ask" });
-    expect(await roleGrants()).toEqual(["triage-do:comment:acme/widgets", "triage-do:labels:acme/widgets"]);
+    expect(await roleGrants()).toEqual(["triage-do:comment:github:acme/widgets", "triage-do:labels:github:acme/widgets"]);
     current = await store(github, bitbucket);
 
     // The workspace's automation is set by name, and a patch that leaves it out keeps it.
@@ -192,7 +192,7 @@ test("PostgreSQL: a workspace set up before automation existed is kept asking on
     expect(await nsOf("tnt_new")).toEqual({});
     expect(logged).toEqual([{ level: "info", msg: "existing_workspaces_kept_asking", workspaces: 1 }]);
     const kept = await db.select({ resource: schema.grant.resource }).from(schema.grant).where(and(eq(schema.grant.tenantId, "tnt_existing"), isNotNull(schema.grant.roleId)));
-    expect(kept.map((row) => row.resource).sort()).toEqual(["triage-do:comment:acme/widgets", "triage-do:labels:acme/widgets", "triage-do:merge:acme/widgets"]);
+    expect(kept.map((row) => row.resource).sort()).toEqual(["triage-do:comment:github:acme/widgets", "triage-do:labels:github:acme/widgets", "triage-do:merge:github:acme/widgets"]);
 
     await patchCorbitsTriage(db, "tnt_new", (ns) => ({ ...ns, repos: [] }));
     expect(await nsOf("tnt_new")).toEqual({ repos: [], automation: "policy", rev: 1 });

@@ -848,7 +848,7 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
 }
 
 /** Names one held Do by the run whose verdict holds it; the hub looks the Do up and mails the deployment to run it. */
-export type HeldDoRef = { runId: string; repo: string; number: number; effectId: string; kind: ActionKind };
+export type HeldDoRef = { runId: string; repo: string; number: number; effectId: string; kind: ActionKind; source: RepoSource };
 
 /** The hub's refusals that name its internals; the rest of its text is already plain. */
 const DO_REFUSALS: Record<string, string> = {
@@ -1430,7 +1430,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     actions: suggestedActions(detail.actions ?? []),
     automatic: ACTION_KINDS.filter((kind) => detail.automatic?.includes(kind)),
     href: canonicalPrHref(pull.repo, pull.number),
-    source: "github",
+    source: pull.source,
     url: null,
   };
 }
@@ -1461,7 +1461,7 @@ export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], open
     if (!isGithubWriteApproval(approval) || approval.status !== "pending") continue;
     const args = approval.toolArguments;
     const item = items.get(`${args.repo}#${args.number}`);
-    if (!item) continue;
+    if (!item || item.source !== "github") continue;
     items.set(item.key, {
       ...item,
       needsHuman: true,
@@ -1476,16 +1476,18 @@ export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], open
 function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage: Map<string, PullTriage>): void {
   for (const { repo, source, prs, error } of openPulls.repos) {
     if (error) continue;
+    const host = repoSourceOf(source);
     const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
     for (const item of items.values()) {
-      if (item.repo === repo && !open.has(item.key)) items.set(item.key, { ...item, needsHuman: false, closed: true });
+      if (item.repo === repo && item.source === host && !open.has(item.key)) items.set(item.key, { ...item, needsHuman: false, closed: true });
     }
     for (const pr of prs) {
       const key = `${repo}#${pr.number}`;
       const known = items.get(key);
       if (known) {
-        // A verdict recorded before the hub kept its facts takes the pull request's from GitHub; a draft is GitHub's now, not the verdict's.
-        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: pr.draft, authorKind: pr.authorKind ?? null, byTriage: pr.byTriage === true, updatedAt: pr.updatedAt, headSha: pr.sha, source: repoSourceOf(source), url: pr.url ?? null });
+        if (known.source !== host) continue;
+        // A verdict recorded before the hub kept its facts takes them from the open pull request; a draft is the host's now, not the verdict's.
+        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: pr.draft, authorKind: pr.authorKind ?? null, byTriage: pr.byTriage === true, updatedAt: pr.updatedAt, headSha: pr.sha, source: host, url: pr.url ?? null });
         continue;
       }
       const pull = triage.get(key);
@@ -1532,7 +1534,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         actions: [],
         automatic: [],
         href: canonicalPrHref(repo, pr.number),
-        source: repoSourceOf(source),
+        source: host,
         url: pr.url ?? null,
       });
     }

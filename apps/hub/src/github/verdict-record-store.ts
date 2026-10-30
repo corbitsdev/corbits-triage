@@ -208,6 +208,12 @@ export function createVerdictRecordStore(db: DB["db"]) {
       return db.select().from(verdictRecord).where(where).orderBy(asc(verdictRecord.verdictAt));
     },
 
+    /** Oldest first, on one host. A run whose workflow is not Bitbucket's, or is gone, is GitHub's, as `latestFor` reads it. */
+    forHostedPull(tenantId: string, pull: HostedPull): Promise<VerdictRecord[]> {
+      const hosted = hostedVerdicts(db, and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, pull.repo), eq(verdictRecord.number, pull.number)));
+      return db.select().from(hosted).where(eq(hosted.source, pull.source)).orderBy(asc(hosted.verdictAt));
+    },
+
     async earliest(tenantId: string, repo: string): Promise<Date | null> {
       const [row] = await db
         .select({ at: sql<Date | null>`min(${verdictRecord.verdictAt})`.mapWith(verdictRecord.verdictAt) })

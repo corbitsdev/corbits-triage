@@ -10,7 +10,7 @@ import { automationMode, repoRecords, sourceOf, triageNs } from "./tenant-config
 
 export type PolicyGrantsDeps = {
   db: DB["db"];
-  automaticKinds: (tenantId: string, repo: string) => Promise<ActionKind[]>;
+  automaticKinds: (tenantId: string, repo: string, source: RepoSource) => Promise<ActionKind[]>;
   /** Edited policy file text read as triage would read it once merged. */
   preview: (tenantId: string, repo: string, source: RepoSource, text: string) => Promise<CheckPackRead>;
   /** Whether a read of the file at `sha` is still the repository's newest, so an overtaken read grants nothing. */
@@ -35,7 +35,7 @@ export function createPolicyGrants(deps: PolicyGrantsDeps) {
       });
       return true;
     });
-    return granted ? { ...read, automatic: await deps.automaticKinds(tenantId, repo) } : read;
+    return granted ? { ...read, automatic: await deps.automaticKinds(tenantId, repo, source) } : read;
   }
 
   /**
