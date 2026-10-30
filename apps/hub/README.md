@@ -16,14 +16,18 @@ Every custom route is described in `/openapi.json`.
 
 ## Observability
 
-`server.ts` calls `await configureObservability()` once, before constructing the hub. It uses stock `@intx/log` and
+`server.ts` configures observability once, before constructing the hub; `migrate.ts` does so before migrating. It uses stock `@intx/log` and
 LogTape's supported advanced configuration API (a direct dependency). `createInterchangeHub()` does not reset logging.
 Keep application call sites on `logJson`, passed as `log`; its local JSON lines retain `ts` and the existing fields.
-Stock hub logs use LogTape's JSON console formatter. Sidecars configure their own logging independently.
+Stock hub logs retain debug-level ANSI output outside production and info-level JSON in production. Application logs
+stay JSON in both modes. Sidecars configure their own logging independently.
 
 For an application-owned integration, pass arrays of async `(event, signal) => Promise<void>` destinations to
-`configureObservability({ telemetry, errors, notifications })`. The default arrays are empty; no production provider,
-credentials, environment switches, Slack/email clients or Sentry clients are configured. Adapters must return promptly
+`configureObservability({ telemetry, errors, notifications }, { development })`. All three arrays and the boolean
+logging mode are required and validated at startup. Use an explicit empty array to disable a role; missing arrays or
+non-callable destinations are configuration errors, not disabled delivery. Both entry points explicitly supply three
+empty arrays and derive the logging mode from validated `NODE_ENV`. No production provider, credentials, external-delivery
+environment switches, Slack/email clients or Sentry clients are configured. Adapters must return promptly
 and do asynchronous I/O, honor cancellation where possible, and must not perform blocking CPU work. JavaScript cannot
 preempt blocking provider code. See [delivery and correlation limits](../../docs/ARCHITECTURE.md#hub-observability).
 

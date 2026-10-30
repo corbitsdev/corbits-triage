@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { getLogger } from "@intx/log";
-import { configure, getConsoleSink, getJsonLinesFormatter, reset, type LogRecord, type Sink } from "@logtape/logtape";
+import { ansiColorFormatter, configure, getConsoleSink, getJsonLinesFormatter, reset, type LogRecord, type Sink } from "@logtape/logtape";
 
 const Correlation = type({
   tenantId: "0 < string <= 200",
@@ -16,10 +16,13 @@ const Correlation = type({
 export type ReviewEvent = typeof Correlation.infer;
 export type Destination = (event: Readonly<ReviewEvent>, signal: AbortSignal) => Promise<void>;
 export type Destinations = {
-  telemetry?: readonly Destination[];
-  errors?: readonly Destination[];
-  notifications?: readonly Destination[];
+  telemetry: readonly Destination[];
+  errors: readonly Destination[];
+  notifications: readonly Destination[];
 };
+
+const DestinationArrays = type({ telemetry: "Function[]", errors: "Function[]", notifications: "Function[]" });
+const LoggingOptions = type({ development: "boolean" });
 
 /** Deliberately excludes raw messages, exception objects and every unrecognized property. */
 function project(entry: Record<string, unknown>): ReviewEvent | undefined {
@@ -35,12 +38,13 @@ function diagnostic(reason: "overflow" | "timeout" | "failed" | "shutdown_deadli
 }
 
 /** In-memory best effort, one outstanding send per destination, including after timeout. */
-export function createObservability(destinations: Destinations = {}, { capacity = 64, timeoutMs = 2000, drainMs = 3000 } = {}) {
+export function createObservability(destinations: Destinations, { capacity = 64, timeoutMs = 2000, drainMs = 3000 } = {}) {
+  DestinationArrays.assert(destinations);
   for (const value of [capacity, timeoutMs, drainMs]) if (!Number.isSafeInteger(value) || value < 1) throw new Error("Observability limits must be positive integers");
   const workers = [
-    ...(destinations.telemetry ?? []).map((send) => ({ send, role: "telemetry" })),
-    ...(destinations.errors ?? []).map((send) => ({ send, role: "errors" })),
-    ...(destinations.notifications ?? []).map((send) => ({ send, role: "notifications" })),
+    ...destinations.telemetry.map((send) => ({ send, role: "telemetry" })),
+    ...destinations.errors.map((send) => ({ send, role: "errors" })),
+    ...destinations.notifications.map((send) => ({ send, role: "notifications" })),
   ].map(function worker({ send, role }, index) {
     const queue: ReviewEvent[] = [];
     let active: Promise<void> | undefined;
@@ -150,10 +154,11 @@ export function logJson(entry: Record<string, unknown>): void {
   else logger.info("{msg}", entry);
 }
 
-/** Called once by server.ts, never by createInterchangeHub or sidecars. */
-export async function configureObservability(destinations: Destinations = {}): Promise<{ shutdown: () => Promise<void> }> {
+/** Called once per hub entry point, never by createInterchangeHub or sidecars. */
+export async function configureObservability(destinations: Destinations, options: { development: boolean }): Promise<{ shutdown: () => Promise<void> }> {
+  const { development } = LoggingOptions.assert(options);
   const observability = createObservability(destinations);
-  const stockConsole = getConsoleSink({ formatter: getJsonLinesFormatter() });
+  const stockConsole = getConsoleSink({ formatter: development ? ansiColorFormatter : getJsonLinesFormatter() });
   function consoleSink(record: LogRecord): void {
     if (record.category.join(".") === "corbits.hub") {
       console.log(JSON.stringify({ ts: new Date(record.timestamp).toISOString(), ...record.properties }));
@@ -163,7 +168,7 @@ export async function configureObservability(destinations: Destinations = {}): P
     reset: true,
     sinks: { console: consoleSink, external: observability.sink },
     loggers: [
-      { category: [], lowestLevel: "info", sinks: ["console", "external"] },
+      { category: [], lowestLevel: development ? "debug" : "info", sinks: ["console", "external"] },
       { category: ["corbits", "hub"], lowestLevel: "debug", sinks: ["console", "external"], parentSinks: "override" },
       { category: ["logtape", "meta"], lowestLevel: "warning", sinks: ["console"] },
     ],

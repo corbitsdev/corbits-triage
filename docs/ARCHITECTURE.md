@@ -1524,7 +1524,9 @@ read it, and passes the rest of the request to stock.
 
 The hub configures stock `@intx/log` / LogTape once at the application entry point. `logJson` remains the structured
 application logging convention and preserves JSON console fields. Local logs are not redacted by the external-event
-projection: access to stdout must remain restricted. Stock hub logs also use a JSON console sink. The hub factory
+projection: access to stdout must remain restricted. Stock hub logs retain debug-level ANSI console output outside
+`NODE_ENV=production`, and info-level JSON lines in production. Application `logJson` output stays JSON in both modes.
+The migration CLI also configures logging before migrating and disposes it on success or failure. The hub factory
 never calls stock `setup()` afterwards, since that would reset the sinks. Sidecar logging is independent and unchanged.
 
 At `/manager/reviewer-result`, only after the atomic result-recording statement has committed, the hub logs one of
@@ -1543,7 +1545,10 @@ independently verified host facts. The manager ID is the claim's run ID from the
 newly deployed or inferred association; absent/ended claims omit it. This does not claim the manager deployed that
 reviewer. Raw results, prompts, source, credentials, mail, exception details and arbitrary extra properties are never
 projected. Correlation identifiers, including private repository names, are still sensitive metadata; destinations
-must be authorized to receive them. No provider configuration is enabled by default.
+must be authorized to receive them. Both hub entry points explicitly supply empty telemetry, errors and notifications
+arrays: no external providers are enabled. Composition must supply all three arrays (an empty array deliberately disables
+that role); omitted roles are configuration errors, never silently replaced with empty arrays. Logging mode is also
+required at configuration time and selected by each entry point from its validated environment.
 
 Injected destination arrays have distinct roles:
 

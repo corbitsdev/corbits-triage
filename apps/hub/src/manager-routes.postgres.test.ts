@@ -606,7 +606,7 @@ for (const pr of [GITHUB, BITBUCKET]) {
       async function alert(event: ReviewEvent): Promise<void> { alerts.push(event); }
       async function broken(): Promise<void> { throw new Error(secret); }
       function hung(): Promise<void> { return new Promise<void>(function never() {}); }
-      const obs = createObservability({ telemetry: [broken, hung, collect], notifications: [alert] }, { timeoutMs: 10, drainMs: 20 });
+      const obs = createObservability({ telemetry: [broken, hung, collect], errors: [], notifications: [alert] }, { timeoutMs: 10, drainMs: 20 });
       let waking: "ok" | "failed" | "unrouted" = "ok";
       async function wake(): Promise<boolean> {
         const [row] = await db.execute<{ count: number }>(sql`SELECT count(*)::int AS count FROM corbits_triage.manager_state WHERE state->>'type' = 'reviewer-result'`);
@@ -652,7 +652,7 @@ test("PostgreSQL: a rejected result write emits no external outcome", async () =
   await withDatabase(async function rejected(db) {
     const events: ReviewEvent[] = [];
     async function collect(event: ReviewEvent): Promise<void> { events.push(event); }
-    const obs = createObservability({ telemetry: [collect] });
+    const obs = createObservability({ telemetry: [collect], errors: [], notifications: [] });
     const app = buildHub(db, { log: obs.observe });
     const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
     await db.execute(sql`ALTER TABLE corbits_triage.manager_state ADD CONSTRAINT reject_result CHECK (state->>'type' IS DISTINCT FROM 'reviewer-result')`);

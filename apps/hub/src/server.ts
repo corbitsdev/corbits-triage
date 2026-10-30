@@ -157,7 +157,7 @@ const WORKFLOW_RELEASE_CONCURRENCY = 2;
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
-const observability = await configureObservability();
+const observability = await configureObservability({ telemetry: [], errors: [], notifications: [] }, { development: env.NODE_ENV !== "production" });
 const settings = interchangeSettings(env);
 const triageTimings = timingsFrom(env);
 setTimings({ ...triageTimings, mailHoldMs: settings.sidecarLink.mailHoldTTLMs });
