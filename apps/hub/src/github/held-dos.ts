@@ -15,12 +15,13 @@ import { doRefused, failure, type PortalCredentialDeps } from "./portal-credenti
 import type { Member } from "../integrations/app.js";
 import type { PullRequestRef } from "../manager-state.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
-import { ListenerUnroutedError } from "./deployment.js";
+import { ListenerUnroutedError, workflowName } from "./deployment.js";
 import type { ReconcilePolicy } from "./reconcile-plan.js";
 import { holdHead } from "./triage-queue.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
+import { verdictWorkflowsFor } from "./source-workflow.js";
 
 export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
 
@@ -87,15 +88,22 @@ function heldDo(verdict: Record<string, unknown>, body: Body, principalId: strin
   return { kind: APPROVE_DO_KIND, runId: body.runId, principalId, list, index, request, step: { effectId, headSha, kind, target } };
 }
 
+/** A workflow `verdictWorkflowsFor` names for Bitbucket is that host's; every other name, and a missing one, is GitHub's. */
+function hostOfWorkflow(name: string | null): RepoSource {
+  return name !== null && verdictWorkflowsFor("bitbucket-datacenter").includes(name) ? "bitbucket-datacenter" : "github";
+}
+
 export function createGithubHeldDos(deps: GithubHeldDosDeps) {
   async function runEvents(tenantId: string, domain: string, runId: string) {
-    const run = await deps.db.query.workflowRun.findFirst({
-      where: and(eq(schema.workflowRun.id, runId), eq(schema.workflowRun.tenantId, tenantId)),
-      columns: { anchorRunId: true },
-    });
+    const [run] = await deps.db
+      .select({ anchorRunId: schema.workflowRun.anchorRunId, workflow: workflowName })
+      .from(schema.workflowRun)
+      .leftJoin(schema.workflowDefinition, eq(schema.workflowDefinition.id, schema.workflowRun.definitionId))
+      .leftJoin(schema.workflowRunLaunchSpec, eq(schema.workflowRunLaunchSpec.anchorRunId, schema.workflowRun.anchorRunId))
+      .where(and(eq(schema.workflowRun.id, runId), eq(schema.workflowRun.tenantId, tenantId)));
     if (!run?.anchorRunId) return undefined;
     const repoId = workflowRunRepoIdForAddress(formatRunAddress(run.anchorRunId, domain));
-    return { anchorRunId: run.anchorRunId, events: await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId) };
+    return { anchorRunId: run.anchorRunId, workflow: run.workflow, events: await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId) };
   }
 
   /** An approval stands only on the newest verdict of its host that judged something; a run not recorded yet has none newer that is known. */
@@ -134,6 +142,7 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
     const run = await runEvents(tenantId, tenant.domain, runId);
     const events = run?.events;
     if (!run || !events?.length) return failure(404, "run_not_found", "No such run in this workspace.");
+    if (hostOfWorkflow(run.workflow) !== source) return failure(409, "run_host_mismatch", "This run is on another host.");
     const verdict = verdictFor(events, repo, number) ?? (await managedVerdict(tenantId, record, body));
     if (verdict instanceof Response) return verdict;
     if (!verdict) return failure(404, "verdict_not_found", `The run has no verdict for ${repo}#${number}.`);

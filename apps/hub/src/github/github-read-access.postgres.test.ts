@@ -7,7 +7,7 @@ import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, createGrantStore, dropSchema, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { TRIAGE_ROLE, triageStopped, type ActionKind, type PrTriageRow } from "@corbits/triage-contracts";
+import { TRIAGE_MANAGERS, TRIAGE_ROLE, triageStopped, type ActionKind, type PrTriageRow } from "@corbits/triage-contracts";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
 import { guardedApp } from "../integrations/test-app.js";
 import { migrateTriageTables } from "../triage-db.js";
@@ -480,7 +480,7 @@ test("PostgreSQL: approving a held Do on Bitbucket checks that host's grant and 
     async passRequest() { throw new Error("pr-triage's verdict is in its run's log"); },
     log() {},
   });
-  await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_bb", tenantId: TENANT, name: "pr-triage-bb", status: "stopped" });
+  await handle.db.insert(schema.workflowDefinition).values({ id: "wfd_bb", tenantId: TENANT, name: "pr-triage-bitbucket-datacenter", status: "stopped" });
   await handle.db.insert(schema.workflowRun).values({ id: "wfr_bb", definitionId: "wfd_bb", anchorRunId: "wfr_bb", tenantId: TENANT, status: "completed" });
   const body = { runId: "wfr_bb", repo: bb, number: 1, effectId: comment.effectId, kind: "comment" as const };
 
@@ -541,5 +541,82 @@ test("PostgreSQL: a later completed verdict on the other host does not supersede
     expect(mailed).toHaveLength(1);
   } finally {
     await handle.db.delete(verdictRecord).where(and(eq(verdictRecord.tenantId, TENANT), inArray(verdictRecord.runId, planted)));
+  }
+});
+
+test("PostgreSQL: a Bitbucket approval of a GitHub run is refused, and the same run still approves on GitHub", async () => {
+  const tenantId = "tnt_cross_host_do";
+  const target = {};
+  const ship = { list: "pass" as const, index: 0, kind: "approve" as const, target, held: true, effectId: doEffectId({ repo: REPO, number: 8, headSha: HEAD, list: "pass", index: 0, kind: "approve", target }) };
+  const verdict = { repo: REPO, number: 8, headSha: HEAD, request: { repo: REPO, number: 8, labels: [], owned: [], comment: "" }, actions: [ship] };
+  const events = [{ seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } } }];
+  const mailed: unknown[] = [];
+  const heldDos = createGithubHeldDos({
+    ...deps,
+    ...NOT_HELD,
+    runReader: { async readRunEvents() { return events; } },
+    verdicts: { async forPull() { return []; }, async forHostedPull() { return []; } },
+    async toListener(_tenantId, payload) {
+      mailed.push(payload);
+      return true;
+    },
+    async passRequest() { throw new Error("pr-triage's verdict is in its run's log"); },
+    log() {},
+  });
+  await handle.db.insert(schema.tenant).values({
+    id: tenantId, name: "Cross host", slug: "cross-host-do", domain: "cross-host-do.test",
+    config: { corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true, installationId: 1 }, { name: REPO, source: "bitbucket-datacenter", connected: true, enabled: true }] } },
+  });
+  await handle.db.insert(schema.principal).values({ id: "prn_cross", tenantId, kind: "user", refId: "usr_cross", status: "active" });
+  await handle.db.insert(schema.grant).values({ id: "grt_cross_approve", tenantId, principalId: "prn_cross", resource: "triage-do:approve:*", action: "invoke", effect: "allow", origin: "system" });
+  await handle.db.insert(schema.workflowDefinition).values([
+    { id: "wfd_cross_gh", tenantId, name: "pr-triage", status: "stopped" },
+    { id: "wfd_proj_gh", tenantId, name: TRIAGE_MANAGERS["bitbucket-datacenter"], status: "stopped" },
+    { id: "wfd_proj_bb", tenantId, name: "triage-manager", status: "stopped" },
+  ]);
+  await handle.db.insert(schema.workflowRun).values([
+    { id: "wfr_cross_gh", definitionId: "wfd_cross_gh", anchorRunId: "wfr_cross_gh", tenantId, status: "completed" },
+    { id: "wfr_proj_gh", definitionId: "wfd_proj_gh", anchorRunId: "wfr_proj_gh", tenantId, status: "completed" },
+    { id: "wfr_proj_bb", definitionId: "wfd_proj_bb", anchorRunId: "wfr_proj_bb", tenantId, status: "completed" },
+  ]);
+  function launched(anchorRunId: string, workflow: string) {
+    return {
+      anchorRunId, sessionId: `ses_${anchorRunId}`, deploymentDomain: "cross-host-do.test", sourceAuthorityPrincipalId: "prn_cross",
+      frozenApprovalBundle: { projection: { id: workflow } }, sourceOfferingIds: [], defaultSourceOfferingId: "off_default", deployContent: {},
+    };
+  }
+  await handle.db.insert(schema.workflowRunLaunchSpec).values([
+    launched("wfr_proj_gh", TRIAGE_MANAGERS.github),
+    launched("wfr_proj_bb", TRIAGE_MANAGERS["bitbucket-datacenter"]),
+  ]);
+  const body = { runId: "wfr_cross_gh", repo: REPO, number: 8, effectId: ship.effectId, kind: "approve" as const };
+  const who = { tenantId, principalId: "prn_cross" };
+  const planted = ["wfr_cross_gh", "wfr_proj_gh", "wfr_proj_bb"];
+  await migrateTriageTables(handle.db, testSchema);
+  try {
+    const crossed = await heldDos({ ...body, source: "bitbucket-datacenter" }, who);
+    expect(crossed.status).not.toBe(202);
+    expect({ status: crossed.status, body: await crossed.json() }).toMatchObject({ status: 409, body: { error: { code: "run_host_mismatch" } } });
+    expect(mailed).toEqual([]);
+
+    const omitted = await heldDos(body, who);
+    expect({ status: omitted.status, body: await omitted.json() }).toEqual({ status: 202, body: { status: "sent" } });
+    const named = await heldDos({ ...body, source: "github" }, who);
+    expect({ status: named.status, body: await named.json() }).toEqual({ status: 202, body: { status: "sent" } });
+    expect(mailed).toHaveLength(2);
+    expect(mailed.every((payload) => !Object.prototype.hasOwnProperty.call(payload, "repoSource"))).toBe(true);
+
+    const sent = mailed.length;
+    const namedBitbucket = await heldDos({ ...body, runId: "wfr_proj_gh", source: "bitbucket-datacenter" }, who);
+    expect(namedBitbucket.status).not.toBe(202);
+    expect({ status: namedBitbucket.status, body: await namedBitbucket.json() }).toMatchObject({ status: 409, body: { error: { code: "run_host_mismatch" } } });
+    expect(mailed).toHaveLength(sent);
+
+    const sharedName = await heldDos({ ...body, runId: "wfr_proj_bb" }, who);
+    expect(sharedName.status).not.toBe(202);
+    expect({ status: sharedName.status, body: await sharedName.json() }).toMatchObject({ status: 409, body: { error: { code: "run_host_mismatch" } } });
+    expect(mailed).toHaveLength(sent);
+  } finally {
+    await handle.db.delete(verdictRecord).where(and(eq(verdictRecord.tenantId, tenantId), inArray(verdictRecord.runId, planted)));
   }
 });
