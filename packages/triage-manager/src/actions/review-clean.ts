@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { counted } from "@corbits/common";
-import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
+import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, ThreadRead, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
 import { DO_NAMES } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
@@ -46,15 +46,35 @@ function openUnder(condition: FindingsCondition, findings: readonly Finding[]): 
   return findings.filter((finding) => finding.priority <= ceiling);
 }
 
+/**
+ * Whether `finding` is released and no longer holds. One with no thread id was never posted inline, so it is not
+ * released. An id this pass asked for is released only by a read of resolved: a missing read is not resolved, and a
+ * stored resolved is not trusted for an id the pass asked for and did not get back. When the pass asked for no id on
+ * this head — `threads` omitted, empty, or only ids that are not on these findings — only a stored resolved releases
+ * it. An id on this head the list left out, while it did ask for another id on this head, still holds: the cap dropped
+ * it, so its stored state is not trusted. Outdated is not resolved, so it does not release. Not `findingOpen`, which
+ * treats outdated as not open.
+ */
+function released(finding: Finding, asked: readonly number[] | undefined, reads: readonly ThreadRead[], currentIds: ReadonlySet<number>): boolean {
+  const thread = finding.thread;
+  if (thread === undefined) return false;
+  if (asked?.includes(thread.id) === true) return reads.some((read) => read.id === thread.id && read.state === "resolved");
+  const readingThisHead = asked !== undefined && asked.some((id) => currentIds.has(id));
+  if (readingThisHead) return false;
+  return thread.state === "resolved";
+}
+
 function findingsText(condition: FindingsCondition, count: number): string {
   const found = counted(count, "finding", "findings");
   return "above" in condition ? `${found} at ${condition.above} or above` : found;
 }
 
-/** Why the review does not meet `condition`, if it does not. */
-function unmet(condition: FindingsCondition, reviewed: Reviewed): string | undefined {
+/** Why the review does not meet `condition`, if it does not. Findings a resolved thread released are not counted. */
+function unmet(condition: FindingsCondition, reviewed: Reviewed, asked: readonly number[] | undefined, reads: readonly ThreadRead[]): string | undefined {
   if ("incomplete" in reviewed) return reviewed.incomplete;
-  const open = openUnder(condition, reviewed.findings).length;
+  const currentIds = new Set(reviewed.findings.flatMap((item) => (item.thread === undefined ? [] : [item.thread.id])));
+  const holding = reviewed.findings.filter((finding) => !released(finding, asked, reads, currentIds));
+  const open = openUnder(condition, holding).length;
   return open > 0 ? `Code review has ${findingsText(condition, open)} open on this head.` : undefined;
 }
 
@@ -76,6 +96,7 @@ const ClearedInput = type({
   rules: { output: { items: type("object[]").as<Item[]>() } },
   evaluateRules: { output: ClearedVerdict },
   reviewScope: { output: Scope },
+  "findingThreads?": { output: { reads: ThreadRead.array(), "unread?": "string" } },
 });
 
 type Action = Verdict["actions"][number];
@@ -106,11 +127,13 @@ function heldByReview(parsed: typeof ClearedInput.infer): Verdict {
   const reviewed = reviewOf(parsed.take.output, verdict, parsed.reviewScope.output);
   if (reviewed === undefined) return verdict;
   const pack = parsed.rules.output.items.find((item) => item.pack !== undefined)?.pack;
+  const asked = parsed.take.output.threads;
+  const reads = parsed.findingThreads?.output.reads ?? [];
   const notes: string[] = [];
   const actions = verdict.actions.map(function held(action): Action {
     if (!("effectId" in action) || "held" in action) return action;
     const condition = conditionOf(pack, action.list, action.index, action.kind);
-    const reason = condition && unmet(condition, reviewed);
+    const reason = condition && unmet(condition, reviewed, asked, reads);
     if (reason === undefined) return action;
     const name = DO_NAMES[action.kind];
     notes.push(`${name[0]!.toUpperCase()}${name.slice(1)} held: ${reason[0]!.toLowerCase()}${reason.slice(1)}`);

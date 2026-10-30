@@ -771,6 +771,114 @@ describe("triage-manager with code review", () => {
     expect(approve).toEqual(reason === undefined ? APPROVE_DO : { ...APPROVE_DO, held: true, reason });
   });
 
+  const MERGE_DO = { list: "pass", index: 1, kind: "merge", effectId: "do:merge", target: {}, reason: "every rule passed" };
+  const DO_BOTH = [APPROVE_DO, MERGE_DO];
+  const INCOMPLETE = "Code review did not read the whole change on this head.";
+  const ABOVE_P2 = [{ pack: { ...RULES, actions: { ...RULES.actions, pass: [{ do: "approve", when: { findings: { above: "P2" } } }, { do: "merge", when: { findings: { above: "P2" } } }] } } }];
+
+  function threaded(priority: number, state?: "resolved" | "outdated" | "replied" | "untouched", id = 501) {
+    const comment = finding(priority).comments[0]!;
+    if (state === undefined) return comment;
+    return { ...comment, thread: { id, state } };
+  }
+
+  function clearedFor(comments: ReturnType<typeof threaded>[], options: { asked?: number[]; reads?: { id: number; state: "resolved" | "outdated" | "replied" | "untouched" }[]; unread?: string; review?: { complete?: boolean; budgetExhausted?: boolean }; items?: object[] } = {}) {
+    const review = { ...REVIEW, ...options.review, comments };
+    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review, taken: { blocks: ["code-review"], ...CODE_REVIEW }, ...(options.asked !== undefined && { threads: options.asked }) };
+    const reads = options.reads;
+    return actions.cleared({
+      take: { output: take },
+      rules: { output: { items: options.items ?? [] } },
+      evaluateRules: { output: { ...PASSED, approvable: true, actions: DO_BOTH } },
+      reviewScope: { output: { reviewed: true } },
+      ...(reads !== undefined && { findingThreads: { output: { reads, ...(options.unread !== undefined && { unread: options.unread }) } } }),
+    });
+  }
+
+  function heldBoth(reason: string) {
+    return [{ ...APPROVE_DO, held: true, reason }, { ...MERGE_DO, held: true, reason }];
+  }
+
+  test("cleared, a resolved read releases approve and merge", async () => {
+    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
+    expect(made.actions).toEqual(DO_BOTH);
+    expect(made.actions.map((action) => "effectId" in action ? action.effectId : undefined)).toEqual(["do:approve", "do:merge"]);
+    expect(made.approvable).toBe(true);
+    expect(made.feedback).not.toContain("held");
+  });
+
+  test("cleared, an outdated read still holds", async () => {
+    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "outdated" }] });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+    expect(made.approvable).toBe(false);
+  });
+
+  test("cleared, a summary finding holds when a sibling thread was read resolved", async () => {
+    const made = await clearedFor([threaded(2), threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+    expect(made.approvable).toBe(false);
+  });
+
+  test("cleared, an asked thread stays held when the read is empty and unread, even if it was stored resolved", async () => {
+    const made = await clearedFor([threaded(2, "resolved")], { asked: [501], reads: [], unread: "401" });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+  });
+
+  test("cleared, an asked thread stays held when the read omits it, even if it was stored resolved", async () => {
+    const made = await clearedFor([threaded(2, "resolved")], { asked: [501], reads: [{ id: 999, state: "resolved" }] });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+  });
+
+  test("cleared, a stored resolved thread releases approve and merge when the pass asked for none", async () => {
+    const made = await clearedFor([threaded(2, "resolved")]);
+    expect(made.actions).toEqual(DO_BOTH);
+    expect(made.approvable).toBe(true);
+    expect(made.feedback).not.toContain("held");
+  });
+
+  test("cleared, a stored resolved thread releases approve and merge when threads is empty", async () => {
+    const made = await clearedFor([threaded(2, "resolved")], { asked: [] });
+    expect(made.actions).toEqual(DO_BOTH);
+    expect(made.actions.map((action) => "effectId" in action ? action.effectId : undefined)).toEqual(["do:approve", "do:merge"]);
+    expect(made.approvable).toBe(true);
+    expect(made.feedback).not.toContain("held");
+  });
+
+  test("cleared, a stored resolved thread releases approve and merge when the pass asked only for an id not on these findings", async () => {
+    const made = await clearedFor([threaded(2, "resolved")], { asked: [999] });
+    expect(made.actions).toEqual(DO_BOTH);
+    expect(made.approvable).toBe(true);
+    expect(made.feedback).not.toContain("held");
+  });
+
+  test("cleared, a finding left out while the pass asked for another thread on this head still holds", async () => {
+    const made = await clearedFor([threaded(2, "resolved", 501), threaded(2, "resolved", 502)], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+    expect(made.approvable).toBe(false);
+  });
+
+  test.each(["outdated", "replied", "untouched"] as const)("cleared, a stored %s thread still holds when the pass asked for none", async (state) => {
+    const made = await clearedFor([threaded(2, state)]);
+    expect(made.actions).toEqual(heldBoth(OPEN));
+  });
+
+  test("cleared, above P2 does not count a resolved P0 and still counts an outdated P0", async () => {
+    const resolved = await clearedFor([threaded(0, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }], items: ABOVE_P2 });
+    expect(resolved.actions).toEqual(DO_BOTH);
+    expect(resolved.approvable).toBe(true);
+    const outdated = await clearedFor([threaded(0, "untouched")], { asked: [501], reads: [{ id: 501, state: "outdated" }], items: ABOVE_P2 });
+    expect(outdated.actions).toEqual(heldBoth(OPEN_P2));
+    expect(outdated.approvable).toBe(false);
+  });
+
+  test.each([
+    ["not complete", { complete: false }],
+    ["stopped early", { budgetExhausted: true }],
+  ])("cleared, an incomplete review (%s) stays incomplete when its thread was read resolved", async (_name, review) => {
+    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }], review });
+    expect(made.actions).toEqual(heldBoth(INCOMPLETE));
+  });
+
   test("cleared keeps the reason of a Do already held, such as for CI", async () => {
     const waiting = { ...APPROVE_DO, kind: "merge", held: true, reason: "Waiting for checks to finish." };
     const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: { ...REVIEW, budgetExhausted: true }, taken: { blocks: ["code-review"], ...CODE_REVIEW } };

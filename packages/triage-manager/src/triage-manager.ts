@@ -53,7 +53,7 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
   return {
     reviewScope: action({ handler: "reviewScope", input: { merge: [MAIL, stepsOf("take", "rules", "evaluateRules")] }, after: ["evaluateRules"] }),
     // After reviewScope, so a review the policy left out is told from one that is due; the verdict goes up from here.
-    cleared: action({ handler: "cleared", input: stepsOf("take", "rules", "evaluateRules", "reviewScope"), after: ["reviewScope"] }),
+    cleared: action({ handler: "cleared", input: stepsOf("take", "findingThreads", "rules", "evaluateRules", "reviewScope"), after: ["reviewScope"] }),
     reviewing: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "deployReview", else: "posting", after: ["cleared"] }),
     deployReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["reviewing"]),
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
