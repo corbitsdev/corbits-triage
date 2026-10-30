@@ -206,7 +206,15 @@ test("PostgreSQL: the hub publishes once as the workspace's publisher, rolls aga
   const withReview = await workflowAssets();
   expect(withReview).toHaveLength(first.length + 3);
   const manager = withReview.filter((row) => row.name.startsWith(MANAGER)).find((row) => !first.some((old) => old.id === row.id))!;
-  expect(Object.keys((await managerRelease(manager.id)).github).sort()).toEqual(["codeReview", "judge"]);
+  const release = (await managerRelease(manager.id)).github;
+  expect(Object.keys(release).sort()).toEqual(["codeReviews", "judge"]);
+  const reviewer = withReview.find((row) => row.name.startsWith("pr-code-review-reviewer-github"))!;
+  expect(release.codeReviews).toEqual({
+    "pr-code-review-reviewer-github": expect.objectContaining({
+      name: "pr-code-review-reviewer-github",
+      workflow: expect.objectContaining({ assetId: reviewer.id }),
+    }),
+  });
   expect(live()).toEqual(["run_3"]);
 }, 120_000);
 
