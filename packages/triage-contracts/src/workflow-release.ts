@@ -111,7 +111,11 @@ export async function withRelease(models: readonly ModelInfo[], entry: SourceInd
     const target = chainOf(slot.workflow);
     const offerings = target && offeringsIn(models, target.models);
     if (!deployed || !target || !offerings) throw new Error(`${entry.workflow} deploys ${slot.workflow}, which this release has not published before it.`);
-    body[slot.as] = { name: slot.workflow, workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
+    const release = { name: slot.workflow, workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
+    if (slot.as === "codeReview") {
+      const reviewers = (body["codeReviews"] ??= {}) as Record<string, unknown>;
+      reviewers[slot.workflow] = release;
+    } else body[slot.as] = release;
   }
   if (Object.keys(body).length === 0) return plain;
   const json = `${JSON.stringify({ [chain.source]: body }, null, 2)}\n`;

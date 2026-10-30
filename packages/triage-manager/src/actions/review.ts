@@ -6,7 +6,7 @@ import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import { call, hostWrite, toolName } from "@corbits/triage-workflows/logic/host";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import { Mailed, type MailInput } from "../mail.js";
-import { publishedFor } from "../release.js";
+import { publishedReviewer } from "../release.js";
 import { deploy, managerMailOf } from "./hub.js";
 import { Reviewer, storedReviewer, TakeOutput } from "./manager.js";
 
@@ -25,8 +25,7 @@ function providerOf(part: CodeReviewPart | undefined): string | undefined {
 function reviewerFor(source: RepoSource, provider: string | undefined) {
   if (provider === undefined || !Object.hasOwn(CODE_REVIEW_REVIEWERS, provider)) return undefined;
   const expected = CODE_REVIEW_REVIEWERS[provider as keyof typeof CODE_REVIEW_REVIEWERS][source];
-  const release = publishedFor(source, "codeReview");
-  return release?.name === expected ? release : undefined;
+  return publishedReviewer(source, expected);
 }
 const ScopeInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, evaluateRules: { output: "unknown" } });
 const EarlyInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } } });

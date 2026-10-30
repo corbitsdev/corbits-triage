@@ -13,7 +13,7 @@ export const Release = type({ "name?": "string > 0", workflow: PublishedWorkflow
 export type Release = typeof Release.infer;
 
 /** What each host's listener and manager deploy: the hub writes `release.json` into each published tree; a source run has none. */
-const Published = type({ "[string]": { "manager?": Release, "codeReview?": Release, "judge?": Release } });
+const Published = type({ "[string]": { "manager?": Release, "codeReview?": Release, "codeReviews?": { "[string]": Release }, "judge?": Release } });
 
 /** The creator-sourced grants to deploy the published workflow: create a deployment, read exactly its asset, and read the run it starts. */
 export function deployGrants({ workflow }: Release) {
@@ -27,4 +27,18 @@ export function deployGrants({ workflow }: Release) {
 /** The host's published `which`, or undefined when `release.json` publishes none; it never throws, so every entry imports. */
 export function publishedFor(source: RepoSource, which: "manager" | "codeReview" | "judge"): Release | undefined {
   return Published.assert(published)[source]?.[which];
+}
+
+/** The published reviewers for a host, including a legacy single-slot release. */
+export function publishedReviewers(source: RepoSource): Release[] {
+  const host = Published.assert(published)[source];
+  if (host?.codeReviews !== undefined) return Object.values(host.codeReviews);
+  return host?.codeReview ? [host.codeReview] : [];
+}
+
+/** Select only the release bound to the exact reviewer workflow name. */
+export function publishedReviewer(source: RepoSource, name: string): Release | undefined {
+  const host = Published.assert(published)[source];
+  const release = host?.codeReviews !== undefined ? host.codeReviews[name] : host?.codeReview;
+  return release?.name === name ? release : undefined;
 }

@@ -18,6 +18,7 @@ import { workflow as bitbucket } from "./triage-manager-bitbucket-datacenter.js"
 import { workflow as github } from "./triage-manager-github.js";
 import { workflow as listener } from "./triage-listener-github.js";
 import { triageListener } from "./triage-listener.js";
+import { publishedReviewer } from "./release.js";
 import { PASSES, triageManager } from "./triage-manager.js";
 
 const TENANT = "tnt_acme";
@@ -452,12 +453,13 @@ describe("triage-manager with code review", () => {
   });
 
   test("the first pass deploys the review and mails it, posting nothing; the pass that collects its report posts the verdict and the review together", async () => {
+    publish({ github: { codeReviews: { "other-reviewer": { ...RELEASE, name: "other-reviewer", workflow: { ...RELEASE.workflow, assetId: "ast_other" } }, [RELEASE.name]: { ...RELEASE, workflow: { ...RELEASE.workflow, assetId: "ast_selected" } } } } });
     const { writes, host } = githubHost();
     const mailed: unknown[] = [];
     const first = fakeHub({ takes: [{ ...PASS, request: ON }], dones: [ENDED] });
     expect((await runMail(reviewed, wake(), host, first.hub, mailed)).ran).toContain("doneReviewing");
     expect(writes).toEqual([inProgress("code review")]);
-    expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_review", package: { format: "source", commitSha: "c0ffee", packageName: RELEASE.workflow.packageName } }, entry: RELEASE.workflow.entry, sourceOfferingIds: ["off_a"], defaultSourceOfferingId: "off_a" } });
+    expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_selected", package: { format: "source", commitSha: "c0ffee", packageName: RELEASE.workflow.packageName } }, entry: RELEASE.workflow.entry, sourceOfferingIds: ["off_a"], defaultSourceOfferingId: "off_a" } });
     expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
@@ -671,6 +673,26 @@ describe("triage-manager with code review", () => {
       if (!expected) await expect(actions.deployReview({ payload, take }, {} as EffectContext, new AbortController().signal)).rejects.toThrow("no matching code review");
     }
     publish({ [source]: {} });
+    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(false);
+    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(false);
+  });
+
+  test.each(["github", "bitbucket-datacenter"])("selects the mapped reviewer from multiple published releases on %s", async (source) => {
+    const name = `pr-code-review-reviewer-${source}`;
+    const chosen = { ...RELEASE, name, workflow: { ...RELEASE.workflow, assetId: "ast_chosen" } };
+    const other = { ...RELEASE, name: "other-reviewer", workflow: { ...RELEASE.workflow, assetId: "ast_other" } };
+    const payload = wake({ source, repo: PR.repo, number: PR.number });
+    const take = { output: { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { ...CODE_REVIEW, ...REVIEW_REQUEST } } };
+    const rules = { output: { items: [{ facts: { author: "octocat", authorTeams: [], authorTeamsUnknown: [], changedFiles: 1, files: [{ path: "src/flag.ts" }] }, pack: RULES }] } };
+    publish({ [source]: { codeReviews: { [name]: chosen, "other-reviewer": other } } });
+    expect(publishedReviewer(source as "github" | "bitbucket-datacenter", name)?.workflow.assetId).toBe("ast_chosen");
+    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(true);
+    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(true);
+    const grants = triageManager({ id: "test", sources: [source], codeReview: [other, chosen] }).grantRequirements;
+    expect(grants).toContainEqual({ resource: "asset:ast_chosen", action: "read", source: "creator" });
+    expect(grants).toContainEqual({ resource: "asset:ast_other", action: "read", source: "creator" });
+    publish({ [source]: { codeReview: chosen, codeReviews: { [name]: other, "other-reviewer": chosen } } });
+    expect(publishedReviewer(source as "github" | "bitbucket-datacenter", name)).toBeUndefined();
     expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(false);
     expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(false);
   });

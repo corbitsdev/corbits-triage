@@ -1532,3 +1532,5 @@ deltas in `vendor/interchange/VENDORED.md`, each with the condition for removing
 `tooling/vendor-diff-check.sh` fails on any other drift, including a stock
 file missing from the vendored copy unless `tooling/vendor-diff-pruned.txt`
 lists it or a directory above it as an upstream path we don't vendor.
+
+The manager release indexes published code reviewers by workflow name for each host. The policy provider and host select that exact entry; the manager declares creator-sourced reads for each published reviewer asset. Older single-reviewer releases remain usable only when their recorded workflow name matches, and an indexed catalog never falls back to that legacy slot.
