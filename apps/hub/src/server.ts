@@ -1,3 +1,4 @@
+import { configureObservability } from "./observability.js";
 // Composition over the stock Interchange hub bootstrap (./interchange-hub.ts).
 // GitHub manifest start/callback and PR actions are custom domain routes
 // because GitHub must return a one-time code to a confidential server before
@@ -156,6 +157,7 @@ const WORKFLOW_RELEASE_CONCURRENCY = 2;
 const ROOT = resolve(import.meta.dir, "../../..");
 const V = resolve(ROOT, "vendor/interchange");
 const env = loadHubEnv(process.env);
+const observability = await configureObservability();
 const settings = interchangeSettings(env);
 const triageTimings = timingsFrom(env);
 setTimings({ ...triageTimings, mailHoldMs: settings.sidecarLink.mailHoldTTLMs });
@@ -230,6 +232,7 @@ async function shutdown(): Promise<void> {
   try {
     await local.shutdown();
   } finally {
+    await observability.shutdown();
     process.exit(0);
   }
 }

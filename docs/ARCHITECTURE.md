@@ -1520,6 +1520,58 @@ read it, and passes the rest of the request to stock.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
 
+## Hub observability
+
+The hub configures stock `@intx/log` / LogTape once at the application entry point. `logJson` remains the structured
+application logging convention and preserves JSON console fields. Local logs are not redacted by the external-event
+projection: access to stdout must remain restricted. Stock hub logs also use a JSON console sink. The hub factory
+never calls stock `setup()` afterwards, since that would reset the sinks. Sidecar logging is independent and unchanged.
+
+At `/manager/reviewer-result`, only after the atomic result-recording statement has committed, the hub logs one of
+`reviewer_result_accepted_success`, `reviewer_result_accepted_failure`, `reviewer_result_duplicate`, or
+`reviewer_result_stale`. Success here means the reviewer submitted a result, not that the pull request passed policy
+or that code review was complete. Stale results do not wake a manager. Other results retain the existing wake behavior,
+including retrying wake on a duplicate: `reviewer_result_woken`, `reviewer_result_unrouted` (no listener), or
+`reviewer_result_wake_failed` (the existing 502 response; the recorded result remains stored). Woken means the wake
+operation returned successfully, not that a manager consumed the result. These are observations, not approval decisions.
+
+External delivery accepts only those named events from the application logger category, not arbitrary stock logs,
+raw message templates or exceptions. The envelope explicitly projects `msg`, `tenantId`, `source`, `repo`, `number`,
+`head`, `runId`, `kind` and optional `managerRunId`, with runtime validation and bounded string sizes. Tenant and reviewer
+run IDs come from authenticated route context. Repository/head/kind come from the validated result request; they are not
+independently verified host facts. The manager ID is the claim's run ID from the same SQL statement's snapshot, not a
+newly deployed or inferred association; absent/ended claims omit it. This does not claim the manager deployed that
+reviewer. Raw results, prompts, source, credentials, mail, exception details and arbitrary extra properties are never
+projected. Correlation identifiers, including private repository names, are still sensitive metadata; destinations
+must be authorized to receive them. No provider configuration is enabled by default.
+
+Injected destination arrays have distinct roles:
+
+- **Telemetry:** all projected review outcomes and wake diagnostics.
+- **Errors:** accepted reviewer failures and wake failures.
+- **Notifications:** those errors plus missing-listener wake results. Duplicates and stale results are not new alerts.
+
+Each destination has an independent in-memory queue: at most 64 events including its one active send. Enqueue does not
+await delivery or invoke provider code on the domain call stack. Saturation drops the newest event and logs one local
+overflow diagnostic per destination for the process. Synchronous throws and rejected promises are caught without
+exporting the exception, and other destinations continue. A send exceeding two seconds aborts its signal, drops its
+queue and disables that destination for the process lifetime. Even if it ignores abort forever, it gets no further
+sends; timing out never creates an unbounded collection of in-flight promises. Destinations must use asynchronous I/O;
+this cannot isolate a CPU-blocking callback. Local delivery diagnostics contain only a fixed reason and destination
+array index and bypass external sinks to prevent recursion.
+
+LogTape's asynchronous sink disposal closes intake and drains for at most three seconds, then aborts active sends and
+discards queues. The server awaits this disposal during shutdown. This bounds observability disposal, not unrelated
+sidecar shutdown. The limit values are injectable for unit tests, not production environment settings. Process crashes,
+forced exits, saturation, provider failures and shutdown deadlines can lose events. There are no persisted deliveries,
+retries, recovery alerts or exactly-once guarantees; the SQL result and external event are not a transactional outbox.
+Existing SMTP liveness alerts and workflow mail dispatch are separate mechanisms, not repurposed as generic outboxes.
+
+Follow-ups remain explicit: preserve safe failure classifications/run references through the failed-review API and UI;
+independently detect overdue/unconsumed results; persist incident/delivery state with retry/dedup/recovery behavior;
+implement authorized provider adapters; instrument sidecar startup; and add an external heartbeat/watchdog for a dead
+hub. These logs do not establish the initiating cause of earlier production incidents.
+
 ## Vendoring
 
 Interchange is vendored under `vendor/interchange` at a stock pin plus the

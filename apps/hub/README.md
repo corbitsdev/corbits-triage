@@ -14,6 +14,19 @@ bun run dev     # hub and portal
 
 Every custom route is described in `/openapi.json`.
 
+## Observability
+
+`server.ts` calls `await configureObservability()` once, before constructing the hub. It uses stock `@intx/log` and
+LogTape's supported advanced configuration API (a direct dependency). `createInterchangeHub()` does not reset logging.
+Keep application call sites on `logJson`, passed as `log`; its local JSON lines retain `ts` and the existing fields.
+Stock hub logs use LogTape's JSON console formatter. Sidecars configure their own logging independently.
+
+For an application-owned integration, pass arrays of async `(event, signal) => Promise<void>` destinations to
+`configureObservability({ telemetry, errors, notifications })`. The default arrays are empty; no production provider,
+credentials, environment switches, Slack/email clients or Sentry clients are configured. Adapters must return promptly
+and do asynchronous I/O, honor cancellation where possible, and must not perform blocking CPU work. JavaScript cannot
+preempt blocking provider code. See [delivery and correlation limits](../../docs/ARCHITECTURE.md#hub-observability).
+
 ## Test
 
 ```sh
