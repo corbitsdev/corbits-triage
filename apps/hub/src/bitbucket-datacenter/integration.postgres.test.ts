@@ -6,7 +6,7 @@ import { sql } from "drizzle-orm";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { credentialAad } from "@intx/types";
-import { connectTriage, createAutomation } from "../github/automation.js";
+import { connectTriage, createAutomation, grantEnabledKinds } from "../github/automation.js";
 import { patchCorbitsTriage, repoRecords, triageNs } from "../github/tenant-config.js";
 import { WEBHOOK_EVENTS } from "./client.js";
 import { createBitbucketIntegration } from "./integration.js";
@@ -94,16 +94,46 @@ test("PostgreSQL: enabling a Bitbucket repository grants comment, the one enable
   });
 }, 120_000);
 
-test("PostgreSQL: a Bitbucket repository named as a GitHub one, in any case, is refused", async () => {
-  await withDatabase(async function nameTaken(db, cipher) {
+test("PostgreSQL: a Bitbucket repository named as a GitHub one, in any case, is enabled and the GitHub labels grant stays", async () => {
+  await withDatabase(async function sameName(db, cipher) {
     const integration = createBitbucketIntegration({
       db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
       async stockFetch() { return new Response(null, { status: 500 }); },
       publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201), lookup: lookupBitbucket,
       onEnabled() {}, async onConnectionChanged() {}, onCredentialsReplaced() {}, now: () => new Date(), log() {},
     });
-    await patchCorbitsTriage(db, TENANT, (ns) => ({ ...ns, repos: [{ name: "tri/Widgets", connected: true, installationId: 1 }] }));
-    expect(await failureCode(integration.enable(MEMBER, "TRI", "widgets"))).toEqual([409, "repo_name_taken"]);
+    const automation = createAutomation({ db });
+    await patchCorbitsTriage(db, TENANT, async (ns, tx) => {
+      await grantEnabledKinds(tx, TENANT, "tri/Widgets", "github", new Date());
+      return { ...ns, repos: [{ name: "tri/Widgets", connected: true, installationId: 1 }] };
+    });
+    const res = await integration.enable(MEMBER, "TRI", "widgets");
+    expect(res.status).toBe(200);
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets", "bitbucket-datacenter")).toEqual(["comment"]);
+    expect(await automation.automaticKinds(TENANT, "tri/Widgets", "github")).toContain("labels");
+  });
+}, 120_000);
+
+test("PostgreSQL: enabling and disabling a Bitbucket repository returns its own row when a GitHub repository has the same name", async () => {
+  await withDatabase(async function exactName(db, cipher) {
+    const integration = createBitbucketIntegration({
+      db, cipher, onKeyMoved: noKeyPush, async authorize() { return true; },
+      async stockFetch() { return new Response(null, { status: 500 }); },
+      publicOrigin: "https://hub.test", fetchImpl: instanceFetch(201), lookup: lookupBitbucket,
+      onEnabled() {}, async onConnectionChanged() {}, onCredentialsReplaced() {}, now: () => new Date(), log() {},
+    });
+    const automation = createAutomation({ db });
+    await patchCorbitsTriage(db, TENANT, async (ns, tx) => {
+      await grantEnabledKinds(tx, TENANT, "TRI/widgets", "github", new Date());
+      return { ...ns, repos: [{ name: "TRI/widgets", connected: true, installationId: 1 }] };
+    });
+    const enabled = await integration.enable(MEMBER, "TRI", "widgets");
+    expect(enabled.status).toBe(200);
+    expect(await enabled.json()).toMatchObject({ repository: { source: "bitbucket-datacenter", enabled: true } });
+    expect(await automation.automaticKinds(TENANT, "TRI/widgets", "github")).toContain("labels");
+    const disabled = await integration.disable(MEMBER, "TRI", "widgets");
+    expect(disabled.status).toBe(200);
+    expect(await disabled.json()).toMatchObject({ repository: { source: "bitbucket-datacenter" } });
   });
 }, 120_000);
 

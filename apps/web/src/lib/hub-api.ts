@@ -1562,7 +1562,6 @@ const BITBUCKET_DATACENTER_REFUSALS: Record<string, string> = {
   bitbucket_datacenter_failed: "Bitbucket Data Center answered with an error. Try again in a moment.",
   repo_not_found: "Bitbucket Data Center does not show this repository to the token. Check the token can read its project.",
   repo_empty: "This repository has no default branch yet. Push a first commit, then turn on triage.",
-  repo_name_taken: "A GitHub repository in this workspace has the same name, so this one cannot be triaged.",
 };
 
 function bitbucketDatacenterPath(tenantId: string, path: string): string {
