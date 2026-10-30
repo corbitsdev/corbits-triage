@@ -10,6 +10,15 @@ export const CODE_REVIEW_PROVIDERS = {
 
 export type CodeReviewProvider = keyof typeof CODE_REVIEW_PROVIDERS;
 
+/**
+ * The reviewer workflow each provider deploys, per host: the manager reads this table and deploys the row for the
+ * policy's provider, refusing an unknown provider rather than defaulting. One row today; nothing else is built until
+ * a second reviewer package exists.
+ */
+export const CODE_REVIEW_REVIEWERS = {
+  anthropic: { github: "pr-code-review-reviewer-github", "bitbucket-datacenter": "pr-code-review-reviewer-bitbucket-datacenter" },
+} as const satisfies Record<CodeReviewProvider, Record<string, string>>;
+
 /** The workspace's code review provider, from the names of its active credentials; undefined while it stores no provider's key. */
 export function codeReviewProviderOf(credentials: readonly string[]): CodeReviewProvider | undefined {
   return (Object.keys(CODE_REVIEW_PROVIDERS) as CodeReviewProvider[]).find((provider) => credentials.includes(CODE_REVIEW_PROVIDERS[provider].credential));

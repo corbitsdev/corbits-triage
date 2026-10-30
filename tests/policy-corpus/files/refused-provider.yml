@@ -1,0 +1,6 @@
+rules:
+  - check: ci-green
+    text: CI passes.
+    reason: Required.
+    evidence: [maintainer-stated]
+code-review: { on: true, provider: openai }

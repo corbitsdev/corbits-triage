@@ -641,6 +641,21 @@ describe("triage-manager with code review", () => {
     expect(doneBody(hub.calls)["report"]).toMatchObject({ verdict: { codeReviewSkipped: why } });
   });
 
+  test("a code review naming an unknown provider is never deployed, rather than defaulting", async () => {
+    const { host } = githubHost();
+    const unknown = hubRequest(RULES, { codeReview: { ...CODE_REVIEW.codeReview, provider: "openai" }, ...REVIEW_REQUEST });
+    const hub = fakeHub({ takes: [{ ...PASS, request: unknown }], dones: [ENDED] });
+    const { ran } = await runMail(reviewed, wake(), host, hub.hub);
+    expect(ran).not.toContain("deployReview");
+    expect(ran).toContain("mirrorRules");
+  });
+
+  test("deployReview refuses an unknown code review provider rather than defaulting", async () => {
+    const signal = new AbortController().signal;
+    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { codeReview: { provider: "openai" } } };
+    await expect(actions.deployReview({ payload: wake(), take: { output: take } }, {} as EffectContext, signal)).rejects.toThrow('deployReview: unknown code review provider "openai"');
+  });
+
   test.each([
     ["a changed file `when.paths` keeps is reviewed", { paths: ["!**/*.md"] }, {}, true],
     ["fewer files read than changed are never left out by `when.paths`", { paths: ["!**/*.ts"] }, { pull: { changed_files: 2 } }, true],

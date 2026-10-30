@@ -59,6 +59,7 @@ const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact
   [["code-review", "when", "rules"], words(RULE_GATES)],
   [[BLOCK, "when", "paths"], "a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches"],
   [[BLOCK, "provider"], words(PROVIDERS)],
+  [[BLOCK, "profile"], "a profile name of at most 100 characters"],
   [["pace"], MAPPING],
   [["pace", "debounce"], DURATION_TEXT],
   [["pace", "maxWait"], DURATION_TEXT],

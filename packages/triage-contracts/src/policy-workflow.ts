@@ -1,5 +1,7 @@
-// The policy file's v4 keys beside `rules`: author groups, one key per block that runs after triage, `pace`, `pauseLabel`
+// The policy file's v4 keys beside `rules`: author groups, one key per block that runs after triage, `pauseLabel`
 // and `decide`. They are read and validated here; nothing acts on them yet, except steps naming a group.
+// `pace` is refused: pacing is not available yet. `code-review` runs only on `anthropic`; its optional `profile`
+// names the profile within the provider, so a future provider running an Anthropic profile stays expressible.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
 import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, Glob, GROUP_NAME_MAX, GroupName, Label, POLICY_EVENTS, VERDICTS, type AuthorKind, type AuthorMatch, type FileAuthorMatch, type PolicyActions, type Step, type VerdictWord } from "./check-pack.js";
@@ -15,7 +17,9 @@ export type BlockKind = (typeof BLOCK_KINDS)[number];
  */
 export const RESERVED_BLOCKS = ["security", "deslop"] as const;
 
-export const PROVIDERS = ["anthropic", "openai", "xai", "google", "opencode", "custom"] as const;
+/** The code review providers available in this release: only Anthropic reviews yet. The shape stays a provider plus an
+ * optional profile, so a future provider running an Anthropic profile is expressible without reshaping the file. */
+export const PROVIDERS = ["anthropic"] as const;
 
 /** Least severe first. */
 export const SEVERITIES = ["low", "medium", "high", "critical"] as const;
@@ -31,12 +35,14 @@ const Severity = type.enumerated(...SEVERITIES);
 const Duration = type(/^[1-9]\d*[smhd]$/);
 const Count = type("number.integer").atLeast(1);
 
+const Profile = type(/^\S(.*\S)?$/).atMostLength(100);
 const CodeReviewSchema = type({
   "+": "reject",
   on: "boolean",
   "for?": GroupNames,
   "when?": { "+": "reject", "triage?": Verdicts, "paths?": Globs, "rules?": type.enumerated(...RULE_GATES) },
   "provider?": type.enumerated(...PROVIDERS),
+  "profile?": Profile,
 });
 
 const PaceSchema = type({
@@ -242,6 +248,7 @@ export function workflowProblems(workflow: PolicyWorkflow, actions: WrittenActio
   const own = Object.keys(workflow.groups ?? {}).filter((name) => GroupName.allows(name));
   const known = [...new Set([...own, ...Object.keys(AUTHOR_GROUPS), EVERYONE])];
   return [
+    ...(workflow.pace !== undefined ? [{ message: "`pace`: pacing is not available yet; remove the block.", path: ["pace"] }] : []),
     ...(actions !== undefined && workflow.decide !== undefined ? [{ message: "`actions` and `decide` can't both be set; keep your steps in `actions` and remove `decide`, which Triage does not act on.", path: ["actions"] }] : []),
     ...groupProblems(workflow.groups ?? {}),
     ...BLOCK_KINDS.flatMap((kind) => referenceProblems(workflow[kind]?.for ?? [], [kind, "for"], known)),
