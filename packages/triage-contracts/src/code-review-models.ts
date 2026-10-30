@@ -11,9 +11,8 @@ export const CODE_REVIEW_PROVIDERS = {
 export type CodeReviewProvider = keyof typeof CODE_REVIEW_PROVIDERS;
 
 /**
- * The reviewer workflow each provider deploys, per host: the manager reads this table and deploys the row for the
- * policy's provider, refusing an unknown provider rather than defaulting. One row today; nothing else is built until
- * a second reviewer package exists.
+ * The reviewer workflow names per provider and host. Policy validation uses the provider keys to refuse unknown
+ * providers; deployment uses the single Anthropic reviewer in this release.
  */
 export const CODE_REVIEW_REVIEWERS = {
   anthropic: { github: "pr-code-review-reviewer-github", "bitbucket-datacenter": "pr-code-review-reviewer-bitbucket-datacenter" },

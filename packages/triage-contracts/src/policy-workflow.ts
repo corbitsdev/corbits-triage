@@ -1,7 +1,7 @@
 // The policy file's v4 keys beside `rules`: author groups, one key per block that runs after triage, `pauseLabel`
 // and `decide`. They are read and validated here; nothing acts on them yet, except steps naming a group.
 // `pace` is refused: pacing is not available yet. `code-review` runs only on `anthropic`; its optional `profile`
-// names the profile within the provider, so a future provider running an Anthropic profile stays expressible.
+// is validated but not used yet, so a future provider running an Anthropic profile stays expressible.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
 import { AUTHOR_GROUPS, AUTHOR_KINDS, decideDoSchema, fileGroupSchema, Glob, GROUP_NAME_MAX, GroupName, Label, POLICY_EVENTS, VERDICTS, type AuthorKind, type AuthorMatch, type FileAuthorMatch, type PolicyActions, type Step, type VerdictWord } from "./check-pack.js";

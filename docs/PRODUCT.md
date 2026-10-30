@@ -322,7 +322,7 @@ On GitHub, a pull request carrying `pauseLabel` starts no run, and while the
 pull request cannot be read it is not triaged but retried, never run unpaused;
 through a long GitHub outage it waits out a bounded number of retries and is
 triaged on its next event. Code review runs on Anthropic with the workspace's Anthropic key: `provider` must be `anthropic`,
-the only reviewer in this release, and the optional `profile` names the profile within the provider; a file naming any
+the only reviewer in this release, and the optional `profile` is checked but does not affect the review yet; a file naming any
 other provider, or holding `pace`, is refused, since pacing is not available. `decide` is read and
 checked, and nothing acts on it. A file holds `decide` or `actions`, never
 both, so a file that sets `decide` takes no actions. With `code-review` on, an
