@@ -973,6 +973,10 @@ describe("triage-manager with code review", () => {
     expect(terminalStatus).toBe("completed");
     releasedOnly(outputs);
     expect(doneBody(calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
+    expect(doneBody(calls)["threads"]).toBeUndefined();
+    const reviewers = doneBody(calls)["reviewers"] as { kind: string; result?: { comments?: { thread?: { id: number; state: string } }[] } }[];
+    const review = reviewers.find((reviewer) => reviewer.kind === "code-review");
+    expect(review?.result?.comments?.map((comment) => comment.thread)).toEqual([{ id: 501, state: "untouched" }]);
     const cleared = suggested(outputs, "cleared");
     expect(cleared.actions.find((action) => action.kind === "approve")).toMatchObject({ held: true, reason: OPEN });
     expect(cleared.approvable).toBe(false);

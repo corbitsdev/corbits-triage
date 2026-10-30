@@ -49,7 +49,8 @@ function openUnder(condition: FindingsCondition, findings: readonly Finding[]): 
 /**
  * Whether `finding` is released and no longer holds. One with no thread id was never posted inline, so it is not
  * released. An id this pass asked for is released only by a read of resolved: a missing read is not resolved, and a
- * stored resolved is not trusted for an id the pass asked for and did not get back. When the pass asked for no id on
+ * stored resolved is not trusted for an id the pass asked for and did not get back. Done records that id as untouched,
+ * so a later pass that does not ask cannot treat the failed read as resolved. When the pass asked for no id on
  * this head — `threads` omitted, empty, or only ids that are not on these findings — only a stored resolved releases
  * it. An id on this head the list left out, while it did ask for another id on this head, still holds: the cap dropped
  * it, so its stored state is not trusted. Outdated is not resolved, so it does not release. Not `findingOpen`, which

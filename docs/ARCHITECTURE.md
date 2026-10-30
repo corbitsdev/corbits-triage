@@ -1129,8 +1129,9 @@ reviewer-result row: resolved, outdated, replied (by someone other than Triage)
 or untouched, with `at` only when the host names the time of the change (a
 reply's time on both hosts, a resolve's on Data Center). Host thread state is
 the source. A read the host refuses is logged as `finding_threads_unread` and
-leaves that finding holding; on Data Center, where each comment is its own
-read, only the comments that failed stay unread. On Data
+leaves that finding holding, and does not leave that finding stored `resolved`,
+so a later pass cannot treat the failed read as resolved; on Data Center, where
+each comment is its own read, only the comments that failed stay unread. On Data
 Center the fields read (`threadResolved`, `threadResolvedDate`, `anchor.orphaned`,
 nested `comments`) were checked against Bitbucket 10.5. The portal shows it
 from `GET …/code-review`; a finding held in the summary, one a person sent from
@@ -1141,7 +1142,8 @@ outdated is no longer open in the portal; replied, untouched and `not-tracked` o
 The approve and merge hold does not follow `findingOpen`: only `resolved` releases
 the hold on that same commit, with no new push; outdated, replied, untouched, a
 finding with no thread, and a thread this pass could not read stay open. A later
-pass that did not read this head trusts a stored `resolved`.
+pass that did not read this head trusts a stored `resolved` that a successful
+read wrote.
 With `at`, the route answers only that head's reviews and carries none over to
 it, so an older head's review reads with the states recorded for it. A
 closed or merged pull request is not read again.
@@ -1171,9 +1173,11 @@ without one is held only when it approves or merges and the review has any
 finding open. The approve and merge hold does not follow `findingOpen`: only
 `resolved` releases the hold on that same commit, with no new push; outdated,
 replied, untouched, a finding with no thread, and a thread this pass could not
-read stay open. A later pass that did not read this head trusts a stored
-`resolved`. A review that did not run, failed, ran past its deadline, read
-only part of the change or reviewed another head meets no condition. Each Do
+read stay open, and a refused read does not leave that finding stored
+`resolved`. A later pass that did not read this head trusts a stored `resolved`
+that a successful read wrote. A review that did not run, failed, ran past its
+deadline, read only part of the change or reviewed another head meets no
+condition. Each Do
 it holds adds one line to the verdict's comment naming the action and why, and
 a held approve makes the head not approvable, so Triage takes back an earlier
 approval. A pull request the block's `for` or `when` leaves out runs its Dos as

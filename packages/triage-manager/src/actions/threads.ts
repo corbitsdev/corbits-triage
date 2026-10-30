@@ -11,8 +11,8 @@ const Read = type({ threads: ThreadRead.array(), "unread?": "string" });
 
 /**
  * Reads what became of the threads of the findings posted on earlier heads, which take names on a pass for a newer
- * head, once for each head. A read the host refuses, whole or for some threads, leaves those findings as they were last
- * read, and says why for the hub to log.
+ * head, once for each head. A read the host refuses, whole or for some threads, returns no state for them and says why
+ * for the hub to log. Done does not leave an id this pass asked for, and did not hear, stored resolved.
  */
 export async function findingThreads(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ reads: ThreadRead[]; unread?: string }> {
   const parsed = ThreadsInput(input);
