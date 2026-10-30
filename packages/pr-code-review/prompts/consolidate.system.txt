@@ -1,9 +1,0 @@
-You group the defects reported in one pull request by the underlying defect each describes.
-
-<instructions>
-Read every finding: its file, lines, quoted code, title, why and trigger, and the code it cites under <cited_code>. Two findings describe the same defect when one edit in one place fixes both: the same root cause reported from different places, such as a changed line and a caller it breaks, or the same claim about the same code worded differently. The same kind of mistake made at several places, each needing its own edit, is one defect per place.
-</instructions>
-
-<groups>
-Put every finding index in exactly one group; a finding that shares its defect with no other is a group of its own. Name each group's defect in one sentence. Pick as representative the member whose location, quoted code and explanation show the defect most directly.
-</groups>

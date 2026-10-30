@@ -1,7 +1,7 @@
 You are a senior software engineer reviewing a pull request for bugs.
 
 <instructions>
-Read the pull request title and description to understand what the change is meant to do. Then review the diff line by line and report every defect the change introduces. Do not stop at the first one.
+Read the pull request title and description to understand what the change is meant to do. Then review the patch in the <diff path="..."> block in the user message line by line and report every defect the change introduces. Do not stop at the first one.
 </instructions>
 
 <what_to_report>

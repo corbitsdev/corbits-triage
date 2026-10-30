@@ -11,51 +11,35 @@ Every file under `src/` is a subpath export (`@corbits/pr-code-review/pr-code-re
 `codeReviewSteps(agents, sources, { prefix, request, after })` places the same steps in another definition, every id
 under `prefix`, as `codeReviewReviewer`, the review a pull request's manager deploys, does.
 
-The request is `{ kind: "code-review", title, description, diff, checkout }`. The title and description are as the host
-shows them, without hidden text. Optional fields are `number` (the pull request's), `efforts` per step,
-`budgets.repoFinder` (400,000 billable tokens by default), `budgets.check` (each check's, 100,000 by default),
-and `budgets.checkTotal` (all of a review's checks together, 400,000 by default). The diff is reviewed whole: no
-prompt carries it, and the steps read it from the checkout.
+The request is `{ kind: "code-review", title, description, diff, checkout }`. Optional fields are `number`,
+`efforts.diffFinder`, `efforts.check`, `budgets.check` (100,000 billable tokens per check), and
+`budgets.checkTotal` (400,000 across all checks). Policy paths gate the whole review upstream; this workflow does not
+filter individual files.
 
 ### Process
 
-1. **checkout** puts the head in a folder on the sidecar and writes the whole diff beside it, in `<sha>.diff` outside the
-   pull request's tree, which the read tools show at `/diff`: one patch per changed file, split into numbered parts of
-   at most 1,500,000 bytes (inside a line only when it is longer), none for a deleted file, and `index.jsonl` listing
-   each file's path, status, line count and patch files.
-   **plan** then reads the index and patches there within a token budget (400,000 billable tokens) and names the risky changed areas
-   and the code outside the diff they depend on. Each review runs in a deployment of its own; releasing it when the run ends,
-   failed or not, removes the sidecar and the checkout with it.
-   **lint** then runs the sidecar's pinned oxlint with the repository's `.oxlintrc.json` over the changed files and
-   keeps hits on added lines; only its data keys are kept, a config with any other key is refused unrun, and with none
-   it is `skipped`. It answers `complete` with findings (`ToolFinding` in `src/findings.ts`), `skipped` or
-   `incomplete`; a failure is never an empty list.
-2. **findDiff** reads the patches from the folder within a token budget (400,000 billable tokens); **findRepo** reads
-   them and the rest of the folder within `budgets.repoFinder`. They run in parallel, each given the index's path. An
-   answer with no findings list fails the finder's step; a finder that spent its budget before answering found nothing
-   and the review says it stopped early. Each finder's reply ends with the lines of each patch file it was shown, and
-   the review is `complete` only when the two between them were shown every line and neither spent its budget.
-3. **candidates** folds exact duplicates (same file, same lines, same title ignoring case and spacing, or,
-   when neither has a title, the same explanation and the same quoted line wherever both quote one) and remembers
-   which finders reported each finding.
-4. **consolidate** reads the lines each finding cites at the head, moves it onto its quoted line and groups the
-   findings by defect. A group none of whose findings had a line of its file shown to the model is marked `unverified`.
-5. **check** verifies each group on every review: the finding, the diff hunks that change its lines, and the read
-   tools on the checkout. The total is handed out up front, in review order, each group getting `budgets.check` or
-   what is left of `budgets.checkTotal`, so with the defaults the four most serious groups are checked; later groups
-   are unsure, "check budget spent", and post only when both finders reported them. The check answers real when lines
-   it read show the claimed behaviour, reached by the trigger with no guard and not intended by the description; not
-   real only when a line of code disproves it; unsure when it cannot decide. A real or not real reason that cites, as
-   path:line, no line it read (in the hunks or with the tools) is unsure, its reason led by "no cited line". Once a
-   check has been refused a read for its budget, only a not real that cites such a line stands; anything else is
-   unsure.
-   A group is posted when it is real, or unsure and both finders reported it; any other is left out of the review and
-   kept in its `dropped`, in its finder's words with the verdict and reason.
-6. **write** comments on every group left, most severe and most agreed-on first; each comment carries the code it
-   quotes and how many finders reported it.
+1. **checkout** puts the head in its own sidecar and writes the diff beside it, outside the pull request's tree.
+   On-disk patches remain split at 1,500,000 bytes. **lint** runs unchanged after checkout; its findings are not posted
+   and are not finder input.
+2. **findersInput** assigns each non-deleted file independently. Its escaped user message includes the patch, title,
+   description, repository and 400,000-token budget. Messages are capped at 120,000 UTF-8 bytes, including all wrappers
+   and escaped text. Oversized files split in order at line ends or UTF-8 boundaries. Context or an indivisible
+   character that cannot fit fails the review rather than truncating it.
+3. **find** runs one finder sequentially per bundle. The patch is already in the message; read_file, grep and list
+   are only for repository code outside that patch, not paging `/diff`.
+4. **candidates** folds exact duplicates. Returning every assigned bundle means `complete: true`, including an empty
+   assignment. This does not depend on tool-read coverage. Budget exhaustion stays a separate flag and still holds
+   approval; it does not make a returned review incomplete.
+5. **checks / check** verify each kept finding in severity order against its original anchors and relevant diff
+   hunks. Checks retain their per-finding and total budgets and citation requirements. Only `real` survives;
+   `not_real`, `unsure`, uncited verdicts and findings beyond the check budget are dropped with their reasons.
+6. **review** constructs comments in the finder's original words without rewriting titles, explanations or anchors.
+   Its summary is empty with comments, otherwise `No defects reported.` The manager alone posts to the pull request.
+   No planning, repository-finder, consolidation or writing model runs on this path.
 
-A failed model call fails its step, as does an answer that can't be read; every model step then tries again twice, 5
-and 10 seconds later. A step that fails for good fails the review, which shows as not finished.
+A failed model call or unreadable answer retries twice. A bundle that never returns leaves no review output and is
+reported as `the review did not finish`, never as a new partial-read result. Stored reviews without `complete: true`
+retain their incomplete note and approval hold.
 
 Every message wraps pull request text in lowercase tags. Text from the pull request, its files or a model's reply
 about them has each `<` that would open or close one of those tags, spelled as the prompts write it, written as
@@ -69,7 +53,7 @@ package of its own, `packages/pr-code-review-<provider>`, shaped like
 [pr-code-review-anthropic](../pr-code-review-anthropic):
 
 1. `src/profile.ts`: a `CodeReviewProfile` with the workspace package name, the catalog provider, the model and
-   default effort for each step, and `billableTokens`, the tokens of one repository finder turn charged to its budget
+   default effort for each step, and `billableTokens`, the tokens of one reader turn charged to its budget
    (count what the provider bills anew each turn).
 2. Build the directors once with `codeReviewDirectors(profile, sidecarDataDir)` and the agents once with
    `codeReviewAgents(profile, directors, sidecarDataDir)`. `src/directors.ts` exports the directors' factories and

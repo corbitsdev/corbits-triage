@@ -1005,58 +1005,52 @@ Code review only reads: a checkout action downloads the head through the host
 credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>` and
 writes the whole diff beside it in `<sha>.diff`, a folder made afresh outside
 the tree the pull request controls (a link or file in the way fails the
-action). Its tools are the host read bundle and repository reads confined to
-the checkout, which show the diff folder at `/diff` to `read_file` and `list`
-only; no repository path is absolute, and grep never searches it. Each changed
-file's patch is its own file there, split into numbered parts of at most
-1,500,000 bytes, at a line end where one fits and inside a longer line
-otherwise, so the read tools' 2,000,000-byte limit never refuses one; a deleted
-file has none. `/diff/index.jsonl` lists every changed file
-with its path, status (added, modified, deleted or renamed), line count and
-patch files. No prompt carries the diff: plan and both finders get the index's
-path and read the patches with the repository reads on their token budget
-(`budgets.repoFinder` for the repository finder, 400,000 billable tokens each by
-default). `read_file` clips each line at 500 characters, so a longer diff line
-is read only up to the clip, and counts as shown; a line cut across parts is
-a line of each part, shown once each is read. A page is at most 400 lines, and
-ends at the last whole line that keeps the result's JSON within 9,000
-characters, below the 10,000 at which Interchange cuts a tool result to plain
-text that counts as nothing shown; its `end` names the last line returned, and
-the reader reads on from the line after it. Each finder's reader reports
-the lines of each patch file `read_file` showed it, never `grep`'s matches;
-the review is `complete` only when the two finders between them were shown
-every line of every patch file and neither spent its budget. A review that is
-not complete holds approve and merge, as one that stopped early does, and the
-portal and the posted review say so in INCOMPLETE_NOTE's one sentence. The
-review's `unread` lists the first 50 changed files, by repository path, with the
-ranges of their patch's lines no finder was shown, and `unreadFiles` counts
-every file with such lines; ranges are numbered through the whole
-patch so a line cut across parts is one line; past 20 ranges the last runs to
-the end of the file's last unread line. The hub logs those paths and
-the count with the run and head when it records a review that is not complete, and the portal's note names the first
-five on a line of their own. The consolidate step reads each finding's lines at the head and reports
-the findings it could show the model no line of; a comment whose group had no
-member read carries `unverified`, which the portal and the review sent to
-GitHub show as "Not checked against the file". The check step verifies every
-consolidated group on the diff finder's model, one reader run each: it gets the
-finding (path, lines, title, why, trigger), the diff hunks that change its
-lines, and the repository read tools on the checkout. The total check budget
-is handed out up front, in review order (severity, then agreement): each group
-gets `budgets.check` (100,000 billable tokens by default) or what is left of
-`budgets.checkTotal` (400,000 by default), so with the defaults the four most
-serious groups are checked; later groups are unsure with the reason "check
-budget spent" and post only when both finders reported them. The check answers
-real when lines it read show the claimed behaviour, reached by the trigger with
-no guard and not intended by the description, not real only when a line of
-code disproves it, and unsure when it cannot decide. The reader director makes
-a real or not real whose reason cites, as path:line, no line from the hunks or
-from its own reads unsure, its reason led by "no cited line"; an answer with no
-verdict fails the step, which asks again. Once a check has been refused a read
-for its budget, only a not real that cites such a line stands, and anything
-else, no verdict included, is unsure; so is no verdict once the budget is
-spent. A group is posted when it is real, or unsure
-and both finders reported it; the others stay in the reported result's
-`dropped`, each with the verdict and reason.
+action). Repository reads are confined to the checkout. Checkout still writes
+per-file patch parts of at most 1,500,000 bytes and `/diff/index.jsonl`, but the
+finder does not page them. Code builds one finder message per nondeleted
+changed file, splitting only when needed to fit 120,000 UTF-8 bytes for the
+fully escaped message, including its title, description, repository and budget
+tags and `<diff path="...">` patch block. Splits prefer line ends and preserve
+UTF-8 characters. Deleted files receive no bundle; small files are not combined.
+The policy's path conditions still gate the whole review, not individual bundles.
+
+The narrow pipeline is `findersInput` → `find` → `candidates` → `checks` →
+`check` → `review`. There is no plan, repository finder, consolidate or model
+write step. A single finder runs sequentially over the bundles, with a
+400,000-token budget per bundle. Its `read_file`, `grep` and `list` tools are
+for repository context outside the supplied patch, not for reading `/diff`.
+Candidates are folded deterministically by matching path, start and end and
+normalized title (or explanation and compatible code when untitled), retaining
+the first finding's words and anchors.
+
+Completion means every assigned bundle returned through the successful finder
+map, not that tool reads covered every patch line. An empty assignment is
+complete. A missing or failed bundle leaves the review unfinished; it is not a
+clean review. New successful results set `complete: true`, `unread: []` and
+`unreadFiles: 0`. Budget exhaustion is independent of completion: a returned
+bundle can exhaust its reading budget, and `budgetExhausted` still holds approve
+and merge and displays the stopped-early warning. Stored reviews with
+`complete` absent or false retain the existing `INCOMPLETE_NOTE`, unread-file
+information and approve/merge hold.
+
+The existing checker verifies each kept candidate: it gets the finding's path,
+lines, title, explanation and trigger, the diff hunks at those lines, and
+repository read tools. Check budgets are handed out up front in severity order:
+`budgets.check` defaults to 100,000 billable tokens per finding and
+`budgets.checkTotal` to 400,000. Later findings are unsure with the reason
+"check budget spent". The checker answers real, not real or unsure; the reader
+director downgrades a real or not-real answer that cites no line from its hunks
+or reads to unsure ("no cited line"). After a budget-refused read, only a
+not-real answer citing such a line stands; other answers are unsure. An invalid
+answer otherwise fails the step and is retried.
+
+Only `real` findings survive. Not-real and unsure findings stay in `dropped`
+with their verdict and reason; repeated reports do not substitute for
+confirmation. The deterministic review action uses the finder's original title,
+explanation and trigger, with title fallbacks, and preserves its path, start
+and end. No model rewrites or re-anchors the finding. With no survivors the
+summary is `No defects reported.`; otherwise it is empty and the findings carry
+the review. The manager remains the sole pull-request writer.
 
 Beside the model steps, one step runs a tool and keeps what it says, as structured
 findings (source, rule, path, line, message, severity, fix when the tool gives

@@ -1,6 +1,6 @@
 import { action, defineWorkflow, gate, onTrigger, step } from "@intx/workflow";
 import { checkoutAction } from "@corbits/pr-code-review/pr-code-review";
-import { finderAgent, repoFinderAgent, type Sources } from "../src/agents.js";
+import { finderAgent, type Sources } from "../src/agents.js";
 
 const ADDRESS = "pr-code-finder";
 
@@ -18,7 +18,7 @@ export function prCodeFinder({ systemPrompt }: { systemPrompt?: string } = {}) {
       route: gate({ when: { from: "steps.input.output.withRepo" }, then: "checkout", else: "find", after: ["input"] }),
       find: step({ agent: finderAgent(systemPrompt), input: { from: "steps.input.output.text" }, ...FIND, after: ["route"] }),
       checkout: checkoutAction(GITHUB, { from: "steps.input.output.checkout" }, ["route"]),
-      findRepo: step({ agent: repoFinderAgent(systemPrompt), input: { from: "steps.input.output.text" }, ...FIND, after: ["checkout"] }),
+      findRepo: step({ agent: finderAgent(systemPrompt), input: { from: "steps.input.output.text" }, ...FIND, after: ["checkout"] }),
     },
   });
   return defineWorkflow({

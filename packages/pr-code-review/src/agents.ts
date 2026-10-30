@@ -1,129 +1,28 @@
-import { defineAgent, defineTool } from "@intx/agent";
-import { bitbucketRead } from "@corbits/bitbucket-datacenter-tool";
-import { githubRead } from "@corbits/github-tool";
+import { defineAgent } from "@intx/agent";
 import { repoReadUnder } from "@corbits/repo-read-tool";
 import type { RepoSource } from "@corbits/triage-contracts";
-import { READ_FILE_TOOL } from "./actions/checkout.js";
 import type { CodeReviewDirectors } from "./directors.js";
 import type { CodeReviewProfile, Role } from "./profile.js";
 import { SYSTEM_PROMPTS } from "./prompts.js";
 
 export type Sources = readonly RepoSource[];
 
-const READS: Record<RepoSource, typeof githubRead> = { github: githubRead, "bitbucket-datacenter": bitbucketRead };
-
-/** Each host's read bundle cut down to its file read, the one call the consolidate director makes; a call to any other tool is unknown. */
-function fileReadsOf(sources: Sources) {
-  return sources.map(function fileRead(source) {
-    const reads = READS[source];
-    const only = (definition: { name: string }) => definition.name === READ_FILE_TOOL[source];
-    return defineTool({
-      id: reads.id,
-      requires: reads.requires,
-      definitions: reads.definitions.filter(only),
-      factory: function fileReadFactory(env: Parameters<typeof reads>[0]) {
-        const bundle = reads(env);
-        return { ...bundle, definitions: bundle.definitions.filter(only) };
-      },
-    });
-  });
-}
-
-/**
- * The review runs a model over untrusted code, so on GitHub it binds the token the hub mints with contents read only.
- * Bitbucket Data Center has no token the hub can narrow, so its review binds the workspace's one.
- */
+/** GitHub's review token is contents-read-only; Bitbucket binds its workspace credential. */
 const CREDENTIAL: Record<RepoSource, string> = { github: "github-read", "bitbucket-datacenter": "bitbucket-datacenter" };
 
-/**
- * Each host's read bundle and the checkout action bound to the tenant's credential for that host, whose handle is the
- * host's name; an unresolved binding fails the deployment, so only the given hosts are bound.
- */
 export function credentialBindingsFor(sources: Sources) {
-  return sources.flatMap((source) => [
-    { package: READS[source].id, handle: source, provider: source, name: CREDENTIAL[source], locator: "tenant" } as const,
-    { action: "checkout", handle: source, provider: source, name: CREDENTIAL[source], locator: "tenant" } as const,
-  ]);
+  return sources.map((source) => ({ action: "checkout", handle: source, provider: source, name: CREDENTIAL[source], locator: "tenant" }) as const);
 }
 
-const CONSOLIDATE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["groups"],
-  properties: {
-    groups: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["defect", "members", "representative"],
-        properties: { defect: { type: "string" }, members: { type: "array", items: { type: "integer" } }, representative: { type: "integer" } },
-      },
-    },
-  },
-};
-
-const WRITE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["summary", "comments"],
-  properties: {
-    summary: { type: "string" },
-    comments: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["finding", "title", "body"],
-        properties: { finding: { type: "integer" }, title: { type: "string" }, body: { type: "string" } },
-      },
-    },
-  },
-};
-
-/**
- * The review's agents, each declaring its step's model on the profile's provider and run by the provider's directors;
- * the repository finder reads checkouts under the sidecar data dir `dataDir` names.
- */
-export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolidate, structured }: CodeReviewDirectors, dataDir: () => string) {
+export function codeReviewAgents(profile: CodeReviewProfile, { reader }: CodeReviewDirectors, dataDir: () => string) {
   function inference(role: Role) {
     return { sources: [{ provider: profile.provider, model: profile.models[role] }] };
   }
-
-  /** The diff finder: the model reads the pull request's diff from the checkout its input names with the read tools, confined to it. */
   function finderAgent(systemPrompt = SYSTEM_PROMPTS["finder-diff"]) {
     return defineAgent({ id: "code-review-finder", systemPrompt, tools: [repoReadUnder(dataDir)], capabilities: [], inference: inference("diffFinder"), director: reader.build({ tools: "diff", answer: "findings" }) });
   }
-
-  /** The repository finder: the model reads the checkout its input names with the read tools, confined to it. */
-  function repoFinderAgent(systemPrompt = SYSTEM_PROMPTS["finder-repo"]) {
-    return defineAgent({
-      id: "code-review-finder-repo",
-      systemPrompt,
-      tools: [repoReadUnder(dataDir)],
-      capabilities: [],
-      inference: inference("repoFinder"),
-      director: reader.build({ tools: "finder-repo", answer: "findings" }),
-    });
-  }
-
-  /** Reads the lines each finding cites at the head through the host's contents API, then groups the findings by defect. */
-  function consolidateAgent(sources: Sources) {
-    return defineAgent({
-      id: "code-review-consolidate",
-      systemPrompt: SYSTEM_PROMPTS.consolidate,
-      tools: fileReadsOf(sources),
-      capabilities: [],
-      inference: inference("consolidate"),
-      director: consolidate.build({ name: "consolidate", schema: CONSOLIDATE_SCHEMA }),
-    });
-  }
-
   return {
     finderAgent,
-    repoFinderAgent,
-    consolidateAgent,
-    /** Verifies one finding against the code, reading the checkout its input names with the read tools. */
     checkAgent: defineAgent({
       id: "code-review-check",
       systemPrompt: SYSTEM_PROMPTS.check,
@@ -132,17 +31,6 @@ export function codeReviewAgents(profile: CodeReviewProfile, { reader, consolida
       inference: inference("check"),
       director: reader.build({ tools: "check", answer: "verdict" }),
     }),
-    /** Plans the review, reading the pull request's diff from the checkout its input names with the read tools. */
-    planAgent: defineAgent({
-      id: "code-review-plan",
-      systemPrompt: SYSTEM_PROMPTS.plan,
-      tools: [repoReadUnder(dataDir)],
-      capabilities: [],
-      inference: inference("plan"),
-      director: reader.build({ tools: "diff", answer: "plan" }),
-    }),
-    writeAgent: defineAgent({ id: "code-review-write", systemPrompt: SYSTEM_PROMPTS.write, tools: [], capabilities: [], inference: inference("write"), director: structured.build({ name: "write", schema: WRITE_SCHEMA }) }),
   };
 }
-
 export type CodeReviewAgents = ReturnType<typeof codeReviewAgents>;

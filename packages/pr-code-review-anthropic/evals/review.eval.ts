@@ -7,15 +7,15 @@
 //
 //   bun run eval:review -- --prompt <file.txt> --effort medium [--model claude-haiku-5-5] [--repo] [--cases a,b] [--max-tokens 1000000] [--out <file.json>]
 //   --repo checks each case's head out (with `gh auth token`) and lets the finder read it; every tool call is recorded.
-//   --budget <tokens> sets the repository finder's token budget (default the workflow's).
+//   --budget <tokens> sets the standalone finder's token budget, or the per-finding check budget with --e2e.
 //   bun run eval:review -- --rescore <results-dir>   re-scores saved results without model calls
 //   bun run eval:review -- --rescore <e2e.json> [--out <file.json>]   sweeps posting cutoffs over a saved --e2e run without
 //   model calls (sweep.ts) and reports the loosest one at 85% precision and the precision/recall frontier.
 //   bun run eval:review -- --e2e [--cases a,b] [--<role>-model m] [--<role>-effort e] [--budget n] [--out <file.json>] [--baseline]
-//   with <role> one of plan, diff-finder, repo-finder, consolidate, check, write; each role defaults to its deployed model;
-//   runs the whole pr-code-review workflow on each case's head, checking every finding as every review does, and
-//   scores the finders' union, the consolidated findings (what the review posted before the check), the ones the check
-//   confirmed, the final review, and its comments found by both finders and by one, with each stage's precision and
+//   with <role> one of diff-finder and check; each role defaults to its deployed model;
+//   runs the whole pr-code-review workflow on each case's head, checking findings as every review does, and
+//   scores raw finder findings, deduplicated candidates, confirmed findings and final comments at their original anchors,
+//   with each stage's precision and
 //   each step's tokens, dollars and seconds. --baseline, over every case, also writes
 //   results/pr-code-review.baseline.json, refusing on a dirty working tree or when any case's repository is not public.
 //
@@ -35,7 +35,7 @@ import { runLocalWorkflow } from "../../triage-workflows/src/run-local.js";
 import * as actions from "../src/actions/index.js";
 import { BUDGET_EXHAUSTED } from "@corbits/pr-code-review/actions/checkout";
 import { credentialBindingsFor } from "@corbits/pr-code-review/agents";
-import { finderAgent, repoFinderAgent, type Sources } from "../src/agents.js";
+import { finderAgent, type Sources } from "../src/agents.js";
 import * as directors from "../src/directors.js";
 import { prCodeReview } from "../src/pr-code-review.js";
 import { finderInput } from "./finder-input.js";
@@ -289,21 +289,16 @@ function rescore(dir: string, out: string | undefined) {
 
 
 /** Each model step's role in the request, and the flag prefix that sets its model and effort. */
-const ROLE_FLAGS = { plan: "plan", diffFinder: "diff-finder", repoFinder: "repo-finder", consolidate: "consolidate", check: "check", write: "write" } as const;
+const ROLE_FLAGS = { diffFinder: "diff-finder", check: "check" } as const;
 type Role = keyof typeof ROLE_FLAGS;
 const ROLES = Object.keys(ROLE_FLAGS) as Role[];
 
-/** The role that sets each agent's model. */
 const ROLE_OF_AGENT: Record<string, Role | undefined> = {
-  "code-review-plan": "plan",
   "code-review-finder": "diffFinder",
-  "code-review-finder-repo": "repoFinder",
-  "code-review-consolidate": "consolidate",
   "code-review-check": "check",
-  "code-review-write": "write",
 };
 
-const STAGES = ["union", "consolidated", "confirmed", "final", "bothFinders", "oneFinder"] as const;
+const STAGES = ["finder", "candidates", "confirmed", "final"] as const;
 type Stage = (typeof STAGES)[number];
 
 interface StepCost {
@@ -344,7 +339,7 @@ function e2eConfig(values: Record<string, unknown>, provider: ProviderId): E2ECo
     return [[role, value]];
   }
   function effort(role: Role): [Role, Effort] {
-    return [role, effortFlag(values[`${ROLE_FLAGS[role]}-effort`], role === "write" ? "low" : "medium")];
+    return [role, effortFlag(values[`${ROLE_FLAGS[role]}-effort`], "medium")];
   }
   return {
     models: Object.fromEntries(ROLES.flatMap(model)),
@@ -384,7 +379,7 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     step.ms += ms;
   }
   const head = headOf(testCase.id);
-  const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, checkout: { source: "github", ...head }, efforts: config.efforts, ...(config.budget && { budgets: { repoFinder: config.budget } }) };
+  const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, checkout: { source: "github", ...head }, efforts: config.efforts, ...(config.budget && { budgets: { check: config.budget } }) };
   const started = performance.now();
   const run = await runLocalWorkflow({
     workflow: prCodeReview({ sources: GITHUB }),
@@ -405,16 +400,17 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
   function score(stage: Stage, findings: Finding[]) {
     stages[stage] = { ...scoreCase(testCase, findings), findings };
   }
-  if (outputs.candidates) score("union", reanchor(findingsAt(outputs.candidates.found), testCase.diff).findings);
-  if (outputs.checks) score("consolidated", findingsAt(outputs.checks.findings));
-  if (outputs.writeInput) score("confirmed", findingsAt(outputs.writeInput.findings));
-  if (outputs.review) {
-    const comments: (Finding & { agreement: { finders: number } })[] = outputs.review.comments;
-    score("final", findingsAt(comments));
-    score("bothFinders", findingsAt(comments.filter((c) => c.agreement.finders === 2)));
-    score("oneFinder", findingsAt(comments.filter((c) => c.agreement.finders === 1)));
+  if (outputs.candidates) {
+    score("finder", findingsAt(outputs.candidates.found));
+    score("candidates", findingsAt(outputs.candidates.kept));
   }
-  const failed = run.terminalStatus === "completed" ? undefined : `ended ${run.terminalStatus}`;
+  if (outputs.checks && outputs.check) {
+    const confirmed = outputs.checks.findings.filter((_: Finding, i: number) => outputs.check[i] && JSON.parse(outputs.check[i].reply).verdict === "real");
+    score("confirmed", findingsAt(confirmed));
+  }
+  if (outputs.review) score("final", findingsAt(outputs.review.comments));
+  const complete = run.terminalStatus === "completed" && STAGES.every((stage) => stages[stage] !== undefined);
+  const failed = complete ? undefined : `ended ${run.terminalStatus} with missing review stages`;
   return { id: testCase.id, ...(failed && { failed }), budgetExhausted: outputs.candidates?.budgetExhausted === true, wallMs, steps, stages, outputs };
 }
 
@@ -432,11 +428,9 @@ function replayedOf(result: E2EResult, key: CaseKey): Replayed {
   return { key, comments };
 }
 
-function cutoffLabel({ oneFinder, bothFinders, priority }: Cutoff): string {
-  function least(value: number): string {
-    return value === Number.POSITIVE_INFINITY ? "none" : `>=${value}`;
-  }
-  return `one ${least(oneFinder)}, both ${least(bothFinders)}, p<=${priority === Number.POSITIVE_INFINITY ? "any" : priority}`;
+function cutoffLabel({ confidence, priority }: Cutoff): string {
+  const least = confidence === Number.POSITIVE_INFINITY ? "none" : `>=${confidence}`;
+  return `confidence ${least}, p<=${priority === Number.POSITIVE_INFINITY ? "any" : priority}`;
 }
 
 function percent(value: number | null): string {
@@ -636,7 +630,7 @@ async function main() {
   if (!effort) throw new Error(`--effort must be one of ${EFFORTS.join(", ")}`);
   const maxTokens = Number(values["max-tokens"]);
   if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw new Error("--max-tokens must be a positive integer");
-  const model = values.model ?? deployedModel(values.repo ? repoFinderAgent() : finderAgent());
+  const model = values.model ?? deployedModel(finderAgent());
   const source = provider();
   priceOf(priceKey(source.id, model));
   const systemPrompt = readFileSync(values.prompt, "utf8");
