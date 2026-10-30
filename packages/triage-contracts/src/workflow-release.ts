@@ -28,7 +28,7 @@ export type BuiltPackage = {
   models: readonly [DeclaredModel, ...DeclaredModel[]];
 };
 
-/** A workflow of the manager chain; one that deploys others is published after them, with each release under `as`. */
+/** A workflow of the manager chain; dependencies publish first, with reviewers indexed by workflow name and other releases under `as`. */
 type ChainPackage = BuiltPackage & { source: RepoSource; deploys?: readonly { workflow: string; as: "codeReview" | "manager" | "judge" }[] };
 
 // Each host's listener deploys its manager, which deploys its code review and its judge, so they publish in this order.
