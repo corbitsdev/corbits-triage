@@ -54,7 +54,7 @@ export function wakes(pack: CheckPack, facts: PrFacts): boolean {
 }
 
 /** Events that clear a hold Triage adds itself, and the kind of step each releases whatever the policy's `on:` lists. */
-const RELEASES: ReadonlyArray<[TriageEvent, ActionKind]> = [["threads", "merge"]];
+const RELEASES: ReadonlyArray<[TriageEvent, ActionKind]> = [["threads", "merge"], ["threads", "approve"]];
 
 function releasedKinds(facts: PrFacts): ActionKind[] {
   return RELEASES.filter(([event]) => facts.events.includes(event)).map(([, kind]) => kind);

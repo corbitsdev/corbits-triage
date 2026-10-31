@@ -53,7 +53,7 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
   return {
     reviewScope: action({ handler: "reviewScope", input: { merge: [MAIL, stepsOf("take", "rules", "evaluateRules")] }, after: ["evaluateRules"] }),
     // After reviewScope, so a review the policy left out is told from one that is due; the verdict goes up from here.
-    cleared: action({ handler: "cleared", input: stepsOf("take", "rules", "evaluateRules", "reviewScope"), after: ["reviewScope"] }),
+    cleared: action({ handler: "cleared", input: stepsOf("take", "findingThreads", "rules", "evaluateRules", "reviewScope"), after: ["reviewScope"] }),
     reviewing: gate({ when: { from: "steps.reviewScope.output.deploy" }, then: "deployReview", else: "posting", after: ["cleared"] }),
     deployReview: hubAction("deployReview", { merge: [MAIL, stepsOf("take")] }, ["reviewing"]),
     mailReview: step({ agent: mailAgentOf(mailDirector, judgeAgent.inference, { tolerate: true }), input: { from: "steps.deployReview.output.mail" }, after: ["deployReview"] }),
@@ -162,7 +162,7 @@ function passOf(id: string, sources: Sources) {
  * `codeReview` and `judge`, the ones published as the definition loads, name the assets it declares the grants to
  * deploy. Mail comes from the hub and the listener that deployed it.
  */
-export function triageManager({ id, sources, codeReview, judge }: { id: string; sources: Sources; codeReview: Release | undefined; judge?: Release }) {
+export function triageManager({ id, sources, codeReview, judge }: { id: string; sources: Sources; codeReview: Release | readonly Release[] | undefined; judge?: Release }) {
   const perMail = defineWorkflow({
     id: `${id}-run`,
     trigger: { type: "manual" },
@@ -188,7 +188,7 @@ export function triageManager({ id, sources, codeReview, judge }: { id: string; 
     grantRequirements: [
       { resource: MANAGER_STATE_RESOURCE, action: MANAGER_STATE_ACTION, source: "creator" },
       { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
-      ...(codeReview ? deployGrants(codeReview) : []),
+      ...(codeReview ? (Array.isArray(codeReview) ? codeReview : [codeReview as Release]).flatMap(deployGrants) : []),
       ...(judge ? deployGrants(judge) : []),
     ],
     mailAccept: { invoker: true, tenant: true },

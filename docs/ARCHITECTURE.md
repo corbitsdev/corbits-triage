@@ -383,7 +383,14 @@ any other tenant or an unknown sender.
   running, the role is taken from every person who holds it. Each host's code review, judge, manager and
   listener publish in that order: the manager's tree gets a `release.json`
   naming the code review and judge just published and the offerings each runs
-  on, the listener's the same for the manager. A chain workflow publishes
+  on, the listener's the same for the manager. The manager's release indexes
+  code reviewers by workflow name for each host. Before either early or normal
+  review deployment, the policy provider and host select that exact entry, whose
+  recorded name must match. The manager declares creator-sourced reads for each
+  published reviewer asset, never a wildcard. Older single-reviewer releases
+  remain usable only when their recorded workflow name matches; an indexed
+  catalog never falls back to that legacy slot. Releases without the reviewer's
+  identity must be republished. A chain workflow publishes
   only while the workspace has every model it names, so code review publishes
   once its key is saved, and the release after that gives the manager and the
   listener new assets. An asset is named `<workflow>-<publisher>-<8 hex>`,
@@ -914,9 +921,9 @@ label off that head, so it never stands on a head not yet triaged.
    GitHub's `pull_request_review_thread` (`resolved`, `unresolved`) and Data
    Center's `pr:comment:edited` whose text is unchanged (a resolve or reopen,
    checked against Bitbucket 10.5) wake the pull request as `threads`, which
-   is not a policy event: it runs only the policy's merge steps, whatever
-   `on:` lists, since it releases a hold Triage added itself; every other
-   action waits for an event `on:` lists.
+   is not a policy event: it re-suggests merge and approve, not labels or
+   every other action, whatever `on:` lists, since it releases a hold Triage
+   added itself; every other action waits for an event `on:` lists.
    A pass that waited for the head's CI or a reviewer acted on none of its
    events, and the mail that ends the wait names only what ended it. The
    manager's take therefore answers, as the newest mail's events, those of
@@ -1111,24 +1118,36 @@ not line up with the review's findings are logged and left out. A GitHub
 read-back that fails, or that matches fewer comments to findings than the
 review holds inline, leaves the ids unknown and is logged as
 `finding_threads_unread`; the review counts as posted, and a later send of it
-reads them again. The first pass on a newer head gets from take at most 100
-ids, the newest unresolved findings' first and then the newest resolved ones,
-so a reopened thread is seen, reads them in one `findingThreads`
-step through the host read tool (`finding_thread_states`: GitHub's GraphQL
-`reviewThreads`, Data Center's comment by id), and done writes each state on its
-finding: resolved, outdated, replied (by someone other than Triage) or
-untouched, with `at` only when the host names the time of the change (a reply's
-time on both hosts, a resolve's on Data Center). A read the host refuses is
-logged as `finding_threads_unread` and leaves the findings as they were; on Data
-Center, where each comment is its own read, only the comments that failed stay
-unread. On Data
+reads them again. Take no longer names thread ids only on the first pass of a
+newer head. A pass whose webhook triages as `threads` also names this head's
+inline finding ids, numeric only, those not stored resolved first and then those
+stored resolved, then other heads' ids only on the first pass, still at most
+100, an id past that left out. A later pass that does not triage as `threads`
+names none. It reads the named ids in one `findingThreads` step through the
+host read tool (`finding_thread_states`: GitHub's GraphQL `reviewThreads`, Data
+Center's comment by id), and done writes each state onto the finding in the
+reviewer-result row: resolved, outdated, replied (by someone other than Triage)
+or untouched, with `at` only when the host names the time of the change (a
+reply's time on both hosts, a resolve's on Data Center). Host thread state is
+the source. A read the host refuses is logged as `finding_threads_unread` and
+leaves that finding holding, and does not leave that finding stored `resolved`,
+so a later pass cannot treat the failed read as resolved; on Data Center, where
+each comment is its own read, only the comments that failed stay unread. On Data
 Center the fields read (`threadResolved`, `threadResolvedDate`, `anchor.orphaned`,
 nested `comments`) were checked against Bitbucket 10.5. The portal shows it
 from `GET …/code-review`; a finding held in the summary, one a person sent from
 the portal that the manager never posts again on that head, or one posted
 before Triage kept its comment is `not-tracked`. Each finding's `open` follows
 that record through `findingOpen` in triage-contracts: a finding whose thread is resolved or
-outdated is no longer open; replied, untouched and `not-tracked` ones are.
+outdated is no longer open in the portal; replied, untouched and `not-tracked` ones are.
+The approve and merge hold does not follow `findingOpen`: only `resolved` releases
+the hold on that same commit, with no new push; outdated, replied, untouched, a
+finding with no comment id, and a thread this pass could not read stay open. A
+comment id kept on the code-review event counts when the claim's reviewer result
+has none, matched to that finding: the pass that asked for it releases only on a
+read of resolved, and a refused or omitted read still holds. A later
+pass that did not read this head trusts a stored `resolved` that a successful
+read wrote, on the claim or, when the claim has no id, on that event.
 With `at`, the route answers only that head's reviews and carries none over to
 it, so an older head's review reads with the states recorded for it. A
 closed or merged pull request is not read again.
@@ -1155,8 +1174,16 @@ review does not meet the step's `when.findings`: `{ above: P<n> }` allows only
 findings less severe than P<n>, `{ any: false }` none and `{ any: true }` any.
 A step
 without one is held only when it approves or merges and the review has any
-finding open. A review that did not run, failed, ran past its deadline, read
-only part of the change or reviewed another head meets no condition. Each Do
+finding open. The approve and merge hold does not follow `findingOpen`: only
+`resolved` releases the hold on that same commit, with no new push; outdated,
+replied, untouched, a finding with no comment id, and a thread this pass could not
+read stay open, and a refused read does not leave that finding stored
+`resolved`. A comment id kept only on the code-review event is that finding's id
+for this check. A later pass that did not read this head trusts a stored `resolved`
+that a successful read wrote, on the claim or, when the claim has no id, on that
+event. A review that did not run, failed, ran past its
+deadline, read only part of the change or reviewed another head meets no
+condition. Each Do
 it holds adds one line to the verdict's comment naming the action and why, and
 a held approve makes the head not approvable, so Triage takes back an earlier
 approval. A pull request the block's `for` or `when` leaves out runs its Dos as
@@ -1513,6 +1540,63 @@ read it, and passes the rest of the request to stock.
   answers the same 503; the others are held as above.
 - Webhook replay protection uses the `@corbits/webhooks` table and a
   delivery-id cache in `HUB_DATA_DIR`.
+
+## Hub observability
+
+The hub configures stock `@intx/log` / LogTape once at the application entry point. `logJson` remains the structured
+application logging convention and preserves JSON console fields. Local logs are not redacted by the external-event
+projection: access to stdout must remain restricted. Stock hub logs retain debug-level ANSI console output outside
+`NODE_ENV=production`, and info-level JSON lines in production. Application `logJson` output stays JSON in both modes.
+The migration CLI also configures logging before migrating and disposes it on success or failure. The hub factory
+never calls stock `setup()` afterwards, since that would reset the sinks. Sidecar logging is independent and unchanged.
+
+At `/manager/reviewer-result`, only after the atomic result-recording statement has committed, the hub logs one of
+`reviewer_result_accepted_success`, `reviewer_result_accepted_failure`, `reviewer_result_duplicate`, or
+`reviewer_result_stale`. Success here means the reviewer submitted a result, not that the pull request passed policy
+or that code review was complete. Stale results do not wake a manager. Other results retain the existing wake behavior,
+including retrying wake on a duplicate: `reviewer_result_woken`, `reviewer_result_unrouted` (no listener), or
+`reviewer_result_wake_failed` (the existing 502 response; the recorded result remains stored). Woken means the wake
+operation returned successfully, not that a manager consumed the result. These are observations, not approval decisions.
+
+External delivery accepts only those named events from the application logger category, not arbitrary stock logs,
+raw message templates or exceptions. The envelope explicitly projects `msg`, `tenantId`, `source`, `repo`, `number`,
+`head`, `runId`, `kind` and optional `managerRunId`, with runtime validation and bounded string sizes. Tenant and reviewer
+run IDs come from authenticated route context. Repository/head/kind come from the validated result request; they are not
+independently verified host facts. The manager ID is the claim's run ID from the same SQL statement's snapshot, not a
+newly deployed or inferred association; absent/ended claims omit it. This does not claim the manager deployed that
+reviewer. Raw results, prompts, source, credentials, mail, exception details and arbitrary extra properties are never
+projected. Correlation identifiers, including private repository names, are still sensitive metadata; destinations
+must be authorized to receive them. Both hub entry points explicitly supply empty telemetry, errors and notifications
+arrays: no external providers are enabled. Composition must supply all three arrays (an empty array deliberately disables
+that role); omitted roles are configuration errors, never silently replaced with empty arrays. Logging mode is also
+required at configuration time and selected by each entry point from its validated environment.
+
+Injected destination arrays have distinct roles:
+
+- **Telemetry:** all projected review outcomes and wake diagnostics.
+- **Errors:** accepted reviewer failures and wake failures.
+- **Notifications:** those errors plus missing-listener wake results. Duplicates and stale results are not new alerts.
+
+Each destination has an independent in-memory queue: at most 64 events including its one active send. Enqueue does not
+await delivery or invoke provider code on the domain call stack. Saturation drops the newest event and logs one local
+overflow diagnostic per destination for the process. Synchronous throws and rejected promises are caught without
+exporting the exception, and other destinations continue. A send exceeding two seconds aborts its signal, drops its
+queue and disables that destination for the process lifetime. Even if it ignores abort forever, it gets no further
+sends; timing out never creates an unbounded collection of in-flight promises. Destinations must use asynchronous I/O;
+this cannot isolate a CPU-blocking callback. Local delivery diagnostics contain only a fixed reason and destination
+array index and bypass external sinks to prevent recursion.
+
+LogTape's asynchronous sink disposal closes intake and drains for at most three seconds, then aborts active sends and
+discards queues. The server awaits this disposal during shutdown. This bounds observability disposal, not unrelated
+sidecar shutdown. The limit values are injectable for unit tests, not production environment settings. Process crashes,
+forced exits, saturation, provider failures and shutdown deadlines can lose events. There are no persisted deliveries,
+retries, recovery alerts or exactly-once guarantees; the SQL result and external event are not a transactional outbox.
+Existing SMTP liveness alerts and workflow mail dispatch are separate mechanisms, not repurposed as generic outboxes.
+
+Follow-ups remain explicit: preserve safe failure classifications/run references through the failed-review API and UI;
+independently detect overdue/unconsumed results; persist incident/delivery state with retry/dedup/recovery behavior;
+implement authorized provider adapters; instrument sidecar startup; and add an external heartbeat/watchdog for a dead
+hub. These logs do not establish the initiating cause of earlier production incidents.
 
 ## Vendoring
 

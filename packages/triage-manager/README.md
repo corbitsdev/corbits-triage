@@ -40,7 +40,11 @@ A workspace's listener and a pull request's manager.
 What each deploys next, a published workflow's source asset at one commit and the offerings it runs on (`Release`), is
 read per host from `src/release.json`, which the hub writes into each published tree and the bundle keeps external,
 as each body runs, so every entry imports without one: a listener body fails without the manager's, and a manager runs
-code review only when the code review's is set, and the judge only when the judge's is set. The repository's own `release.json` is empty.
+code review only when the policy provider and host map to a published reviewer with the matching workflow name,
+and the judge only when the judge's is set. Reviewers are indexed by workflow name in each host's `codeReviews`;
+the manager declares creator-sourced reads for each published reviewer asset. A legacy `codeReview` slot is used
+only when no indexed catalog exists and its recorded name matches. A missing or mismatched reviewer is never
+substituted, and actions requiring review remain held. The repository's own `release.json` is empty.
 
 A run mails only through an agent step, so both mail through `mailAgentOf`, whose director makes no model call. The code
 review a manager deploys is `codeReviewReviewer` in [`@corbits/pr-code-review`](../pr-code-review), and the judge is

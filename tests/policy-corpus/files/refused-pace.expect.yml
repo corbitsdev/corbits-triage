@@ -1,0 +1,3 @@
+# Pacing is not available, so a pace block is refused on its line by every reader.
+accept: false
+reason: "Line 6: `pace`: pacing is not available yet; remove the block."

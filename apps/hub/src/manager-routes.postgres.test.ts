@@ -1,3 +1,4 @@
+import { createObservability, type ReviewEvent } from "./observability.js";
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -203,7 +204,7 @@ test("PostgreSQL: done keeps each posted finding's comment, the first pass on a 
     await post(app, "done", { ...GITHUB, reviewers: [] }, manager);
     await post(app, "take", GITHUB, manager);
     expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threadIds: { runId: "run_reviewer", ids: [501] } }, manager)).json()).toEqual({ outcome: "ended" });
-    expect(logged).toEqual([expect.objectContaining({ msg: "code_review_incomplete", runId: "run_reviewer", head: "h1", unread: ["src/a.ts"], unreadFiles: 1 }), expect.objectContaining({ msg: "finding_threads_misaligned", findings: 3, ids: 1 })]);
+    expect(logged).toEqual([expect.objectContaining({ msg: "reviewer_result_accepted_success" }), expect.objectContaining({ msg: "code_review_incomplete", runId: "run_reviewer", head: "h1", unread: ["src/a.ts"], unreadFiles: 1 }), expect.objectContaining({ msg: "reviewer_result_woken" }), expect.objectContaining({ msg: "finding_threads_misaligned", findings: 3, ids: 1 })]);
     await recordEvent(db, TENANT, GITHUB, "posted", { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1" } });
     expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h1" }, threads: [] });
     expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threadIds: { runId: "run_reviewer", ids: [501, null, 502] } }, manager)).json()).toEqual({ outcome: "ended" });
@@ -239,6 +240,18 @@ test("PostgreSQL: done keeps each posted finding's comment, the first pass on a 
     expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h4" }, threads: [502, 501] });
     await post(app, "done", { ...GITHUB, reviewers: [], threads: [{ id: 501, state: "untouched" }, { id: 502, state: "outdated" }] }, manager);
     expect(await threadsShown()).toEqual([["a.ts", { state: "untouched" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "outdated" }]]);
+
+    await recordEvent(db, TENANT, GITHUB, "thread-resolved", { type: "webhook", head: "h1", payload: { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: "h1" } });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h1" }, threads: [501, 502], commentThreads: [{ runId: "run_reviewer", threads: [{ id: 501, state: "untouched" }, null, { id: 502, state: "outdated" }] }] });
+    const review = { ...REVIEW, comments: findings };
+    const stamped = await post(app, "done", { ...GITHUB, reviewers: [{ kind: "code-review", head: "h1", runId: "run_reviewer", deployedBy: "run_manager", deadline: "2999-01-01T00:00:00.000Z", result: review }], threadIds: { runId: "run_reviewer", ids: [501, null, 502] }, threads: [{ id: 501, state: "resolved" }] }, manager);
+    expect(await stamped.json()).toEqual({ outcome: "ended" });
+    const next = await (await post(app, "take", GITHUB, manager)).json() as { reviewers: { result: { comments: { path: string; thread?: { id: number; state: string } }[] } }[] };
+    expect(next.reviewers[0]?.result.comments).toEqual([
+      { ...findings[0], thread: { id: 501, state: "resolved" } },
+      findings[1],
+      { ...findings[2], thread: { id: 502, state: "untouched" } },
+    ]);
   });
 }, 60_000);
 
@@ -260,7 +273,7 @@ test("PostgreSQL: a reviewer's result wakes the pull request's manager as a host
     const late = bearer(await runWithToken(db, "run_late", [RESULT]));
     expect(await (await post(app, "reviewer-result", result, late)).json()).toEqual({ recorded: false });
     expect(woken).toHaveLength(1);
-    expect(logged).toEqual([{ level: "info", msg: "reviewer_result_stale", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", current: "h2", runId: "run_late" }]);
+    expect(logged.at(-1)).toEqual({ level: "info", msg: "reviewer_result_stale", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", current: "h2", runId: "run_late" });
     const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE key LIKE '%:run_late'`);
     expect(stored!.events).toBe(0);
 
@@ -292,7 +305,10 @@ test("PostgreSQL: a result whose wake fails stays recorded with nothing else, th
     const failed = await post(app, "reviewer-result", { ...GITHUB, kind: "judge", head: "h1", failed: "the judge did not finish" }, reviewer);
     expect(failed.status).toBe(502);
     expect(await errorCode(failed)).toBe("wake_failed");
-    expect(logged).toEqual([{ level: "error", msg: "reviewer_result_wake_failed", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", runId: "run_reviewer", error: "Error: delivery failed" }]);
+    expect(logged).toEqual([
+      { level: "error", msg: "reviewer_result_accepted_failure", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", runId: "run_reviewer" },
+      { level: "error", msg: "reviewer_result_wake_failed", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", runId: "run_reviewer", error: "Error: delivery failed" },
+    ]);
     const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE key LIKE '%:run_reviewer' AND state->>'consumedBy' IS NULL`);
     expect(stored!.events).toBe(1);
     expect(await db.execute(sql`SELECT key, state FROM corbits_triage.manager_state WHERE kind = 'claim'`)).toEqual(before);
@@ -588,5 +604,77 @@ test("PostgreSQL: /openapi.json documents each manager route's request and respo
       const fenced = extra.path.endsWith("/take") || extra.path.endsWith("/done");
       expect((fenced ? FencedOperation : Operation).allows(operation)).toBe(true);
     }
+  });
+}, 60_000);
+
+
+for (const pr of [GITHUB, BITBUCKET]) {
+  test(`PostgreSQL: ${pr.source} committed correlated review outcomes survive failing destinations without exporting secrets`, async () => {
+    await withDatabase(async function observed(db) {
+      const secret = "SENTINEL_private_review_and_delivery";
+      const events: ReviewEvent[] = [];
+      const alerts: ReviewEvent[] = [];
+      async function collect(event: ReviewEvent): Promise<void> { events.push(event); }
+      async function alert(event: ReviewEvent): Promise<void> { alerts.push(event); }
+      async function broken(): Promise<void> { throw new Error(secret); }
+      function hung(): Promise<void> { return new Promise<void>(function never() {}); }
+      const obs = createObservability({ telemetry: [broken, hung, collect], errors: [], notifications: [alert] }, { timeoutMs: 10, drainMs: 20 });
+      let waking: "ok" | "failed" | "unrouted" = "ok";
+      async function wake(): Promise<boolean> {
+        const [row] = await db.execute<{ count: number }>(sql`SELECT count(*)::int AS count FROM corbits_triage.manager_state WHERE state->>'type' = 'reviewer-result'`);
+        expect(row!.count).toBeGreaterThan(0);
+        if (waking === "failed") throw new Error(secret);
+        return waking === "ok";
+      }
+      const app = buildHub(db, { log: obs.observe, wake });
+      try {
+        const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
+        const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
+        await webhook(db, pr);
+        await post(app, "take", pr, manager);
+        const result = { ...pr, kind: "code-review", head: "h1", runId: secret, managerRunId: secret, tenantId: secret, result: { ...REVIEW, summary: secret } };
+        expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: true });
+        expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: false });
+        const failedReviewer = bearer(await runWithToken(db, "run_failed", [RESULT]));
+        waking = "failed";
+        expect((await post(app, "reviewer-result", { ...pr, kind: "judge", head: "h1", failed: secret }, failedReviewer)).status).toBe(502);
+        waking = "unrouted";
+        expect((await post(app, "reviewer-result", { ...pr, kind: "judge", head: "h1", failed: secret }, failedReviewer)).status).toBe(200);
+        await recordEvent(db, TENANT, pr, "push-new", { type: "webhook", head: "h2", payload: {} });
+        expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: false });
+        await obs.shutdown();
+        expect(events.map((event) => event.msg)).toEqual([
+          "reviewer_result_accepted_success", "reviewer_result_woken",
+          "reviewer_result_duplicate", "reviewer_result_woken",
+          "reviewer_result_accepted_failure", "reviewer_result_wake_failed",
+          "reviewer_result_duplicate", "reviewer_result_unrouted", "reviewer_result_stale",
+        ]);
+        expect(events[0]).toEqual({ ...pr, tenantId: TENANT, head: "h1", runId: "run_reviewer", managerRunId: "run_manager", kind: "code-review", msg: "reviewer_result_accepted_success" });
+        expect(alerts.map((event) => event.msg)).toEqual(["reviewer_result_accepted_failure", "reviewer_result_wake_failed", "reviewer_result_unrouted"]);
+        expect(JSON.stringify({ events, alerts })).not.toContain(secret);
+        const [stored] = await db.execute<{ count: number }>(sql`SELECT count(*)::int AS count FROM corbits_triage.manager_state WHERE state->>'type' = 'reviewer-result'`);
+        expect(stored!.count).toBe(2);
+      } finally { await obs.shutdown(); }
+    });
+  }, 60_000);
+}
+
+
+test("PostgreSQL: a rejected result write emits no external outcome", async () => {
+  await withDatabase(async function rejected(db) {
+    const events: ReviewEvent[] = [];
+    async function collect(event: ReviewEvent): Promise<void> { events.push(event); }
+    const obs = createObservability({ telemetry: [collect], errors: [], notifications: [] });
+    const app = buildHub(db, { log: obs.observe });
+    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
+    await db.execute(sql`ALTER TABLE corbits_triage.manager_state ADD CONSTRAINT reject_result CHECK (state->>'type' IS DISTINCT FROM 'reviewer-result')`);
+    try {
+      const response = await post(app, "reviewer-result", { ...GITHUB, kind: "judge", head: "h1", failed: "failed" }, reviewer);
+      expect(response.status).toBe(500);
+      await obs.shutdown();
+      expect(events).toEqual([]);
+      const [row] = await db.execute<{ count: number }>(sql`SELECT count(*)::int AS count FROM corbits_triage.manager_state`);
+      expect(row!.count).toBe(0);
+    } finally { await obs.shutdown(); }
   });
 }, 60_000);

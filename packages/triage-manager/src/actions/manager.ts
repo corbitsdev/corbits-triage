@@ -1,6 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
-import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, JudgeVerdict, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
+import { asRecord } from "@corbits/common";
+import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, FindingThread, JudgeVerdict, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { hostAwaited, type Awaits } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
@@ -12,7 +13,8 @@ export type Reviewer = typeof Reviewer.infer;
 
 const TakenEvent = type({ key: "string", event: { type: "string", head: "string", payload: "Record<string, unknown>" } });
 const Latest = { "request?": "Record<string, unknown>", reviewers: Reviewer.array(), "waitingSince?": "string", "headSince?": "string", claimedAt: "string" } as const;
-const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), threads: "number[]", ...Latest });
+const CommentThreads = type({ runId: "string > 0", threads: FindingThread.or("null").array() });
+const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), threads: "number[]", "commentThreads?": CommentThreads.array(), ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 
 /**
@@ -31,6 +33,7 @@ export const LIFETIME_MS = 3 * 60 * 60_000;
  * judge's verdict on `head`, reported on this pass or an earlier one. `waitingSince` is when the head started waiting
  * for its CI, while it still does. `stopped` names what the head still waited for once the manager's lifetime ran out:
  * the pass decides without it. `threads` are the comments of findings posted on earlier heads, whose threads the pass reads.
+ * `commentThreads` is each code-review event's thread per finding, in that review's order, null where it names no comment.
  */
 export const TakeOutput = type({
   run: "boolean",
@@ -50,6 +53,7 @@ export const TakeOutput = type({
   "waitingSince?": "string",
   "stopped?": type.enumerated("ci", "judge", "code-review").array(),
   "threads?": "number[]",
+  "commentThreads?": CommentThreads.array(),
 });
 export type TakeOutput = typeof TakeOutput.infer;
 
@@ -177,6 +181,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   if (typeof head !== "string") return { ...nothing, reviewers: answer.reviewers };
   const events = answer.outcome === "pass" ? answer.events : [];
   const threads = answer.outcome === "pass" ? answer.threads : [];
+  const commentThreads = answer.outcome === "pass" ? answer.commentThreads : undefined;
   const mails = events.filter(({ event }) => event.type === "webhook").map(({ event }) => event);
   const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
@@ -195,7 +200,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const taken = request && { ...request, ...(waitedOut && { noWait: true }), ...(!waitedOut && starting && { ciStarting: true }) };
   const verdict = report.judge ?? storedVerdict(reviewers, head);
   const waiting = waitingSince !== undefined && !waitedOut;
-  return { run: answer.outcome === "pass" || overdue || waitedOut, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }), ...(stopped && { stopped: outstanding }), ...(threads.length > 0 && { threads }) };
+  return { run: answer.outcome === "pass" || overdue || waitedOut, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }), ...(stopped && { stopped: outstanding }), ...(threads.length > 0 && { threads }), ...(commentThreads !== undefined && commentThreads.length > 0 && { commentThreads }) };
 }
 
 const Output = { output: "Record<string, unknown>" } as const;
@@ -304,6 +309,39 @@ function awaiting(take: TakeOutput, reviewers: readonly Reviewer[]): Reviewer[] 
 }
 
 /**
+ * Reviewers done persists once an asked thread this pass did not hear is no longer stored `resolved`. A refusal, or a
+ * read that omits the id, comes back with no state for it, and done leaves an empty read list out of the body, so the
+ * hub would otherwise keep the previous thread. A read that is present is left for the hub to stamp what the host said.
+ * A pass that did not ask, or whose `findingThreads` step did not run, is unchanged, so a stored `resolved` a successful
+ * read wrote still releases when a later pass does not ask.
+ */
+function clearUnheard(reviewers: readonly Reviewer[], asked: readonly number[] | undefined, threads: DoneInput["findingThreads"]): readonly Reviewer[] {
+  if (threads === undefined || asked === undefined || asked.length === 0) return reviewers;
+  const heard = new Set(threads.output.reads.map((read) => read.id));
+  const missed = new Set(asked.filter((id) => !heard.has(id)));
+  if (missed.size === 0) return reviewers;
+  return reviewers.map((reviewer) => (reviewer.kind === "code-review" ? unreadReviewer(reviewer, missed) : reviewer));
+}
+
+/** `reviewer` with each finding whose comment `missed` names set to untouched, so a failed read is not stored resolved. */
+function unreadReviewer(reviewer: Reviewer, missed: ReadonlySet<number>): Reviewer {
+  const result = asRecord(reviewer.result);
+  const comments = result?.["comments"];
+  if (result === undefined || !Array.isArray(comments)) return reviewer;
+  let changed = false;
+  const next = comments.map(function comment(finding) {
+    const fields = asRecord(finding);
+    const thread = fields === undefined ? undefined : asRecord(fields["thread"]);
+    const id = thread?.["id"];
+    if (fields === undefined || thread === undefined || typeof id !== "number" || !missed.has(id)) return finding;
+    if (thread["state"] === "untouched" && thread["at"] === undefined) return finding;
+    changed = true;
+    return { ...fields, thread: { id, state: "untouched" } };
+  });
+  return changed ? { ...reviewer, result: { ...result, comments: next } } : reviewer;
+}
+
+/**
  * Closes the pass with what it ran and stops the reviewers it no longer waits for, past their deadline or with their run
  * ended. A pass whose head still awaits a reviewer asks the hub to `wait`. `more` runs the next pass at once, or with
  * `wait` after polling for the reviewer, and names the runs of the reviewers still `out` for it to read first; `ended`
@@ -316,7 +354,7 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const mail = managerMailOf(parsed.payload);
   const mailed = [parsed.judgeMailed, parsed.earlyReviewMailed, parsed.reviewMailed].flatMap((step) => (step?.output.reviewer ? [step.output.reviewer] : []));
   const report = doneReport(parsed);
-  const reviewers = reviewersAfter(parsed.take.output, mailed);
+  const reviewers = clearUnheard(reviewersAfter(parsed.take.output, mailed), parsed.take.output.threads, parsed.findingThreads);
   const out = awaiting(parsed.take.output, reviewers).map((reviewer) => reviewer.runId);
   const wait = out.length > 0;
   const posted = parsed.postReview?.output.threads;

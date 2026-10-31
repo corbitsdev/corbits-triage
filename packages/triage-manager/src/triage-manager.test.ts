@@ -18,6 +18,7 @@ import { workflow as bitbucket } from "./triage-manager-bitbucket-datacenter.js"
 import { workflow as github } from "./triage-manager-github.js";
 import { workflow as listener } from "./triage-listener-github.js";
 import { triageListener } from "./triage-listener.js";
+import { publishedReviewer } from "./release.js";
 import { PASSES, triageManager } from "./triage-manager.js";
 
 const TENANT = "tnt_acme";
@@ -43,7 +44,7 @@ const BB_REPO = "ACME/widgets";
 const BB_PULL = "/rest/api/1.0/projects/ACME/repos/widgets/pull-requests/8";
 const BB_BUILDS = "/rest/build-status/1.0/commits/abc";
 
-const RELEASE = { workflow: { assetId: "ast_review", commitSha: "c0ffee", packageName: "@corbits/pr-code-review-anthropic", entry: "./pr-code-review-reviewer-github.mjs" }, offerings: { ids: ["off_a"], defaultId: "off_a" } };
+const RELEASE = { name: "pr-code-review-reviewer-github", workflow: { assetId: "ast_review", commitSha: "c0ffee", packageName: "@corbits/pr-code-review-anthropic", entry: "./pr-code-review-reviewer-github.mjs" }, offerings: { ids: ["off_a"], defaultId: "off_a" } };
 const JUDGE_RELEASE = { workflow: { assetId: "ast_judge", commitSha: "c0ffee", packageName: "@corbits/triage-judge-github-workflow", entry: "./triage-judge-github.mjs" }, offerings: { ids: ["off_d"], defaultId: "off_d" } };
 const CODE_REVIEW = { codeReview: { on: true, for: ["everyone"], triage: ["pass", "fail", "unsure"], rules: "any" }, blocks: ["code-review"] };
 const REVIEW_REQUEST = { codeReviewRequest: { kind: "code-review", number: PR.number, title: PR.title, description: PR.body, diff: "diff --git a/src/flag.ts b/src/flag.ts", checkout: { source: "github", repo: PR.repo, sha: HEAD } } };
@@ -452,12 +453,13 @@ describe("triage-manager with code review", () => {
   });
 
   test("the first pass deploys the review and mails it, posting nothing; the pass that collects its report posts the verdict and the review together", async () => {
+    publish({ github: { codeReviews: { "other-reviewer": { ...RELEASE, name: "other-reviewer", workflow: { ...RELEASE.workflow, assetId: "ast_other" } }, [RELEASE.name]: { ...RELEASE, workflow: { ...RELEASE.workflow, assetId: "ast_selected" } } } } });
     const { writes, host } = githubHost();
     const mailed: unknown[] = [];
     const first = fakeHub({ takes: [{ ...PASS, request: ON }], dones: [ENDED] });
     expect((await runMail(reviewed, wake(), host, first.hub, mailed)).ran).toContain("doneReviewing");
     expect(writes).toEqual([inProgress("code review")]);
-    expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_review", package: { format: "source", commitSha: "c0ffee", packageName: RELEASE.workflow.packageName } }, entry: RELEASE.workflow.entry, sourceOfferingIds: ["off_a"], defaultSourceOfferingId: "off_a" } });
+    expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_selected", package: { format: "source", commitSha: "c0ffee", packageName: RELEASE.workflow.packageName } }, entry: RELEASE.workflow.entry, sourceOfferingIds: ["off_a"], defaultSourceOfferingId: "off_a" } });
     expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
@@ -474,9 +476,9 @@ describe("triage-manager with code review", () => {
     expect(mailed).toHaveLength(1);
   });
 
-  /** GitHub answering the review's inline comments and its review threads as GraphQL gives them. */
-  function threadedHost(threads?: object[]) {
-    const { writes, host } = githubHost();
+  /** GitHub answering the review's inline comments and its review threads as GraphQL gives them. `checkRuns` is the head's CI. */
+  function threadedHost(threads?: object[], checkRuns?: object[]) {
+    const { writes, host } = githubHost(HEAD, { checkRuns });
     async function threaded(input: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
       if (/\/pulls\/\d+\/comments$/.test(url.pathname)) {
@@ -641,6 +643,66 @@ describe("triage-manager with code review", () => {
     expect(doneBody(hub.calls)["report"]).toMatchObject({ verdict: { codeReviewSkipped: why } });
   });
 
+  test("a code review naming an unknown provider is never deployed, rather than defaulting", async () => {
+    const { host } = githubHost();
+    const unknown = hubRequest(RULES, { codeReview: { ...CODE_REVIEW.codeReview, provider: "openai" }, ...REVIEW_REQUEST });
+    const hub = fakeHub({ takes: [{ ...PASS, request: unknown }], dones: [ENDED] });
+    const { ran } = await runMail(reviewed, wake(), host, hub.hub);
+    expect(ran).not.toContain("deployReview");
+    expect(ran).toContain("mirrorRules");
+  });
+
+  test("a published reviewer for another workflow is never deployed", async () => {
+    publish({ github: { codeReview: { ...RELEASE, name: "wrong-reviewer" } } });
+    const { host } = githubHost();
+    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(RULES, { ...CODE_REVIEW, ...REVIEW_REQUEST }) }], dones: [ENDED] });
+    const { ran } = await runMail(reviewed, wake(), host, hub.hub);
+    expect(ran).not.toContain("deployReview");
+  });
+
+  test.each(["github", "bitbucket-datacenter"])("provider routing verifies published identity on %s in both paths", async (source) => {
+    const name = `pr-code-review-reviewer-${source}`;
+    const payload = wake({ source, repo: PR.repo, number: PR.number });
+    const take = { output: { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { ...CODE_REVIEW, ...REVIEW_REQUEST } } };
+    const rules = { output: { items: [{ facts: { author: "octocat", authorTeams: [], authorTeamsUnknown: [], changedFiles: 1, files: [{ path: "src/flag.ts" }] }, pack: RULES }] } };
+    for (const [identity, expected] of [[undefined, false], ["wrong-reviewer", false], [name, true]] as const) {
+      const { name: _name, ...unnamed } = RELEASE;
+      publish({ [source]: { codeReview: identity === undefined ? unnamed : { ...RELEASE, name: identity } } });
+      expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(expected);
+      expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(expected);
+      if (!expected) await expect(actions.deployReview({ payload, take }, {} as EffectContext, new AbortController().signal)).rejects.toThrow("no matching code review");
+    }
+    publish({ [source]: {} });
+    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(false);
+    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(false);
+  });
+
+  test.each(["github", "bitbucket-datacenter"])("selects the mapped reviewer from multiple published releases on %s", async (source) => {
+    const name = `pr-code-review-reviewer-${source}`;
+    const chosen = { ...RELEASE, name, workflow: { ...RELEASE.workflow, assetId: "ast_chosen" } };
+    const other = { ...RELEASE, name: "other-reviewer", workflow: { ...RELEASE.workflow, assetId: "ast_other" } };
+    const payload = wake({ source, repo: PR.repo, number: PR.number });
+    const take = { output: { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { ...CODE_REVIEW, ...REVIEW_REQUEST } } };
+    const rules = { output: { items: [{ facts: { author: "octocat", authorTeams: [], authorTeamsUnknown: [], changedFiles: 1, files: [{ path: "src/flag.ts" }] }, pack: RULES }] } };
+    publish({ [source]: { codeReviews: { [name]: chosen, "other-reviewer": other } } });
+    expect(publishedReviewer(source as "github" | "bitbucket-datacenter", name)?.workflow.assetId).toBe("ast_chosen");
+    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(true);
+    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(true);
+    const grants = triageManager({ id: "test", sources: [source], codeReview: [other, chosen] }).grantRequirements;
+    expect(grants).toContainEqual({ resource: "asset:ast_chosen", action: "read", source: "creator" });
+    expect(grants).toContainEqual({ resource: "asset:ast_other", action: "read", source: "creator" });
+    publish({ [source]: { codeReview: chosen, codeReviews: { [name]: other, "other-reviewer": chosen } } });
+    expect(publishedReviewer(source as "github" | "bitbucket-datacenter", name)).toBeUndefined();
+    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(false);
+    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(false);
+  });
+
+  test("deployReview refuses an unknown code review provider rather than defaulting", async () => {
+    const signal = new AbortController().signal;
+    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { codeReview: { provider: "openai" } } };
+    await expect(actions.deployReview({ payload: wake(), take: { output: take } }, {} as EffectContext, signal)).rejects.toThrow('deployReview: unknown code review provider "openai"');
+  });
+
   test.each([
     ["a changed file `when.paths` keeps is reviewed", { paths: ["!**/*.md"] }, {}, true],
     ["fewer files read than changed are never left out by `when.paths`", { paths: ["!**/*.ts"] }, { pull: { changed_files: 2 } }, true],
@@ -771,11 +833,252 @@ describe("triage-manager with code review", () => {
     expect(approve).toEqual(reason === undefined ? APPROVE_DO : { ...APPROVE_DO, held: true, reason });
   });
 
+  const MERGE_DO = { list: "pass", index: 1, kind: "merge", effectId: "do:merge", target: {}, reason: "every rule passed" };
+  const DO_BOTH = [APPROVE_DO, MERGE_DO];
+  const INCOMPLETE = "Code review did not read the whole change on this head.";
+  const ABOVE_P2 = [{ pack: { ...RULES, actions: { ...RULES.actions, pass: [{ do: "approve", when: { findings: { above: "P2" } } }, { do: "merge", when: { findings: { above: "P2" } } }] } } }];
+
+  function threaded(priority: number, state?: "resolved" | "outdated" | "replied" | "untouched", id = 501) {
+    const comment = finding(priority).comments[0]!;
+    if (state === undefined) return comment;
+    return { ...comment, thread: { id, state } };
+  }
+
+  function clearedFor(comments: ReturnType<typeof threaded>[], options: { asked?: number[]; reads?: { id: number; state: "resolved" | "outdated" | "replied" | "untouched" }[]; unread?: string; review?: { complete?: boolean; budgetExhausted?: boolean }; items?: object[] } = {}) {
+    const review = { ...REVIEW, ...options.review, comments };
+    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review, taken: { blocks: ["code-review"], ...CODE_REVIEW }, ...(options.asked !== undefined && { threads: options.asked }) };
+    const reads = options.reads;
+    return actions.cleared({
+      take: { output: take },
+      rules: { output: { items: options.items ?? [] } },
+      evaluateRules: { output: { ...PASSED, approvable: true, actions: DO_BOTH } },
+      reviewScope: { output: { reviewed: true } },
+      ...(reads !== undefined && { findingThreads: { output: { reads, ...(options.unread !== undefined && { unread: options.unread }) } } }),
+    });
+  }
+
+  function heldBoth(reason: string) {
+    return [{ ...APPROVE_DO, held: true, reason }, { ...MERGE_DO, held: true, reason }];
+  }
+
+  test("cleared, a resolved read releases approve and merge", async () => {
+    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
+    expect(made.actions).toEqual(DO_BOTH);
+    expect(made.actions.map((action) => "effectId" in action ? action.effectId : undefined)).toEqual(["do:approve", "do:merge"]);
+    expect(made.approvable).toBe(true);
+    expect(made.feedback).not.toContain("held");
+  });
+
+  test("cleared, an outdated read still holds", async () => {
+    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "outdated" }] });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+    expect(made.approvable).toBe(false);
+  });
+
+  test("cleared, a summary finding holds when a sibling thread was read resolved", async () => {
+    const made = await clearedFor([threaded(2), threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+    expect(made.approvable).toBe(false);
+  });
+
+  test("cleared, an asked thread stays held when the read is empty and unread, even if it was stored resolved", async () => {
+    const made = await clearedFor([threaded(2, "resolved")], { asked: [501], reads: [], unread: "401" });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+  });
+
+  test("cleared, an asked thread stays held when the read omits it, even if it was stored resolved", async () => {
+    const made = await clearedFor([threaded(2, "resolved")], { asked: [501], reads: [{ id: 999, state: "resolved" }] });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+  });
+
+  test("cleared, a stored resolved thread releases approve and merge when the pass asked for none", async () => {
+    const made = await clearedFor([threaded(2, "resolved")]);
+    expect(made.actions).toEqual(DO_BOTH);
+    expect(made.approvable).toBe(true);
+    expect(made.feedback).not.toContain("held");
+  });
+
+  test("cleared, a stored resolved thread releases approve and merge when threads is empty", async () => {
+    const made = await clearedFor([threaded(2, "resolved")], { asked: [] });
+    expect(made.actions).toEqual(DO_BOTH);
+    expect(made.actions.map((action) => "effectId" in action ? action.effectId : undefined)).toEqual(["do:approve", "do:merge"]);
+    expect(made.approvable).toBe(true);
+    expect(made.feedback).not.toContain("held");
+  });
+
+  test("cleared, a stored resolved thread releases approve and merge when the pass asked only for an id not on these findings", async () => {
+    const made = await clearedFor([threaded(2, "resolved")], { asked: [999] });
+    expect(made.actions).toEqual(DO_BOTH);
+    expect(made.approvable).toBe(true);
+    expect(made.feedback).not.toContain("held");
+  });
+
+  test("cleared, a finding left out while the pass asked for another thread on this head still holds", async () => {
+    const made = await clearedFor([threaded(2, "resolved", 501), threaded(2, "resolved", 502)], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
+    expect(made.actions).toEqual(heldBoth(OPEN));
+    expect(made.approvable).toBe(false);
+  });
+
+  test.each(["outdated", "replied", "untouched"] as const)("cleared, a stored %s thread still holds when the pass asked for none", async (state) => {
+    const made = await clearedFor([threaded(2, state)]);
+    expect(made.actions).toEqual(heldBoth(OPEN));
+  });
+
+  test("cleared, above P2 does not count a resolved P0 and still counts an outdated P0", async () => {
+    const resolved = await clearedFor([threaded(0, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }], items: ABOVE_P2 });
+    expect(resolved.actions).toEqual(DO_BOTH);
+    expect(resolved.approvable).toBe(true);
+    const outdated = await clearedFor([threaded(0, "untouched")], { asked: [501], reads: [{ id: 501, state: "outdated" }], items: ABOVE_P2 });
+    expect(outdated.actions).toEqual(heldBoth(OPEN_P2));
+    expect(outdated.approvable).toBe(false);
+  });
+
+  test.each([
+    ["not complete", { complete: false }],
+    ["stopped early", { budgetExhausted: true }],
+  ])("cleared, an incomplete review (%s) stays incomplete when its thread was read resolved", async (_name, review) => {
+    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }], review });
+    expect(made.actions).toEqual(heldBoth(INCOMPLETE));
+  });
+
   test("cleared keeps the reason of a Do already held, such as for CI", async () => {
     const waiting = { ...APPROVE_DO, kind: "merge", held: true, reason: "Waiting for checks to finish." };
     const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: { ...REVIEW, budgetExhausted: true }, taken: { blocks: ["code-review"], ...CODE_REVIEW } };
     const { actions: [merge] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { ...PASSED, actions: [waiting] } }, reviewScope: { output: { reviewed: true } } }) as { actions: Record<string, unknown>[] };
     expect(merge).toEqual(waiting);
+  });
+
+  const CI_GREEN = [{ name: "ci", status: "completed", conclusion: "success" }];
+  /** Approve and merge, woken by the policy's own events, which do not include threads. */
+  const RELEASING: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: [{ do: "approve" }, { do: "merge" }] } };
+  const SUMMARY = { ...REVIEW.comments[0]!, title: "In the summary", body: "This finding was not posted inline." };
+
+  function inline(state: "untouched" | "resolved") {
+    return { ...REVIEW.comments[0]!, thread: { id: 501, state } };
+  }
+
+  function wroteMerge(writes: readonly Write[]): boolean {
+    return writes.some((write) => write.method === "PUT" && write.path === `/repos/${PR.repo}/pulls/${PR.number}/merge`);
+  }
+
+  type Suggested = { kind: string; effectId?: string; held?: boolean; reason?: string };
+
+  /**
+   * A later pass on the head whose review is already stored, woken by a review-thread webhook. The pack's `on:` does not
+   * name threads, so approve and merge are suggested only because that wake releases them. No second review is deployed.
+   * `commentThreads` is the code-review event's thread per finding, which a review posted before the claim kept the id
+   * has even when the stored comments do not.
+   */
+  async function threadsWake(hostThreads: object[] | undefined, comments: readonly object[], commentThreads?: { runId: string; threads: ({ id: number; state: "resolved" | "outdated" | "replied" | "untouched" } | null)[] }[]) {
+    const request = { ...hubRequest(RELEASING, { ...CODE_REVIEW, ...REVIEW_REQUEST }), event: "pull_request_review_thread", action: "resolved", events: ["threads"] };
+    const { writes, host } = threadedHost(hostThreads, CI_GREEN);
+    const take = { ...PASS, request, events: [mailEvent(HEAD, { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: HEAD }, "evt_threads")], threads: [501], reviewers: [{ ...reviewer(), result: { ...REVIEW, comments } }], ...(commentThreads !== undefined && { commentThreads }) };
+    const hub = fakeHub({ takes: [take], dones: [ENDED] });
+    const run = await runMail(reviewed, wake(), host, hub.hub);
+    return { writes, ...run, calls: hub.calls };
+  }
+
+  function suggested(outputs: Record<string, unknown>, step: "evaluateRules" | "cleared") {
+    return (outputs[step] as { approvable?: boolean; actions: Suggested[] });
+  }
+
+  /** Approve and merge are on the list only because the threads wake released them: the pack's `on:` does not name threads. */
+  function releasedOnly(outputs: Record<string, unknown>) {
+    const [item] = (outputs["rules"] as { items: { facts: { events: string[] }; pack: CheckPack }[] }).items;
+    expect(item!.pack.actions.when).not.toContain("threads");
+    expect(item!.facts.events).toEqual(["threads"]);
+    expect(suggested(outputs, "evaluateRules").actions.map((action) => action.kind)).toEqual(["approve", "merge"]);
+  }
+
+  test("a resolved host thread on a threads wake writes approve and merge under the effect ids evaluateRules assigned", async () => {
+    const { writes, outputs, ran, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [inline("untouched")]);
+    expect(terminalStatus).toBe("completed");
+    expect(ran).not.toContain("deployReview");
+    releasedOnly(outputs);
+    const evaluated = suggested(outputs, "evaluateRules");
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.map((action) => action.held)).toEqual([undefined, undefined]);
+    expect(cleared.actions.map((action) => action.effectId)).toEqual(evaluated.actions.map((action) => action.effectId));
+    expect(cleared.approvable).toBe(true);
+    expect(cleared.approvable).toBe(evaluated.approvable);
+    expect(approved(writes)).toBe(true);
+    expect(wroteMerge(writes)).toBe(true);
+  });
+
+  test("an outdated host thread holds approve and merge for the open finding and writes neither", async () => {
+    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isOutdated: true })], [inline("untouched")]);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    const evaluated = suggested(outputs, "evaluateRules");
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions).toEqual([
+      { ...evaluated.actions[0], held: true, reason: OPEN },
+      { ...evaluated.actions[1], held: true, reason: OPEN },
+    ]);
+    expect(cleared.actions.map((action) => action.reason)).not.toContain(INCOMPLETE);
+    expect(cleared.approvable).toBe(false);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+  });
+
+  test("a resolved thread does not release a summary finding, so approve is not written", async () => {
+    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [inline("untouched"), SUMMARY]);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.map((action) => action.held === true ? action.reason : undefined)).toEqual([OPEN, OPEN]);
+    expect(cleared.approvable).toBe(false);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+  });
+
+  test("a thread read the host refuses holds approve even when the stored thread was resolved", async () => {
+    const { writes, outputs, calls, terminalStatus } = await threadsWake(undefined, [inline("resolved")]);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    expect(doneBody(calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
+    expect(doneBody(calls)["threads"]).toBeUndefined();
+    const reviewers = doneBody(calls)["reviewers"] as { kind: string; result?: { comments?: { thread?: { id: number; state: string } }[] } }[];
+    const review = reviewers.find((reviewer) => reviewer.kind === "code-review");
+    expect(review?.result?.comments?.map((comment) => comment.thread)).toEqual([{ id: 501, state: "untouched" }]);
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.find((action) => action.kind === "approve")).toMatchObject({ held: true, reason: OPEN });
+    expect(cleared.approvable).toBe(false);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+  });
+
+  /** Comment id 501 lives on the code-review event, not on the stored review the claim kept before it recorded threads. */
+  const EVENT_THREAD = [{ runId: DEPLOYED, threads: [{ id: 501, state: "untouched" as const }] }];
+
+  test("a resolved read of a comment id known only from the code-review event writes approve and merge", async () => {
+    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [REVIEW.comments[0]!], EVENT_THREAD);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    const evaluated = suggested(outputs, "evaluateRules");
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.map((action) => action.held)).toEqual([undefined, undefined]);
+    expect(cleared.actions.map((action) => action.effectId)).toEqual(evaluated.actions.map((action) => action.effectId));
+    expect(cleared.approvable).toBe(true);
+    expect(cleared.approvable).toBe(evaluated.approvable);
+    expect(approved(writes)).toBe(true);
+    expect(wroteMerge(writes)).toBe(true);
+  });
+
+  test("a refused read of a comment id known only from the code-review event still holds and does not stamp resolved", async () => {
+    const { writes, outputs, calls, terminalStatus } = await threadsWake(undefined, [REVIEW.comments[0]!], EVENT_THREAD);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    expect(doneBody(calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
+    expect(doneBody(calls)["threads"]).toBeUndefined();
+    const reviewers = doneBody(calls)["reviewers"] as { kind: string; result?: { comments?: { thread?: { state: string } }[] } }[];
+    const review = reviewers.find((reviewer) => reviewer.kind === "code-review");
+    expect(review?.result?.comments?.map((comment) => comment.thread?.state)).not.toContain("resolved");
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.find((action) => action.kind === "approve")).toMatchObject({ held: true, reason: OPEN });
+    expect(cleared.approvable).toBe(false);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
   });
 
   test("a review that could not be mailed by its deadline leaves the verdict to go up alone, waiting for no reviewer", async () => {
