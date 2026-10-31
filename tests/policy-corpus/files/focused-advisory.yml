@@ -1,0 +1,14 @@
+rules:
+  - check: focused
+    text: One change.
+    reason: Mixed changes are harder to review.
+    evidence: [maintainer-stated]
+  - check: ci-green
+    text: CI passes.
+    reason: Tests protect the repository.
+    evidence: [maintainer-stated]
+  - check: no-forbidden-paths
+    text: Do not change vendor files.
+    paths: ["vendor/**"]
+    reason: Vendor files are maintained upstream.
+    evidence: [maintainer-stated]
