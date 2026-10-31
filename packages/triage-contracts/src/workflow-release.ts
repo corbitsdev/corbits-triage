@@ -28,7 +28,7 @@ export type BuiltPackage = {
   models: readonly [DeclaredModel, ...DeclaredModel[]];
 };
 
-/** A workflow of the manager chain; one that deploys others is published after them, with each release under `as`. */
+/** A workflow of the manager chain; dependencies publish first, with reviewers indexed by workflow name and other releases under `as`. */
 type ChainPackage = BuiltPackage & { source: RepoSource; deploys?: readonly { workflow: string; as: "codeReview" | "manager" | "judge" }[] };
 
 // Each host's listener deploys its manager, which deploys its code review and its judge, so they publish in this order.
@@ -111,7 +111,11 @@ export async function withRelease(models: readonly ModelInfo[], entry: SourceInd
     const target = chainOf(slot.workflow);
     const offerings = target && offeringsIn(models, target.models);
     if (!deployed || !target || !offerings) throw new Error(`${entry.workflow} deploys ${slot.workflow}, which this release has not published before it.`);
-    body[slot.as] = { workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
+    const release = { name: slot.workflow, workflow: { assetId: deployed.assetId, commitSha: deployed.commitSha, packageName: target.packageName, entry: target.entry }, offerings };
+    if (slot.as === "codeReview") {
+      const reviewers = (body["codeReviews"] ??= {}) as Record<string, unknown>;
+      reviewers[slot.workflow] = release;
+    } else body[slot.as] = release;
   }
   if (Object.keys(body).length === 0) return plain;
   const json = `${JSON.stringify({ [chain.source]: body }, null, 2)}\n`;

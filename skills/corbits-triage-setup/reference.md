@@ -1,6 +1,6 @@
 # .corbits-triage.yml reference
 
-The file holds `rules` (required), and optionally `onFail`, `actions` or `decide`, `labels`, `extends`, `groups`, the block `code-review`, `pace` and `pauseLabel`. Any other key is refused, with the key it was likely meant to be. Never write `security` or `deslop`: those reviews are not available. In a file already on the default branch, Triage skips either block and any `decide` rule with a condition on one, runs the rest, and offers a pull request removing them; Triage refuses a file written with them. Every refusal names its line and what the value must be. YAML only, at most 64 KB; YAML aliases (`*name`) and the keys `__proto__`, `constructor` and `prototype` are refused.
+The file holds `rules` (required), and optionally `onFail`, `actions` or `decide`, `labels`, `extends`, `groups`, the block `code-review` and `pauseLabel`. Any other key is refused, with the key it was likely meant to be. Never write `security`, `deslop` or `pace`: those reviews and pacing are not available. In a file already on the default branch, Triage skips a `security` or `deslop` block and any `decide` rule with a condition on one, runs the rest, and offers a pull request removing them; Triage refuses a file written with them. Every refusal names its line and what the value must be. YAML only, at most 64 KB; YAML aliases (`*name`) and the keys `__proto__`, `constructor` and `prototype` are refused.
 
 ## Rules
 
@@ -163,7 +163,7 @@ labels:
 
 Write these only when the user asks. A file holds `decide` or `actions`, never both.
 
-A file with `code-review` on runs the PR workflow: triage, then code review, then its `actions`. The file then decides code review for the repository, whatever its Code review switch says. It needs the workspace's Anthropic key and a place for code review to run; without them triage runs alone and approve and merge wait for a person. Code review always runs on Anthropic with the workspace's Anthropic key; `provider` has no effect. On GitHub, a pull request carrying the `pauseLabel` label starts no run until the label comes off, and one that can't be read is retried, never run unpaused. `pace` and `decide` are read and checked, and nothing acts on them: a file with `decide` takes no actions.
+A file with `code-review` on runs the PR workflow: triage, then code review, then its `actions`. The file then decides code review for the repository, whatever its Code review switch says. It needs the workspace's Anthropic key and a place for code review to run; without them triage runs alone and approve and merge wait for a person. Code review runs on Anthropic with the workspace's Anthropic key: `provider` must be `anthropic`, the only reviewer in this release, and the optional `profile` is checked but does not affect the review yet. A file naming any other provider is refused. On GitHub, a pull request carrying the `pauseLabel` label starts no run until the label comes off, and one that can't be read is retried, never run unpaused. `decide` is read and checked, and nothing acts on it: a file with `decide` takes no actions.
 
 ```yaml
 groups:
@@ -186,12 +186,12 @@ decide:
   - `for`: list of groups; default everyone.
   - `when`: `triage` (`pass`, `fail`, `unsure` or a list of them), `rules` and `paths` (globs; any changed file matching is enough). A glob starting with `!` leaves out the files it matches; with only `!` globs, every other file matches. When the user asks to turn on `code-review`, suggest skipping pull requests that change only Markdown docs or lockfiles (`*.lock`, which covers `bun.lock`, plus `package-lock.json` and `pnpm-lock.yaml`), as in the example. `rules`: `pass` (the default) runs the review only once every rule in the file with `onFail: fail` that needs no model has passed, CI only when `ci-green` is one of them, and Triage's built-in checks (draft, changes requested) never hold it back; a failed one skips it, and while CI is still running it waits. `any` runs it whatever those rules say.
   - Findings never change the verdict. Which actions still run with findings open is each step's `when.findings`, under Actions. The old `clean` key is refused.
-  - `provider`: `anthropic`, `openai`, `xai`, `google`, `opencode` or `custom`.
-- `pace`: `debounce`, `maxWait` (durations of at least 1, such as `30s`, `2m`, `24h`, `7d`), `perHead` (whole number ≥ 1), `cap: { runs, per }`, `backoff: { pushes, within, pause }`.
+  - `provider`: `anthropic`, the only reviewer in this release; any other value is refused.
+  - `profile` (optional): a name of at most 100 characters, checked but not used by the review yet.
 - `pauseLabel`: a label of at most 50 characters.
 - `decide`: rules `{ if, do }`, in order. `if` sets at least one of `all: clean`, `triage`, `event` (a list of `opened`, `updated`, `checks`, `ready`), `author` (groups) and the outcome of a block that is on (`clean`, `findings`, `incomplete`, `skipped`, a list of them, or `{ findings: <severity> }`). `do` is `approve`, `merge`, `close`, `request-changes`, `nothing`, or a list of those and steps written as under Actions (`comment`, `labels`, `request-review` and `assign` need their `target`). `nothing` stands alone. `{ all: clean }` holds when at least one block ran and every block that ran is clean; skipped blocks never count, so it doesn't hold when every block was skipped or none is on. A rule that approves or merges without `triage` matches only Pass. Incomplete is never clean: a rule that approves or merges can't name `incomplete`, and only matches when nothing that ran is incomplete.
 
-A file that uses `extends` can't hold `groups`, blocks, `pace`, `pauseLabel` or `decide`.
+A file that uses `extends` can't hold `groups`, blocks, `pauseLabel` or `decide`.
 
 ## extends
 

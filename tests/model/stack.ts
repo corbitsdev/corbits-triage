@@ -61,6 +61,7 @@ export const MANAGER_RELEASE: Release = {
 
 /** The code review the release publishes beside the manager; its run never reports, as `ReviewFault` plays. */
 export const REVIEW_RELEASE: Release = {
+  name: "pr-code-review-reviewer-github",
   workflow: { assetId: `ast_${REVIEWER}`, commitSha: "c0ffee", packageName: "@corbits/pr-code-review-reviewer-github-workflow", entry: "./pr-code-review-reviewer-github.mjs" },
   offerings: OFFERINGS,
 };

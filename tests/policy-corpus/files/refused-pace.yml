@@ -1,0 +1,6 @@
+rules:
+  - check: ci-green
+    text: CI passes.
+    reason: Required.
+    evidence: [maintainer-stated]
+pace: { debounce: 30s }
