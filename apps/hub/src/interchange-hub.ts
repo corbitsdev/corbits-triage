@@ -32,6 +32,7 @@
 //   the pr-triage deployment rotation and the workflow release call, the asset
 //   service and repo store the workflow release publishes through, and the
 //   deployment plugin registry code review's placement asks.
+// - Logging is configured once by server.ts, not reset by this composition.
 // - Named functions in place of inline callbacks, and `errorText(err)`, per
 //   this repository's code rules.
 // `resolveHubApiOrigin` is imported from stock's hub app source, which is not
@@ -99,7 +100,7 @@ import { generateKeyPair } from "@intx/crypto";
 import { hexEncode, type AdapterManifest } from "@intx/types";
 import { MAX_SIDECAR_FRAME_BYTES } from "@intx/types/sidecar";
 import { upgradeWebSocket, websocket } from "hono/bun";
-import { setup, getLogger } from "@intx/log";
+import { getLogger } from "@intx/log";
 import { errorText } from "@corbits/common";
 import type { DatabaseConfig, InterchangeSettings } from "./env.js";
 import { createHubAuth, type HubAuthConfig } from "./auth.js";
@@ -144,8 +145,6 @@ export async function createInterchangeHub({
   sidecarOperationTimeoutMs,
   extraRunTokenRoutes = [],
 }: CreateHubServerOpts) {
-  await setup();
-
   const log = getLogger(["hub"]);
   const { db } = createDB(database);
 
