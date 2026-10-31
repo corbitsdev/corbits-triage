@@ -745,4 +745,6 @@ Type in the search box to narrow the list by anything in a row. The dropdown lim
 
 **How do I remove someone from the workspace?** The portal does not change roles; an Owner or Admin changes or removes a person's role through the Triage server's API.
 
+**Can the server operator diagnose a review that did not finish?** Give them the repository, pull request number and commit id. The hub's local JSON logs distinguish a newly received review result from a duplicate or an old-head result, and show whether waking triage succeeded, had no listener, or failed. They include the reviewer run id and the manager run id when one is known. A received result does not mean the pull request passed, and a successful wake does not prove triage consumed it. These logs do not change review requirements or approval permissions. External error reports and notifications are not enabled by default and are not guaranteed delivery; no alert is not proof that the service is healthy.
+
 **Something looks wrong. What should I tell support?** The repository name and pull request number, what you expected, what you saw, and the versions under **Versions for support** at the bottom of Settings (use its **Copy** button). The audit log's **Export** button gives support a record of what happened.
