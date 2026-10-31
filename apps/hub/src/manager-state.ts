@@ -63,8 +63,11 @@ const NewEvent = EventState.omit("receivedAt", "consumedBy", "consumedAt");
 export type PullRequestRef = { source: RepoSource; repo: string; number: number };
 type TakenEvent = { key: string; event: ManagerEvent };
 
+/** A code-review event's thread for each finding, in the review's order; null where that finding has no comment id. */
+type CommentThreads = { runId: string; threads: (typeof FindingThread.infer | null)[] };
+
 type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[]; waitingSince?: string; headSince?: string; claimedAt: string };
-type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean; threads: number[] } & Latest);
+type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean; threads: number[]; commentThreads?: CommentThreads[] } & Latest);
 type ClosedPass = Claim["history"][number];
 /**
  * What a pass reports as done closes it: the head it worked on, whether its verdict waits for the host's checks, or the
@@ -80,7 +83,7 @@ type DoneResult = { outcome: "refused" } | { outcome: "ended" } | { outcome: "mo
  * `wait` when the pass's head still awaits CI or a reviewer, so the manager polls for it before its claim ends. `report`
  * and `record` record what the pass did; `log` names each reviewer it gave up on.
  */
-export type DoneOptions = { wait?: boolean; report?: PassReport; record?: RecordDone; log?: (entry: Record<string, unknown>) => void };
+export type DoneOptions = { wait?: boolean; report?: PassReport; record?: RecordDone; log?: (entry: Record<string, unknown>) => void; threadIds?: PostedThreads; threads?: readonly ThreadRead[] };
 
 function pullKey({ source, repo, number }: PullRequestRef): string {
   return `${source}:${repo}#${number}`;
@@ -468,28 +471,108 @@ function newest(ids: readonly number[], count: number): number[] {
   return ids.slice(Math.max(0, ids.length - count));
 }
 
-/**
- * The comments of findings reported on heads other than `head`, which a pass on `head` reads, at most
- * `MAX_THREAD_READS`: the newest of those not yet resolved, then the newest resolved ones, which a person can reopen.
- */
-async function threadsBefore(tx: Tx, tenantId: string, pr: PullRequestRef, head: string): Promise<number[]> {
-  const results = eventsOf(await codeReviewResults(tx, tenantId, pr));
-  const threads = new Map(results.flatMap(({ event }) => (event.head === head ? [] : findingsOf(event).flatMap((finding) => (finding.thread ? [[finding.thread.id, finding.thread.state] as const] : [])))));
-  const ids = [...threads.keys()];
-  const open = newest(ids.filter((id) => threads.get(id) !== "resolved"), MAX_THREAD_READS);
-  const resolved = newest(ids.filter((id) => threads.get(id) === "resolved"), MAX_THREAD_READS - open.length);
-  return [...open, ...resolved];
+/** Whether a stored webhook payload triages as threads, as a GitHub review-thread event or a Bitbucket resolve edit does. */
+function triagesThreads(payload: Record<string, unknown>): boolean {
+  const merged = payload["merged"];
+  return triageEventsOf({ event: payload["event"], action: payload["action"], review: payload["review"], ...(merged === true && { merged }), events: payload["events"] }).includes("threads");
 }
 
-/** The first pass on a head reads the threads of findings posted before it; the passes after it on that head read none. */
-async function threadsFor(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head: string): Promise<number[]> {
-  return claim.history.some((pass) => pass.head === head) ? [] : threadsBefore(tx, tenantId, pr, head);
+/** Comment ids of findings on `head`, or on every other head, in the order the reviews reported them; a later review's state replaces an earlier one's. Numeric ids only. */
+function reportedThreads(results: readonly TakenEvent[], head: string, onHead: boolean): Map<number, string> {
+  return new Map(results.flatMap(({ event }) => {
+    if ((event.head === head) !== onHead) return [];
+    return findingsOf(event).flatMap((finding) => {
+      const thread = finding.thread;
+      return thread !== undefined && typeof thread.id === "number" ? [[thread.id, thread.state] as const] : [];
+    });
+  }));
+}
+
+/** Each code-review event's thread per finding, in that review's order, omitting a review that names no comment id. */
+function commentThreadsOf(results: readonly TakenEvent[], pr: PullRequestRef): CommentThreads[] {
+  const prefix = eventKey(pr, "");
+  return results.flatMap(function posted({ key, event }) {
+    const threads = findingsOf(event).map((finding) => finding.thread ?? null);
+    if (threads.every((thread) => thread === null)) return [];
+    return [{ runId: key.slice(prefix.length), threads }];
+  });
+}
+
+/** Ids whose stored state is `resolved`, or not, in map order. */
+function idsInState(threads: ReadonlyMap<number, string>, resolved: boolean): number[] {
+  return [...threads.keys()].filter((id) => (threads.get(id) === "resolved") === resolved);
+}
+
+/** `groups` in priority order, the newest of each that still fit under `MAX_THREAD_READS`. */
+function withinCap(groups: readonly (readonly number[])[]): number[] {
+  const out: number[] = [];
+  for (const group of groups) {
+    const room = MAX_THREAD_READS - out.length;
+    if (room <= 0) break;
+    out.push(...newest(group, room));
+  }
+  return out;
+}
+
+/**
+ * Comments a pass reads, at most `MAX_THREAD_READS`, newest within each group, and the thread each code-review event
+ * keeps per finding. A pass whose webhooks triage as threads, a resumed pass's included, reads findings posted on
+ * `head`: ids not stored resolved, then ids stored resolved. The first pass on `head` then reads findings posted on
+ * other heads, newest unresolved then newest resolved, which a person can reopen. A later pass that does not triage as
+ * threads reads none. An id past the cap is left out. `commentThreads` is named either way, so a comment id kept only
+ * on the event still joins to a read on this pass and a stored resolved still releases on a later one.
+ */
+async function threadsFor(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head: string, passEvents: readonly TakenEvent[]): Promise<{ ids: number[]; commentThreads: CommentThreads[] }> {
+  const reported = eventsOf(await codeReviewResults(tx, tenantId, pr));
+  const commentThreads = commentThreadsOf(reported, pr);
+  const first = !claim.history.some((pass) => pass.head === head);
+  const currentHead = passEvents.some(({ event }) => event.type === "webhook" && triagesThreads(event.payload));
+  if (!first && !currentHead) return { ids: [], commentThreads };
+  const current = currentHead ? reportedThreads(reported, head, true) : new Map<number, string>();
+  const other = first ? reportedThreads(reported, head, false) : new Map<number, string>();
+  return { ids: withinCap([idsInState(current, false), idsInState(current, true), idsInState(other, false), idsInState(other, true)]), commentThreads };
+}
+
+function threadAnswer(read: { ids: number[]; commentThreads: CommentThreads[] }): { threads: number[]; commentThreads?: CommentThreads[] } {
+  return { threads: read.ids, ...(read.commentThreads.length > 0 && { commentThreads: read.commentThreads }) };
 }
 
 /** A finding's thread once `id` is its comment and `read` what the host last said of it, if anything; a comment just posted is untouched. */
 function threadAfter(before: FindingThread | undefined, id: number, read: ThreadRead | undefined): FindingThread {
   if (read) return read;
   return before?.id === id ? before : { id, state: "untouched" };
+}
+
+/**
+ * The reviewers `done` will write, with thread id and state stamped onto each code-review result the same way
+ * `recordFindingThreads` keeps them on the review event. `posted` sets ids on that run's review; a read replaces state;
+ * no read leaves the comment; a comment just given an id is untouched, never resolved. Ids that do not line up are left out.
+ */
+function stampFindingThreads(reviewers: readonly Reviewer[], posted: PostedThreads | undefined, reads: readonly ThreadRead[] | undefined): Reviewer[] {
+  if (posted === undefined && reads === undefined) return [...reviewers];
+  const read = new Map(reads?.map((thread) => [thread.id, thread]));
+  return reviewers.map(function stamped(reviewer) {
+    if (reviewer.kind !== "code-review") return reviewer;
+    const result = asRecord(reviewer.result);
+    const comments = result?.["comments"];
+    if (result === undefined || !Array.isArray(comments)) return reviewer;
+    const named = posted !== undefined && posted.runId === reviewer.runId ? posted.ids : undefined;
+    const ids = named === undefined || named.length === comments.length ? named : undefined;
+    let changed = false;
+    const next = comments.map(function comment(finding, index) {
+      const fields = asRecord(finding);
+      if (fields === undefined) return finding;
+      const parsed = FindingThread(fields["thread"]);
+      const held = parsed instanceof type.errors ? undefined : parsed;
+      const id = ids === undefined ? held?.id : ids[index];
+      if (id === undefined || id === null) return finding;
+      const thread = threadAfter(held, id, read.get(id));
+      if (thread === held) return finding;
+      changed = true;
+      return { ...fields, thread };
+    });
+    return changed ? { ...reviewer, result: { ...result, comments: next } } : reviewer;
+  });
 }
 
 /** The ids of each finding's inline comment as the manager posted the review a run reported, in its findings' order. */
@@ -570,7 +653,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
       const pass = { ...claim.pass, takes: claim.pass.takes + 1 };
       await writeClaim(tx, tenantId, pr, { ...claim, pass });
       const events = await eventsByKey(tx, tenantId, pass.events);
-      return { outcome: "pass", pass, events, resumed: true, threads: await threadsFor(tx, tenantId, pr, claim, pass.head), ...(await latest(tx, tenantId, pr, claim, pass)) };
+      return { outcome: "pass", pass, events, resumed: true, ...threadAnswer(await threadsFor(tx, tenantId, pr, claim, pass.head, events)), ...(await latest(tx, tenantId, pr, claim, pass)) };
     }
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
       .where(pending(tenantId, pr))
@@ -587,7 +670,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     if (kept.length === 0) return { outcome: "idle", ...(await latest(tx, tenantId, pr, claim)) };
     const pass = { id, head, events: kept.map((row) => row.key), takenAt, takes: 1 };
     await writeClaim(tx, tenantId, pr, { ...claim, pass });
-    return { outcome: "pass", pass, events: kept, resumed: false, threads: await threadsFor(tx, tenantId, pr, claim, head), ...(await latest(tx, tenantId, pr, claim, pass)) };
+    return { outcome: "pass", pass, events: kept, resumed: false, ...threadAnswer(await threadsFor(tx, tenantId, pr, claim, head, kept)), ...(await latest(tx, tenantId, pr, claim, pass)) };
   });
 }
 
@@ -649,7 +732,7 @@ function reviewerKey({ kind, head, runId }: Reviewer): string {
  * reviewer result starts the next manager. A reviewer the pass gave up on with no report, past its deadline or with its
  * run ended, is logged.
  */
-export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], { wait = false, report, record, log }: DoneOptions = {}): Promise<DoneResult> {
+export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, reviewers: readonly Reviewer[], { wait = false, report, record, log, threadIds, threads }: DoneOptions = {}): Promise<DoneResult> {
   return db.transaction(async function finishPass(tx) {
     const claim = await lockClaim(tx, tenantId, pr);
     if (!fencedTo(claim, runId)) return { outcome: "refused" };
@@ -660,7 +743,7 @@ export async function done(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     const history = closed ? closedInto(claim.history, closed) : claim.history;
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState).where(pending(tenantId, pr));
     const waiting = passHeadOf(eventsOf(rows), history) !== undefined;
-    const kept = { claimId: claim.claimId, claimedAt: claim.claimedAt, reviewers: recorded, history, starts: claim.starts };
+    const kept = { claimId: claim.claimId, claimedAt: claim.claimedAt, reviewers: stampFindingThreads(recorded, threadIds, threads), history, starts: claim.starts };
     if (record) await record(tx, report && await closingOf(tx, tenantId, pr, runId, report.head, history));
     for (const reviewer of await givenUp(tx, tenantId, pr, claim, recorded, now)) {
       log?.({ level: "warn", msg: "reviewer_overdue", tenantId, source: pr.source, repo: pr.repo, number: pr.number, kind: reviewer.kind, head: reviewer.head, runId: reviewer.runId, deadline: reviewer.deadline });

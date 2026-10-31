@@ -172,6 +172,19 @@ describe("evaluateActions", () => {
     expect(inserted!.effectId).not.toBe(before!.effectId);
     expect(moved!.effectId).not.toBe(before!.effectId);
   });
+
+  test("a threads wake re-suggests approve and merge, not labels, and the approve keeps its effect id", () => {
+    const pass = [
+      { do: "labels", target: { from: "list", labels: ["shipit"] } },
+      { do: "approve" },
+      { do: "merge" },
+    ] satisfies Step[];
+    const ran = run({ when: ["opened", "checks"], pass }, "pass", ["threads"]);
+    const approve = { repo: "acme/widgets", number: 8, headSha: "abc", list: "pass", index: 1, kind: "approve", target: {} } as const;
+    expect(ran.map((action) => action.kind)).toEqual(["approve", "merge"]);
+    const suggested = ran.find((action) => action.kind === "approve");
+    expect(suggested && "effectId" in suggested ? suggested.effectId : undefined).toBe(doEffectId(approve));
+  });
 });
 
 describe("author groups written before author kinds were GitHub's", () => {

@@ -425,7 +425,8 @@ any roll that failed.
   branch, rather than merged in a pull request, is read only after a hub
   restart. Without Check suite, a pull request waiting for CI is triaged after
   the quiet time instead of seconds after CI finishes. Without Pull request
-  review thread, resolving a review thread does not release a held merge.
+  review thread, resolving a review thread does not release a held approve or
+  a held merge.
 - Rules saved in the portal by an earlier build are archived on the first
   start of this one: a repository runs on its `.corbits-triage.yml` only.
   Before upgrading, move any you still need into that file on an earlier build,
