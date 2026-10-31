@@ -6,7 +6,8 @@
 - Stock ref: `19d89be64de634ea6e0ecfbfa7036d3ced6f8bef`
 - Composite pin: stock `19d89be6` (`v0.5.0-103`) plus the local CL-10210
   carry, the INTR-666 adaptive-thinking model ids and Anthropic structured
-  outputs, the host run-token routes, and the deployer's manage grant. Do not treat any
+  outputs, the host run-token routes, the deployer's manage grant, and the
+  Railway connect deadline (CL-11829). Do not treat any
   delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
@@ -164,6 +165,32 @@ Allowed files:
 Upstream reference: none yet; to be raised upstream.
 
 Remove when stock grants the deployer `manage` on the run it deployed.
+
+### Railway connect deadline (CL-11829)
+
+Stock gives every sidecar 120 seconds to connect and finish deploying. A
+Railway sandbox can take the five minutes the provisioner already waits for
+the VM to leave `CREATING`, and the hub was giving up at 120 seconds while
+that wait was still running. `SidecarProvisioner.connectTimeoutMs`, when set,
+is that deadline for the bind, for adopting a probe, and for the first-connect
+windows after a disconnect, a hub start, and a repair. The ensure lease,
+including a probe ensure, uses that same budget, because a Railway ensure does
+not return until the VM is running and ignores abort. When `connectTimeoutMs`
+is absent, the hub default and the ensure lease stay at 120 seconds. The
+global operation timeout is unchanged. Inventory waits are unchanged.
+
+`workflow-allocation-service.ts` is also the deployer manage grant above.
+
+Allowed files:
+
+- `packages/hub-sessions/src/sidecar-allocation/contracts.ts`
+- `packages/hub-sessions/src/sidecar-allocation/reconciler.ts`
+- `packages/hub-sessions/src/sidecar-allocation/reconciler.test.ts`
+- `packages/hub-sessions/src/workflow-allocation-service.ts`
+
+Upstream status: to be filed.
+
+Remove when stock lets a provisioner name how long its sidecar has to connect.
 
 ## Dropped deltas
 

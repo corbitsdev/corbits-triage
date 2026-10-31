@@ -159,6 +159,13 @@ export interface SidecarProvisioner {
   /** Stable, non-secret identity for the backend configuration. */
   readonly bindingFingerprint: string;
   readonly capabilities: readonly SidecarCapabilityDeclaration[];
+  /**
+   * How long a generation on this provisioner has to connect and finish
+   * deploying. Absent means the Hub's own connect timeout. A backend that
+   * takes longer to boot than that timeout sets this so the Hub does not give
+   * up while the provisioner is still waiting.
+   */
+  readonly connectTimeoutMs?: number;
   /** Called once when the Hub starts, with the calls it offers. */
   attach?(host: SidecarProvisionerHost): void;
   /**

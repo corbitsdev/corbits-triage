@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { describeProvisionerConformance } from "@corbits/provisioner-test";
 import { createRailwaySidecarProvisioner, RailwayCreateRefused, sweepRailwaySidecars, type RailwaySandboxes, type SandboxSummary } from "./index.js";
+import { RUNNING_WAIT_MS } from "./sandboxes.js";
 
 type FakeSandbox = {
   status: SandboxSummary["status"];
@@ -93,6 +94,11 @@ describeProvisionerConformance("railway", async () => {
     },
     async dispose() {},
   };
+});
+
+test("a railway sandbox gets the five minutes the provisioner already waits for the VM to run", () => {
+  expect(RUNNING_WAIT_MS).toBe(5 * 60_000);
+  expect(subject().provisioner.connectTimeoutMs).toBe(RUNNING_WAIT_MS);
 });
 
 test("the sidecar's token and key reach its process only, never the sandbox's own variables", async () => {

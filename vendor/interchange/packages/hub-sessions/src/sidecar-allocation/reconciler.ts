@@ -55,6 +55,7 @@ type AllocationStore = Pick<
   | "claimNextReconcilable"
   | "extendReconciliationLease"
   | "failWithoutInfrastructure"
+  | "findById"
   | "listActive"
   | "listForConnectionRepair"
   | "isReconciliationLeaseCurrent"
@@ -177,6 +178,18 @@ class CleanupPersistenceError extends Error {
 
 const DEFAULT_LEASE_DURATION_MS = 60_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 120_000;
+
+/**
+ * How long this generation has to connect. A provisioner that names its own
+ * budget wins; one that does not keeps the Hub default.
+ */
+export function connectTimeoutFor(
+  provisioner: Pick<SidecarProvisioner, "connectTimeoutMs"> | undefined,
+  fallbackMs: number,
+): number {
+  return provisioner?.connectTimeoutMs ?? fallbackMs;
+}
+
 const MAX_RETRY_BACKOFF_ATTEMPT = 5;
 // How long a first deploy that keeps failing before its deploy frame is sent
 // is retried, from its first failure.
@@ -403,6 +416,21 @@ export function createSidecarAllocationReconciler({
       };
     provisionerUnavailableDeadlines.delete(allocation.id);
     return { provisioner };
+  }
+
+  // A missing or rebound provisioner keeps the Hub default: this lookup must
+  // not fail a disconnect or a restart.
+  function connectTimeoutOf(allocation: SidecarAllocation): number {
+    const provisioner = plugins.getProvisioner(allocation.provisionerId);
+    if (
+      provisioner === null ||
+      provisioner.apiVersion !== allocation.provisionerApiVersion ||
+      provisioner.bindingFingerprint !==
+        allocation.provisionerBindingFingerprint
+    ) {
+      return connectTimeoutMs;
+    }
+    return connectTimeoutFor(provisioner, connectTimeoutMs);
   }
 
   async function waitForProvisioner(
@@ -911,6 +939,9 @@ export function createSidecarAllocationReconciler({
     const sidecarId = allocation.sidecarId;
     let result: EnsureSidecarResult;
     try {
+      // An ensure that waits out VM boot ignores abort, so this lease lasts
+      // for that provisioner's connect budget. One that sets none keeps the
+      // operation timeout.
       result = parseEnsureResult(
         await withReconciliationLease(
           allocation,
@@ -928,7 +959,7 @@ export function createSidecarAllocationReconciler({
               hubWebSocketUrl,
               ...(adapterManifest !== undefined ? { adapterManifest } : {}),
             }),
-          operationTimeoutMs,
+          connectTimeoutFor(provisioner, operationTimeoutMs),
         ),
       );
     } catch (error) {
@@ -1124,7 +1155,9 @@ export function createSidecarAllocationReconciler({
     }
     const token = createToken();
     const sidecarId = createSidecarId();
-    const connectDeadline = new Date(now().getTime() + connectTimeoutMs);
+    const connectDeadline = new Date(
+      now().getTime() + connectTimeoutFor(provisioner, connectTimeoutMs),
+    );
     const digest = await currentAdapterManifestDigest;
     const bound = replacement
       ? await allocationStore.bindReplacementSidecar({
@@ -1851,7 +1884,7 @@ export function createSidecarAllocationReconciler({
           generation: allocation.generation,
           now: startedAt,
           firstConnectDeadline: new Date(
-            startedAt.getTime() + connectTimeoutMs,
+            startedAt.getTime() + connectTimeoutOf(allocation),
           ),
         });
       } else if (allocation.nextAttemptAt === undefined) {
@@ -1942,11 +1975,14 @@ export function createSidecarAllocationReconciler({
     noteDisconnect(target);
     return queueConnectionEvent(target, async () => {
       const lostAt = now();
+      const allocation = await allocationStore.findById(target.allocationId);
+      const timeout =
+        allocation === null ? connectTimeoutMs : connectTimeoutOf(allocation);
       const disconnected = await allocationStore.markConnectionLost({
         allocationId: target.allocationId,
         generation: target.generation,
         now: lostAt,
-        firstConnectDeadline: new Date(lostAt.getTime() + connectTimeoutMs),
+        firstConnectDeadline: new Date(lostAt.getTime() + timeout),
       });
       noteDisconnect(target, disconnected !== null);
     });
@@ -2083,7 +2119,7 @@ export function createSidecarAllocationReconciler({
             ...target,
             now: repairedAt,
             firstConnectDeadline: new Date(
-              repairedAt.getTime() + connectTimeoutMs,
+              repairedAt.getTime() + connectTimeoutOf(allocation),
             ),
           });
         } else if (

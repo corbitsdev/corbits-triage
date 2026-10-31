@@ -37,6 +37,7 @@ import {
   SidecarFirstDeployError,
 } from "./operation";
 import {
+  connectTimeoutFor,
   createSidecarAllocationReconciler,
   type SidecarAllocationReconcilerDeps,
 } from "./reconciler";
@@ -86,6 +87,7 @@ function fakeStore(overrides: Partial<AllocationStore> = {}): AllocationStore {
     claimNextReconcilable: async () => null,
     extendReconciliationLease: async () => true,
     failWithoutInfrastructure: notUsed("failWithoutInfrastructure"),
+    findById: async () => null,
     listActive: async () => [],
     listForConnectionRepair: overrides.listActive ?? (async () => []),
     isReconciliationLeaseCurrent: async () => true,
@@ -3360,6 +3362,127 @@ describe("createSidecarAllocationReconciler", () => {
     expect(recordedDigest).toBe(await adapterManifestDigest(adapterManifest));
   });
 
+  test.each([
+    ["provisioner", 300_000],
+    ["default", undefined],
+  ] as const)(
+    "binds a generation with the %s connect timeout",
+    async (_label, timeout) => {
+      const expected = new Date(NOW.getTime() + (timeout ?? 120_000));
+      const pending = allocation();
+      const replacing = allocation({
+        status: "replacing",
+        generation: 2,
+        sidecarId: "sc-old",
+        externalRef: "vm-old",
+      });
+      const deadlines: Date[] = [];
+      let claim: "pending" | "replacing" | "done" = "pending";
+      const store = fakeStore({
+        claimNextReconcilable: async () => {
+          if (claim === "pending") return pending;
+          if (claim === "replacing") return replacing;
+          return null;
+        },
+        bindInitialSidecar: async (args) => {
+          deadlines.push(args.connectDeadline);
+          claim = "replacing";
+          return allocation({
+            status: "provisioning",
+            generation: 1,
+            sidecarId: "sc-new",
+            connectDeadline: args.connectDeadline,
+          });
+        },
+        bindReplacementSidecar: async (args) => {
+          deadlines.push(args.connectDeadline);
+          claim = "done";
+          return allocation({
+            ...replacing,
+            status: "provisioning",
+            sidecarId: "sc-new",
+            connectDeadline: args.connectDeadline,
+          });
+        },
+        markAllocated: async (args) =>
+          allocation({
+            status: "allocated",
+            generation: args.generation,
+            sidecarId: "sc-new",
+            ensureAcceptedGeneration: args.generation,
+          }),
+        parkReconciliation: async () => true,
+      });
+      const reconciler = createSidecarAllocationReconciler(
+        deps({
+          store,
+          ready: false,
+          provisioner: testProvisioner(
+            timeout === undefined ? {} : { connectTimeoutMs: timeout },
+          ),
+        }),
+      );
+
+      expect(await reconciler.reconcileNext()).toBe(true);
+      expect(await reconciler.reconcileNext()).toBe(true);
+
+      const chosen = connectTimeoutFor(
+        timeout === undefined ? undefined : { connectTimeoutMs: timeout },
+        120_000,
+      );
+      expect(chosen).toBe(timeout ?? 120_000);
+      expect(deadlines).toEqual([expected, expected]);
+    },
+  );
+
+  test("first-connect windows use the provisioner's timeout", async () => {
+    const row = allocation({
+      status: "allocated",
+      generation: 4,
+      ensureAcceptedGeneration: 4,
+      sidecarId: "sc-1",
+    });
+    const { nextAttemptAt: _nextAttemptAt, ...unscheduled } = row;
+    const deadlines: Date[] = [];
+    const store = fakeStore({
+      findById: async () => row,
+      listActive: async () => [row],
+      listForConnectionRepair: async () => [unscheduled],
+      scheduleReconnectAfterHubStart: async (args) => {
+        deadlines.push(args.firstConnectDeadline);
+        return row;
+      },
+      markConnectionLost: async (args) => {
+        deadlines.push(args.firstConnectDeadline);
+        return row;
+      },
+      scheduleReconnectIfUnscheduled: async (args) => {
+        deadlines.push(args.firstConnectDeadline);
+        return unscheduled;
+      },
+    });
+    const reconciler = createSidecarAllocationReconciler(
+      deps({
+        store,
+        ready: false,
+        provisioner: testProvisioner({ connectTimeoutMs: 300_000 }),
+      }),
+    );
+
+    await reconciler.initialize();
+    await reconciler.handleDisconnect({
+      allocationId: row.id,
+      generation: row.generation,
+    });
+    await reconciler.repairUnscheduledConnections();
+
+    expect(deadlines).toEqual([
+      new Date(NOW.getTime() + 300_000),
+      new Date(NOW.getTime() + 300_000),
+      new Date(NOW.getTime() + 300_000),
+    ]);
+  });
+
   test("parks an accepted provision without waiting for its websocket", async () => {
     const pending = allocation();
     const provisioning = allocation({
@@ -3556,7 +3679,9 @@ describe("createSidecarAllocationReconciler", () => {
         ready: 2,
         initialized: 2,
         recovered: 2,
-        lookups: 0,
+        // Initialize asks the provisioner for its connect budget. A missing
+        // or mismatched one keeps the hub default, and recovery still proceeds.
+        lookups: 1,
       });
     },
   );
@@ -5824,6 +5949,91 @@ describe("provisioner operation deadlines", () => {
     expect(accepted).toBe(false);
   });
 
+  test.each(["pending", "replacing"] as const)(
+    "a %s ensure that ignores abort is not ensure_failed while its connect budget is open",
+    async (status) => {
+      const connectBudgetMs = 10_000;
+      const operationMs = 80;
+      let failureCode: string | undefined;
+      let accepted = false;
+      let connectDeadline: Date | undefined;
+      let claimed = false;
+      const pending = allocation();
+      const replacing = allocation({
+        status: "replacing",
+        generation: 2,
+        sidecarId: "sc-old",
+        externalRef: "vm-old",
+      });
+      const store = fakeStore({
+        claimNextReconcilable: async () => {
+          if (claimed) return null;
+          claimed = true;
+          return status === "pending" ? pending : replacing;
+        },
+        bindInitialSidecar: async (args) => {
+          connectDeadline = args.connectDeadline;
+          return allocation({
+            status: "provisioning",
+            generation: 1,
+            sidecarId: "sc-new",
+            connectDeadline: args.connectDeadline,
+            reconciliationLeaseId: "lease-1",
+          });
+        },
+        bindReplacementSidecar: async (args) => {
+          connectDeadline = args.connectDeadline;
+          return allocation({
+            ...replacing,
+            status: "provisioning",
+            sidecarId: "sc-new",
+            connectDeadline: args.connectDeadline,
+            reconciliationLeaseId: "lease-1",
+          });
+        },
+        markAllocated: async () => {
+          accepted = true;
+          return allocation({
+            status: "allocated",
+            generation: status === "pending" ? 1 : 2,
+            sidecarId: "sc-new",
+            ensureAcceptedGeneration: status === "pending" ? 1 : 2,
+            ...(connectDeadline !== undefined ? { connectDeadline } : {}),
+          });
+        },
+        beginReplacement: async (args) => {
+          failureCode = args.failureCode;
+          return allocation({ status: "replacing", generation: 3 });
+        },
+        parkReconciliation: async () => true,
+      });
+      const reconciler = createSidecarAllocationReconciler({
+        ...deps({
+          store,
+          ready: false,
+          provisioner: testProvisioner({
+            connectTimeoutMs: connectBudgetMs,
+            async ensure() {
+              // Railway's wait for the VM to be running does not stop on abort.
+              await Bun.sleep(400);
+              return { kind: "accepted" };
+            },
+          }),
+        }),
+        operationTimeoutMs: operationMs,
+      });
+
+      expect(await reconciler.reconcileNext()).toBe(true);
+
+      expect(failureCode).toBeUndefined();
+      expect(accepted).toBe(true);
+      expect(connectDeadline).toEqual(new Date(NOW.getTime() + connectBudgetMs));
+      expect(
+        connectDeadline !== undefined && connectDeadline.getTime() > NOW.getTime(),
+      ).toBe(true);
+    },
+  );
+
   test("keeps replacement pending when destruction times out", async () => {
     let retried = false;
     let ensured = false;
@@ -7696,6 +7906,8 @@ describe("reconciliation ownership", () => {
     const disconnected = reconciler.handleDisconnect(target);
     const connected = reconciler.handleConnected(target);
     await Promise.resolve();
+    await Promise.resolve();
+    // The deadline is read from the allocation before the disconnect write.
     await Promise.resolve();
     expect(calls).toEqual(["disconnect"]);
     disconnectWrite.resolve(null);
