@@ -35,28 +35,29 @@ function linesIn(text: string): string[] {
 }
 
 /** `line` cut into pieces of at most MAX_PART_BYTES each, never inside a character. */
-function pieces(line: string): string[] {
+function pieces(line: string, room = MAX_PART_BYTES): string[] {
   const bytes = Buffer.from(line);
   const cut: string[] = [];
   let from = 0;
   while (from < bytes.length) {
-    let to = Math.min(from + MAX_PART_BYTES, bytes.length);
+    let to = Math.min(from + room, bytes.length);
     // A UTF-8 continuation byte is 10xxxxxx; cutting before one would split its character.
-    while (to < bytes.length && (bytes[to]! & 0xc0) === 0x80) to--;
+    while (to > from && to < bytes.length && (bytes[to]! & 0xc0) === 0x80) to--;
+    if (to <= from) throw new Error("finder bundle cannot fit one UTF-8 character");
     cut.push(bytes.subarray(from, to).toString());
     from = to;
   }
   return cut;
 }
 
-/** The patch cut into texts of at most MAX_PART_BYTES each, at line ends, and inside a line only when it is longer. */
-function split(patch: string): string[] {
+/** The patch cut at line ends, and inside a line only when it is longer than the room. */
+function split(patch: string, room = MAX_PART_BYTES): string[] {
   const parts: string[] = [];
   let part = "";
   let bytes = 0;
-  for (const piece of linesIn(patch).flatMap(pieces)) {
+  for (const piece of linesIn(patch).flatMap((line) => pieces(line, room))) {
     const size = Buffer.byteLength(piece);
-    if (part !== "" && bytes + size > MAX_PART_BYTES) {
+    if (part !== "" && bytes + size > room) {
       parts.push(part);
       part = "";
       bytes = 0;
@@ -65,6 +66,30 @@ function split(patch: string): string[] {
     bytes += size;
   }
   return part === "" ? parts : [...parts, part];
+}
+
+export const MAX_BUNDLE_BYTES = 120_000;
+
+/** Cap the escaped user message, not just the raw patch. Never truncate its surrounding context. */
+export function splitBundle(patch: string, message: (text: string) => string, limit = MAX_BUNDLE_BYTES): string[] {
+  const room = limit - Buffer.byteLength(message(""));
+  if (!Number.isSafeInteger(room) || room < 0) throw new Error("finder bundle context exceeds its byte limit");
+  if (Buffer.byteLength(message(patch)) <= limit) return [patch];
+  if (room === 0) throw new Error("finder bundle has no room for the patch");
+  function fit(piece: string): string[] {
+    if (Buffer.byteLength(message(piece)) <= limit) return [piece];
+    const bytes = Buffer.from(piece);
+    let at = Math.floor(bytes.length / 2);
+    while (at > 0 && (bytes[at]! & 0xc0) === 0x80) at--;
+    // A character wider than half the piece may still be a valid first half.
+    if (at === 0) {
+      at = 1;
+      while (at < bytes.length && (bytes[at]! & 0xc0) === 0x80) at++;
+    }
+    if (at >= bytes.length) throw new Error("finder bundle cannot fit one escaped character");
+    return [...fit(bytes.subarray(0, at).toString()), ...fit(bytes.subarray(at).toString())];
+  }
+  return split(patch, room).flatMap(fit);
 }
 
 function partPath(file: number, part: number, of: number): string {

@@ -2,7 +2,7 @@
 // features from the saved step outputs (top finder confidence, finder agreement, priority), every cutoff is applied and
 // what is left is scored with scoreCase, as the e2e stages are.
 import { BUDGET_EXHAUSTED } from "@corbits/pr-code-review/actions/checkout";
-import { orderedGroups, isDuplicate, type Candidate, type Consolidated } from "@corbits/pr-code-review/actions/review";
+import { isDuplicate, ownWords, type Candidate } from "@corbits/pr-code-review/actions/review";
 import { findingOf, firstFindingsList, type Finding } from "@corbits/pr-code-review/findings";
 import type { CaseKey, Reach } from "./cases.js";
 import { REACHES, scoreCase } from "./score.js";
@@ -19,33 +19,25 @@ export interface Replayed {
   comments: Comment[];
 }
 
-/**
- * Comments posted when their priority is at most `priority` and their top confidence at least the cutoff for their
- * agreement: `oneFinder` for comments one finder reported, `bothFinders` for those both did. A cutoff of 0 keeps
- * comments without a confidence; Infinity drops them all.
- */
+/** A zero confidence cutoff includes unscored findings; Infinity drops them all. */
 export interface Cutoff {
-  oneFinder: number;
-  bothFinders: number;
+  confidence: number;
   priority: number;
 }
 
-export const KEEP_ALL: Cutoff = { oneFinder: 0, bothFinders: 0, priority: Number.POSITIVE_INFINITY };
+export const KEEP_ALL: Cutoff = { confidence: 0, priority: Number.POSITIVE_INFINITY };
 
 export function posts(comment: Comment, cutoff: Cutoff): boolean {
-  const least = comment.finders >= 2 ? cutoff.bothFinders : cutoff.oneFinder;
-  const confident = least === 0 || (comment.confidence !== undefined && comment.confidence >= least);
+  const confident = cutoff.confidence === 0 || (comment.confidence !== undefined && comment.confidence >= cutoff.confidence);
   const severe = cutoff.priority === Number.POSITIVE_INFINITY || comment.priority <= cutoff.priority;
   return confident && severe;
 }
 
 export interface SavedOutputs {
-  findDiff: { reply: string };
-  findRepo: { reply: string };
+  find: { reply: string }[];
   candidates: { found: Candidate[]; kept: Candidate[] };
-  consolidate: { reply: string };
+  checks: { findings: Finding[] };
   check: { reply: string }[];
-  writeInput: { findings: Finding[] };
   review: { comments: (Finding & { agreement: { finders: number } })[] };
 }
 
@@ -66,7 +58,7 @@ function finderConfidences(reply: string): (number | undefined)[] {
 
 /** Each kept candidate's top confidence over the found candidates folded into it, folded in found order as the candidates step does. */
 function keptConfidences(outputs: SavedOutputs): (number | undefined)[] {
-  const confidences = [...finderConfidences(outputs.findDiff.reply), ...finderConfidences(outputs.findRepo.reply)];
+  const confidences = outputs.find.flatMap((output) => finderConfidences(output.reply));
   const { found, kept } = outputs.candidates;
   if (confidences.length !== found.length) throw new Error(`the finder replies yield ${confidences.length} findings, the saved candidates ${found.length}`);
   const top: (number | undefined)[] = [];
@@ -82,7 +74,7 @@ function keptConfidences(outputs: SavedOutputs): (number | undefined)[] {
 }
 
 function sameFinding(a: Finding, b: Finding): boolean {
-  return a.path === b.path && a.start === b.start && a.end === b.end && a.title === b.title;
+  return a.path === b.path && a.start === b.start && a.end === b.end && ownWords(a).title === b.title;
 }
 
 function isReal(output: { reply: string }): boolean {
@@ -92,17 +84,15 @@ function isReal(output: { reply: string }): boolean {
 /** The final review's comments with their group's features, from one case's saved step outputs, matched in the order the review reports them. */
 export function commentsOf(outputs: SavedOutputs): Comment[] {
   const { kept } = outputs.candidates;
-  const ordered = orderedGroups(kept, JSON.parse(outputs.consolidate.reply) as Consolidated);
-  // A run saved before every finding was checked has no check outputs and reported every group.
-  const reported = outputs.check.length === 0 ? ordered : ordered.filter((_, i) => outputs.check[i] !== undefined && isReal(outputs.check[i]));
+  const ordered = kept.map((finding, index) => ({ finding, index })).sort((a, b) => a.finding.priority - b.finding.priority);
+  const reported = ordered.filter((_, i) => outputs.check[i] !== undefined && isReal(outputs.check[i]));
   const confidences = keptConfidences(outputs);
   function comment(posted: SavedOutputs["review"]["comments"][number], index: number): Comment {
     const entry = reported[index];
-    const written = outputs.writeInput.findings[index];
-    if (!entry || !written || !sameFinding(entry.finding, written)) throw new Error(`comment ${index} at ${posted.path}:${posted.start} does not replay as the review reported it`);
-    const known = entry.group.members.flatMap((i) => (confidences[i] === undefined ? [] : [confidences[i]]));
+    if (!entry || !sameFinding(entry.finding, posted)) throw new Error(`comment ${index} at ${posted.path}:${posted.start} does not replay as the review reported it`);
+    const confidence = confidences[entry.index];
     const { path, start, end, priority } = posted;
-    return { path, start, end, priority, finders: posted.agreement.finders, ...(known.length > 0 && { confidence: Math.max(...known) }) };
+    return { path, start, end, priority, finders: posted.agreement.finders, ...(confidence !== undefined && { confidence }) };
   }
   if (reported.length !== outputs.review.comments.length) throw new Error(`${reported.length} replayed findings, ${outputs.review.comments.length} comments`);
   return outputs.review.comments.map(comment);
@@ -157,13 +147,13 @@ export function scoreCutoff(replayed: readonly Replayed[], cutoff: Cutoff): Swee
   };
 }
 
-/** Every cutoff over the confidences the comments carry, both agreement levels and every priority. */
+/** Every cutoff over the single finder's confidences and every priority. */
 export function cutoffs(replayed: readonly Replayed[]): Cutoff[] {
   const seen = replayed.flatMap(({ comments }) => comments.flatMap((c) => (c.confidence === undefined ? [] : [c.confidence])));
   const confidences = [...new Set([0, ...seen])].sort((a, b) => a - b);
   const levels = [...confidences, Number.POSITIVE_INFINITY];
   const priorities = [0, 1, 2, 3, Number.POSITIVE_INFINITY];
-  return levels.flatMap((oneFinder) => levels.flatMap((bothFinders) => priorities.map((priority) => ({ oneFinder, bothFinders, priority }))));
+  return levels.flatMap((confidence) => priorities.map((priority) => ({ confidence, priority })));
 }
 
 /** The rows no other row beats on both precision and recall, by recall. */

@@ -1,207 +1,110 @@
 import { type } from "arktype";
-import { hunksAt } from "@corbits/common/diff-files";
+import { diffFiles, hunksAt } from "@corbits/common/diff-files";
 import { isFromTriageSender, triggerRequestOf, type UnreadLines } from "@corbits/triage-contracts";
-import { changedFiles, parseFindings, samePath, type Finding, type Site } from "../findings.js";
+import { parseFindings, samePath, type Finding } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
 import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
-import { DIFF_INDEX, indexedFiles, shownIn, unreadLines } from "../diff-parts.js";
+import { splitBundle } from "../diff-parts.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
-
 const ReviewRequest = type({
-  kind: "'code-review'",
-  title: "string",
-  description: "string",
-  diff: "string",
-  checkout: Checkout,
-  "efforts?": { "plan?": Effort, "diffFinder?": Effort, "repoFinder?": Effort, "consolidate?": Effort, "check?": Effort, "write?": Effort },
-  "budgets?": { "repoFinder?": "number.integer > 0", "check?": "number.integer > 0", "checkTotal?": "number.integer > 0" },
-  /** The pull request's number, so a run can be found by it. */
+  kind: "'code-review'", title: "string", description: "string", diff: "string", checkout: Checkout,
+  "efforts?": { "diffFinder?": Effort, "check?": Effort },
+  "budgets?": { "check?": "number.integer > 0", "checkTotal?": "number.integer > 0" },
   "number?": "number.integer > 0",
 });
 type ReviewRequest = typeof ReviewRequest.infer;
 
-const FINDERS = ["diff", "repo"] as const;
-type Finder = (typeof FINDERS)[number];
-
-/** A finding, the finders that reported it and how many of their findings it stands for. */
 export interface Candidate extends Finding {
-  finders: Finder[];
+  finders: "diff"[];
   reports: number;
 }
-
-interface Agreement {
-  finders: number;
-  reports: number;
-}
-
 interface Reported extends Finding {
-  defect: string;
-  agreement: Agreement;
-  /** Set when no member of its group had a line read, so its lines are the finder's alone. */
-  unverified?: true;
+  agreement: { finders: number; reports: number };
 }
-
 interface Steps {
-  /** The review's step ids sit under it in a definition that holds other steps too. */
   $prefix?: string;
   reviewInput?: { output: ReviewInput };
-  plan?: { output: unknown };
-  findDiff?: { output: unknown };
-  findRepo?: { output: unknown };
+  find?: { output: unknown[] };
   candidates?: { output: Candidates };
-  consolidate?: { output: unknown };
   checks?: { output: Checks };
   check?: { output: unknown[] };
-  writeInput?: { output: WriteInput };
-  write?: { output: unknown };
 }
-
-interface StepInference {
-  effort: Effort;
-  maxTokens: number;
-}
-
-interface ReviewInput {
-  request: ReviewRequest;
-  plan: string;
-  inference: Record<Role, StepInference>;
-}
-
+interface StepInference { effort: Effort; maxTokens: number }
+interface ReviewInput { request: ReviewRequest; inference: Record<Role, StepInference> }
 interface Candidates {
   found: Candidate[];
   kept: Candidate[];
   budgetExhausted: boolean;
-  /** Whether the finders between them were shown every line of the diff and neither spent its budget. */
   complete: boolean;
-  /** The patch lines neither finder was shown, by changed file, and how many files have any. */
   unread: UnreadLines[];
   unreadFiles: number;
-  consolidate: string;
-  inference: StepInference;
 }
-
-export interface Group {
-  defect: string;
-  members: number[];
-  representative: number;
-}
-
-/** The check step's answer; its director refuses any other, so the step asks again. */
 export const Verdict = type({ verdict: "'real' | 'not_real' | 'unsure'", reason: "string" });
 type Verdict = typeof Verdict.infer;
-
-interface Checks {
-  findings: Reported[];
-  /** One per finding from the first, while the review's total check budget lasts. */
-  checks: { text: string; inference: StepInference }[];
-}
-
-/** The verdict of a finding the total check budget did not reach. */
+interface Checks { findings: Reported[]; checks: { text: string; inference: StepInference }[] }
 const UNCHECKED: Verdict = { verdict: "unsure", reason: "check budget spent" };
-
-/** A finding with the check's verdict and reason; one the review leaves out is kept with them in its `dropped`. */
-interface Judged extends Verdict {
-  finding: Reported;
-}
-
-interface WriteInput {
-  budgetExhausted: boolean;
-  complete: boolean;
-  unread: UnreadLines[];
-  unreadFiles: number;
-  findings: Reported[];
-  dropped: Judged[];
-  text: string;
-  inference: StepInference;
-}
+interface Judged extends Verdict { finding: Reported }
 
 function replyOf(output: unknown): string {
   if (typeof output === "object" && output !== null && "reply" in output && typeof output.reply === "string") return output.reply;
   throw new Error("step output has no reply");
 }
-
-/** A structured step's JSON reply; the error leaves the reply out, as the portal shows it. */
-function jsonReply<T>(output: unknown): T {
-  const reply = replyOf(output).replace(BUDGET_EXHAUSTED, "");
-  try {
-    return JSON.parse(reply) as T;
-  } catch {
-    throw new Error("step replied without JSON");
-  }
+function verdictOf(output: unknown): Verdict {
+  let parsed: unknown;
+  try { parsed = JSON.parse(replyOf(output).replace(BUDGET_EXHAUSTED, "")); }
+  catch { throw new Error("step replied without JSON"); }
+  const verdict = Verdict(parsed);
+  if (verdict instanceof type.errors) throw new Error("check replied without a verdict");
+  return verdict;
 }
-
 type StepId = Exclude<keyof Steps, "$prefix">;
-
 function stepOutput<K extends StepId>(steps: Steps, id: K): NonNullable<Steps[K]>["output"] {
   const step = (steps as Record<string, Steps[K]>)[`${steps.$prefix ?? ""}${id}`];
   if (!step) throw new Error(`missing step output ${id}`);
   return step.output as NonNullable<Steps[K]>["output"];
 }
-
 function aboutPullRequest(request: ReviewRequest): string {
   return `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n</pull_request>`;
 }
-
-/** The checkout and token budget a step reads under, the pull request, and the index of its diff in the checkout. */
-function pullRequest(request: ReviewRequest, budget: number): string {
-  return `${repositoryTag(request.checkout)}${budgetTag(budget)}${aboutPullRequest(request)}\n\n<diff index="${DIFF_INDEX}"/>`;
-}
-
-/** A request the PR workflow's scope step handed over, rather than a trigger mail. */
 function handedOver(input: unknown): boolean {
   return typeof input === "object" && input !== null && "kind" in input && input.kind === "code-review";
 }
-
-/**
- * The reviewInput action: the request from the trigger mail, the plan's user message and every role's per-call options;
- * a role's effort is the request's, else the profile's. Only the hub's trigger mail is reviewed; the PR workflow hands
- * over the request its scope step took from the hub's mail.
- */
 export function reviewInputFor({ efforts }: Pick<CodeReviewProfile, "efforts">) {
   return async function reviewInput(input: unknown): Promise<ReviewInput> {
     if (!handedOver(input) && !isFromTriageSender(input)) throw new Error("reviewInput: the trigger mail is not from the hub's Triage sender");
     const request = ReviewRequest(triggerRequestOf(input));
     if (request instanceof type.errors) throw new Error(`reviewInput: invalid request: ${request.summary}`);
     const inference = Object.fromEntries(ROLES.map((role) => [role, { effort: request.efforts?.[role] ?? efforts[role], maxTokens: MAX_OUTPUT_TOKENS }])) as Record<Role, StepInference>;
-    return { request, plan: `${pullRequest(request, DEFAULT_BUDGET)}\n\nPlan the review of this pull request.`, inference };
+    return { request, inference };
   };
 }
 
-/** Both finders' user messages with the plan appended, each under its token budget. */
+/** Each file is assigned independently; only an oversized escaped message splits its patch. */
 export async function findersInput(steps: Steps) {
   const { request } = stepOutput(steps, "reviewInput");
-  const plan = replyOf(stepOutput(steps, "plan"));
-  function message(budget: number) {
-    return `${pullRequest(request, budget)}\n\n<plan>\n${promptText(plan)}\n</plan>\n\nReview the diff and report the defects this change introduces.`;
+  const bundles: string[] = [];
+  for (const file of diffFiles(request.diff)) {
+    if (file.status === "deleted") continue;
+    function message(text: string) {
+      return `${repositoryTag(request.checkout)}${budgetTag(DEFAULT_BUDGET)}${aboutPullRequest(request)}\n\n<diff path="${promptAttribute(file.path)}">\n${promptText(text)}\n</diff>\n\nReview the diff and report the defects this change introduces.`;
+    }
+    bundles.push(...splitBundle(file.patch, message).map(message));
   }
-  return { diff: message(DEFAULT_BUDGET), repo: message(request.budgets?.repoFinder ?? DEFAULT_BUDGET) };
+  return { bundles };
 }
-
-/** A finder's findings; one that spent its budget before answering in JSON found none, and the finder steps fail on any other unreadable reply. */
-function findingsOf(output: unknown, finder: Finder): Candidate[] {
+function findingsOf(output: unknown): Candidate[] {
   const reply = replyOf(output);
   const parsed = parseFindings(reply.replace(BUDGET_EXHAUSTED, ""));
   if ("unparsable" in parsed) {
     if (reply.startsWith(BUDGET_EXHAUSTED)) return [];
-    throw new Error(`${finder} finder: ${parsed.unparsable}`);
+    throw new Error(`diff finder: ${parsed.unparsable}`);
   }
-  return parsed.findings.map((finding) => ({ ...finding, finders: [finder], reports: 1 }));
+  return parsed.findings.map((finding) => ({ ...finding, finders: ["diff"], reports: 1 }));
 }
-
-function spaced(text: string | undefined): string | undefined {
-  return text?.trim().replace(/\s+/g, " ") || undefined;
-}
-
-function normalized(text: string | undefined): string | undefined {
-  return spaced(text)?.toLowerCase();
-}
-
-/**
- * Same file and lines, and the same title ignoring case and spacing. Two untitled findings compare their explanations
- * instead, and their quoted lines ignoring spacing when both quote one.
- */
+function spaced(text: string | undefined): string | undefined { return text?.trim().replace(/\s+/g, " ") || undefined; }
+function normalized(text: string | undefined): string | undefined { return spaced(text)?.toLowerCase(); }
 export function isDuplicate(a: Finding, b: Finding): boolean {
   if (!samePath(a.path, b.path) || a.start !== b.start || a.end !== b.end) return false;
   const title = normalized(a.title);
@@ -213,80 +116,23 @@ export function isDuplicate(a: Finding, b: Finding): boolean {
   const other = spaced(b.code);
   return code === undefined || other === undefined || code === other;
 }
-
-/** The candidates with each exact duplicate folded into the first. */
 function withoutDuplicates(found: readonly Candidate[]): Candidate[] {
   const kept: Candidate[] = [];
   for (const candidate of found) {
     const index = kept.findIndex((k) => isDuplicate(k, candidate));
-    if (index === -1) {
-      kept.push(candidate);
-      continue;
-    }
+    if (index === -1) { kept.push(candidate); continue; }
     const first = kept[index]!;
-    kept[index] = { ...first, finders: [...new Set([...first.finders, ...candidate.finders])], reports: first.reports + candidate.reports };
+    kept[index] = { ...first, reports: first.reports + candidate.reports };
   }
   return kept;
 }
 
-function consolidateMessage(request: ReviewRequest, kept: readonly Candidate[]): string {
-  const listed = kept.map(({ path, start, end, code, title, why, trigger }, index) => ({ index, path, start, end, code, title, why, trigger }));
-  return `${repositoryTag(request.checkout)}${aboutPullRequest(request)}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nGroup the findings by the defect they describe.`;
-}
-
-/**
- * Both finders' findings, those left once exact duplicates are folded together, whether either finder's budget ran out,
- * whether the review is complete, and the consolidate step's message.
- */
+/** A successful map returned every assigned bundle, independently of tool reads or budget exhaustion. */
 export async function candidates(steps: Steps): Promise<Candidates> {
-  const { request, inference } = stepOutput(steps, "reviewInput");
-  const replies = [replyOf(stepOutput(steps, "findDiff")), replyOf(stepOutput(steps, "findRepo"))];
-  const found = [...findingsOf(stepOutput(steps, "findDiff"), "diff"), ...findingsOf(stepOutput(steps, "findRepo"), "repo")];
-  const kept = withoutDuplicates(found);
-  const budgetExhausted = replies.some((reply) => reply.startsWith(BUDGET_EXHAUSTED));
-  const { unread, unreadFiles } = unreadLines(indexedFiles(request.diff), replies.map(shownIn));
-  const complete = !budgetExhausted && unreadFiles === 0;
-  return { found, kept, budgetExhausted, complete, unread, unreadFiles, consolidate: consolidateMessage(request, kept), inference: inference.consolidate };
+  const outputs = stepOutput(steps, "find");
+  const found = outputs.flatMap(findingsOf);
+  return { found, kept: withoutDuplicates(found), budgetExhausted: outputs.some((output) => replyOf(output).startsWith(BUDGET_EXHAUSTED)), complete: true, unread: [], unreadFiles: 0 };
 }
-
-/** The consolidate step's groups, with every candidate it left out or repeated in a group of its own. */
-function groupsOf(groups: readonly Group[], count: number): Group[] {
-  const seen = new Set<number>();
-  const valid: Group[] = [];
-  for (const group of groups) {
-    const members = group.members.filter((i) => Number.isInteger(i) && i >= 0 && i < count && !seen.has(i));
-    if (members.length === 0) continue;
-    for (const i of members) seen.add(i);
-    valid.push({ defect: group.defect, members, representative: members.includes(group.representative) ? group.representative : members[0]! });
-  }
-  for (let i = 0; i < count; i++) if (!seen.has(i)) valid.push({ defect: "", members: [i], representative: i });
-  return valid;
-}
-
-/** The group with a member whose lines were read as its representative, when its own were not and one was. */
-function readRepresentative(group: Group, unreadFindings: readonly number[]): Group {
-  const read = group.members.find((i) => !unreadFindings.includes(i));
-  return unreadFindings.includes(group.representative) && read !== undefined ? { ...group, representative: read } : group;
-}
-
-/** The group's representative, at its anchored site, with the most severe priority and the agreement of all its members. */
-function reportedOf(group: Group, kept: readonly Candidate[], sites: readonly Site[]): Reported {
-  const members = group.members.map((i) => kept[i]!);
-  const { path, start, end } = sites[group.representative]!;
-  const { title, why, trigger, code } = kept[group.representative]!;
-  const agreement = { finders: new Set(members.flatMap((m) => m.finders)).size, reports: members.reduce((total, m) => total + m.reports, 0) };
-  return { path, start, end, title, why, trigger, code, priority: Math.min(...members.map((m) => m.priority)), defect: group.defect, agreement };
-}
-
-function severityOf(finding: Reported): number {
-  return finding.priority;
-}
-
-function bySeverityThenAgreement(a: Reported, b: Reported): number {
-  return severityOf(a) - severityOf(b) || b.agreement.finders - a.agreement.finders || b.agreement.reports - a.agreement.reports;
-}
-
-/** The check's message: the checkout and budget it reads under, the finding, and the diff hunks that change its lines. */
 function checkMessage(request: ReviewRequest, finding: Reported, budget: number): string {
   const claim = { title: finding.title, why: finding.why, trigger: finding.trigger };
   const hunks = hunksAt(request.diff, finding);
@@ -297,31 +143,10 @@ function checkMessage(request: ReviewRequest, finding: Reported, budget: number)
     "Verify this finding.",
   ].join("\n\n");
 }
-
-export interface Consolidated {
-  groups: Group[];
-  sites: Site[];
-  unreadFindings: number[];
-}
-
-/** Every consolidated group with its finding, in the order the review reports them: by severity, then agreement. */
-export function orderedGroups(kept: readonly Candidate[], { groups, sites, unreadFindings }: Consolidated) {
-  function reported(joined: Group) {
-    const group = readRepresentative(joined, unreadFindings);
-    const finding = reportedOf(group, kept, sites);
-    return { group, finding: unreadFindings.includes(group.representative) ? { ...finding, unverified: true as const } : finding };
-  }
-  return groupsOf(groups, kept.length).map(reported).sort((a, b) => bySeverityThenAgreement(a.finding, b.finding));
-}
-
-/**
- * Every consolidated finding, ordered by severity then agreement, and a check of each in that order, each on the per-check
- * budget or what is left of the review's total, until the total is spent.
- */
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
   const { kept } = stepOutput(steps, "candidates");
-  const findings = orderedGroups(kept, jsonReply<Consolidated>(stepOutput(steps, "consolidate"))).map((o) => o.finding);
+  const findings = kept.map((finding) => ({ ...finding, agreement: { finders: 1, reports: finding.reports } })).sort((a, b) => a.priority - b.priority);
   const perCheck = request.budgets?.check ?? DEFAULT_CHECK_BUDGET;
   let left = request.budgets?.checkTotal ?? DEFAULT_CHECK_TOTAL;
   const checked: Checks["checks"] = [];
@@ -333,58 +158,21 @@ export async function checks(steps: Steps): Promise<Checks> {
   }
   return { findings, checks: checked };
 }
-
-/** Whether a checked finding is posted: the check confirmed it, or could not decide and both finders reported it. */
-function posted({ finding, verdict }: Judged): boolean {
-  return verdict === "real" || (verdict === "unsure" && finding.agreement.finders === FINDERS.length);
-}
-
-/** The findings to report, those left out with the check's verdict and reason, and the write step's user message. */
-export async function writeInput(steps: Steps): Promise<WriteInput> {
-  const { request, inference } = stepOutput(steps, "reviewInput");
-  const { budgetExhausted, complete, unread, unreadFiles } = stepOutput(steps, "candidates");
-  const { findings: checked } = stepOutput(steps, "checks");
-  const verdicts = stepOutput(steps, "check").map((output) => jsonReply<Verdict>(output));
-  const judged = checked.map((finding, i) => ({ finding, ...(verdicts[i] ?? UNCHECKED) }));
-  const findings = judged.flatMap((j) => (posted(j) ? [j.finding] : []));
-  const dropped = judged.filter((j) => !posted(j));
-  const listed = findings.map(({ path, start, end, title, why, trigger, code }, finding) => ({ finding, path, start, end, title, why, trigger, code }));
-  const change = `<pull_request>\n<title>${promptText(request.title)}</title>\n<description>${promptText(request.description)}</description>\n<changed_files>\n${promptText(changedFiles(request.diff).join("\n"))}\n</changed_files>\n</pull_request>`;
-  const text = `${change}\n\n<findings>\n${promptText(JSON.stringify(listed, null, 2))}\n</findings>\n\nWrite the review.`;
-  return { budgetExhausted, complete, unread, unreadFiles, findings, dropped, text, inference: inference.write };
-}
-
-interface Written {
-  summary: string;
-  comments: { finding: number; title: string; body: string }[];
-}
-
-/** A comment from whatever the finder gave: its title or the defect it was grouped under, why and trigger; the quoted code travels beside it. */
-function ownWords({ title, defect, why, trigger, path, start }: Reported) {
-  const heading = [title, defect, why].find((part) => part !== undefined && part !== "") ?? `Defect at ${path}:${start}`;
+export function ownWords({ title, why, trigger, path, start }: Finding) {
+  const heading = [title, why].find((part) => part !== undefined && part !== "") ?? `Defect at ${path}:${start}`;
   return { title: heading, body: [why, trigger].filter((part) => part !== undefined).join("\n\n") };
 }
-
-/** A finding as the review carries it, in the words given or else its finder's. */
-function commentOf(finding: Reported, { title, body }: { title: string; body: string }) {
-  const { path, start, end, agreement, priority, code, unverified } = finding;
-  return { path, start, end, title, body, priority, ...(code !== undefined && { quoted: code }), agreement, ...(unverified && { unverified }) };
+function commentOf(finding: Reported) {
+  const { path, start, end, agreement, priority, code } = finding;
+  return { path, start, end, ...ownWords(finding), priority, ...(code !== undefined && { quoted: code }), agreement };
 }
-
-/**
- * The review: the summary, one comment per finding in order, anchored where the finding is, with the code it quotes, its
- * agreement and whether its lines went unread, whether it stopped early, whether it is complete and which patch lines no finder read, and each finding it left out, in its
- * finder's words with the check's verdict and reason. A finding the write step left without a comment gets one in its
- * finder's words.
- */
 export async function review(steps: Steps) {
-  const { findings, dropped, budgetExhausted, complete, unread, unreadFiles } = stepOutput(steps, "writeInput");
-  const written = jsonReply<Written>(stepOutput(steps, "write"));
-  function comment(finding: Reported, index: number) {
-    return commentOf(finding, written.comments.find((c) => c.finding === index) ?? ownWords(finding));
-  }
-  function droppedOf({ finding, verdict, reason }: Judged) {
-    return { ...commentOf(finding, ownWords(finding)), verdict, reason };
-  }
-  return { summary: written.summary, comments: findings.map(comment), dropped: dropped.map(droppedOf), budgetExhausted, complete, unread, unreadFiles };
+  const { budgetExhausted, complete, unread, unreadFiles } = stepOutput(steps, "candidates");
+  const { findings } = stepOutput(steps, "checks");
+  const verdicts = stepOutput(steps, "check").map(verdictOf);
+  const judged = findings.map((finding, i) => ({ finding, ...(verdicts[i] ?? UNCHECKED) }));
+  const comments = judged.filter((j) => j.verdict === "real").map((j) => commentOf(j.finding));
+  function droppedOf({ finding, verdict, reason }: Judged) { return { ...commentOf(finding), verdict, reason }; }
+  const dropped = judged.filter((j) => j.verdict !== "real").map(droppedOf);
+  return { summary: comments.length === 0 ? "No defects reported." : "", comments, dropped, budgetExhausted, complete, unread, unreadFiles };
 }

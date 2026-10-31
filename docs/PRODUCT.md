@@ -449,9 +449,13 @@ reviewed commit is billed to that Anthropic account. A commit is reviewed once
 the rules that fail a pull request without the decision model have passed, or
 whatever they say with `when: { rules: any }`; drafts are not reviewed.
 **Review again** reviews the current commit once more, whatever the file says.
-The review reads the whole diff, however large; a review that could not is
-marked incomplete and holds approve and merge. A review sandbox that never
-connects is replaced, up to three in all. If the review still cannot start, or
+The review receives patches directly in bundles; completion means every
+assigned bundle returned its review work, not proof that every line was read.
+A missing or failed bundle leaves the review unfinished and holds approve and
+merge. Exhausting the review budget is tracked separately and also holds
+approve and merge, even when all bundles returned. Older incomplete review
+records remain incomplete and continue to hold approve and merge.
+A review sandbox that never connects is replaced, up to three in all. If the review still cannot start, or
 its run dies, Triage gives the verdict without it, says the review failed, and
 holds approve and merge.
 
