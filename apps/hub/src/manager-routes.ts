@@ -197,7 +197,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
           const summary = summaryOf(posted, new Date().toISOString(), trigger, mirrorOutcomesOf(report?.mirror), ruledOf(report?.rules).get(`${pr.repo}#${pr.number}`));
           if (summary) await replaceVerdict(tx, tenantId, { runId, repo: pr.repo, number: pr.number, headSha: closing.head, startedAt: new Date(closing.startedAt), ...summary, runStatus: "completed" });
         }
-        const approved = approvals === undefined ? [] : approvals.results.flatMap((ran) => [...doResultsOf(ran).values()].map((outcome) => ({ repo: pr.repo, number: pr.number, ...outcome })));
+        const approved = approvals === undefined ? [] : approvals.results.flatMap((ran) => [...doResultsOf(ran).values()].map((outcome) => ({ repo: pr.repo, number: pr.number, source: pr.source, ...outcome })));
         await recordApproved(tx, tenantId, approved);
         await recordFindingThreads(tx, tenantId, pr, threadIds, threads, log);
       }

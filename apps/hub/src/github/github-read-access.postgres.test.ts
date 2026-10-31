@@ -464,7 +464,7 @@ test("PostgreSQL: a held Do of a verdict a manager reported is approved from the
 test("PostgreSQL: approving a held Do on Bitbucket checks that host's grant and mails its source, and a post without a source still checks GitHub", async () => {
   const bb = "PROJ/api";
   const target = { body: "Please split this." };
-  const comment = { list: "pass" as const, index: 0, kind: "comment" as const, target, held: true, effectId: doEffectId({ repo: bb, number: 1, headSha: HEAD, list: "pass", index: 0, kind: "comment", target }) };
+  const comment = { list: "pass" as const, index: 0, kind: "comment" as const, target, held: true, effectId: doEffectId({ repo: bb, number: 1, headSha: HEAD, list: "pass", index: 0, kind: "comment", target, source: "bitbucket-datacenter" }) };
   const verdict = { repo: bb, number: 1, headSha: HEAD, request: { repo: bb, number: 1, labels: [], owned: [], comment: "" }, actions: [comment] };
   const events = [{ seq: 1, type: "StepCompleted", body: { type: "StepCompleted", seq: 1, stepId: "evaluate", output: { ref: `inline:${JSON.stringify(verdict)}` } } }];
   const mailed: unknown[] = [];

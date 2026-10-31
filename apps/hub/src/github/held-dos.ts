@@ -80,7 +80,7 @@ function heldDo(verdict: Record<string, unknown>, body: Body, principalId: strin
   const headSha = verdict["headSha"];
   if (request instanceof type.errors || typeof headSha !== "string") return failure(409, "verdict_outdated", "Run triage again.");
   const target = step.target as ResolvedTarget;
-  const effectId = doEffectId({ repo: body.repo, number: body.number, headSha, list: step.list, index: step.index, kind: step.kind, target });
+  const effectId = doEffectId({ repo: body.repo, number: body.number, headSha, list: step.list, index: step.index, kind: step.kind, target, ...(body.source !== undefined && { source: body.source }) });
   if (effectId !== step.effectId) return failure(409, "effect_mismatch", "The verdict's effect id does not match this Do.");
   const { list, index, kind } = step;
   const refused = unrunnable({ kind, target });

@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type RepoSource, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
 import { authorFailures, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
@@ -10,8 +10,9 @@ import { unrunnable } from "./execute-do.js";
 /**
  * Names one resolved Do on one head: `index` is its place in the verdict's list as the pack defines it, so skipped or satisfied steps before it do not shift it.
  * `kind` and `target` keep a Do inserted earlier by a pack edit from taking a later Do's id on the same head.
+ * `source`, when it is not GitHub, keeps a Do on another host from sharing this id; absent and GitHub keep the id already written.
  */
-export type DoRef = { repo: string; number: number; headSha: string; list: VerdictWord; index: number; kind: ActionKind; target: ResolvedTarget };
+export type DoRef = { repo: string; number: number; headSha: string; list: VerdictWord; index: number; kind: ActionKind; target: ResolvedTarget; source?: RepoSource };
 
 /** JSON with object keys sorted, so equal targets hash equally whatever order their keys were written in. */
 function canonical(value: unknown): string {
@@ -23,9 +24,10 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** GitHub writes and their audit share it. */
+/** GitHub writes and their audit share it. A host other than GitHub is part of the hash; GitHub, named or not, is not, so ids already written stay. */
 export function doEffectId(ref: DoRef): string {
-  const parts = [ref.repo, ref.number, ref.headSha, ref.list, ref.index, ref.kind, canonical(ref.target)];
+  const host = ref.source !== undefined && ref.source !== "github" ? [ref.source] : [];
+  const parts = [...host, ref.repo, ref.number, ref.headSha, ref.list, ref.index, ref.kind, canonical(ref.target)];
   return bytesToHex(sha256(utf8ToBytes(parts.join("\x1f"))));
 }
 
@@ -46,6 +48,8 @@ export interface ActionInput {
   pack: CheckPack;
   /** Each labelling rule's result, and each rule that did not fail but still labels, where the host has labels. */
   labelled?: CheckResult[];
+  /** Where the pull request lives. Absent on GitHub, so a GitHub Do keeps the effect id already written. */
+  repoSource?: RepoSource;
 }
 
 /** Catch-up runs the policy's actions whatever woke it. */
@@ -218,7 +222,7 @@ function stepLabels(pack: CheckPack): Set<string> {
  * a labelling rule's once it passes, unless a labels step of the policy names it, and a level label of sensitive paths
  * or risk that no longer applies.
  */
-function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: string): SuggestedAction[] {
+function labelDo({ labelled, pack, facts, verdict: list, repoSource }: ActionInput, reason: string): SuggestedAction[] {
   if (labelled === undefined) return [];
   const labels = labelRules(pack);
   const named = stepLabels(pack);
@@ -226,7 +230,7 @@ function labelDo({ labelled, pack, facts, verdict: list }: ActionInput, reason: 
   const target = derivedLabels([...new Set(labelled.flatMap((c) => addedLabels(c, labels)))], (label) => owned.has(label.toLowerCase()), facts);
   if (satisfied("labels", target, facts)) return [];
   const index = pack.actions[list].length;
-  const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: "labels", target });
+  const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: "labels", target, ...(repoSource !== undefined && { source: repoSource }) });
   return [{ list, index, kind: "labels", effectId, target, reason }];
 }
 
@@ -239,7 +243,7 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
   const woken = wakes(input.pack, input.facts);
   const released = releasedKinds(input.facts);
   if (!woken && released.length === 0) return [];
-  const { verdict: list, reason, facts } = input;
+  const { verdict: list, reason, facts, repoSource } = input;
   const subject = stepSubject(facts, input.pack);
   const out: SuggestedAction[] = [];
   for (const [index, step] of steps.entries()) {
@@ -252,7 +256,7 @@ export function stepActions(input: ActionInput, steps: readonly Step[]): Suggest
     }
     try {
       const target = resolve(step, input);
-      const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: step.do, target });
+      const effectId = doEffectId({ repo: facts.repo, number: facts.number, headSha: facts.headSha, list, index, kind: step.do, target, ...(repoSource !== undefined && { source: repoSource }) });
       if (!satisfied(step.do, target, facts)) out.push({ ...base, effectId, target, reason });
     } catch (e) {
       out.push({ ...base, skipped: true, reason: sentence(errorText(e)) });
