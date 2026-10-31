@@ -159,7 +159,7 @@ under `ask` every other action waits for a person
 | 200 | `{ "repository", "webhook": "created", "hookUrl" }` |
 | 200 | `{ "repository", "webhook": "manual", "hookUrl", "hookSecret", "events" }` when the token may not manage webhooks |
 | 404 | `repo_not_found` |
-| 409 | `bitbucket_datacenter_not_connected`, `bitbucket_datacenter_host_refused`, `repo_empty` (no default branch), `repo_name_taken` (a GitHub repository has the same name) |
+| 409 | `bitbucket_datacenter_not_connected`, `bitbucket_datacenter_host_refused`, `repo_empty` (no default branch) |
 | 502 | `bitbucket_datacenter_failed`, `bitbucket_datacenter_unreachable` |
 
 ### `GET /repositories/{project}/{slug}/webhook`

@@ -31,8 +31,8 @@ export async function approval(input: unknown, _ctx: EffectContext, _signal: Abo
   if (named instanceof type.errors) return { approved: true, effectId, refused: `approval names no Do: ${named.summary}` };
   const { repo, number } = approved.request;
   const { list, index, principalId } = named;
-  if (doEffectId({ repo, number, headSha, list, index, kind, target }) !== effectId) return { approved: true, effectId, refused: "the approval's effect id does not match its Do" };
   const repoSource = repoSourceOf(request["repoSource"]);
+  if (doEffectId({ repo, number, headSha, list, index, kind, target, source: repoSource }) !== effectId) return { approved: true, effectId, refused: "the approval's effect id does not match its Do" };
   const appLogin = request["appLogin"];
   return { approved: true, principalId, ...approved, ...(repoSource !== "github" && { repoSource }), ...(typeof appLogin === "string" && { appLogin }) };
 }

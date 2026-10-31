@@ -1,4 +1,4 @@
-import { alwaysHeld, type ActionKind, type VerdictWord } from "@corbits/triage-contracts";
+import { alwaysHeld, type ActionKind, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import { strings, type HeldDoRef, type PrItem, type SuggestedAction } from "./hub-api.ts";
 import { joined } from "./triage-view.ts";
 
@@ -6,7 +6,7 @@ import { joined } from "./triage-view.ts";
  * `sentKey` also names the status it had when approved, so a later failure offers it again. `until` is what lets an
  * action the policy has Triage take on its own run without you, null for one that waits on you.
  */
-export type PendingDo = { key: string; sentKey: string; label: string; list: VerdictWord; kind: ActionKind; reason: string; ref: HeldDoRef; error: string | null; until: string | null };
+export type PendingDo = { key: string; sentKey: string; label: string; list: VerdictWord; kind: ActionKind; reason: string; source: RepoSource; ref: HeldDoRef; error: string | null; until: string | null };
 
 /** Resolution keeps only team slugs, and only the repository owner's teams can review. */
 function teamName(slug: string, repo: string): string {
@@ -130,8 +130,8 @@ export function pendingDos(item: PrItem): PendingDo[] {
   for (const action of item.actions) {
     const text = offered(item, action) ? label(action, repo) : null;
     if (text === null) continue;
-    const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind };
-    out.push({ key: action.effectId, sentKey: sentKeyOf(action), label: `${text}${verdictNote(action)}`, list: action.list, kind: action.kind, reason: action.reason, ref, error: action.error ?? null, until: untilText(item, action) });
+    const ref = { runId, repo, number, effectId: action.effectId, kind: action.kind, source: item.source };
+    out.push({ key: action.effectId, sentKey: sentKeyOf(action), label: `${text}${verdictNote(action)}`, list: action.list, kind: action.kind, reason: action.reason, source: item.source, ref, error: action.error ?? null, until: untilText(item, action) });
   }
   return out;
 }

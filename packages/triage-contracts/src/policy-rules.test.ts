@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { askRules, labelRules, POLICY_EVENTS, readCheckPack, type CheckPack } from "./check-pack.ts";
+import { askRules, labelRules, POLICY_EVENTS, recommendedPack, readCheckPack, type CheckPack } from "./check-pack.ts";
 import { exportPolicyFile } from "./policy-export.ts";
 import { checkPolicyFile, readPolicyFile } from "./policy-file.ts";
 import { extendedFilePack } from "./resolve-policy.ts";
@@ -53,7 +53,7 @@ describe("policy file schema 3", () => {
     expect(policy.checks).toEqual({
       "max-lines-changed": { enabled: true, maxLines: 400, onFail: "label", text: "A pull request changes at most 400 lines.", reason: "Large changes were split before review.", evidence: ["#44", "acme/api#57"] },
       "max-lines-changed-per-file": { enabled: true, maxFileLines: 300, onFail: "ask", text: "A pull request changes at most 300 lines in one file.", reason: "Large files hide changes from review.", evidence: ["maintainer-stated"] },
-      focused: { enabled: true, text: "A pull request makes one focused change.", reason: "Mixed changes were closed and split.", evidence: ["maintainer-stated"] },
+      focused: { enabled: true, onFail: "label", text: "A pull request makes one focused change.", reason: "Mixed changes were closed and split.", evidence: ["maintainer-stated"] },
     });
     expect(policy.custom).toEqual([
       { id: "errors-are-handled", name: "Errors are handled", group: "pull-request", kind: "model", shape: "is-true", claim: "Every new call that can fail handles or propagates its error.", reason: "Two outages came from swallowed errors.", evidence: ["https://example.com/postmortem"] },
@@ -153,4 +153,20 @@ actions:
     expect(checkPolicyFile(`rules:\n${risk}    high: [hot-files, tired]\n`, REPO)).toMatchObject({ ok: false });
     expect(() => readPolicyFile(`rules:\n${risk}    medium: 6\n`, REPO)).toThrow("Risk medium must be a number of signals from 1 to 5");
   });
+});
+
+
+test("focused defaults to a label, while rule and file severity choices survive export", () => {
+  const rule = "  - check: focused\n    text: One change.\n    reason: Mixed changes are harder to review.\n    evidence: [maintainer-stated]\n";
+  const advisory = readPolicyFile(`rules:\n${rule}`, REPO) as CheckPack;
+  expect([...labelRules(advisory)]).toEqual([["focused", "focused: check"]]);
+  expect(recommendedPack(REPO).checks.focused).toEqual({ enabled: true, onFail: "label" });
+  for (const file of [undefined, "fail", "ask", "label"] as const) {
+    for (const override of [undefined, "fail", "ask", "label"] as const) {
+      const pack = readPolicyFile(`${file ? `onFail: ${file}\n` : ""}rules:\n${rule}${override ? `    onFail: ${override}\n` : ""}`, REPO) as CheckPack;
+      const severity = override ?? file ?? "label";
+      expect(pack.checks.focused?.onFail ?? "fail").toBe(severity);
+      expect(readPolicyFile(exportPolicyFile(pack).text, REPO)).toEqual(pack);
+    }
+  }
 });

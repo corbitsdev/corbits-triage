@@ -141,7 +141,7 @@ function allowedEach(results: UseQueryResult<boolean>[]): boolean[] {
 }
 
 /** Whether you may run each held action yourself, in the same order. */
-export function useHoldsDos(dos: readonly Pick<PendingDo, "kind" | "ref">[]): boolean[] {
+export function useHoldsDos(dos: readonly Pick<PendingDo, "kind" | "source" | "ref">[]): boolean[] {
   const accessQuery = useAccessQuery();
-  return useQueries({ queries: dos.map((pending) => accessQuery(doResource(pending.kind, pending.ref.repo), DO_GRANT_ACTION)), combine: allowedEach });
+  return useQueries({ queries: dos.map((pending) => accessQuery(doResource(pending.kind, pending.source, pending.ref.repo), DO_GRANT_ACTION)), combine: allowedEach });
 }

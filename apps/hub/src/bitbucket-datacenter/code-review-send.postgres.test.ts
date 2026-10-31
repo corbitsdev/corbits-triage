@@ -70,7 +70,7 @@ beforeAll(async () => {
   await db.insert(schema.grant).values([
     { id: "grt_user_use", tenantId: TENANT, principalId: "prn_user", resource: "credential:crd_bb", action: "use", effect: "allow", origin: "system" },
     { id: "grt_commenter_use", tenantId: TENANT, principalId: "prn_commenter", resource: "credential:crd_bb", action: "use", effect: "allow", origin: "system" },
-    { id: "grt_commenter_comment", tenantId: TENANT, principalId: "prn_commenter", resource: doResource("comment", REPO), action: "invoke", effect: "allow", origin: "system" },
+    { id: "grt_commenter_comment", tenantId: TENANT, principalId: "prn_commenter", resource: doResource("comment", "bitbucket-datacenter", REPO), action: "invoke", effect: "allow", origin: "system" },
   ]);
 }, 120_000);
 

@@ -848,7 +848,7 @@ export async function githubPrAction(transport: Transport, tenantId: string, inp
 }
 
 /** Names one held Do by the run whose verdict holds it; the hub looks the Do up and mails the deployment to run it. */
-export type HeldDoRef = { runId: string; repo: string; number: number; effectId: string; kind: ActionKind };
+export type HeldDoRef = { runId: string; repo: string; number: number; effectId: string; kind: ActionKind; source: RepoSource };
 
 /** The hub's refusals that name its internals; the rest of its text is already plain. */
 const DO_REFUSALS: Record<string, string> = {
@@ -893,8 +893,9 @@ export type TimelineEntry = {
 
 export type TriageTimeline = { repo: string; number: number; entries: TimelineEntry[] };
 
-export async function loadTriageTimeline(transport: Transport, tenantId: string, repo: string, number: number): Promise<TriageTimeline> {
-  return transport.fetch<TriageTimeline>("GET", `/api/integrations/triage-timeline/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`);
+export async function loadTriageTimeline(transport: Transport, tenantId: string, repo: string, number: number, source?: RepoSource): Promise<TriageTimeline> {
+  const host = source === undefined ? "" : `&source=${enc(source)}`;
+  return transport.fetch<TriageTimeline>("GET", `/api/integrations/triage-timeline/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}${host}`);
 }
 
 export type PullTriage = TriageVerdicts["pulls"][number];
@@ -952,21 +953,24 @@ export async function loadGithubPull(
   tenantId: string,
   repo: string,
   number: number,
+  source?: RepoSource,
 ): Promise<GithubPullDetail> {
   if (!Number.isInteger(number) || number < 1) throw new Error("Pull request number must be a positive integer.");
+  const host = source === undefined ? "" : `&source=${enc(source)}`;
   return transport.fetch<GithubPullDetail>(
     "GET",
-    `/api/integrations/github-pull/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}`,
+    `/api/integrations/github-pull/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&number=${number}${host}`,
   );
 }
 
 /** Whether the host would merge a pull request now: GitHub's `mergeableState` and `reviewDecision`, or Bitbucket's `canMerge` and `mergeVetoes`. */
 export type MergeState = Pick<GithubPullDetail["pr"], "mergeable" | "mergeableState" | "reviewDecision" | "canMerge" | "mergeVetoes"> & { number: number };
 
-export async function loadMergeStates(transport: Transport, tenantId: string, repo: string, numbers: number[]): Promise<MergeState[]> {
+export async function loadMergeStates(transport: Transport, tenantId: string, repo: string, numbers: number[], source?: RepoSource): Promise<MergeState[]> {
+  const host = source === undefined ? "" : `&source=${enc(source)}`;
   const { prs } = await transport.fetch<{ prs: MergeState[] }>(
     "GET",
-    `/api/integrations/merge-states/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&numbers=${numbers.join(",")}`,
+    `/api/integrations/merge-states/${enc(requireTenantId(tenantId))}?repo=${enc(validateRepo(repo))}&numbers=${numbers.join(",")}${host}`,
   );
   return prs;
 }
@@ -1430,7 +1434,7 @@ function verdictItem(pull: PullTriage, verdict: PullVerdict): PrItem {
     actions: suggestedActions(detail.actions ?? []),
     automatic: ACTION_KINDS.filter((kind) => detail.automatic?.includes(kind)),
     href: canonicalPrHref(pull.repo, pull.number),
-    source: "github",
+    source: pull.source,
     url: null,
   };
 }
@@ -1461,7 +1465,7 @@ export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], open
     if (!isGithubWriteApproval(approval) || approval.status !== "pending") continue;
     const args = approval.toolArguments;
     const item = items.get(`${args.repo}#${args.number}`);
-    if (!item) continue;
+    if (!item || item.source !== "github") continue;
     items.set(item.key, {
       ...item,
       needsHuman: true,
@@ -1476,16 +1480,18 @@ export function projectQueue(pulls: PullTriage[], approvals: HubApproval[], open
 function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage: Map<string, PullTriage>): void {
   for (const { repo, source, prs, error } of openPulls.repos) {
     if (error) continue;
+    const host = repoSourceOf(source);
     const open = new Set(prs.map((pr) => `${repo}#${pr.number}`));
     for (const item of items.values()) {
-      if (item.repo === repo && !open.has(item.key)) items.set(item.key, { ...item, needsHuman: false, closed: true });
+      if (item.repo === repo && item.source === host && !open.has(item.key)) items.set(item.key, { ...item, needsHuman: false, closed: true });
     }
     for (const pr of prs) {
       const key = `${repo}#${pr.number}`;
       const known = items.get(key);
       if (known) {
-        // A verdict recorded before the hub kept its facts takes the pull request's from GitHub; a draft is GitHub's now, not the verdict's.
-        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: pr.draft, authorKind: pr.authorKind ?? null, byTriage: pr.byTriage === true, updatedAt: pr.updatedAt, headSha: pr.sha, source: repoSourceOf(source), url: pr.url ?? null });
+        if (known.source !== host) continue;
+        // A verdict recorded before the hub kept its facts takes them from the open pull request; a draft is the host's now, not the verdict's.
+        items.set(key, { ...known, title: known.title ?? pr.title, author: known.author ?? pr.author, draft: pr.draft, authorKind: pr.authorKind ?? null, byTriage: pr.byTriage === true, updatedAt: pr.updatedAt, headSha: pr.sha, source: host, url: pr.url ?? null });
         continue;
       }
       const pull = triage.get(key);
@@ -1532,7 +1538,7 @@ function joinOpenPulls(items: Map<string, PrItem>, openPulls: OpenPulls, triage:
         actions: [],
         automatic: [],
         href: canonicalPrHref(repo, pr.number),
-        source: repoSourceOf(source),
+        source: host,
         url: pr.url ?? null,
       });
     }
@@ -1560,7 +1566,6 @@ const BITBUCKET_DATACENTER_REFUSALS: Record<string, string> = {
   bitbucket_datacenter_failed: "Bitbucket Data Center answered with an error. Try again in a moment.",
   repo_not_found: "Bitbucket Data Center does not show this repository to the token. Check the token can read its project.",
   repo_empty: "This repository has no default branch yet. Push a first commit, then turn on triage.",
-  repo_name_taken: "A GitHub repository in this workspace has the same name, so this one cannot be triaged.",
 };
 
 function bitbucketDatacenterPath(tenantId: string, path: string): string {

@@ -44,7 +44,7 @@ export function keptOpenPrs(list: OpenPrsLister, reads: RepoReads): OpenPrsListe
     const listing = list(tenantId);
     return function keptRepo(record) {
       if (sourceOf(record) !== "github") return listing(record);
-      return reads.read({ scope: "pulls", tenantId, repo: record.name, key: "open-prs" }, function listNow() {
+      return reads.read({ scope: "pulls", tenantId, repo: record.name, source: sourceOf(record), key: "open-prs" }, function listNow() {
         return listing(record);
       });
     };

@@ -7,17 +7,17 @@ import { schema } from "@intx/db";
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readMergeStates, type MergeState } from "@corbits/github-reads";
 import { errorText } from "@corbits/common";
-import { MAX_MERGE_STATES } from "@corbits/triage-contracts";
+import { MAX_MERGE_STATES, REPO_SOURCES } from "@corbits/triage-contracts";
 import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import type { RepoReads } from "./repo-reads.js";
 import { createSourceFetch, type SourceFetchDeps } from "./source-fetch.js";
-import { repoRecords, sourceOf, triageNs } from "./tenant-config.js";
+import { repoRecords, connectedNamed, sourceOf, triageNs } from "./tenant-config.js";
 
 export const MERGE_STATES_PATH = "/api/integrations/merge-states";
 
-const MergeStatesQuery = type({ repo: /^[\w.-]+\/[\w.-]+$/, numbers: /^[1-9]\d*(,[1-9]\d*)*$/ });
+const MergeStatesQuery = type({ repo: /^[\w.-]+\/[\w.-]+$/, numbers: /^[1-9]\d*(,[1-9]\d*)*$/, "source?": type.enumerated(...REPO_SOURCES) });
 
 /** GraphQL's Int. */
 const MAX_NUMBER = 2 ** 31 - 1;
@@ -46,7 +46,8 @@ export function createMergeStates(deps: SourceFetchDeps & { reads: RepoReads; lo
 
   return async function handle(req: Request, { tenantId, principalId }: Member): Promise<Response> {
     const url = new URL(req.url);
-    const query = MergeStatesQuery({ repo: url.searchParams.get("repo"), numbers: url.searchParams.get("numbers") });
+    const asked = url.searchParams.get("source");
+    const query = MergeStatesQuery({ repo: url.searchParams.get("repo"), numbers: url.searchParams.get("numbers"), ...(asked !== null && { source: asked }) });
     if (query instanceof type.errors) return failure(400, "invalid_request", query.summary);
     const numbers = [...new Set(query.numbers.split(",").map(Number))];
     if (numbers.length > MAX_MERGE_STATES) return failure(400, "invalid_request", `Ask about at most ${MAX_MERGE_STATES} pull requests at once.`);
@@ -58,7 +59,7 @@ export function createMergeStates(deps: SourceFetchDeps & { reads: RepoReads; lo
 
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { config: true } });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
-    const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === query.repo && row.connected);
+    const record = connectedNamed(repoRecords(triageNs(tenant.config)), query.repo, query.source);
     if (!record) return failure(409, "repo_not_connected", `${query.repo} is not connected to this workspace.`);
     const refused = await sourceCredentialGrant(deps, principalId, tenantId, record, "read");
     if (refused) return refused;
@@ -68,7 +69,7 @@ export function createMergeStates(deps: SourceFetchDeps & { reads: RepoReads; lo
       if (!source) throw new Error(`no readable ${sourceOf(record)} credential`);
       if ("gh" in source) {
         const { gh } = source;
-        const prs = await deps.reads.read({ scope: "all", tenantId, repo: record.name, key: `merge-states:${numbers.toSorted((a, b) => a - b).join(",")}`, usable: everyNumberKnown }, function readNow() {
+        const prs = await deps.reads.read({ scope: "all", tenantId, repo: record.name, source: sourceOf(record), key: `merge-states:${numbers.toSorted((a, b) => a - b).join(",")}`, usable: everyNumberKnown }, function readNow() {
           return readMergeStates(gh, record.name, numbers);
         });
         return Response.json({ prs });

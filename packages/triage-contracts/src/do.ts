@@ -23,9 +23,9 @@ export const ANY_DO_RESOURCE = `${DO_GRANT_PREFIX}:*`;
 export const AUTOMATION_MODES = ["policy", "ask"] as const;
 export type AutomationMode = (typeof AUTOMATION_MODES)[number];
 
-/** Holding `invoke` on it lets a person approve a held Do of `kind` in `repo`, and the pr-triage role run it unattended. */
-export function doResource(kind: ActionKind, repo: string): string {
-  return `${DO_GRANT_PREFIX}:${kind}:${repo.toLowerCase()}`;
+/** Holding `invoke` on it lets a person approve a held Do of `kind` on `source` in `repo`, and the pr-triage role run it unattended. */
+export function doResource(kind: ActionKind, source: RepoSource, repo: string): string {
+  return `${DO_GRANT_PREFIX}:${kind}:${source}:${repo.toLowerCase()}`;
 }
 
 /** Bitbucket Data Center has no labels or assignees. */

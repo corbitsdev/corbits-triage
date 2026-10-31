@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classificationSources, emptyPack, type CheckPack } from "@corbits/triage-contracts";
+import { askRules, classificationSources, emptyPack, labelRules, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
 import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict } from "./render.js";
 import { QUALITY_EVALUATION_LIMIT_ERROR, type FocusedPlan, type QualityPlan } from "./quality.js";
 import { REVIEW_ANSWERED_REASON, type DeterministicResult } from "./checks.js";
@@ -466,3 +466,32 @@ describe("requested changes rendering", () => {
     expect(verdict.feedback).toBe("**Triage: Fail**\n\n@octocat, please address the following:\n- merge conflicts with base");
   });
 });
+
+
+for (const repoSource of ["github", "bitbucket-datacenter"] as const) {
+  test(`${repoSource}: default focused failure and uncertainty are notes, explicit severity and hard failures still decide`, () => {
+    for (const severity of [undefined, "fail", "ask"] as const) {
+      const pack = readPolicyFile(`rules:
+  - check: focused
+    text: One change.
+    reason: Mixed changes are harder to review.
+    evidence: [maintainer-stated]
+${severity ? `    onFail: ${severity}\n` : ""}`, "acme/widgets") as CheckPack;
+      const det: DeterministicResult = { ...FOCUSED_DET, sources: classificationSources(pack), labelled: { ids: [...labelRules(pack).keys()], checks: [] }, ask: askRules(pack) };
+      for (const [one, more, result] of [[0.1, 0.8, "fail"], [0.5, 0.4, "unconfirmed"]] as const) {
+        const input = { repoSource, author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: parseAnswers(focusedAnswer(one, more) + NOT_INSTRUCTED), focused: focusedPlan({}).focused, choice: CHOICE.pass };
+        const verdict = renderVerdict(input);
+        if (severity === undefined) {
+          expect(verdict).toMatchObject({ verdict: "pass", reasons: [], labelled: [{ check: "focused", result }] });
+          expect(verdict.feedback).toContain("Notes:");
+          expect(verdict.checks).toEqual([]);
+          for (const check of ["ci-green", "no-forbidden-paths"]) {
+            expect(renderVerdict({ ...input, det: { ...det, state: "needs-author-update", checks: [{ check, kind: "machine", result: "fail", reason: "policy violation", evidence: [] }] } }).verdict).toBe("fail");
+          }
+        } else {
+          expect(verdict.verdict).toBe(severity === "fail" && result === "fail" ? "fail" : "unsure");
+        }
+      }
+    }
+  });
+}

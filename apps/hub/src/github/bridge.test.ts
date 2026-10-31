@@ -300,14 +300,14 @@ describe("bridge handler", () => {
     const changed: string[] = [];
     const base = JSON.parse(prPayload);
     const closed = JSON.stringify({ ...base, pull_request: { ...base.pull_request, state: "closed" } });
-    function repoChanged(tenantId: string, repo: string, event?: string) {
-      changed.push(`${tenantId} ${repo} ${event}`);
+    function repoChanged(tenantId: string, repo: string, source: string, event?: string) {
+      changed.push(`${tenantId} ${repo} ${source} ${event}`);
     }
     const res = await bridge({ sent, repoChanged })(githubRequest(closed), TARGET);
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ status: "ignored" });
     expect(sent).toHaveLength(0);
-    expect(changed).toEqual([`${TENANT_ID} octocat/hello pull_request`]);
+    expect(changed).toEqual([`${TENANT_ID} octocat/hello github pull_request`]);
   });
 
   test("a merge into the default branch reads the policy file again and re-checks that repository's other open pull requests", async () => {

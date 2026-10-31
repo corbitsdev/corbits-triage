@@ -22,11 +22,11 @@ test("a GitHub repository is listed again only after a webhook about its pull re
 
   await poll();
   await poll();
-  reads.changed(TENANT, REPO, "check_run");
+  reads.changed(TENANT, REPO, "github", "check_run");
   await poll();
   expect(listed).toEqual([REPO, "ACME/widgets", "ACME/widgets", "ACME/widgets"]);
 
-  reads.changed(TENANT, REPO, "pull_request");
+  reads.changed(TENANT, REPO, "github", "pull_request");
   await poll();
   at = KEPT_MS.pulls;
   await poll();
@@ -59,7 +59,7 @@ test("an unusable or rate-limited read is read again, and a change during a read
     return value !== "computing";
   }
   function read() {
-    return reads.read({ scope: "all", tenantId: TENANT, repo: REPO, key: "details:1", usable: worked }, function readNow() {
+    return reads.read({ scope: "all", tenantId: TENANT, repo: REPO, source: "github", key: "details:1", usable: worked }, function readNow() {
       return answers[calls++]!();
     });
   }
@@ -67,10 +67,28 @@ test("an unusable or rate-limited read is read again, and a change during a read
   expect(await read()).toBe("computing");
   await expect(read()).rejects.toBeInstanceOf(GithubRateLimited);
   const during = read();
-  reads.changed(TENANT, REPO, "status");
+  reads.changed(TENANT, REPO, "github", "status");
   release();
   expect(await during).toBe("before the change");
   expect(await read()).toBe("after the change");
   expect(await read()).toBe("after the change");
   expect(calls).toBe(4);
+});
+
+test("a change on GitHub does not drop the Bitbucket read of the same repository name", async () => {
+  const reads = createRepoReads(() => new Date(0));
+  let githubReads = 0;
+  let bitbucketReads = 0;
+  function read(source: "github" | "bitbucket-datacenter", next: () => number) {
+    return reads.read({ scope: "all", tenantId: TENANT, repo: REPO, source, key: "details:1" }, async function readNow() {
+      return next();
+    });
+  }
+
+  expect(await read("github", () => ++githubReads)).toBe(1);
+  expect(await read("bitbucket-datacenter", () => ++bitbucketReads)).toBe(1);
+  reads.changed(TENANT, REPO, "github", "pull_request");
+  expect(await read("github", () => ++githubReads)).toBe(2);
+  expect(await read("bitbucket-datacenter", () => ++bitbucketReads)).toBe(1);
+  expect(bitbucketReads).toBe(1);
 });

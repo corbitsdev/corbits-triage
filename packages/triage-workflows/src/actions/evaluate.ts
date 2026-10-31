@@ -178,7 +178,7 @@ function actionInputOf(it: Item, rendered: Rendered): ActionInput | undefined {
   if (!it.pack) return undefined;
   // Bitbucket Data Center has no labels, so there a labelling rule is only noted.
   const labelled = hostKinds(it.repoSource ?? "github").includes("labels") ? labelling(rendered) : undefined;
-  return { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, labelled };
+  return { facts: it.facts, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: it.pack, labelled, ...(it.repoSource !== undefined && { repoSource: it.repoSource }) };
 }
 
 /** The Dos of `steps` on a rendered item, each held as the run may or may not write it. */

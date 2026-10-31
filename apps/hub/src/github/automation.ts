@@ -42,14 +42,14 @@ function isAlways(): boolean {
   return true;
 }
 
-async function deleteKinds(tx: Tx, tenantId: string, roleId: string, repo: string, kinds: readonly ActionKind[]): Promise<void> {
+async function deleteKinds(tx: Tx, tenantId: string, roleId: string, repo: string, source: RepoSource, kinds: readonly ActionKind[]): Promise<void> {
   if (kinds.length === 0) return;
   const { grant } = schema;
   await tx.delete(grant).where(and(
     eq(grant.tenantId, tenantId),
     eq(grant.roleId, roleId),
     eq(grant.effect, "allow"),
-    inArray(grant.resource, kinds.map((kind) => doResource(kind, repo))),
+    inArray(grant.resource, kinds.map((kind) => doResource(kind, source, repo))),
   ));
 }
 
@@ -63,8 +63,8 @@ export async function grantWanted(tx: Tx, tenantId: string, repo: string, source
   // Checked under the role's lock, which every grant writer takes, so a read overtaken meanwhile writes nothing.
   if (!stillWanted()) return;
   const kinds = hostKinds(source).filter((kind) => wanted.includes(kind) || postingKinds(source).includes(kind));
-  await deleteKinds(tx, tenantId, roleId, repo, ACTION_KINDS.filter((kind) => !kinds.includes(kind)));
-  for (const kind of kinds) await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, stamp);
+  await deleteKinds(tx, tenantId, roleId, repo, source, ACTION_KINDS.filter((kind) => !kinds.includes(kind)));
+  for (const kind of kinds) await allowRole(tx, tenantId, roleId, doResource(kind, source, repo), DO_GRANT_ACTION, stamp);
 }
 
 /**
@@ -75,21 +75,21 @@ export async function grantEnabledKinds(tx: Tx, tenantId: string, repo: string, 
   await grantWanted(tx, tenantId, repo, source, [], stamp);
 }
 
-/** Every kind the pr-triage role holds on the repository, so enabling it again starts from the enabled kinds. */
-export async function revokeRepoKinds(tx: Tx, tenantId: string, repo: string): Promise<void> {
+/** Every kind the pr-triage role holds on the repository of `source`, so enabling it again starts from the enabled kinds. */
+export async function revokeRepoKinds(tx: Tx, tenantId: string, repo: string, source: RepoSource): Promise<void> {
   const roleId = await triageRoleId(tx, tenantId);
-  if (roleId) await deleteKinds(tx, tenantId, roleId, repo, ACTION_KINDS);
+  if (roleId) await deleteKinds(tx, tenantId, roleId, repo, source, ACTION_KINDS);
 }
 
 export function createAutomation(deps: AutomationDeps) {
-  async function automaticKinds(tenantId: string, repo: string): Promise<ActionKind[]> {
+  async function automaticKinds(tenantId: string, repo: string, source: RepoSource): Promise<ActionKind[]> {
     const roleId = await triageRoleId(deps.db, tenantId);
     if (!roleId) return [];
     const rows = await deps.db.select().from(schema.grant).where(and(eq(schema.grant.tenantId, tenantId), eq(schema.grant.roleId, roleId)));
     const grants = rows.map((row): GrantRule => ({ ...row, conditions: row.conditions as GrantRule["conditions"] }));
     const kinds: ActionKind[] = [];
     for (const kind of ACTION_KINDS) {
-      if ((await evaluateGrants(grants, doResource(kind, repo), DO_GRANT_ACTION, { conditions: "pessimistic" })).effect === "allow") kinds.push(kind);
+      if ((await evaluateGrants(grants, doResource(kind, source, repo), DO_GRANT_ACTION, { conditions: "pessimistic" })).effect === "allow") kinds.push(kind);
     }
     return kinds;
   }

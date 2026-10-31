@@ -30,7 +30,7 @@ test("a held Do approved through the hub runs once on the pull request", async (
   const { verdict } = await approved();
   // The verdict's one Do is the held assign, whose effect id its recorded Dos keep.
   const [held] = verdict!["dos"] as { effectId: string }[];
-  await approveHeldDo(chain.workspace.transport, chain.workspace.tenantId, { runId: String(verdict!["run_id"]), repo: HELD, number: 1, effectId: held!.effectId, kind: "assign" });
+  await approveHeldDo(chain.workspace.transport, chain.workspace.tenantId, { runId: String(verdict!["run_id"]), repo: HELD, number: 1, effectId: held!.effectId, kind: "assign", source: "github" });
   await until("the assignment", () => github.writesTo(HELD, 1).find((write) => write.path.endsWith("/assignees")));
   await settled(HELD, 1, 2);
   expect(github.writesTo(HELD, 1).filter((write) => write.path.endsWith("/assignees"))).toEqual([expect.objectContaining({ method: "POST", body: { assignees: ["octocat"] } })]);
@@ -71,6 +71,6 @@ const switchedOff = once(async function switchedOff() {
 
 test("switching a repository off takes back everything Triage did there on its own", async () => {
   const { before, after } = await switchedOff();
-  expect(before).toEqual([`triage-do:assign:${HELD}`, `triage-do:comment:${HELD}`, `triage-do:labels:${HELD}`]);
+  expect(before).toEqual([`triage-do:assign:github:${HELD}`, `triage-do:comment:github:${HELD}`, `triage-do:labels:github:${HELD}`]);
   expect(after).toEqual([]);
 });

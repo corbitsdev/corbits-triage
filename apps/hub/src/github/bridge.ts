@@ -507,7 +507,7 @@ export function createBridgeHandler(d: BridgeDeps) {
     const named = asRecord(asRecord(payload)?.["repository"])?.["full_name"];
     if (typeof named === "string") {
       d.heard(loaded.tenantId, "github", named);
-      d.repoChanged(loaded.tenantId, named, event);
+      d.repoChanged(loaded.tenantId, named, "github", event);
     }
     if (INSTALL_EVENTS.has(event) && isRecord(payload)) {
       return handleInstallEvent(d, log, loaded, delivery, event, payload);

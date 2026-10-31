@@ -89,6 +89,17 @@ describe("evaluateActions", () => {
     expect(doEffectId(ref)).toBe("7e611cf1aaf437e896b5f4aa1aca8b51f80a15ceb9883911e353cae40cd6fa8f");
   });
 
+  test("an effect id names the host when it is not GitHub, and a GitHub id stays the one computed without a source", () => {
+    const ref = { repo: "acme/widgets", number: 8, headSha: "abc", list: "pass" as const, index: 0, kind: "comment" as const, target: { body: "pass" } };
+    expect(doEffectId({ ...ref, source: "github" })).toBe(doEffectId(ref));
+    expect(doEffectId({ ...ref, source: "bitbucket-datacenter" })).not.toBe(doEffectId(ref));
+    const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [say("pass")] } };
+    const input = { facts, checks: [], verdict: "pass" as const, reason: "passes the repository's policy", pack };
+    expect(evaluateActions(input)).toMatchObject([{ effectId: doEffectId(ref) }]);
+    expect(evaluateActions({ ...input, repoSource: "github" })).toMatchObject([{ effectId: doEffectId(ref) }]);
+    expect(evaluateActions({ ...input, repoSource: "bitbucket-datacenter" })).toMatchObject([{ effectId: doEffectId({ ...ref, source: "bitbucket-datacenter" }) }]);
+  });
+
   test("a step keeps its index when steps before it are satisfied or skipped", () => {
     const behind = run({ pass: [
       { do: "labels", target: { from: "list", labels: ["api"] } },

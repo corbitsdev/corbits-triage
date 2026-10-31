@@ -4,7 +4,7 @@
 // the pull request's manager writes it at most once under its effect id.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
-import { ACTION_KINDS, AGENT_DO, APPROVE_DO_KIND, DoList, repoPolicy, triageStopped, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, AGENT_DO, APPROVE_DO_KIND, DoList, REPO_SOURCES, repoPolicy, repoSourceOf, triageStopped, type ActionKind, type RepoSource, type ResolvedTarget } from "@corbits/triage-contracts";
 import { schema } from "@intx/db";
 import { formatRunAddress } from "@intx/types";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress, type WorkflowRunReader } from "@intx/hub-sessions";
@@ -15,16 +15,17 @@ import { doRefused, failure, type PortalCredentialDeps } from "./portal-credenti
 import type { Member } from "../integrations/app.js";
 import type { PullRequestRef } from "../manager-state.js";
 import type { VerdictRecordStore } from "./verdict-record-store.js";
-import { ListenerUnroutedError } from "./deployment.js";
+import { ListenerUnroutedError, workflowName } from "./deployment.js";
 import type { ReconcilePolicy } from "./reconcile-plan.js";
 import { holdHead } from "./triage-queue.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
 import { verdictFor } from "./triage-runs.js";
+import { verdictWorkflowsFor } from "./source-workflow.js";
 
 export const GITHUB_HELD_DOS_PATH = "/api/integrations/github-held-dos";
 
-export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0", effectId: "string > 0", kind: type.enumerated(...ACTION_KINDS, "agent") });
+export const HeldDoBody = type({ runId: "string > 0", repo: /^[\w.-]+\/[\w.-]+$/, number: "number.integer > 0", effectId: "string > 0", kind: type.enumerated(...ACTION_KINDS, "agent"), "source?": type.enumerated(...REPO_SOURCES) });
 /** `warning` says when the approved Do runs against its verdict, as a merge on a Fail or Unsure list does. */
 export const HeldDoSent = type({ status: "'sent'", "warning?": "string" });
 
@@ -42,7 +43,7 @@ const MirrorRequest = type({ repo: "string", number: "number", labels: "string[]
 
 export type GithubHeldDosDeps = PortalCredentialDeps & {
   runReader: Pick<WorkflowRunReader, "readRunEvents">;
-  verdicts: Pick<VerdictRecordStore, "forPull">;
+  verdicts: Pick<VerdictRecordStore, "forPull" | "forHostedPull">;
   /** Hands the approval to the workspace's listener, whose manager runs it; false when the workspace has none. */
   toListener: (tenantId: string, payload: unknown) => Promise<boolean>;
   /** The mirror request a manager's pass kept with the verdict it posted on the head. */
@@ -79,7 +80,7 @@ function heldDo(verdict: Record<string, unknown>, body: Body, principalId: strin
   const headSha = verdict["headSha"];
   if (request instanceof type.errors || typeof headSha !== "string") return failure(409, "verdict_outdated", "Run triage again.");
   const target = step.target as ResolvedTarget;
-  const effectId = doEffectId({ repo: body.repo, number: body.number, headSha, list: step.list, index: step.index, kind: step.kind, target });
+  const effectId = doEffectId({ repo: body.repo, number: body.number, headSha, list: step.list, index: step.index, kind: step.kind, target, ...(body.source !== undefined && { source: body.source }) });
   if (effectId !== step.effectId) return failure(409, "effect_mismatch", "The verdict's effect id does not match this Do.");
   const { list, index, kind } = step;
   const refused = unrunnable({ kind, target });
@@ -87,20 +88,27 @@ function heldDo(verdict: Record<string, unknown>, body: Body, principalId: strin
   return { kind: APPROVE_DO_KIND, runId: body.runId, principalId, list, index, request, step: { effectId, headSha, kind, target } };
 }
 
+/** A workflow `verdictWorkflowsFor` names for Bitbucket is that host's; every other name, and a missing one, is GitHub's. */
+function hostOfWorkflow(name: string | null): RepoSource {
+  return name !== null && verdictWorkflowsFor("bitbucket-datacenter").includes(name) ? "bitbucket-datacenter" : "github";
+}
+
 export function createGithubHeldDos(deps: GithubHeldDosDeps) {
   async function runEvents(tenantId: string, domain: string, runId: string) {
-    const run = await deps.db.query.workflowRun.findFirst({
-      where: and(eq(schema.workflowRun.id, runId), eq(schema.workflowRun.tenantId, tenantId)),
-      columns: { anchorRunId: true },
-    });
+    const [run] = await deps.db
+      .select({ anchorRunId: schema.workflowRun.anchorRunId, workflow: workflowName })
+      .from(schema.workflowRun)
+      .leftJoin(schema.workflowDefinition, eq(schema.workflowDefinition.id, schema.workflowRun.definitionId))
+      .leftJoin(schema.workflowRunLaunchSpec, eq(schema.workflowRunLaunchSpec.anchorRunId, schema.workflowRun.anchorRunId))
+      .where(and(eq(schema.workflowRun.id, runId), eq(schema.workflowRun.tenantId, tenantId)));
     if (!run?.anchorRunId) return undefined;
     const repoId = workflowRunRepoIdForAddress(formatRunAddress(run.anchorRunId, domain));
-    return { anchorRunId: run.anchorRunId, events: await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId) };
+    return { anchorRunId: run.anchorRunId, workflow: run.workflow, events: await deps.runReader.readRunEvents(repoId, WORKFLOW_RUN_REF, runId) };
   }
 
-  /** An approval stands only on the newest verdict that judged something; a run not recorded yet has none newer that is known. */
-  async function superseded(tenantId: string, repo: string, number: number, runId: string): Promise<boolean> {
-    const verdicts = await deps.verdicts.forPull(tenantId, repo, number);
+  /** An approval stands only on the newest verdict of its host that judged something; a run not recorded yet has none newer that is known. */
+  async function superseded(tenantId: string, source: RepoSource, repo: string, number: number, runId: string): Promise<boolean> {
+    const verdicts = await deps.verdicts.forHostedPull(tenantId, { source, repo, number });
     const at = verdicts.findIndex((verdict) => verdict.runId === runId);
     return at >= 0 && verdicts.slice(at + 1).some((verdict) => verdict.degraded === null && (verdict.runStatus === null || verdict.runStatus === "completed"));
   }
@@ -121,24 +129,26 @@ export function createGithubHeldDos(deps: GithubHeldDosDeps) {
   return async function approve(body: typeof HeldDoBody.infer, { tenantId, principalId }: Member): Promise<Response> {
     // A verdict recorded before agent Dos were removed may still hold one.
     if (body.kind === "agent") return failure(409, "do_not_runnable", AGENT_DO);
-    const refused = await doRefused(deps, principalId, tenantId, body.repo, body.kind);
+    const source = repoSourceOf(body.source);
+    const refused = await doRefused(deps, principalId, tenantId, source, body.repo, body.kind);
     if (refused) return refused;
 
     const tenant = await deps.db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId), columns: { domain: true, config: true } });
     if (!tenant) return failure(409, "workspace_unconfigured", "The workspace is not set up yet.");
     const { repo, number, runId } = body;
-    const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected);
+    const record = repoRecords(triageNs(tenant.config)).find((row) => row.name === repo && row.connected && sourceOf(row) === source);
     if (!record || !repoPolicy(record).enabled) return failure(409, "repo_not_enabled", "Triage is disabled for this repository. Enable it first.");
 
     const run = await runEvents(tenantId, tenant.domain, runId);
     const events = run?.events;
     if (!run || !events?.length) return failure(404, "run_not_found", "No such run in this workspace.");
+    if (hostOfWorkflow(run.workflow) !== source) return failure(409, "run_host_mismatch", "This run is on another host.");
     const verdict = verdictFor(events, repo, number) ?? (await managedVerdict(tenantId, record, body));
     if (verdict instanceof Response) return verdict;
     if (!verdict) return failure(404, "verdict_not_found", `The run has no verdict for ${repo}#${number}.`);
     const approval = heldDo(verdict, body, principalId);
     if (approval instanceof Response) return approval;
-    if (await superseded(tenantId, repo, number, runId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
+    if (await superseded(tenantId, source, repo, number, runId)) return failure(409, "verdict_superseded", "A newer triage result exists.");
     const repoSource = sourceOf(record);
     const mailed = { ...approval, ...(repoSource !== "github" && { repoSource }) };
     const logged = { tenantId, principalId, runId, repo, number, effectId: body.effectId, kind: approval.step.kind, list: approval.list };

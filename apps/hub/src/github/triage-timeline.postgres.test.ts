@@ -5,7 +5,8 @@ import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema, type DB } from "@intx/db";
 import { migrateTriageTables } from "../triage-db.js";
 import { createTriageTimeline, TriageTimeline } from "./triage-timeline.js";
-import { createVerdictRecordStore, type RecordedVerdict, replaceVerdict } from "./verdict-record-store.js";
+import { createVerdictRecordStore, type RecordedVerdict, type VerdictRecord, replaceVerdict } from "./verdict-record-store.js";
+import type { RepoRecord } from "./tenant-config.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_timeline";
@@ -16,6 +17,50 @@ const T0 = Date.parse("2026-10-01T12:00:00Z");
 function minutes(n: number): Date {
   return new Date(T0 + n * 60_000);
 }
+
+const SAME_NAME: RepoRecord[] = [
+  { name: REPO, connected: true },
+  { name: REPO, source: "bitbucket-datacenter", connected: true },
+];
+
+function row(runId: string): VerdictRecord {
+  return { ...verdict(runId, "aaa", 0, []), tenantId: TENANT, detail: null, trigger: null, runStatus: "completed", degraded: null };
+}
+
+test("a timeline read returns only the selected host's verdicts", async () => {
+  const github = row("run_gh");
+  const bitbucket = row("run_bb");
+  const asked: string[] = [];
+  function timelineFor(repos: RepoRecord[]) {
+    return createTriageTimeline({
+      db: { query: { tenant: { async findFirst() { return { config: { corbitsTriage: { repos } } }; } } } } as never,
+      verdicts: {
+        async forHostedPull(_tenantId, pull) {
+          asked.push(pull.source);
+          return pull.source === "bitbucket-datacenter" ? [bitbucket] : [github];
+        },
+      },
+    });
+  }
+  async function runIds(repos: RepoRecord[], source?: string) {
+    const query = source === undefined ? "" : `&source=${source}`;
+    const res = await timelineFor(repos)(new Request(`http://hub.test/timeline?repo=${REPO}&number=8${query}`), { tenantId: TENANT, principalId: "prn" });
+    const body = await res.json() as { entries: Array<{ runId: string }> };
+    return { status: res.status, ids: body.entries.map((entry) => entry.runId) };
+  }
+
+  const named = await runIds(SAME_NAME, "bitbucket-datacenter");
+  expect(named.status).toBe(200);
+  expect(named.ids).toEqual(["run_bb"]);
+  expect(asked).toEqual(["bitbucket-datacenter"]);
+
+  const both = await runIds(SAME_NAME);
+  expect(both.ids).toEqual(["run_gh"]);
+
+  const only = await runIds([{ name: REPO, source: "bitbucket-datacenter", connected: true }]);
+  expect(only.status).toBe(200);
+  expect(only.ids).toEqual(["run_bb"]);
+});
 
 function verdict(runId: string, headSha: string, at: number, checks: RecordedVerdict["checks"], fields: Partial<RecordedVerdict> = {}): RecordedVerdict {
   return {
@@ -41,7 +86,7 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
     const db = handle.db;
     await migrateTriageTables(db, "public");
     await db.insert(schema.tenant).values([
-      { id: TENANT, name: "Timeline", slug: "timeline", domain: "timeline.test" },
+      { id: TENANT, name: "Timeline", slug: "timeline", domain: "timeline.test", config: { corbitsTriage: { repos: [{ name: REPO, connected: true }] } } },
       { id: OTHER_TENANT, name: "Other", slug: "timeline-other", domain: "timeline-other.test" },
     ]);
 
@@ -59,7 +104,7 @@ test("PostgreSQL: a pull request's timeline scores each new outcome and names th
     ]);
     await seed(db, OTHER_TENANT, [verdict("run_7", "eee", 50, [])]);
 
-    const timeline = createTriageTimeline({ verdicts });
+    const timeline = createTriageTimeline({ db, verdicts });
     async function get(query: string): Promise<Response> {
       return timeline(new Request(`http://hub.test/api/integrations/triage-timeline/${TENANT}?${query}`), { tenantId: TENANT, principalId: "prn_timeline" });
     }

@@ -242,13 +242,13 @@ const ASKING_RULES: ReadonlySet<string> = new Set(["sensitive-paths", "risk"]);
 
 /**
  * What a policy file's rule does on failure when the file does not say: features and refactors cross size limits and
- * touch risky code, so those only label, and a sensitive or risky change is the author's to make but a maintainer's to accept.
+ * touch risky code, and judging one focus is a heuristic, so those only label, and a sensitive or risky change is the author's to make but a maintainer's to accept.
  */
 export function defaultOnFail(id: string): (typeof ON_FAILS)[number] {
   // A judged duplicate may only overlap, so a maintainer decides.
   if (id === "duplicates-open-pull-request") return "ask";
   if (ASKING_RULES.has(id)) return "ask";
-  return isSizeRule(id) || id === "regression-risk" ? "label" : "fail";
+  return isSizeRule(id) || id === "regression-risk" || id === "focused" ? "label" : "fail";
 }
 
 export const MODEL_SHAPES = ["is-true", "score", "choose"] as const;
@@ -660,7 +660,7 @@ export function recommendedPack(repo: string): CheckPack {
     checks: {
       "max-files-changed": { enabled: true, maxFiles: RECOMMENDED_SIZE.maxFiles, onFail: "label" },
       "max-lines-changed": { enabled: true, maxLines: RECOMMENDED_SIZE.maxLines, onFail: "label" },
-      focused: { enabled: true },
+      focused: { enabled: true, onFail: "label" },
       docs: { enabled: true },
       "linked-issue": { enabled: true, tracker: RECOMMENDED_ISSUE.tracker },
       "no-merge-conflicts": { enabled: true },

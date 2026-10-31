@@ -3,7 +3,7 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
-import { ACTION_KINDS, defaultActions, emptyPack, recommendedPack, WAITING_LABEL, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
+import { ACTION_KINDS, defaultActions, emptyPack, readPolicyFile, recommendedPack, WAITING_LABEL, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
 import { localActionCredentials } from "./local-credentials.js";
 import * as actions from "./actions/index.js";
 import type { ExecuteOutput } from "./actions/execute.js";
@@ -478,7 +478,7 @@ describe("pr-triage body", () => {
   });
 
   test("model checks run the judge on the repository's own docs and the verdict records its answers", async () => {
-    const { path, judged, verdict } = await triage(recommendedPack(REPO));
+    const { path, judged, verdict } = await triage(blockingFocusPack(REPO));
     expect(path).toEqual(JUDGE_PATH);
     expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001", "focused", "instructed"], ["focused-file-001"]]);
     expect(verdict).toMatchObject({ verdict: "fail", score: null, reasons: ["mixes unrelated changes: src/flag.ts", "documentation is not updated: src/flag.ts"] });
@@ -500,7 +500,7 @@ describe("pr-triage body", () => {
   });
 
   test("a branch based on another open pull request's is asked focused about its own changes, and the comment says what it is stacked on", async () => {
-    const { judged, verdict } = await triage(recommendedPack(REPO), { stacked: "onto" });
+    const { judged, verdict } = await triage(blockingFocusPack(REPO), { stacked: "onto" });
     expect(judged.flatMap((call) => call.questions.map((question) => question.id))).toContain("focused");
     expect((verdict as Verdict).checks.find((c) => c.check === "focused")?.result).toBe("fail");
     expect((verdict as Verdict).request.comment).toContain("Stacked on #7: only this pull request's own changes were checked.");
@@ -508,7 +508,7 @@ describe("pr-triage body", () => {
   });
 
   test("a branch other pull requests were merged into skips focused, saying why, and the other rules run as usual", async () => {
-    const { judged, verdict } = await triage(recommendedPack(REPO), { stacked: "merged" });
+    const { judged, verdict } = await triage(blockingFocusPack(REPO), { stacked: "merged" });
     const skipped = "stacked branch, based on #7, includes #9, #10, #11 and 2 more";
     expect(judged.map((call) => call.questions.map((question) => question.id))).toEqual([["docs-file-001", "instructed"]]);
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "pass"], ["docs", "fail"]]);
@@ -549,7 +549,7 @@ describe("pr-triage body", () => {
     }));
     expect(sources.reduce((total, file) => total + file.patch.length, 0)).toBeGreaterThan(3 * MAX_SYSTEM_ONE_STATE_BYTES);
     const files = [...sources, { ...FLAG, filename: "docs/flag.md" }];
-    const { judged, path, verdict } = await triage(recommendedPack(REPO), { files });
+    const { judged, path, verdict } = await triage(blockingFocusPack(REPO), { files });
     expect(path.judgeCalls).toBeGreaterThanOrEqual(4);
     expect(new Set(judged.flatMap((call) => call.state.pullRequest.files.map((file) => file.path)))).toEqual(new Set(files.map((file) => file.filename)));
     expect((verdict as Verdict).checks.filter((c) => c.kind === "model").map((c) => [c.check, c.result])).toEqual([["focused", "fail"], ["docs", "pass"]]);
@@ -1032,3 +1032,32 @@ describe("a run that could not read the pull request", () => {
     expect(writes(unknown.requests)).toEqual([]);
   });
 });
+
+
+test("default focused failure posts a note and label, never requests changes; explicit fail still does", async () => {
+  const text = `rules:
+  - check: focused
+    text: One change.
+    reason: Mixed changes are harder to review.
+    evidence: [maintainer-stated]
+`;
+  const pack = readPolicyFile(text, REPO) as CheckPack;
+  const github = fakeGithub();
+  const { verdict, judged } = await triage({ ...pack, actions: REQUEST_CHANGES }, { github });
+  expect(verdict).toMatchObject({ verdict: "pass", labelled: [{ check: "focused", result: "fail" }], actions: [{ kind: "labels", target: { labels: ["focused: check"] } }] });
+  expect((verdict as Verdict).request.comment).toContain("Notes:");
+  expect(github.labels).toContain("focused: check");
+  expect(github.reviews).toEqual([]);
+  expect(judged.flatMap((call) => call.questions.map((question) => question.id))).not.toContain("verdict");
+  const blocking = readPolicyFile(`${text}    onFail: fail\n`, REPO) as CheckPack;
+  const blocked = fakeGithub();
+  expect((await triage({ ...blocking, actions: REQUEST_CHANGES }, { github: blocked })).verdict).toMatchObject({ verdict: "fail" });
+  expect(blocked.reviews).toContainEqual(expect.objectContaining({ state: "CHANGES_REQUESTED" }));
+});
+
+
+/** These judge scenarios require an explicitly blocking focus rule, not the advisory recommendation. */
+function blockingFocusPack(repo: string): CheckPack {
+  const pack = recommendedPack(repo);
+  return { ...pack, checks: { ...pack.checks, focused: { enabled: true } } };
+}

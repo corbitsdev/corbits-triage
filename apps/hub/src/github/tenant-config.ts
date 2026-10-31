@@ -57,6 +57,16 @@ export function sourceOf(record: Pick<RepoRecord, "source">): RepoSource {
   return repoSourceOf(record.source);
 }
 
+/**
+ * The connected repository of this name. A named host matches only that host. With none named, two connected rows
+ * resolve to GitHub, and a single row is used as it is, so a Bitbucket-only repository still reads.
+ */
+export function connectedNamed(records: readonly RepoRecord[], repo: string, source: RepoSource | undefined): RepoRecord | undefined {
+  const named = records.filter((record) => record.name === repo && record.connected);
+  if (source !== undefined) return named.find((record) => sourceOf(record) === source);
+  return named.find((record) => sourceOf(record) === "github") ?? (named.length === 1 ? named[0] : undefined);
+}
+
 /** What the triage state and its queue key a repository by: GitHub ones keep their name, so stored state keeps matching; another host's carries its source. */
 export function triageStateKey(record: Pick<RepoRecord, "name" | "source">): string {
   const source = sourceOf(record);
@@ -78,15 +88,15 @@ function nsRev(ns: CorbitsTriageNs): number {
 }
 
 /**
- * Repositories the patch switches off or removes. Grants name a repository alone, so one whose name another host's
- * record keeps on is left out.
+ * Repositories the patch switches off or removes, each with its host. Removal is the triage state key; one still
+ * enabled on that host is left, and another host's record of the same name is not.
  */
-function switchedOff(before: CorbitsTriageNs, after: CorbitsTriageNs): string[] {
+function switchedOff(before: CorbitsTriageNs, after: CorbitsTriageNs): { name: string; source: RepoSource }[] {
   const kept = new Set(repoRecords(after).map(triageStateKey));
-  const on = new Set(repoRecords(after).filter((row) => row.enabled === true).map((row) => row.name.toLowerCase()));
+  const on = new Set(repoRecords(after).filter((row) => row.enabled === true).map((row) => `${sourceOf(row)}:${row.name.toLowerCase()}`));
   return repoRecords(before)
-    .filter((row) => (row.enabled === true || !kept.has(triageStateKey(row))) && !on.has(row.name.toLowerCase()))
-    .map((row) => row.name);
+    .filter((row) => (row.enabled === true || !kept.has(triageStateKey(row))) && !on.has(`${sourceOf(row)}:${row.name.toLowerCase()}`))
+    .map((row) => ({ name: row.name, source: sourceOf(row) }));
 }
 
 /**
@@ -109,7 +119,7 @@ export async function patchCorbitsTriage(
     const current = triageNs(existing);
     const patched = await patch(current, tx);
     if (patched === undefined) return current;
-    for (const repo of switchedOff(current, patched)) await revokeRepoKinds(tx, tenantId, repo);
+    for (const repo of switchedOff(current, patched)) await revokeRepoKinds(tx, tenantId, repo.name, repo.source);
     const fresh = !(CONFIG_KEY in existing) && patched["automation"] === undefined;
     const nextNs = { ...patched, ...(fresh && { automation: "policy" }), rev: nsRev(current) + 1 };
     await tx.update(schema.tenant)

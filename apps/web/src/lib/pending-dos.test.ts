@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { VerdictDetail } from "@corbits/triage-contracts";
 import { ApiError, type Transport } from "@intx/hub-client";
 import { createHoldQueue, HOLD_MS } from "./held-actions.ts";
-import { approveHeldDo, projectQueue, type PrItem } from "./hub-api.ts";
+import { approveHeldDo, projectQueue, type HubApproval, type PrItem } from "./hub-api.ts";
 import { doWrite } from "./inbox-pane.ts";
 import { actionMode } from "./inbox-view.ts";
 import { heldOffer, pendingDos, withoutDecidedDos, type PendingDo } from "./pending-dos.ts";
@@ -61,7 +61,7 @@ describe("pendingDos", () => {
     expect(calls).toEqual(dos.map((pending, index) => ({
       method: "POST",
       path: "/api/integrations/github-held-dos/t",
-      body: { runId: "run-8", ...pull, effectId: `effect-${index}`, kind: pending.kind },
+      body: { runId: "run-8", ...pull, source: "github", effectId: `effect-${index}`, kind: pending.kind },
     })));
   });
 
@@ -166,5 +166,53 @@ describe("actionMode", () => {
       pendingApprovalId: "a1",
     };
     expect(actionMode(item)?.mode).toBe("waiting");
+  });
+});
+
+const REPO = "acme/api";
+
+function heldPull(source: "github" | "bitbucket-datacenter", at: string) {
+  const detail = VerdictDetail.assert({ labels: ["triage:needs-decision"], feedback: "Please split this.", actions: [step("comment", { body: "Hi" })] });
+  return {
+    repo: REPO, number: 1, source, activityAt: null, run: null,
+    verdict: {
+      runId: `run-${source}`, at, headSha: "abc", verdict: "fail" as const, settled: true, state: "needs-decision", actor: "maintainer", humanGated: true,
+      degraded: null, commented: false, checks: [], detail,
+    },
+  };
+}
+
+function listed(source: "github" | "bitbucket-datacenter", numbers: number[]) {
+  const prs = numbers.map((number) => ({ number, title: "Fix", author: "ada", draft: false, sha: "abc", updatedAt: NOW, labels: [] as string[] }));
+  return { repo: REPO, source, prs };
+}
+
+describe("a held Do's host", () => {
+  test("a Bitbucket verdict keeps its host when no open pull requests are loaded", () => {
+    const [item] = projectQueue([heldPull("bitbucket-datacenter", NOW)], [], undefined);
+    if (item === undefined) throw new Error("no verdict projected");
+    expect(pendingDos(item)[0]?.source).toBe("bitbucket-datacenter");
+  });
+
+  test("the newer GitHub verdict keeps its host when both hosts list the same number", () => {
+    const open = { repos: [listed("github", [1]), listed("bitbucket-datacenter", [1])] };
+    const [item] = projectQueue([heldPull("bitbucket-datacenter", "2026-10-01T00:00:00.000Z"), heldPull("github", "2026-10-02T00:00:00.000Z")], [], open);
+    if (item === undefined) throw new Error("no verdict projected");
+    expect(pendingDos(item)[0]?.source).toBe("github");
+  });
+
+  test("a Bitbucket listing that omits the number does not close a GitHub verdict or change its host", () => {
+    const [item] = projectQueue([heldPull("github", NOW)], [], { repos: [listed("bitbucket-datacenter", [])] });
+    expect(item).toMatchObject({ source: "github", closed: false });
+  });
+
+  test("a GitHub mirror approval does not attach to a Bitbucket verdict", () => {
+    const approval: HubApproval = {
+      id: "mirror", tenantId: "tenant", runId: "run-bitbucket-datacenter", anchorRunId: "run-bitbucket-datacenter", agentAddress: "run-bitbucket-datacenter",
+      status: "pending", scope: null, toolDefinition: { name: "github_mirror" }, toolArguments: { repo: REPO, number: 1 },
+      correlationId: "mirror", timeoutAt: null, resolvedAt: null, createdAt: NOW, updatedAt: NOW,
+    };
+    const [item] = projectQueue([heldPull("bitbucket-datacenter", NOW)], [approval], undefined);
+    expect(item).toMatchObject({ source: "bitbucket-datacenter", pendingApprovalId: null });
   });
 });

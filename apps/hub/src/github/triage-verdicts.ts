@@ -15,7 +15,7 @@ import { listConnectedPulls, listingRefusal, refusedSources, type OpenPrsLister,
 import { failure, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
 import { runKeyNumber, type ObservedRun } from "./reconcile-plan.js";
-import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
+import { repoRecords, sourceOf, triageNs, triageStateKey, connectedNamed, type RepoRecord } from "./tenant-config.js";
 import type { TriageStateStore } from "./triage-state-store.js";
 import type { ManagerRuns, ObservedRuns } from "./manager-runs.js";
 import { type HostedPull, type HostedRepo, type HostedVerdict, type VerdictRecord, type VerdictRecordStore } from "./verdict-record-store.js";
@@ -141,15 +141,7 @@ function newest(times: ReadonlyArray<string | undefined>): string | null {
   return times.reduce<string | null>((latest, at) => (at !== undefined && (latest === null || at > latest) ? at : latest), null);
 }
 
-/** The connected `repo` on `source`; without one, as a repository link resolves: the GitHub one, else the only one. */
-function connectedRecord(connected: readonly RepoRecord[], repo: string, source: RepoSource | undefined): RepoRecord | undefined {
-  const named = connected.filter((record) => record.name === repo);
-  if (source !== undefined) return named.find((record) => sourceOf(record) === source);
-  return named.find((record) => sourceOf(record) === "github") ?? (named.length === 1 ? named[0] : undefined);
-}
-
-/**
- * Open pull requests per listed repository on its host among `records`, plus the `held` ones elsewhere: an approval
+/** Open pull requests per listed repository on its host among `records`, plus the `held` ones elsewhere: an approval
  * still needs a person after triage is turned off. A repository its host could not list is left out.
  */
 function openHeads(listed: OpenPullsRead | undefined, records: readonly RepoRecord[], held: readonly HostedPull[]): OpenHeads {
@@ -320,7 +312,7 @@ export function createTriageVerdicts(deps: TriageVerdictsDeps) {
     const connected = repoRecords(triageNs(tenant.config)).filter((record) => record.connected);
 
     if (query.repo !== undefined && query.number !== undefined) {
-      const record = connectedRecord(connected, query.repo, query.source);
+      const record = connectedNamed(connected, query.repo, query.source);
       if (!record) return failure(404, "not_found", "That repository is not connected.");
       const pull = { repo: query.repo, number: query.number, source: sourceOf(record) };
       const [latest, notes, runs] = await Promise.all([deps.verdicts.latestFor(tenantId, pull), notesOf(tenantId, [record], () => true), deps.managerRuns(tenantId, [pull])]);

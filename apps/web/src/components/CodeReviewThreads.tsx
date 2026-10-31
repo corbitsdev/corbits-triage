@@ -95,7 +95,7 @@ function Thread({ comment, review }: { comment: CodeReviewComment; review: CodeR
  */
 function SendToGithub({ item, completed, carriedTo, send }: { item: Reviewed; completed: CodeReviewRun; carriedTo: string | null; send: ReturnType<typeof useSendCodeReview> }) {
   const { readOnly } = usePortal();
-  const pull = useGithubPull(item.repo, item.number);
+  const pull = useGithubPull(item.repo, item.number, item.source);
   const heads = [completed.headSha, carriedTo];
   const sent = pull.data?.reviews.some((review) => review.codeReview === true && heads.includes(review.commitId)) === true;
   if (sent) return <span className="hint">Sent to GitHub</span>;

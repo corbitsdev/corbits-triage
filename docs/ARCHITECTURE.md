@@ -944,7 +944,7 @@ label off that head, so it never stands on a head not yet triaged.
    names no event and is `catch-up`, which wakes every action.
 
 The hub reads which kinds the `pr-triage` system role is granted (`invoke` on
-`triage-do:<kind>:<owner>/<name>`), after the grant writer has followed that
+`triage-do:<kind>:<source>:<owner>/<name>`), after the grant writer has followed that
 policy read (see [Tenancy and authority](#tenancy-and-authority)), and mails
 them with each trigger; the run trusts them only from the hub's sender. The kinds are acted on later than they
 are read, so a condition checked at read time would not hold at action time:
@@ -969,9 +969,11 @@ held action's verdict. The route checks the caller's stock `create` on
 `alwaysHeld` on `list`, and one the repository's policy file does not want
 (`policyKinds` of its current read, the policy read's `wanted`), and, reading the tenant row under a share lock so a repository
 switched off meanwhile loses the grant with its others, requires an enabled
-record of that source. It builds `triage-do:<kind>:<repo>` itself and gives it
+record of that source. It builds `triage-do:<kind>:<source>:<repo>` itself and gives it
 to the `pr-triage` role with `allowRole`, so the portal never names a role or a
-grant resource, and answers the repository's `automatic` kinds. Other held
+grant resource, and answers the repository's `automatic` kinds. An admin's
+`triage-do:*` and a person's `triage-do:<kind>:*` name no host, so each still
+matches the same kind on either host. Other held
 actions of that kind stay as recorded; the next pass of each pull request's
 manager is mailed the kind as automatic and runs it. Settings lists those kinds
 per repository and, only while `corbitsTriage.automation` is `ask`, removes one
@@ -1295,8 +1297,9 @@ from any App account as triage's own, so another App on the repository could mar
 its review that way. Routes that read the host check the caller's `read`
 (or `use`) grant on `github` and never return a secret; routes that write
 check `use`. A pull request action of a kind triage can run also checks
-`invoke` on `triage-do:<kind>:<owner>/<name>` (the repository name in
-lowercase).
+`invoke` on `triage-do:<kind>:<source>:<owner>/<name>` (the repository name in
+lowercase). An admin's `triage-do:*` and a person's `triage-do:<kind>:*` name no
+host, so each still matches the same kind on either host.
 
 Every connect of either host (`connectTriage` in
 `apps/hub/src/github/automation.ts`, run by GitHub connect, manifest
@@ -1336,7 +1339,7 @@ switches:
   hold exactly the kinds the host can write among `policyKinds` (every kind
   the verdict steps and `decide` rules name, never a step `alwaysHeld` on its
   verdict, whose grant would allow nothing) and posting: it inserts only the missing allows on
-  `triage-do:<kind>:<repo>` and deletes the role's allows there for every
+  `triage-do:<kind>:<source>:<repo>` and deletes the role's allows there for every
   other kind, so the same policy read again touches no row, and a kind taken
   out of the file, or one the host lacks (Labels and Assign on Bitbucket),
   is taken back. Under that lock it first checks the read is still the
@@ -1354,9 +1357,9 @@ switches:
   a person.
 - **Switch off or remove.** Every write of the namespace
   (`patchCorbitsTriage` in `tenant-config.ts`) that switches a repository off
-  or removes it deletes the role's `triage-do` grants on it in the same
-  transaction, on both hosts, unless another host's record of the same name
-  stays on, since a grant names the repository alone. Enabling it again
+  or removes it deletes the role's `triage-do` grants for that host and
+  repository in the same transaction. A grant names the host, so the other
+  host's record of the same name keeps its grants. Enabling it again
   starts from posting.
 
 A member given the `pr-triage` role is refused every action until it is

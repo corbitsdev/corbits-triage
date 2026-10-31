@@ -71,7 +71,7 @@ test("PostgreSQL: allowing a kind needs grant create, an enabled repository of t
 
     const answers = await Promise.all([1, 2, 3].map(() => allow("prn_admin", { repo: REPO, source: "github", kind: "request-review", list: "pass" })));
     expect(answers).toEqual([1, 2, 3].map(() => ({ status: 200, body: { automatic: ["request-review"] } })));
-    expect(await triageGrants()).toEqual([{ resource: doResource("request-review", REPO), action: "invoke" }]);
+    expect(await triageGrants()).toEqual([{ resource: doResource("request-review", "github", REPO), action: "invoke" }]);
     expect(await db.select().from(schema.grant).where(eq(schema.grant.principalId, "prn_admin"))).toEqual([]);
   } finally {
     await handle?.close();

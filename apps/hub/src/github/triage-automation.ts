@@ -17,7 +17,7 @@ export const AutomationBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, source: type.en
 
 export type TriageAutomationDeps = Pick<PortalCredentialDeps, "authorize"> & {
   db: DB["db"];
-  automaticKinds: (tenantId: string, repo: string) => Promise<ActionKind[]>;
+  automaticKinds: (tenantId: string, repo: string, source: RepoSource) => Promise<ActionKind[]>;
   /** The kinds the repository's policy file has Triage take on its own on the host; none without a file Triage runs. */
   wantedKinds: (tenantId: string, repo: string, source: RepoSource) => Promise<ActionKind[]>;
   now: () => Date;
@@ -40,11 +40,11 @@ export function createTriageAutomation(deps: TriageAutomationDeps) {
       if (!record || !repoPolicy(record).enabled) return { status: 409, code: "repo_not_enabled", message: "Triage is disabled for this repository. Enable it first." };
       const roleId = await triageRoleId(tx, tenantId);
       if (!roleId) throw new Error(`Workspace ${tenantId} has no ${TRIAGE_ROLE} role; connecting a host creates it.`);
-      await allowRole(tx, tenantId, roleId, doResource(kind, repo), DO_GRANT_ACTION, deps.now());
+      await allowRole(tx, tenantId, roleId, doResource(kind, source, repo), DO_GRANT_ACTION, deps.now());
       return undefined;
     });
     if (refused) return failure(refused.status, refused.code, refused.message);
     deps.log({ level: "info", msg: "triage_automation_allowed", tenantId, principalId, repo, source, kind });
-    return Response.json({ automatic: await deps.automaticKinds(tenantId, repo) });
+    return Response.json({ automatic: await deps.automaticKinds(tenantId, repo, source) });
   };
 }

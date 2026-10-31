@@ -57,8 +57,8 @@ export function evidenceOf(verdict: Pick<VerdictRecord, "detail">, check: string
   return verdict.detail?.checks?.find((row) => row.check === check)?.evidence;
 }
 
-/** How a Do a maintainer approved ended; its effect id names it on every verdict of its head that suggests it. */
-export type ApprovedDo = { repo: string; number: number; effectId: string; status: string; error?: string };
+/** How a Do a maintainer approved ended; its effect id names it on every verdict of its head that suggests it. Absent `source` is GitHub. */
+export type ApprovedDo = { repo: string; number: number; effectId: string; status: string; error?: string; source?: RepoSource };
 
 const WRITTEN = new Set(["done", "satisfied"]);
 
@@ -86,7 +86,7 @@ function ofPulls(pulls: readonly PullRef[]): SQL | undefined {
 const verdictSource = sql<RepoSource>`case when ${inArray(workflowName, verdictWorkflowsFor("bitbucket-datacenter"))} then 'bitbucket-datacenter' else 'github' end`;
 
 /** The verdicts `where` picks, each with its host, to group or pick from by host. */
-function hostedVerdicts(db: DB["db"], where: SQL | undefined) {
+function hostedVerdicts(db: DB["db"] | Tx, where: SQL | undefined) {
   const { workflowRun, workflowDefinition, workflowRunLaunchSpec } = schema;
   return db
     .select({ ...getTableColumns(verdictRecord), source: verdictSource.as("source") })
@@ -98,6 +98,19 @@ function hostedVerdicts(db: DB["db"], where: SQL | undefined) {
     .as("hosted");
 }
 
+/** The host of a run, read the same way as a verdict's. A run that is gone is GitHub's. */
+async function runSource(db: DB["db"] | Tx, tenantId: string, runId: string): Promise<RepoSource> {
+  const { workflowRun, workflowDefinition, workflowRunLaunchSpec } = schema;
+  const [row] = await db
+    .select({ source: verdictSource })
+    .from(workflowRun)
+    .leftJoin(workflowDefinition, eq(workflowDefinition.id, workflowRun.definitionId))
+    .leftJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.anchorRunId))
+    .where(and(eq(workflowRun.id, runId), eq(workflowRun.tenantId, tenantId)))
+    .limit(1);
+  return row?.source ?? "github";
+}
+
 /** The run started last read the newest head: a backlog run started before a push can make its verdict after the push's. */
 function latestOf(db: DB["db"], where: SQL | undefined): Promise<HostedVerdict[]> {
   const hosted = hostedVerdicts(db, where);
@@ -107,11 +120,12 @@ function latestOf(db: DB["db"], where: SQL | undefined): Promise<HostedVerdict[]
     .orderBy(hosted.repo, hosted.number, hosted.source, desc(hosted.startedAt), desc(hosted.verdictAt));
 }
 
-/** Sets each approved Do's outcome on every recorded verdict of its pull request that suggests it; a verdict not recorded yet gains it when it is. */
+/** Sets each approved Do's outcome on every recorded verdict of its pull request, on the same host, that suggests it; a verdict not recorded yet gains it when it is. A Do with no host is GitHub's. */
 export async function recordApproved(db: DB["db"] | Tx, tenantId: string, approved: readonly ApprovedDo[]): Promise<void> {
   for (const done of approved) {
     const pull = and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, done.repo), eq(verdictRecord.number, done.number));
-    const rows = await db.select({ runId: verdictRecord.runId, detail: verdictRecord.detail }).from(verdictRecord).where(pull);
+    const hosted = hostedVerdicts(db, pull);
+    const rows = await db.select({ runId: hosted.runId, detail: hosted.detail }).from(hosted).where(eq(hosted.source, done.source ?? "github"));
     for (const { runId, detail } of rows) {
       if (!detail?.actions?.some((action) => action.effectId === done.effectId)) continue;
       await db.update(verdictRecord).set({ detail: withApproved(detail, [done]) }).where(and(pull, eq(verdictRecord.runId, runId)));
@@ -119,10 +133,12 @@ export async function recordApproved(db: DB["db"] | Tx, tenantId: string, approv
   }
 }
 
-/** The Dos already written on the verdict's head, as the verdicts recorded there show them. */
-async function writtenOn(db: DB["db"] | Tx, tenantId: string, { repo, number, headSha }: Pick<RecordedVerdict, "repo" | "number" | "headSha">): Promise<ApprovedDo[]> {
-  const rows = await db.select({ detail: verdictRecord.detail }).from(verdictRecord)
-    .where(and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, repo), eq(verdictRecord.number, number), eq(verdictRecord.headSha, headSha)));
+/** The Dos already written on the verdict's head, as the verdicts of its host recorded there show them. */
+async function writtenOn(db: DB["db"] | Tx, tenantId: string, verdict: Pick<RecordedVerdict, "runId" | "repo" | "number" | "headSha">): Promise<ApprovedDo[]> {
+  const { repo, number, headSha } = verdict;
+  const source = await runSource(db, tenantId, verdict.runId);
+  const hosted = hostedVerdicts(db, and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, repo), eq(verdictRecord.number, number), eq(verdictRecord.headSha, headSha)));
+  const rows = await db.select({ detail: hosted.detail }).from(hosted).where(eq(hosted.source, source));
   const written: ApprovedDo[] = [];
   for (const { detail } of rows) {
     if (!detail?.actions) continue;
@@ -206,6 +222,12 @@ export function createVerdictRecordStore(db: DB["db"]) {
     forPull(tenantId: string, repo: string, number: number): Promise<VerdictRecord[]> {
       const where = and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, repo), eq(verdictRecord.number, number));
       return db.select().from(verdictRecord).where(where).orderBy(asc(verdictRecord.verdictAt));
+    },
+
+    /** Oldest first, on one host. A run whose workflow is not Bitbucket's, or is gone, is GitHub's, as `latestFor` reads it. */
+    forHostedPull(tenantId: string, pull: HostedPull): Promise<VerdictRecord[]> {
+      const hosted = hostedVerdicts(db, and(eq(verdictRecord.tenantId, tenantId), eq(verdictRecord.repo, pull.repo), eq(verdictRecord.number, pull.number)));
+      return db.select().from(hosted).where(eq(hosted.source, pull.source)).orderBy(asc(hosted.verdictAt));
     },
 
     async earliest(tenantId: string, repo: string): Promise<Date | null> {
