@@ -26,6 +26,7 @@ export function workflowPart(workflow: PolicyWorkflow | undefined) {
     rules: block?.when?.rules ?? "pass",
     ...(block?.when?.paths && { paths: block.when.paths }),
     ...(block?.provider && { provider: block.provider }),
+    ...(typeof block?.profile === "string" && { profile: block.profile }),
   };
   const blocks = BLOCK_KINDS.filter((kind) => workflow[kind]?.on === true);
   return { codeReview, blocks, ...(workflow.decide && { decide: workflow.decide }) };

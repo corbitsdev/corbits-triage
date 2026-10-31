@@ -15,7 +15,7 @@ const DISCONNECT_MS = 90_000;
 const REPLACED_MS = 3 * 60_000;
 
 const chain = chainStack({ TRIAGE_RECONCILE_INTERVAL_MS: String(RECONCILE_INTERVAL_MS) });
-const { github, pushed, until, rows } = chain;
+const { github, pushed, until, rows, settled } = chain;
 
 /** The GitHub listener's live deployments not being stopped, oldest first, and the pid of the local sidecar each runs on. */
 async function listeners(): Promise<{ id: string; pid: number }[]> {
@@ -59,9 +59,8 @@ const unrouted = once(async function unrouted() {
   const sent = await until("the pull request's mail to go out again", function seen() {
     return logged("triage_requeued").find((entry) => entry["repo"] === UNROUTED && entry["pr"] === 1);
   }, REPLACED_MS);
-  await until("the verdict", function posted() {
-    return comments(github.writesTo(UNROUTED, 1)).length > 0 ? true : undefined;
-  });
+  // The verdict comment precedes the labels; inspect writes only once the manager finishes.
+  await settled(UNROUTED, 1);
   const failed = logged("forward_failed").filter((entry) => entry["repo"] === UNROUTED);
   return { listener, failed, live, sent, writes: github.writesTo(UNROUTED, 1), misses: github.misses.slice(missed) };
 });

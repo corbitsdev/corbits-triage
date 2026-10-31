@@ -231,15 +231,19 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
       const tenantId = c.get("tenant").id;
       const runId = c.get("runId");
       const pr = { source, repo, number };
-      const { recorded, current } = await recordResult(db, tenantId, pr, runId, head, reported);
-      const entry = { tenantId, source, repo, number, kind: reported.kind, head, runId };
+      const { recorded, current, managerRunId } = await recordResult(db, tenantId, pr, runId, head, reported);
+      const entry = { tenantId, source, repo, number, kind: reported.kind, head, runId, ...(managerRunId && { managerRunId }) };
       if (!recorded && current !== undefined && current !== head) {
         log({ level: "info", msg: "reviewer_result_stale", ...entry, current });
         return c.json({ recorded: false });
       }
+      if (!recorded) log({ level: "info", msg: "reviewer_result_duplicate", ...entry });
+      else if ("failed" in reported) log({ level: "error", msg: "reviewer_result_accepted_failure", ...entry });
+      else log({ level: "info", msg: "reviewer_result_accepted_success", ...entry });
       if (recorded && reported.kind === "code-review" && !("failed" in reported) && reported.result.complete !== true) log({ level: "info", msg: "code_review_incomplete", ...entry, unread: reported.result.unread?.map((file) => file.path), unreadFiles: reported.result.unreadFiles });
       try {
         if (!(await wake(tenantId, pr, head))) log({ level: "warn", msg: "reviewer_result_unrouted", ...entry, reason: "the workspace has no listener for the host" });
+        else log({ level: "info", msg: "reviewer_result_woken", ...entry });
       } catch (err) {
         log({ level: "error", msg: "reviewer_result_wake_failed", ...entry, error: String(err) });
         return failure(502, "wake_failed", "The result is recorded, but the pull request's manager could not be woken.");

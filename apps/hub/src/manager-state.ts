@@ -182,14 +182,15 @@ export async function recordEvent(db: DB["db"], tenantId: string, pr: PullReques
   return inserted.length === 1;
 }
 
-const ResultRecorded = type([{ recorded: "0 | 1", current: "string | null" }]);
+const ResultRecorded = type([{ recorded: "0 | 1", current: "string | null", manager: "string | null" }]);
 
 /**
  * Records a reviewer's result on `head` under its run's id, in one statement only while `head` is the newest a pull
  * request mail named, or none named one yet, so a push recorded meanwhile cannot slip between the check and the record.
  * `recorded` is false as well when the run reported before; `current` is the newest head the statement saw.
+ * `managerRunId`, when present, is the claim holder in that snapshot, not necessarily the reviewer's deployer.
  */
-export async function recordResult(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, head: string, payload: Record<string, unknown>): Promise<{ recorded: boolean; current: string | undefined }> {
+export async function recordResult(db: DB["db"], tenantId: string, pr: PullRequestRef, runId: string, head: string, payload: Record<string, unknown>): Promise<{ recorded: boolean; current: string | undefined; managerRunId?: string }> {
   const { key, state } = newEvent(pr, runId, { type: "reviewer-result", head, payload });
   const [row] = ResultRecorded.assert(await db.execute(sql`
     WITH newest AS (SELECT ${managerState.state}->>'head' AS head FROM ${managerState} WHERE ${mails(tenantId, pr)} ORDER BY ${newestFirst} LIMIT 1),
@@ -198,8 +199,10 @@ export async function recordResult(db: DB["db"], tenantId: string, pr: PullReque
       SELECT ${tenantId}, ${key}, 'event', ${state} WHERE NOT EXISTS (SELECT 1 FROM newest WHERE head <> ${head})
       ON CONFLICT DO NOTHING RETURNING 1
     )
-    SELECT (SELECT count(*) FROM inserted)::int AS recorded, (SELECT head FROM newest) AS current`));
-  return { recorded: row.recorded === 1, current: row.current ?? undefined };
+    SELECT (SELECT count(*) FROM inserted)::int AS recorded, (SELECT head FROM newest) AS current,
+      (SELECT ${managerState.state}->>'runId' FROM ${managerState}
+       WHERE ${managerState.tenantId} = ${tenantId} AND ${managerState.key} = ${claimKey(pr)} AND ${managerState.kind} = 'claim') AS manager`));
+  return { recorded: row.recorded === 1, current: row.current ?? undefined, ...(row.manager !== null && { managerRunId: row.manager }) };
 }
 
 /**

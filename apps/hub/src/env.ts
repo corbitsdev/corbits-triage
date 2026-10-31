@@ -92,6 +92,7 @@ const HubEnvSchema = type({
   "HUB_MAIL_ACK_MAX_RETRIES?": positiveInteger,
   "WORKFLOW_DEFAULT_MAX_LIFETIME?": positiveDuration,
   "WORKFLOW_DEFAULT_MAX_DISCONNECTED?": positiveDuration,
+  "NODE_ENV?": "string",
   "PATH?": "string",
   "HOME?": "string",
   "TMPDIR?": "string",
@@ -127,7 +128,7 @@ export function loadHubEnv(raw: Record<string, string | undefined>): HubEnv {
   return env;
 }
 
-const DatabaseEnvSchema = HubEnvSchema.pick("DATABASE_URL", "DB_STATEMENT_TIMEOUT_MS", "PATH", "HOME", "TMPDIR");
+const DatabaseEnvSchema = HubEnvSchema.pick("DATABASE_URL", "DB_STATEMENT_TIMEOUT_MS", "PATH", "HOME", "TMPDIR", "NODE_ENV");
 
 /** The hub variables `db:migrate` needs, read the same way. */
 export function loadDatabaseEnv(raw: Record<string, string | undefined>): typeof DatabaseEnvSchema.infer {

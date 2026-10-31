@@ -16,8 +16,7 @@ const DURATION = "a duration of at least 1, such as 30s, 2m, 24h or 7d";
 const V4 = `${RULES}groups:
   maintainers: { association: [OWNER, MEMBER, COLLABORATOR] }
   core: { teams: [acme/core], users: [octocat] }
-code-review: { on: true, for: [maintainers], provider: anthropic, when: { triage: pass, paths: ["!**/*.md", "!**/*.lock"] } }
-pace: { debounce: 30s, maxWait: 2m, perHead: 1, cap: { runs: 5, per: 24h }, backoff: { pushes: 5, within: 10m, pause: 30m } }
+code-review: { on: true, for: [maintainers], provider: anthropic, profile: default, when: { triage: pass, paths: ["!**/*.md", "!**/*.lock"] } }
 pauseLabel: "corbits: pause"
 decide:
   - { if: { triage: fail, event: [opened] }, do: [request-changes, { do: comment, target: { body: Fix the rules. }, when: { author: [core] } }] }
@@ -38,8 +37,7 @@ describe("policy file v4", () => {
     expect(checked.policy).toEqual({ ...readPolicyFile(RULES, REPO), groups: checked.workflow.groups });
     expect(checked.workflow).toEqual({
       groups: { maintainers: { association: ["OWNER", "MEMBER", "COLLABORATOR"] }, core: { teams: ["acme/core"], users: ["octocat"] } },
-      "code-review": { on: true, for: ["maintainers"], provider: "anthropic", when: { triage: "pass", paths: ["!**/*.md", "!**/*.lock"] } },
-      pace: { debounce: "30s", maxWait: "2m", perHead: 1, cap: { runs: 5, per: "24h" }, backoff: { pushes: 5, within: "10m", pause: "30m" } },
+      "code-review": { on: true, for: ["maintainers"], provider: "anthropic", profile: "default", when: { triage: "pass", paths: ["!**/*.md", "!**/*.lock"] } },
       pauseLabel: "corbits: pause",
       decide: [
         { if: { triage: "fail", event: ["opened"] }, do: ["request-changes", { do: "comment", target: { body: "Fix the rules." }, when: { author: [{ group: "core" }] } }] },
@@ -150,7 +148,7 @@ describe("policy file v4", () => {
     [`${RULES}code-review: { on: true, when: { paths: ["src/**", "!"] } }\n`, "`code-review.when.paths` must be a list of globs with no spaces at either end, where `!` right before a glob leaves out the files it matches.", 6],
     [`${RULES}code-review: { when: { triage: pass } }\n`, "`code-review.on` must be true or false.", 6],
     [`${RULES}code-review: { onn: true }\n`, "`code-review.onn` is not a key; did you mean `code-review.on`?", 6],
-    [`${RULES}code-review: on\n`, "`code-review` must be a mapping of on, for, when and provider.", 6],
+    [`${RULES}code-review: on\n`, "`code-review` must be a mapping of on, for, when, provider and profile.", 6],
     [`${RULES}code-reveiw: { on: true }\n`, "`code-reveiw` is not a key; did you mean `code-review`?", 6],
     [`${RULES}blocks: {}\n`, "`blocks` is not a key; use extends, onFail, rules, actions, labels, groups, code-review, pace, pauseLabel or decide.", 6],
     [`${RULES}code-review: { on: true, whn: { triage: pass } }\n`, "`code-review.whn` is not a key; did you mean `code-review.when`?", 6],
@@ -158,7 +156,10 @@ describe("policy file v4", () => {
     [`${RULES}actions:\n  pass: [{ do: approve, when: { findings: { above: P2 } } }]\n`, "`actions.pass[0].when.findings` reads code review's findings; set `code-review.on: true` or remove the condition.", 7],
     [`${RULES}${ON}actions:\n  pass: [{ do: approve, when: { findings: { above: P4 } } }]\n`, "`actions.pass[0].when.findings` must be `{ above: <priority> }` with a priority of P0, P1, P2 or P3, or `{ any: true }` or `{ any: false }`.", 8],
     [`${RULES}${ON}actions:\n  pass: [{ do: approve, when: { findings: { above: P2, any: true } } }]\n`, "`actions.pass[0].when.findings` must be `{ above: <priority> }` with a priority of P0, P1, P2 or P3, or `{ any: true }` or `{ any: false }`.", 8],
-    [`${RULES}code-review: { on: true, provider: azure }\n`, "`code-review.provider` must be anthropic, openai, xai, google, opencode or custom.", 6],
+    [`${RULES}code-review: { on: true, provider: azure }\n`, "`code-review.provider` must be anthropic.", 6],
+    [`${RULES}code-review: { on: true, provider: openai }\n`, "`code-review.provider` must be anthropic.", 6],
+    [`${RULES}code-review: { on: true, profile: "" }\n`, "`code-review.profile` must be a profile name of at most 100 characters.", 6],
+    [`${RULES}pace: { debounce: 30s }\n`, "`pace`: pacing is not available yet; remove the block.", 6],
     [`${RULES}code-review: { on: true, for: [maintainer] }\n`, "`code-review.for` names `maintainer`, which is not a group; did you mean `maintainers`?", 6],
     [`${RULES}code-review: { on: true, for: [reviewers] }\n`, "`code-review.for` names `reviewers`, which is not a group; define it under groups.", 6],
     [`${RULES}groups: { everyone: { association: [NONE] } }\n`, "`groups.everyone` is built in; name the group something else.", 6],

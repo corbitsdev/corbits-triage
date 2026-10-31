@@ -119,3 +119,19 @@ test.each(policies)("every reader answers %s as expected", async (name) => {
   const observed = await readers(readFileSync(join(FILES, name), "utf8"));
   expect(READERS.map((reader) => [reader, observed[reader]])).toEqual(READERS.map((reader) => [reader, wanted(seams?.[reader] ?? expected, reader)]));
 }, 15_000);
+
+
+test("both host readers preserve focused advisory severity without weakening CI or forbidden paths", async () => {
+  const text = readFileSync(join(FILES, "focused-advisory.yml"), "utf8");
+  const state = stateOf({ path: POLICY_FILE_PATH, read: { kind: "file", sha: "0".repeat(40), text, url: `https://github.com/${REPO}/blob/main/${POLICY_FILE_PATH}` } }, REPO);
+  for (const source of ["github", "bitbucket-datacenter"] as const) {
+    const read = await readRepoPolicy(hubDeps(state), TENANT, REPO, source);
+    expect(read.status).toBe("ok");
+    if (read.status !== "ok") throw new Error(`Policy read failed for ${source}`);
+    expect(read.pack.checks.focused?.onFail).toBe("label");
+    expect(read.pack.checks["ci-green"]).toEqual(expect.objectContaining({ enabled: true }));
+    expect(read.pack.checks["ci-green"]?.onFail).toBeUndefined();
+    expect(read.pack.checks["no-forbidden-paths"]?.onFail).toBeUndefined();
+    expect(read.pack.checks["no-forbidden-paths"]?.forbiddenGlobs).toEqual(["vendor/**"]);
+  }
+});

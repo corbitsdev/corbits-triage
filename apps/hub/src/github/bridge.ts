@@ -1,3 +1,4 @@
+import { logJson } from "../observability.js";
 // Legacy GitHub bridge under /api/hooks. The stock @corbits/webhooks routes
 // reject GitHub's X-Hub-Signature-256 HMAC with 401, so requests carrying that
 // header are verified here against the app-level hook credential
@@ -465,9 +466,7 @@ async function handlePolicyPush(
   return Response.json({ status: "accepted" }, { status: 202 });
 }
 
-export function logJson(entry: Record<string, unknown>): void {
-  console.log(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
-}
+export { logJson } from "../observability.js";
 
 export function createBridgeHandler(d: BridgeDeps) {
   const log = d.log ?? logJson;
