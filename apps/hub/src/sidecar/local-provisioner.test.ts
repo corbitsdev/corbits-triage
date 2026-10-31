@@ -88,6 +88,11 @@ async function setup({ maxSidecars = 4, freeBytes = async () => undefined }: { m
   return { dataRoot, manifests, spawned, crashes, reported, connected, records, retired: retired.promise, retireFailed: retireFailed.promise, create, attach, started };
 }
 
+test("a local sidecar does not name its own connect timeout", async () => {
+  const { create } = await setup();
+  expect(create().provisioner.connectTimeoutMs).toBeUndefined();
+});
+
 test("each allocation starts its own sidecar, and destroying it stops the process and removes its files", async () => {
   const { dataRoot, manifests, spawned, started } = await setup();
   const local = await started();

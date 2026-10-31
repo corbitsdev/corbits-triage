@@ -22,7 +22,7 @@ const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "po
 const TENANT = "tnt_unstarted";
 const RUN = "run_review";
 const ALLOCATION = "sal_review";
-/** Stands in for the hub's two minutes to connect, and fifteen to reconnect, which a lost sandbox always misses. */
+/** Stands in for a Railway sandbox's five minutes to connect, and for fifteen minutes to reconnect. The reconciler's own two minutes must not be what ends the wait. */
 const DEADLINE_MS = 300;
 /** Long enough that no deadline the reconciler set is what ends a test. */
 const SETTLE_MS = 15_000;
@@ -79,6 +79,7 @@ async function placement(db: Db, dataDir: string, connecting: number) {
     apiVersion: 2,
     bindingFingerprint: "railway-sandbox:v1",
     capabilities: [{ capability: "isolation:workload", state: "available" }],
+    connectTimeoutMs: DEADLINE_MS,
     async ensure({ generation }) {
       started.push(generation);
       return { kind: "accepted" };
@@ -119,7 +120,6 @@ async function placement(db: Db, dataDir: string, connecting: number) {
     plugins: createSidecarPluginRegistry({ provisioners: [provisioner] }),
     router,
     hubWebSocketUrl: "wss://hub.unstarted.test/ws/sidecar",
-    connectTimeoutMs: DEADLINE_MS,
     classifyParkedRun: replaceUnstartedRuns({
       publicKeyForAnchor,
       stock: createParkedRunClassifier({ runReader, addressForAnchor: async () => `${RUN}@unstarted.test`, projectionForAnchor: async () => null }),

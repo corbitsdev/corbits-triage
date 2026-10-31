@@ -52,6 +52,7 @@ import {
   type SidecarProvisioner,
   type SidecarProvisionerSelection,
 } from "./sidecar-allocation";
+import { connectTimeoutFor } from "./sidecar-allocation/reconciler";
 import {
   SessionLaunchError,
   type DeployPreparedCodeSourcedWorkflowParams,
@@ -510,7 +511,10 @@ export function createWorkflowAllocationService({
             ...(adoptedProbe.externalRef !== null
               ? { externalRef: adoptedProbe.externalRef }
               : {}),
-            connectDeadline: new Date(createdAt.getTime() + connectTimeoutMs),
+            connectDeadline: new Date(
+              createdAt.getTime() +
+                connectTimeoutFor(provisioner, connectTimeoutMs),
+            ),
             maxDisconnectedMs,
             now: createdAt,
           },
@@ -674,10 +678,12 @@ export function createWorkflowAllocationService({
         generation: bound.generation,
       };
       allocationRouter.fenceAllocation(bound.id, bound.generation);
+      // Same boot wait as a deployment ensure: a provisioner that names a
+      // connect budget must not be cut off at the operation timeout.
       const ensured = parseEnsureResult(
         await runSidecarOperation(
           "Probe ensure",
-          operationTimeoutMs,
+          connectTimeoutFor(probeProvisioner, operationTimeoutMs),
           (signal) =>
             probeProvisioner.ensure({
               signal,

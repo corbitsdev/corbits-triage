@@ -12,7 +12,7 @@ const BUN = {
 const EXEC_ENDPOINT = "wss://ssh.railway.com:2226/ws/exec";
 const PAGE_SIZE = 100;
 const POLL_MS = 1_000;
-const RUNNING_WAIT_MS = 5 * 60_000;
+export const RUNNING_WAIT_MS = 5 * 60_000;
 const DESTROY_WAIT_MS = 60_000;
 const TEMPLATE_WAIT_MS = 30 * 60_000;
 

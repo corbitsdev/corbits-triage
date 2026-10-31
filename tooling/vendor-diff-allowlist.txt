@@ -35,5 +35,14 @@ packages/hub-api/src/index.ts
 
 # Local carry: the deployer's grant on the run it deployed is manage, not
 # read, so a run can stop a deployment it started. To be raised upstream.
-# Remove when stock grants the deployer manage.
+# Remove when stock grants the deployer manage. CL-11829 also changes this
+# file: an adopted probe uses the provisioner's connect timeout.
 packages/hub-sessions/src/workflow-allocation-service.ts
+
+# CL-11829 local carry: a provisioner may set connectTimeoutMs, and the hub
+# uses it as the deadline to connect and finish deploying. Railway sets it to
+# the five minutes it already waits for a sandbox to be running. Not upstream.
+# Remove when stock lets a provisioner name its connect deadline.
+packages/hub-sessions/src/sidecar-allocation/contracts.ts
+packages/hub-sessions/src/sidecar-allocation/reconciler.ts
+packages/hub-sessions/src/sidecar-allocation/reconciler.test.ts

@@ -1,7 +1,7 @@
 import { createTemplateSidecarProvisioner, sidecarEnv, type Backend } from "@corbits/provisioner-template";
 import type { SidecarProvisioner } from "@intx/hub-sessions";
 import type { AdapterManifest } from "@intx/types";
-import { RailwayCreateRefused, type RailwaySandboxes, type SandboxSummary } from "./sandboxes.js";
+import { RailwayCreateRefused, RUNNING_WAIT_MS, type RailwaySandboxes, type SandboxSummary } from "./sandboxes.js";
 
 export {
   connectRailwaySandboxes,
@@ -155,6 +155,8 @@ export function createRailwaySidecarProvisioner({
     id: "railway-sandbox",
     bindingFingerprint: `railway:v1:${environmentId}:${hubId}`,
     capabilities: [{ capability: "isolation:workload", state: "available" }],
+    // The hub's connect deadline has to cover waitUntilRunning, which already waits this long.
+    connectTimeoutMs: RUNNING_WAIT_MS,
     async ensure(request) {
       // No sandbox is created from a template Railway has not built.
       const build = await unlessAborted(sandboxes.templateReady(), request.signal);

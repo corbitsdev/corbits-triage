@@ -226,7 +226,9 @@ GitHub, Bitbucket DC ──webhook──► Hub ◄──── portal (/api)
   Interchange refuses it with `provisioner_no_match`.
   Stock replaces a sidecar that misses its connect deadline only when the
   `classifyParkedRun` hook it is given answers `parked`; otherwise it releases
-  the sidecar and fails the run. The hub uses that hook
+  the sidecar and fails the run. A Railway sandbox's deadline is the five
+  minutes the provisioner waits for the VM to be running. Every other sidecar
+  keeps 120 seconds. The hub uses that hook
   (`apps/hub/src/sidecar/unstarted-run.ts`) for a sandbox whose run never
   finished deploying, which has no public key on its run, stock's proof that a
   generation deployed it: it answers `parked` until the run has had three
