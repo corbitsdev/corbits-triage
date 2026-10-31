@@ -241,7 +241,7 @@ test("PostgreSQL: done keeps each posted finding's comment, the first pass on a 
     expect(await threadsShown()).toEqual([["a.ts", { state: "untouched" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "outdated" }]]);
 
     await recordEvent(db, TENANT, GITHUB, "thread-resolved", { type: "webhook", head: "h1", payload: { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: "h1" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h1" }, threads: [501, 502] });
+    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h1" }, threads: [501, 502], commentThreads: [{ runId: "run_reviewer", threads: [{ id: 501, state: "untouched" }, null, { id: 502, state: "outdated" }] }] });
     const review = { ...REVIEW, comments: findings };
     const stamped = await post(app, "done", { ...GITHUB, reviewers: [{ kind: "code-review", head: "h1", runId: "run_reviewer", deployedBy: "run_manager", deadline: "2999-01-01T00:00:00.000Z", result: review }], threadIds: { runId: "run_reviewer", ids: [501, null, 502] }, threads: [{ id: 501, state: "resolved" }] }, manager);
     expect(await stamped.json()).toEqual({ outcome: "ended" });

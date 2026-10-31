@@ -904,11 +904,13 @@ describe("triage-manager with code review", () => {
   /**
    * A later pass on the head whose review is already stored, woken by a review-thread webhook. The pack's `on:` does not
    * name threads, so approve and merge are suggested only because that wake releases them. No second review is deployed.
+   * `commentThreads` is the code-review event's thread per finding, which a review posted before the claim kept the id
+   * has even when the stored comments do not.
    */
-  async function threadsWake(hostThreads: object[] | undefined, comments: ReturnType<typeof inline>[]) {
+  async function threadsWake(hostThreads: object[] | undefined, comments: readonly object[], commentThreads?: { runId: string; threads: ({ id: number; state: "resolved" | "outdated" | "replied" | "untouched" } | null)[] }[]) {
     const request = { ...hubRequest(RELEASING, { ...CODE_REVIEW, ...REVIEW_REQUEST }), event: "pull_request_review_thread", action: "resolved", events: ["threads"] };
     const { writes, host } = threadedHost(hostThreads, CI_GREEN);
-    const take = { ...PASS, request, events: [mailEvent(HEAD, { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: HEAD }, "evt_threads")], threads: [501], reviewers: [{ ...reviewer(), result: { ...REVIEW, comments } }] };
+    const take = { ...PASS, request, events: [mailEvent(HEAD, { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: HEAD }, "evt_threads")], threads: [501], reviewers: [{ ...reviewer(), result: { ...REVIEW, comments } }], ...(commentThreads !== undefined && { commentThreads }) };
     const hub = fakeHub({ takes: [take], dones: [ENDED] });
     const run = await runMail(reviewed, wake(), host, hub.hub);
     return { writes, ...run, calls: hub.calls };
@@ -977,6 +979,39 @@ describe("triage-manager with code review", () => {
     const reviewers = doneBody(calls)["reviewers"] as { kind: string; result?: { comments?: { thread?: { id: number; state: string } }[] } }[];
     const review = reviewers.find((reviewer) => reviewer.kind === "code-review");
     expect(review?.result?.comments?.map((comment) => comment.thread)).toEqual([{ id: 501, state: "untouched" }]);
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.find((action) => action.kind === "approve")).toMatchObject({ held: true, reason: OPEN });
+    expect(cleared.approvable).toBe(false);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+  });
+
+  /** Comment id 501 lives on the code-review event, not on the stored review the claim kept before it recorded threads. */
+  const EVENT_THREAD = [{ runId: DEPLOYED, threads: [{ id: 501, state: "untouched" as const }] }];
+
+  test("a resolved read of a comment id known only from the code-review event writes approve and merge", async () => {
+    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [REVIEW.comments[0]!], EVENT_THREAD);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    const evaluated = suggested(outputs, "evaluateRules");
+    const cleared = suggested(outputs, "cleared");
+    expect(cleared.actions.map((action) => action.held)).toEqual([undefined, undefined]);
+    expect(cleared.actions.map((action) => action.effectId)).toEqual(evaluated.actions.map((action) => action.effectId));
+    expect(cleared.approvable).toBe(true);
+    expect(cleared.approvable).toBe(evaluated.approvable);
+    expect(approved(writes)).toBe(true);
+    expect(wroteMerge(writes)).toBe(true);
+  });
+
+  test("a refused read of a comment id known only from the code-review event still holds and does not stamp resolved", async () => {
+    const { writes, outputs, calls, terminalStatus } = await threadsWake(undefined, [REVIEW.comments[0]!], EVENT_THREAD);
+    expect(terminalStatus).toBe("completed");
+    releasedOnly(outputs);
+    expect(doneBody(calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
+    expect(doneBody(calls)["threads"]).toBeUndefined();
+    const reviewers = doneBody(calls)["reviewers"] as { kind: string; result?: { comments?: { thread?: { state: string } }[] } }[];
+    const review = reviewers.find((reviewer) => reviewer.kind === "code-review");
+    expect(review?.result?.comments?.map((comment) => comment.thread?.state)).not.toContain("resolved");
     const cleared = suggested(outputs, "cleared");
     expect(cleared.actions.find((action) => action.kind === "approve")).toMatchObject({ held: true, reason: OPEN });
     expect(cleared.approvable).toBe(false);

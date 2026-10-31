@@ -63,8 +63,11 @@ const NewEvent = EventState.omit("receivedAt", "consumedBy", "consumedAt");
 export type PullRequestRef = { source: RepoSource; repo: string; number: number };
 type TakenEvent = { key: string; event: ManagerEvent };
 
+/** A code-review event's thread for each finding, in the review's order; null where that finding has no comment id. */
+type CommentThreads = { runId: string; threads: (typeof FindingThread.infer | null)[] };
+
 type Latest = { request?: Record<string, unknown>; reviewers: Reviewer[]; waitingSince?: string; headSince?: string; claimedAt: string };
-type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean; threads: number[] } & Latest);
+type TakeResult = { outcome: "refused" } | ({ outcome: "idle" } & Latest) | ({ outcome: "pass"; pass: Pass; events: TakenEvent[]; resumed: boolean; threads: number[]; commentThreads?: CommentThreads[] } & Latest);
 type ClosedPass = Claim["history"][number];
 /**
  * What a pass reports as done closes it: the head it worked on, whether its verdict waits for the host's checks, or the
@@ -482,6 +485,16 @@ function reportedThreads(results: readonly TakenEvent[], head: string, onHead: b
   }));
 }
 
+/** Each code-review event's thread per finding, in that review's order, omitting a review that names no comment id. */
+function commentThreadsOf(results: readonly TakenEvent[], pr: PullRequestRef): CommentThreads[] {
+  const prefix = eventKey(pr, "");
+  return results.flatMap(function posted({ key, event }) {
+    const threads = findingsOf(event).map((finding) => finding.thread ?? null);
+    if (threads.every((thread) => thread === null)) return [];
+    return [{ runId: key.slice(prefix.length), threads }];
+  });
+}
+
 /** Ids whose stored state is `resolved`, or not, in map order. */
 function idsInState(threads: ReadonlyMap<number, string>, resolved: boolean): number[] {
   return [...threads.keys()].filter((id) => (threads.get(id) === "resolved") === resolved);
@@ -499,19 +512,26 @@ function withinCap(groups: readonly (readonly number[])[]): number[] {
 }
 
 /**
- * Comments a pass reads, at most `MAX_THREAD_READS`, newest within each group. A pass whose webhooks triage as threads,
- * a resumed pass's included, reads findings posted on `head`: ids not stored resolved, then ids stored resolved. The
- * first pass on `head` then reads findings posted on other heads, newest unresolved then newest resolved, which a person
- * can reopen. A later pass that does not triage as threads reads none. An id past the cap is left out.
+ * Comments a pass reads, at most `MAX_THREAD_READS`, newest within each group, and the thread each code-review event
+ * keeps per finding. A pass whose webhooks triage as threads, a resumed pass's included, reads findings posted on
+ * `head`: ids not stored resolved, then ids stored resolved. The first pass on `head` then reads findings posted on
+ * other heads, newest unresolved then newest resolved, which a person can reopen. A later pass that does not triage as
+ * threads reads none. An id past the cap is left out. `commentThreads` is named either way, so a comment id kept only
+ * on the event still joins to a read on this pass and a stored resolved still releases on a later one.
  */
-async function threadsFor(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head: string, passEvents: readonly TakenEvent[]): Promise<number[]> {
+async function threadsFor(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head: string, passEvents: readonly TakenEvent[]): Promise<{ ids: number[]; commentThreads: CommentThreads[] }> {
+  const reported = eventsOf(await codeReviewResults(tx, tenantId, pr));
+  const commentThreads = commentThreadsOf(reported, pr);
   const first = !claim.history.some((pass) => pass.head === head);
   const currentHead = passEvents.some(({ event }) => event.type === "webhook" && triagesThreads(event.payload));
-  if (!first && !currentHead) return [];
-  const reported = eventsOf(await codeReviewResults(tx, tenantId, pr));
+  if (!first && !currentHead) return { ids: [], commentThreads };
   const current = currentHead ? reportedThreads(reported, head, true) : new Map<number, string>();
   const other = first ? reportedThreads(reported, head, false) : new Map<number, string>();
-  return withinCap([idsInState(current, false), idsInState(current, true), idsInState(other, false), idsInState(other, true)]);
+  return { ids: withinCap([idsInState(current, false), idsInState(current, true), idsInState(other, false), idsInState(other, true)]), commentThreads };
+}
+
+function threadAnswer(read: { ids: number[]; commentThreads: CommentThreads[] }): { threads: number[]; commentThreads?: CommentThreads[] } {
+  return { threads: read.ids, ...(read.commentThreads.length > 0 && { commentThreads: read.commentThreads }) };
 }
 
 /** A finding's thread once `id` is its comment and `read` what the host last said of it, if anything; a comment just posted is untouched. */
@@ -630,7 +650,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
       const pass = { ...claim.pass, takes: claim.pass.takes + 1 };
       await writeClaim(tx, tenantId, pr, { ...claim, pass });
       const events = await eventsByKey(tx, tenantId, pass.events);
-      return { outcome: "pass", pass, events, resumed: true, threads: await threadsFor(tx, tenantId, pr, claim, pass.head, events), ...(await latest(tx, tenantId, pr, claim, pass)) };
+      return { outcome: "pass", pass, events, resumed: true, ...threadAnswer(await threadsFor(tx, tenantId, pr, claim, pass.head, events)), ...(await latest(tx, tenantId, pr, claim, pass)) };
     }
     const rows = await tx.select({ key: managerState.key, state: managerState.state }).from(managerState)
       .where(pending(tenantId, pr))
@@ -647,7 +667,7 @@ export async function take(db: DB["db"], tenantId: string, pr: PullRequestRef, r
     if (kept.length === 0) return { outcome: "idle", ...(await latest(tx, tenantId, pr, claim)) };
     const pass = { id, head, events: kept.map((row) => row.key), takenAt, takes: 1 };
     await writeClaim(tx, tenantId, pr, { ...claim, pass });
-    return { outcome: "pass", pass, events: kept, resumed: false, threads: await threadsFor(tx, tenantId, pr, claim, head, kept), ...(await latest(tx, tenantId, pr, claim, pass)) };
+    return { outcome: "pass", pass, events: kept, resumed: false, ...threadAnswer(await threadsFor(tx, tenantId, pr, claim, head, kept)), ...(await latest(tx, tenantId, pr, claim, pass)) };
   });
 }
 

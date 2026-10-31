@@ -10,7 +10,7 @@ import { describeRoute } from "hono-openapi";
 import { schema, type DB } from "@intx/db";
 import type { RequireGrant, RunTokenRoute, TenantEnv } from "@intx/hub-api";
 import { asRecord } from "@corbits/common";
-import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, StageResult, ThreadRead, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
+import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, REPO_SOURCES, FindingThread, StageResult, ThreadRead, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
 import { failure } from "./github/portal-credential.js";
 import { MAX_BODY_BYTES } from "./read-json.js";
 import { body, Failure, json } from "./route-schema.js";
@@ -64,7 +64,8 @@ const ReviewerResultBody = PullRequest.and(StageResult);
 const DeployedBody = PullRequest.and({ runId: "string > 0" });
 
 const Latest = { "request?": "Record<string, unknown>", reviewers: ReviewerState.array(), "waitingSince?": "string", "headSince?": "string", claimedAt: "string" } as const;
-const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean", threads: "number[]", ...Latest });
+const CommentThreads = type({ runId: "string > 0", threads: FindingThread.or("null").array() });
+const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: PassState, events: type({ key: "string", event: EventState }).array(), resumed: "boolean", threads: "number[]", "commentThreads?": CommentThreads.array(), ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 const Recorded = type({ recorded: "boolean" });
 const Noted = type({ noted: "boolean" });
@@ -155,7 +156,7 @@ export function createManagerRoutes({ db, requireGrant, log, wake, supersede, ta
     TAKE_PATH,
     describeRoute({
       summary: "Take the pull request's pending events as its manager",
-      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded, \`request\`, the newest pull request mail the hub recorded, whose \`events\` name every event on its head no pass has acted on yet (a pass that waited for CI or a reviewer, or whose verdict held an action for CI, acted on none), \`waitingSince\`, when the passes on the head began waiting for its CI while the last of them still does, \`headSince\`, when the head's first closed pass was taken, and \`claimedAt\`, when the calling run claimed the pull request. A pass names in \`threads\` at most 100 host comments of code review findings, an id past that left out, so the manager reads what became of them: when any webhook of the pass triages as threads, a resumed pass's included, the findings posted on its own head, numeric ids only, those not stored resolved first and then those stored resolved; and, only when it is the first pass on its head, findings posted on other heads, the newest not yet resolved first and then the newest resolved ones, which can be reopened. A later pass that does not triage as threads names none. ${NOT_MANAGER}`,
+      description: `Run token only. Claims the pull request for the calling run when no live run holds it. Answers the open pass again (\`resumed\`), or a new pass on the newest head over every pending event no other request holds, or \`idle\`; either way with the reviewers the last done recorded, \`request\`, the newest pull request mail the hub recorded, whose \`events\` name every event on its head no pass has acted on yet (a pass that waited for CI or a reviewer, or whose verdict held an action for CI, acted on none), \`waitingSince\`, when the passes on the head began waiting for its CI while the last of them still does, \`headSince\`, when the head's first closed pass was taken, and \`claimedAt\`, when the calling run claimed the pull request. A pass names in \`threads\` at most 100 host comments of code review findings, an id past that left out, so the manager reads what became of them: when any webhook of the pass triages as threads, a resumed pass's included, the findings posted on its own head, numeric ids only, those not stored resolved first and then those stored resolved; and, only when it is the first pass on its head, findings posted on other heads, the newest not yet resolved first and then the newest resolved ones, which can be reopened. A later pass that does not triage as threads names none. It also names in \`commentThreads\` each code-review event's stored thread for each finding, in that review's order and null where the finding has no comment, so an id kept only on the event still joins to the read. ${NOT_MANAGER}`,
       tags: TAGS,
       responses: { 200: json("The pass to work on, or idle", Taken), ...refusals, 409: json(NOT_MANAGER, Failure) },
     }),

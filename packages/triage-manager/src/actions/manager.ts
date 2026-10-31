@@ -1,7 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, JudgeVerdict, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, FindingThread, JudgeVerdict, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { hostAwaited, type Awaits } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
@@ -13,7 +13,8 @@ export type Reviewer = typeof Reviewer.infer;
 
 const TakenEvent = type({ key: "string", event: { type: "string", head: "string", payload: "Record<string, unknown>" } });
 const Latest = { "request?": "Record<string, unknown>", reviewers: Reviewer.array(), "waitingSince?": "string", "headSince?": "string", claimedAt: "string" } as const;
-const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), threads: "number[]", ...Latest });
+const CommentThreads = type({ runId: "string > 0", threads: FindingThread.or("null").array() });
+const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), threads: "number[]", "commentThreads?": CommentThreads.array(), ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
 
 /**
@@ -32,6 +33,7 @@ export const LIFETIME_MS = 3 * 60 * 60_000;
  * judge's verdict on `head`, reported on this pass or an earlier one. `waitingSince` is when the head started waiting
  * for its CI, while it still does. `stopped` names what the head still waited for once the manager's lifetime ran out:
  * the pass decides without it. `threads` are the comments of findings posted on earlier heads, whose threads the pass reads.
+ * `commentThreads` is each code-review event's thread per finding, in that review's order, null where it names no comment.
  */
 export const TakeOutput = type({
   run: "boolean",
@@ -51,6 +53,7 @@ export const TakeOutput = type({
   "waitingSince?": "string",
   "stopped?": type.enumerated("ci", "judge", "code-review").array(),
   "threads?": "number[]",
+  "commentThreads?": CommentThreads.array(),
 });
 export type TakeOutput = typeof TakeOutput.infer;
 
@@ -178,6 +181,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   if (typeof head !== "string") return { ...nothing, reviewers: answer.reviewers };
   const events = answer.outcome === "pass" ? answer.events : [];
   const threads = answer.outcome === "pass" ? answer.threads : [];
+  const commentThreads = answer.outcome === "pass" ? answer.commentThreads : undefined;
   const mails = events.filter(({ event }) => event.type === "webhook").map(({ event }) => event);
   const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
@@ -196,7 +200,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const taken = request && { ...request, ...(waitedOut && { noWait: true }), ...(!waitedOut && starting && { ciStarting: true }) };
   const verdict = report.judge ?? storedVerdict(reviewers, head);
   const waiting = waitingSince !== undefined && !waitedOut;
-  return { run: answer.outcome === "pass" || overdue || waitedOut, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }), ...(stopped && { stopped: outstanding }), ...(threads.length > 0 && { threads }) };
+  return { run: answer.outcome === "pass" || overdue || waitedOut, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }), ...(stopped && { stopped: outstanding }), ...(threads.length > 0 && { threads }), ...(commentThreads !== undefined && commentThreads.length > 0 && { commentThreads }) };
 }
 
 const Output = { output: "Record<string, unknown>" } as const;

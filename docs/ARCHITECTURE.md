@@ -1141,9 +1141,12 @@ that record through `findingOpen` in triage-contracts: a finding whose thread is
 outdated is no longer open in the portal; replied, untouched and `not-tracked` ones are.
 The approve and merge hold does not follow `findingOpen`: only `resolved` releases
 the hold on that same commit, with no new push; outdated, replied, untouched, a
-finding with no thread, and a thread this pass could not read stay open. A later
+finding with no comment id, and a thread this pass could not read stay open. A
+comment id kept on the code-review event counts when the claim's reviewer result
+has none, matched to that finding: the pass that asked for it releases only on a
+read of resolved, and a refused or omitted read still holds. A later
 pass that did not read this head trusts a stored `resolved` that a successful
-read wrote.
+read wrote, on the claim or, when the claim has no id, on that event.
 With `at`, the route answers only that head's reviews and carries none over to
 it, so an older head's review reads with the states recorded for it. A
 closed or merged pull request is not read again.
@@ -1172,10 +1175,12 @@ A step
 without one is held only when it approves or merges and the review has any
 finding open. The approve and merge hold does not follow `findingOpen`: only
 `resolved` releases the hold on that same commit, with no new push; outdated,
-replied, untouched, a finding with no thread, and a thread this pass could not
+replied, untouched, a finding with no comment id, and a thread this pass could not
 read stay open, and a refused read does not leave that finding stored
-`resolved`. A later pass that did not read this head trusts a stored `resolved`
-that a successful read wrote. A review that did not run, failed, ran past its
+`resolved`. A comment id kept only on the code-review event is that finding's id
+for this check. A later pass that did not read this head trusts a stored `resolved`
+that a successful read wrote, on the claim or, when the claim has no id, on that
+event. A review that did not run, failed, ran past its
 deadline, read only part of the change or reviewed another head meets no
 condition. Each Do
 it holds adds one line to the verdict's comment naming the action and why, and

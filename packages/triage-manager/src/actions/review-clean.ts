@@ -4,7 +4,7 @@ import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, ThreadRead, VERDIC
 import { DO_NAMES } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
-import { LIFETIME_MS, storedReview, TakeOutput } from "./manager.js";
+import { LIFETIME_MS, storedReviewer, TakeOutput } from "./manager.js";
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES) });
 const TakenPart = type({ codeReview: CodeReviewPart });
@@ -24,19 +24,38 @@ type Reviewed = { incomplete: string } | { findings: Finding[] };
 /**
  * The review of the verdict's head while the policy turns code review on. One the policy's `for` or `when` left out
  * counts as off, and one held back by failed or unsettled rules did not run. A review that failed or ran past its
- * deadline reported nothing, and one of another head says nothing of this one.
+ * deadline reported nothing, and one of another head says nothing of this one. A comment id kept only on the code-review
+ * event is joined onto the finding it belongs to, so this pass can match the read by that id.
  */
-function reviewOf({ taken, review, reviewers, head }: TakeOutput, verdict: Verdict, scope: Scope): Reviewed | undefined {
+function reviewOf({ taken, review, reviewRun, reviewers, head, commentThreads }: TakeOutput, verdict: Verdict, scope: Scope): Reviewed | undefined {
   const part = TakenPart(taken);
   if (part instanceof type.errors) return undefined;
   const { codeReview } = part;
   const leftOut = scope.skipped !== undefined && rulesGate(codeReview.rules, verdict.checks).open;
   if (!codeReview.on || leftOut) return undefined;
   if (!scope.reviewed) return { incomplete: "Code review did not run on this head." };
-  const reported = head === undefined || (verdict.headSha !== null && verdict.headSha !== head) ? undefined : (review ?? storedReview(reviewers, head));
+  const stored = head === undefined ? undefined : storedReviewer(reviewers, head);
+  const reported = head === undefined || (verdict.headSha !== null && verdict.headSha !== head) ? undefined : (review ?? stored?.review);
   if (!reported) return { incomplete: "Code review did not report on this head." };
   if (reported.budgetExhausted || reported.complete !== true) return { incomplete: "Code review did not read the whole change on this head." };
-  return { findings: reported.comments };
+  const runId = review !== undefined ? reviewRun : stored?.runId;
+  return { findings: withEventThreads(reported.comments, runId, commentThreads) };
+}
+
+/**
+ * `comments` with the thread the code-review event of `runId` keeps for each finding that has none of its own. Matched
+ * by the event's id, in the review's order: a list that does not line up, or a null, invents nothing, and a missing
+ * thread with no read is not resolved. The event's stored state comes with the id. A pass that asked for the id still
+ * releases only when the read is resolved.
+ */
+function withEventThreads(comments: readonly Finding[], runId: string | undefined, posted: TakeOutput["commentThreads"]): Finding[] {
+  const row = runId === undefined ? undefined : posted?.find((item) => item.runId === runId);
+  if (row === undefined || row.threads.length !== comments.length) return [...comments];
+  return comments.map(function joined(finding, index) {
+    if (finding.thread !== undefined) return finding;
+    const thread = row.threads[index];
+    return thread === null || thread === undefined ? finding : { ...finding, thread };
+  });
 }
 
 /** The findings `condition` does not allow. */
