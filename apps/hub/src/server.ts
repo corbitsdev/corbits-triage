@@ -648,6 +648,7 @@ const watchListeners = createListenerWatch({
   replace: function replaceListener(tenantId, source) {
     return workflowsBundled && workflowReleases.replace(tenantId, source);
   },
+  now,
   log: logJson,
 });
 const managerRuns = createManagerRuns(composition.db, verdictRecordStore, now);

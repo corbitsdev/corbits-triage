@@ -437,8 +437,9 @@ any other tenant or an unknown sender.
 
   Stock routes a deployment's mail through the sidecar router's address
   index, per allocation generation, and acts on a lost route only when a
-  sidecar connects or reports a stop, or once it stayed disconnected past the
-  deployment's `maxDisconnected`. Each reconcile pass therefore asks the
+  sidecar connects or reports a stop. Its disconnect limit does not run while
+  the allocation stays allocated, which is the row a sidecar leaves behind
+  when it goes offline without a stop. Each reconcile pass therefore asks the
   router, through `isAllocatedWorkflowActive`, stock's deploy-readiness check,
   which reads the same per-connection route table mail is routed by, whether
   it routes the generation of each host's live listener whose first deploy
@@ -448,11 +449,22 @@ any other tenant or an unknown sender.
   listener again exactly as a credential write does and logs
   `listener_unroutable` with the workspace, host, run, allocation, generation
   and reason. A host whose roll is running or already due to redeploy it is
-  left to that roll, so one unroutable listener is replaced once. A listener whose sidecar is not
-  connected is left to stock, which fails it once it stays away past
-  `maxDisconnected`; each pass logs `listener_disconnected` at debug level
-  for it, or `listener_identity_unknown` when the router could not validate
-  the sidecar's identity. After asking stock to stop the listeners and
+  left to that roll, so one unroutable listener is replaced once. When the
+  router reports a listener's sidecar not connected, its
+  `SidecarNotConnectedError` carries `notConnectedSince`: when this hub last
+  lost that generation's binding, or when the router started, so a hub
+  restart starts the measure over. A disconnect that has not lasted longer
+  than the deployment's `maxDisconnected` (`maxDisconnectedMs` on the
+  allocation) only logs `listener_disconnected` at debug. Once it has, the
+  hub starts that host's listener again the same way and logs
+  `listener_unreachable` at warn with the workspace, host, run, allocation,
+  generation, how long it was unreachable (`unreachableMs`) and the reason.
+  One whose roll is already running or due is left to that roll, so it is
+  replaced once. `listener_identity_unknown` is logged when the router could
+  not validate the sidecar's identity, and `listener_check_failed` when the
+  check failed any other way, such as a generation that is no longer current;
+  neither pass is a disconnect.
+  After asking stock to stop the listeners and
   workflows a roll replaces, the roll polls stock's lifecycle status until
   each ends. One that stays live once stock gave up stopping it, which
   stock's lifecycle status shows as its allocation no longer dispatchable,

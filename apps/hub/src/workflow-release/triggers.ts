@@ -1,8 +1,8 @@
 // What starts a roll besides the hub's own start: a write through a stock route, a host found with no listener, and one whose
-// listener the hub cannot route mail to.
+// listener the hub cannot route mail to, including one whose sidecar stays disconnected past the deployment's limit.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { SidecarIdentityValidationError, type AllocatedSidecarTarget } from "@intx/hub-sessions";
+import { SidecarIdentityValidationError, SidecarNotConnectedError, type AllocatedSidecarTarget } from "@intx/hub-sessions";
 import { asRecord, decodedSegment, errorText } from "@corbits/common";
 import { REPO_SOURCES, type RepoSource } from "@corbits/triage-contracts";
 
@@ -52,21 +52,25 @@ export type ListenerWatchDeps = {
   listener: (tenantId: string, source: RepoSource) => Promise<{ runId: string } | undefined>;
   /** The host's listeners whose stop stock gave up on while they stay live. */
   stuck: (tenantId: string, source: RepoSource) => Promise<string[]>;
-  /** The allocation generation the listener runs on once deployed; undefined while it starts. */
-  allocation: (runId: string) => Promise<AllocatedSidecarTarget | undefined>;
+  /** The allocation generation the listener runs on once deployed, and how long its sidecar may stay disconnected; undefined while it starts. */
+  allocation: (runId: string) => Promise<(AllocatedSidecarTarget & { readonly maxDisconnectedMs: number }) | undefined>;
   /** Stock's router: whether it routes the generation's mail. */
   routable: (target: AllocatedSidecarTarget) => Promise<boolean>;
   ensure: (tenantId: string) => void;
   replace: (tenantId: string, source: RepoSource) => boolean;
+  /** When a disconnect is measured. */
+  now: () => Date;
   log: (entry: Record<string, unknown>) => void;
 };
 
 /**
  * Rolls a workspace once a connected host has no live listener, as after one stopped on its own, and starts a host's
- * listener again once its sidecar is connected but the hub holds no route to it. Stock acts on a lost route only when a
- * sidecar connects or reports a stop, so such a listener would otherwise stay live and unreachable. A listener whose
- * sidecar is not connected is left to stock, which fails it once it stays away past its deployment's limit. A listener
- * whose stop stock gave up on is reported on every pass.
+ * listener again once its sidecar is connected but the hub holds no route to it, or once the router reports that
+ * sidecar not connected for longer than the deployment's max disconnected limit. Stock acts on a lost route only when a
+ * sidecar connects or reports a stop, and its disconnect clock never starts while the allocation stays allocated, so a
+ * listener whose sidecar is gone would otherwise stay live and unreachable. The router measures a disconnect from when
+ * this hub last lost the generation's binding, or from its own start. One whose stop stock gave up on is reported on
+ * every pass. Any other failed check leaves whether the sidecar is connected unknown, so it is logged and not counted.
  */
 export function createListenerWatch(deps: ListenerWatchDeps) {
   return async function watch(tenantId: string): Promise<void> {
@@ -84,9 +88,21 @@ export function createListenerWatch(deps: ListenerWatchDeps) {
       try {
         routed = await deps.routable(target);
       } catch (error) {
-        // A failed identity lookup leaves whether the sidecar is connected unknown, not absent.
-        if (error instanceof SidecarIdentityValidationError) deps.log({ level: "warn", msg: "listener_identity_unknown", ...entry, reason: errorText(error) });
-        else deps.log({ level: "debug", msg: "listener_disconnected", ...entry, reason: errorText(error) });
+        if (error instanceof SidecarIdentityValidationError) {
+          deps.log({ level: "warn", msg: "listener_identity_unknown", ...entry, reason: errorText(error) });
+          continue;
+        }
+        if (!(error instanceof SidecarNotConnectedError)) {
+          deps.log({ level: "warn", msg: "listener_check_failed", ...entry, reason: errorText(error) });
+          continue;
+        }
+        const unreachableMs = deps.now().getTime() - error.notConnectedSince.getTime();
+        if (unreachableMs <= target.maxDisconnectedMs) {
+          deps.log({ level: "debug", msg: "listener_disconnected", ...entry, reason: errorText(error) });
+          continue;
+        }
+        if (!deps.replace(tenantId, source)) continue;
+        deps.log({ level: "warn", msg: "listener_unreachable", ...entry, unreachableMs, reason: "its sidecar stayed disconnected longer than the deployment's limit" });
         continue;
       }
       if (routed || !deps.replace(tenantId, source)) continue;
