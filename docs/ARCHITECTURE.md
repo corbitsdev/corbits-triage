@@ -449,20 +449,21 @@ any other tenant or an unknown sender.
   listener again exactly as a credential write does and logs
   `listener_unroutable` with the workspace, host, run, allocation, generation
   and reason. A host whose roll is running or already due to redeploy it is
-  left to that roll, so one unroutable listener is replaced once. A listener
-  whose sidecar is not connected keeps a clock on this watch, per listener
-  generation, in memory. The first pass that finds it disconnected starts the
-  clock, a pass that finds the sidecar connected again clears it, and a hub
-  restart starts it over; it does not read the allocation row's timestamps,
-  which do not move while the sidecar is offline. A disconnect that has not
-  lasted longer than the deployment's `maxDisconnected` (`maxDisconnectedMs`
-  on the allocation) only logs `listener_disconnected` at debug. Once it has,
-  the hub starts that host's listener again the same way and logs
+  left to that roll, so one unroutable listener is replaced once. When the
+  router reports a listener's sidecar not connected, its
+  `SidecarNotConnectedError` carries `notConnectedSince`: when this hub last
+  lost that generation's binding, or when the router started, so a hub
+  restart starts the measure over. A disconnect that has not lasted longer
+  than the deployment's `maxDisconnected` (`maxDisconnectedMs` on the
+  allocation) only logs `listener_disconnected` at debug. Once it has, the
+  hub starts that host's listener again the same way and logs
   `listener_unreachable` at warn with the workspace, host, run, allocation,
   generation, how long it was unreachable (`unreachableMs`) and the reason.
   One whose roll is already running or due is left to that roll, so it is
   replaced once. `listener_identity_unknown` is logged when the router could
-  not validate the sidecar's identity, and that pass is not a disconnect.
+  not validate the sidecar's identity, and `listener_check_failed` when the
+  check failed any other way, such as a generation that is no longer current;
+  neither pass is a disconnect.
   After asking stock to stop the listeners and
   workflows a roll replaces, the roll polls stock's lifecycle status until
   each ends. One that stays live once stock gave up stopping it, which

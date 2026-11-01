@@ -9,7 +9,7 @@ import { authorize } from "@intx/authz";
 import { createEnvKeyCredentialCipher, generateKeyPair } from "@intx/crypto";
 import { createDB, createGrantStore, createPrincipalKeyStore, runMigrations, schema } from "@intx/db";
 import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
-import { createAgentRepoStore, createAssetService, DEFAULT_ASSET_REF, type AssetService, type RepoStore } from "@intx/hub-sessions";
+import { createAgentRepoStore, createAssetService, DEFAULT_ASSET_REF, SidecarNotConnectedError, type AssetService, type RepoStore } from "@intx/hub-sessions";
 import { DEPLOYER_GRANTS, REPO_SOURCES, type ModelInfo, type RepoSource, type SourceIndexEntry } from "@corbits/triage-contracts";
 import { revokeHumanDeployers } from "../deployer-role.js";
 import { createSystemWrites, SYSTEM_WRITER, SystemWriteDenied, type SystemWrites } from "../system-writes/writer.js";
@@ -485,7 +485,7 @@ test("a listener whose connected sidecar the router holds no route to is started
   const routes: Record<string, () => boolean> = {
     alc_github: () => false,
     alc_bitbucket: () => {
-      throw new Error("Allocation alc_bitbucket is not connected");
+      throw new SidecarNotConnectedError("Allocation alc_bitbucket is not connected", new Date(0));
     },
   };
   const rolled: Array<RepoSource[]> = [];
@@ -588,7 +588,7 @@ test("a listener whose sidecar stays disconnected past its limit is replaced onc
       return { allocationId: runId === "run_github" ? "alc_github" : "alc_next", generation: 1, maxDisconnectedMs: limit };
     },
     async routable() {
-      if (away) throw new Error("Allocation alc_github is not connected");
+      if (away) throw new SidecarNotConnectedError("Allocation alc_github is not connected", new Date(0));
       return true;
     },
     ensure() {
@@ -602,20 +602,10 @@ test("a listener whose sidecar stays disconnected past its limit is replaced onc
       logged.push(entry);
     },
   });
-  await watch("tnt_away");
-  clock = limit - 1;
-  await watch("tnt_away");
-  expect(rolled).toEqual([]);
-  // A route that returns starts the clock over, so the next gap is measured on its own.
-  away = false;
-  await watch("tnt_away");
-  away = true;
   clock = limit;
   await watch("tnt_away");
-  clock = 2 * limit;
-  await watch("tnt_away");
   expect(rolled).toEqual([]);
-  clock = 2 * limit + 1;
+  clock = limit + 1;
   await watch("tnt_away");
   await entered.promise;
   await watch("tnt_away");
@@ -626,13 +616,47 @@ test("a listener whose sidecar stays disconnected past its limit is replaced onc
   await watch("tnt_away");
   await Bun.sleep(10);
   expect(rolled).toEqual([["github"]]);
-  const disconnected = { level: "debug", msg: "listener_disconnected", tenantId: "tnt_away", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, reason: "Allocation alc_github is not connected" };
+  const entry = { tenantId: "tnt_away", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1 };
   expect(logged).toEqual([
-    disconnected,
-    disconnected,
-    disconnected,
-    disconnected,
-    { level: "warn", msg: "listener_unreachable", tenantId: "tnt_away", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, unreachableMs: limit + 1, reason: "its sidecar stayed disconnected longer than the deployment's limit" },
+    { level: "debug", msg: "listener_disconnected", ...entry, reason: "Allocation alc_github is not connected" },
+    { level: "warn", msg: "listener_unreachable", ...entry, unreachableMs: limit + 1, reason: "its sidecar stayed disconnected longer than the deployment's limit" },
+  ]);
+});
+
+test("a failed route check that is not a disconnect does not replace the listener, even past its limit", async () => {
+  const logged: Record<string, unknown>[] = [];
+  const watch = createListenerWatch({
+    async connectedSources() {
+      return ["github"];
+    },
+    async listener() {
+      return { runId: "run_github" };
+    },
+    async stuck() {
+      return [];
+    },
+    async allocation() {
+      return { allocationId: "alc_github", generation: 1, maxDisconnectedMs: 0 };
+    },
+    async routable() {
+      throw new Error("Allocated sidecar connection changed for allocation alc_github");
+    },
+    ensure() {
+      throw new Error("The host has a listener.");
+    },
+    replace() {
+      throw new Error("A failed check is not a disconnect.");
+    },
+    now() {
+      return new Date(1);
+    },
+    log(entry) {
+      logged.push(entry);
+    },
+  });
+  await watch("tnt_changed");
+  expect(logged).toEqual([
+    { level: "warn", msg: "listener_check_failed", tenantId: "tnt_changed", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, reason: "Allocated sidecar connection changed for allocation alc_github" },
   ]);
 });
 
