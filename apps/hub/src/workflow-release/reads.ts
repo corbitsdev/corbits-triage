@@ -78,11 +78,17 @@ export async function deploymentState(db: DB["db"], runId: string): Promise<Depl
 
 /**
  * The allocation generation a deployment runs on once its first deploy completed, which stock's router then routes its
- * mail to; undefined while it starts or once it stops.
+ * mail to, and how long that deployment may stay disconnected; undefined while it starts or once it stops. Callers that
+ * only route mail use the allocation id and generation.
  */
-export async function deployedAllocation(db: DB["db"], runId: string): Promise<AllocatedSidecarTarget | undefined> {
+export async function deployedAllocation(db: DB["db"], runId: string): Promise<(AllocatedSidecarTarget & { readonly maxDisconnectedMs: number }) | undefined> {
   const [row] = await db
-    .select({ allocationId: schema.sidecarAllocation.id, generation: schema.sidecarAllocation.generation, status: schema.workflowRun.status })
+    .select({
+      allocationId: schema.sidecarAllocation.id,
+      generation: schema.sidecarAllocation.generation,
+      maxDisconnectedMs: schema.sidecarAllocation.maxDisconnectedMs,
+      status: schema.workflowRun.status,
+    })
     .from(schema.workflowRun)
     .innerJoin(schema.sidecarAllocation, eq(schema.sidecarAllocation.anchorRunId, schema.workflowRun.id))
     .where(
@@ -96,5 +102,5 @@ export async function deployedAllocation(db: DB["db"], runId: string): Promise<A
       ),
     );
   if (!row || !schema.isLiveWorkflowRunStatus(row.status)) return undefined;
-  return { allocationId: row.allocationId, generation: row.generation };
+  return { allocationId: row.allocationId, generation: row.generation, maxDisconnectedMs: row.maxDisconnectedMs };
 }

@@ -462,6 +462,9 @@ test("a connected host found with no live listener rolls its workspace, and ever
     replace() {
       return true;
     },
+    now() {
+      return new Date(0);
+    },
     log(entry) {
       logged.push(entry);
     },
@@ -475,7 +478,9 @@ test("a connected host found with no live listener rolls its workspace, and ever
   expect(logged).toEqual([stuck, stuck]);
 });
 
-test("a listener whose connected sidecar the router holds no route to is started again once, and one whose sidecar is not connected is left to stock", async () => {
+test("a listener whose connected sidecar the router holds no route to is started again once, and one disconnected within its limit is not", async () => {
+  const limit = 15 * 60_000;
+  let clock = 0;
   const listeners: Record<RepoSource, { runId: string }> = { github: { runId: "run_github" }, "bitbucket-datacenter": { runId: "run_bitbucket" } };
   const routes: Record<string, () => boolean> = {
     alc_github: () => false,
@@ -510,7 +515,7 @@ test("a listener whose connected sidecar the router holds no route to is started
       return [];
     },
     async allocation(runId) {
-      return runId.endsWith("_next") ? { allocationId: "alc_next", generation: 1 } : { allocationId: `alc_${runId.slice(4)}`, generation: 1 };
+      return runId.endsWith("_next") ? { allocationId: "alc_next", generation: 1, maxDisconnectedMs: limit } : { allocationId: `alc_${runId.slice(4)}`, generation: 1, maxDisconnectedMs: limit };
     },
     async routable(target) {
       return routes[target.allocationId]?.() ?? true;
@@ -519,11 +524,15 @@ test("a listener whose connected sidecar the router holds no route to is started
       throw new Error("Every host has a listener.");
     },
     replace: queue.replace,
+    now() {
+      return new Date(clock);
+    },
     log(entry) {
       logged.push(entry);
     },
   });
   await watch("tnt_unroutable");
+  clock = limit - 1;
   await watch("tnt_unroutable");
   await entered.promise;
   await watch("tnt_unroutable");
@@ -540,6 +549,90 @@ test("a listener whose connected sidecar the router holds no route to is started
     disconnected,
     disconnected,
     disconnected,
+  ]);
+});
+
+test("a listener whose sidecar stays disconnected past its limit is replaced once, and a second watch during that roll does not start another", async () => {
+  const limit = 15 * 60_000;
+  let clock = 0;
+  let away = true;
+  const listeners = { github: { runId: "run_github" } };
+  const rolled: Array<RepoSource[]> = [];
+  const entered = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  const replaced = Promise.withResolvers<void>();
+  const rollout = {
+    async roll(_tenantId: string, redeploy: ReadonlySet<RepoSource>): Promise<RollOutcome> {
+      rolled.push([...redeploy].sort());
+      entered.resolve();
+      await gate.promise;
+      listeners.github = { runId: "run_github_next" };
+      away = false;
+      replaced.resolve();
+      return SUCCEEDED;
+    },
+  };
+  const logged: Record<string, unknown>[] = [];
+  const queue = createRolloutQueue(rollout, { quietMs: 0, retryMs: 60_000, concurrency: 2, random: Math.random }, function ignore() {});
+  const watch = createListenerWatch({
+    async connectedSources() {
+      return ["github"];
+    },
+    async listener() {
+      return listeners.github;
+    },
+    async stuck() {
+      return [];
+    },
+    async allocation(runId) {
+      return { allocationId: runId === "run_github" ? "alc_github" : "alc_next", generation: 1, maxDisconnectedMs: limit };
+    },
+    async routable() {
+      if (away) throw new Error("Allocation alc_github is not connected");
+      return true;
+    },
+    ensure() {
+      throw new Error("The host has a listener.");
+    },
+    replace: queue.replace,
+    now() {
+      return new Date(clock);
+    },
+    log(entry) {
+      logged.push(entry);
+    },
+  });
+  await watch("tnt_away");
+  clock = limit - 1;
+  await watch("tnt_away");
+  expect(rolled).toEqual([]);
+  // A route that returns starts the clock over, so the next gap is measured on its own.
+  away = false;
+  await watch("tnt_away");
+  away = true;
+  clock = limit;
+  await watch("tnt_away");
+  clock = 2 * limit;
+  await watch("tnt_away");
+  expect(rolled).toEqual([]);
+  clock = 2 * limit + 1;
+  await watch("tnt_away");
+  await entered.promise;
+  await watch("tnt_away");
+  expect(rolled).toEqual([["github"]]);
+  gate.resolve();
+  await replaced.promise;
+  await Bun.sleep(10);
+  await watch("tnt_away");
+  await Bun.sleep(10);
+  expect(rolled).toEqual([["github"]]);
+  const disconnected = { level: "debug", msg: "listener_disconnected", tenantId: "tnt_away", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, reason: "Allocation alc_github is not connected" };
+  expect(logged).toEqual([
+    disconnected,
+    disconnected,
+    disconnected,
+    disconnected,
+    { level: "warn", msg: "listener_unreachable", tenantId: "tnt_away", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, unreachableMs: limit + 1, reason: "its sidecar stayed disconnected longer than the deployment's limit" },
   ]);
 });
 
