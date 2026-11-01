@@ -689,6 +689,33 @@ describe("pr-triage body", () => {
     expect(triaged.labels).toEqual(["bug", "Triage: Ready"]);
   });
 
+  test("a person's approval leaves Ready and other labels in place, including while the pass waits", async () => {
+    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
+    function labelWrites(github: ReturnType<typeof fakeGithub>) {
+      return github.requests.filter((r) => r.method !== "GET" && r.path.includes("/labels"));
+    }
+
+    const passed = fakeGithub({ labels: ["bug", "Triage: Ready"] });
+    await triage(pack, { github: passed, events: ["approved"] });
+    expect(labelWrites(passed)).toEqual([]);
+    expect(passed.labels).toEqual(["bug", "Triage: Ready"]);
+
+    const waiting = fakeGithub({ labels: ["bug", "Triage: Ready"] });
+    waiting.pr.ci = "pending";
+    const held = await triage(pack, { github: waiting, events: ["approved"] });
+    expect(held.verdict).toMatchObject({ waiting: true });
+    expect(labelWrites(waiting)).toEqual([]);
+    expect(waiting.labels).toEqual(["bug", "Triage: Ready"]);
+
+    const mixed = fakeGithub({ labels: ["bug", "Triage: Ready"] });
+    await triage(pack, { github: mixed, events: ["approved", "updated"] });
+    expect(labelWrites(mixed)).toEqual([
+      { method: "DELETE", path: `/repos/${REPO}/issues/8/labels/Triage%3A%20Ready` },
+      { method: "POST", path: `/repos/${REPO}/issues/8/labels` },
+    ]);
+    expect(mixed.labels).toEqual(["bug", "Triage: Ready"]);
+  });
+
   test("pushes that keep Not Ready write no label; a changed verdict swaps it once", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
     const github = fakeGithub({ labels: ["bug", "Triage: Not Ready"] });

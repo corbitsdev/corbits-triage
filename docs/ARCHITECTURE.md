@@ -506,7 +506,11 @@ any other tenant or an unknown sender.
   review report, or an overdue reviewer, the shared triage steps run on the
   newest mail for the head, handed over as `{ taken }`, which they trust as
   the hub's. A head is unready first: on a pull request mail on GitHub its pass
-  label comes off (`markUnready`) before facts are read. Every pass runs its approvals step, which
+  label comes off (`markUnready`) before facts are read, unless every triage
+  event on that mail is a person's approval, which leaves every label in place,
+  including when the pass then waits. A push, an open, a synchronize, a check,
+  a comment, a catch-up, or any of those mixed with an approval still takes the
+  pass label off. Every pass runs its approvals step, which
   approves nothing when there is nothing to run. A policy of only deterministic
   rules posts on this pass. One whose rules need the judge, or that asks for
   code review, posts once, after each of those has reported or given up: the machine
@@ -763,7 +767,11 @@ which the manager deploys once the rules gate opens. Mirror, review and
 execute are the manager's, the only workflow that writes to the pull
 request. The repository's policy decides what each step does. Before facts, a pull request mail from the hub naming a GitHub head
 mirrors `unready:<owner>--<name>:<number>:<head sha>`, which takes the pass
-label off that head, so it never stands on a head not yet triaged.
+label off that head, so it never stands on a head not yet triaged, unless every
+triage event on that mail is a person's approval: an approval leaves the labels
+already on the head, and a pass that then waits does not swap the pass label
+for Waiting for CI. Any other event, including a catch-up that names none,
+still takes the pass label off.
 
 1. **facts** (manager): reads the pull request, its files, reviews, CI, commits (the
    first 100 messages in full), the repository's docs and its contribution

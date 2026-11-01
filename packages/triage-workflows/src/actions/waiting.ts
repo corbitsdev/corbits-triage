@@ -23,14 +23,25 @@ function marks(source: RepoSource, automatic: readonly unknown[]): boolean {
   return marksWaiting(source, ACTION_KINDS.filter((kind) => automatic.includes(kind)));
 }
 
+/** Every triage event on the request is a person's approval, so labels stay as they are. */
+function approvalOnly(events: unknown): boolean {
+  return Array.isArray(events) && events.length > 0 && events.every((event) => event === "approved");
+}
+
 /**
  * The waiting marker on `headSha`, `Triage: Waiting for CI` only where the head has CI, with the in-progress comment
- * where triage comments; none where triage writes neither on this host.
+ * where triage comments; none where triage writes neither on this host. An approval-only GitHub pass writes no labels,
+ * including when it waits; the in-progress comment is unchanged.
  */
-export function waitingMark(source: RepoSource, { repo, number, headSha }: { repo: string; number: number; headSha: string }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, ci: boolean, appLogin: string | undefined): WaitingMark | undefined {
+export function waitingMark(source: RepoSource, { repo, number, headSha, events = [] }: { repo: string; number: number; headSha: string; events?: readonly unknown[] }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, ci: boolean, appLogin: string | undefined): WaitingMark | undefined {
   const pull = { repo, number, onHead: headSha };
   const comment = automatic.includes("comment") ? { comment: progressComment(["ci"]) } : {};
   if (marks(source, automatic)) {
+    if (source === "github" && approvalOnly(events)) {
+      if (!("comment" in comment)) return undefined;
+      const marked = mark("waiting", source, pull, labels, false, appLogin);
+      return { ...marked, args: { ...marked.args, labels: [], owned: [], ...comment } };
+    }
     const marked = mark("waiting", source, pull, labels, ci, appLogin);
     return { ...marked, args: { ...marked.args, ...comment } };
   }
@@ -47,8 +58,9 @@ export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Aw
 }
 
 /**
- * A pull request mail from the hub's sender goes on to triage once Ready is off its head on GitHub; Bitbucket's build
- * status is per commit already. Any other mail goes on to triage as it is.
+ * A GitHub pull-request mail from the hub takes Ready off its head before facts, except when every triage event on the
+ * request is `"approved"`, which leaves labels as they are. A push, open, synchronize, check, comment, catch-up, or any
+ * mix still takes Ready off. Bitbucket writes nothing here. Any other mail goes on as it is.
  */
 export async function unready(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<UnreadyOutput> {
   const { request, trusted } = trustedRequestOf(input);
@@ -58,6 +70,7 @@ export async function unready(input: unknown, _ctx: EffectContext, _signal: Abor
   const pack = parseCheckPack(request["pack"] ?? request["checkPack"]);
   if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !pack) return { unready: true };
   if (!marks(source, automatic) || source !== "github") return { unready: true };
+  if (approvalOnly(request["events"])) return { unready: true };
   const appLogin = typeof request["appLogin"] === "string" ? request["appLogin"] : undefined;
   return { unready: true, mark: mark("unready", source, { repo, number: prNumber, onHead: headSha }, pack.labels, false, appLogin) };
 }

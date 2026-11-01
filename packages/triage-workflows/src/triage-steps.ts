@@ -26,8 +26,9 @@ export function hostAction(handler: "facts" | "mirror" | "execute", sources: Sou
 
 // Facts, mirror and execute reach the pull request's host through its bound credential; each host call they make is
 // one call of the host's tool. The judge maps over the rules output's chunks, one System One call each; a second map
-// asks focused's file questions only for the items it failed, and makes no call otherwise. An approval mail skips triage
-// and executes the one held action it names; any other takes Ready off its head before triaging it. The mirror writes
+// asks focused's file questions only for the items it failed, and makes no call otherwise. A held-Do approval mail skips
+// triage and executes that one action. Any other mail triages the head. On GitHub, Ready comes off before facts unless
+// every event on the request is a person's approval, which leaves labels in place. The mirror writes
 // the verdict's comment and label (or build status) before execute, so a merge or close finds them on the head it
 // closes; a mirror on a closed pull request would write nothing. Each gate branch evaluates, mirrors and executes on its own: a live run never hands a skipped step's output
 // to a selector, so a join after the gate could not read the judge when it was skipped.
