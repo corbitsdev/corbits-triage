@@ -382,6 +382,17 @@
         "@intx/harness": "workspace:*",
       },
     },
+    "packages/triage-verify": {
+      "name": "@corbits/triage-verify",
+      "version": "0.1.0",
+      "bin": {
+        "triage-verify": "./src/cli.ts",
+      },
+      "devDependencies": {
+        "@corbits/common": "workspace:*",
+        "@corbits/triage-contracts": "workspace:*",
+      },
+    },
     "packages/triage-workflows": {
       "name": "@corbits/triage-workflows",
       "version": "0.1.0",
@@ -1055,6 +1066,8 @@
     "@corbits/triage-judge": ["@corbits/triage-judge@workspace:packages/triage-judge"],
 
     "@corbits/triage-manager": ["@corbits/triage-manager@workspace:packages/triage-manager"],
+
+    "@corbits/triage-verify": ["@corbits/triage-verify@workspace:packages/triage-verify"],
 
     "@corbits/triage-workflows": ["@corbits/triage-workflows@workspace:packages/triage-workflows"],
 

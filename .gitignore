@@ -9,6 +9,7 @@ tooling/shots/
 .env
 .emulate-secrets.json
 packages/github-tool/dist/
+packages/triage-verify/dist/
 packages/triage-workflows/evals/.cache/
 packages/pr-code-review-anthropic/evals/.cache/
 
