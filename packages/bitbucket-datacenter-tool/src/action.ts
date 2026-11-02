@@ -118,8 +118,9 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
       onHead(pr.sha, request, step);
       const me = await user();
       if (pr.author.id === me.id) throw new ActionNotRunnableError(OWN_PULL_REQUEST);
-      if (statusOf(pr, me) === "NEEDS_WORK") {
-        // Already set, so it is not posted again. Drop the verdict comment a later mirror may have put back.
+      // Needs-work is one status for the pull request, stamped with the commit it reviewed. An older one is not this head's review.
+      const own = [...pr.reviewers, ...pr.participants].find((participant) => participant.user.id === me.id);
+      if (own?.status === "NEEDS_WORK" && own.lastReviewedCommit === step.headSha) {
         await deleteTriageComments(bb, repo, number, me);
         return { status: "satisfied", result: { status: "NEEDS_WORK" } };
       }

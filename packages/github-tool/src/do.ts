@@ -141,11 +141,11 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
     case "request-changes": {
       if (!("body" in target)) throw new Error("this request-changes Do has no body");
       onHead(pr.sha, request, step);
-      const reviewId = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login });
-      if (reviewId !== undefined) {
-        // Already on this head, so it is not posted again. Drop the verdict comment a later mirror may have put back.
-        await deleteTriageComments(gh, repo, number, login);
-        return { status: "satisfied", result: { reviewId } };
+      const review = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login });
+      if (review !== undefined) {
+        // Already on this head, so it is not posted again. A standing review replaces the verdict; one a person dismissed does not.
+        if (review.standing) await deleteTriageComments(gh, repo, number, login);
+        return { status: "satisfied", result: { reviewId: review.id } };
       }
       const body = `${REQUEST_CHANGES_DO_MARKER}\n${target.body}`;
       const posted = await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha });

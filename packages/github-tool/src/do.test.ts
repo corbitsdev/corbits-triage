@@ -281,6 +281,16 @@ describe("executeDo", () => {
     expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual(["DELETE /repos/acme/widgets/issues/comments/9"]);
   });
 
+  test("a request-changes review a person dismissed is not posted again and leaves the verdict comment", async () => {
+    const verdict = { id: 4, user: APP, body: "<!-- corbits-triage -->\n**Triage: Fail**" };
+    const dismissed = { id: 7, user: APP, state: "DISMISSED", commit_id: "abc0000000000000000000000000000000000000", body: `${REQUEST_CHANGES_DO_MARKER}\nFix it` };
+    const { gh, writes, comments } = fakeGithub({ comments: [verdict], approvals: [dismissed] });
+    const task = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
+    expect(await run(gh, task)).toEqual({ status: "satisfied", result: { reviewId: 7 } });
+    expect(comments.map((comment) => comment.id)).toEqual([4]);
+    expect(writes).toEqual([]);
+  });
+
   test("a request-changes review GitHub refuses leaves the verdict comment", async () => {
     const verdict = { id: 4, user: APP, body: "<!-- corbits-triage -->\n**Triage: Fail**" };
     const { gh, writes, comments } = fakeGithub({ comments: [verdict], failReview: true });

@@ -283,11 +283,30 @@ describe("executeAction request-changes", () => {
     expect(fake.writes.map((write) => write.method)).toEqual(["POST", "PUT"]);
   });
 
-  test("needs-work already set deletes the verdict comment and does not post another", async () => {
-    const standing = fakeBitbucket({ comments: [{ ...verdict }, { ...action }, { ...copied }], participants: [{ user: BOT, status: "NEEDS_WORK" }] });
+  test("needs-work already set on this head deletes the verdict comment and does not post another", async () => {
+    const standing = fakeBitbucket({ comments: [{ ...verdict }, { ...action }, { ...copied }], participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "abc" }] });
     expect(await executeAction(standing.bb, task, user)).toEqual({ status: "satisfied", result: { status: "NEEDS_WORK" } });
     expect(standing.comments.map((comment) => comment.id)).toEqual([3, 4]);
     expect(standing.writes.map((write) => `${write.method} ${write.path}`)).toEqual([`DELETE ${PR_PATH}/comments/2?version=1`]);
+  });
+
+  test("needs-work from an older head still posts this head's comment, then drops the verdict", async () => {
+    const older = fakeBitbucket({ comments: [{ ...verdict }], participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "old" }] });
+    expect((await executeAction(older.bb, task, user)).status).toBe("done");
+    expect(older.comments.map((comment) => comment.id)).toEqual([11]);
+    expect(older.comments[0]!.text).toBe("[corbits-action]: #e1\nFix the checks");
+    expect(older.writes.map((write) => `${write.method} ${write.path}`)).toEqual([
+      `POST ${PR_PATH}/comments`,
+      `PUT ${PR_PATH}/participants/triage-bot`,
+      `DELETE ${PR_PATH}/comments/2?version=1`,
+    ]);
+  });
+
+  test("a comment refused while an older needs-work stands leaves the verdict comment", async () => {
+    const older = fakeBitbucket({ comments: [{ ...verdict }], failPost: 1, participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "old" }] });
+    await expect(executeAction(older.bb, task, user)).rejects.toThrow("503");
+    expect(older.comments.map((comment) => comment.id)).toEqual([2]);
+    expect(older.writes.map((write) => write.method)).toEqual(["POST"]);
   });
 
   test("a request-changes write skipped because the head moved leaves the verdict comment", async () => {

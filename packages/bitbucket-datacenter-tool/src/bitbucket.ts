@@ -68,7 +68,7 @@ export async function tokenUser(bb: BitbucketFetch): Promise<TokenUser> {
 }
 
 type ParticipantStatus = "UNAPPROVED" | "NEEDS_WORK" | "APPROVED";
-type Participant = { user: { id: number; slug: string }; role: string; status: ParticipantStatus };
+type Participant = { user: { id: number; slug: string }; role: string; status: ParticipantStatus; lastReviewedCommit?: string };
 
 export type PullRequest = {
   state: "OPEN" | "DECLINED" | "MERGED";

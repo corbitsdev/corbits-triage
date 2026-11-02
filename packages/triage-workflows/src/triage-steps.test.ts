@@ -398,7 +398,7 @@ describe("judge on a blocked pull request", () => {
     expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "pass", reason: "no checks configured", evidence: [] });
   });
 
-  test("a planned request-changes review keeps the verdict comment for the mirror, and a later held or skipped one still shows it, including Notes", async () => {
+  test("a planned request-changes review keeps the verdict comment until that review is on this head, held or skipped alike", async () => {
     const checkPack: CheckPack = {
       ...emptyPack("acme/widgets"),
       checks: { "ci-green": { enabled: true }, "max-lines-changed-per-file": { enabled: true, onFail: "label", maxFileLines: 1 } },
@@ -451,10 +451,14 @@ describe("judge on a blocked pull request", () => {
     expect(skipped.request.comment).toContain("Notes:");
     const heldOnHead = verdictOnFacts({ ...item, automatic: ["comment", "labels"], facts: { ...item.facts, triageRequestedOnHead: true } }, posted);
     expect(heldOnHead.actions).toContainEqual(expect.objectContaining({ kind: "request-changes", held: true }));
-    expect(heldOnHead.request.comment).toContain("please address");
+    expect(heldOnHead.request.comment).toBe("");
+    expect(heldOnHead.feedback).toContain("please address");
+    expect(heldOnHead.feedback).toContain("Notes:");
     const skippedOnHead = verdictOnFacts({ ...item, pack: skippedPack, facts: { ...item.facts, triageRequestedOnHead: true } }, posted);
     expect(skippedOnHead.actions).toContainEqual(expect.objectContaining({ kind: "request-changes", skipped: true }));
-    expect(skippedOnHead.request.comment).toContain("please address");
+    expect(skippedOnHead.request.comment).toBe("");
+    expect(skippedOnHead.feedback).toContain("please address");
+    expect(skippedOnHead.feedback).toContain("Notes:");
   });
 });
 

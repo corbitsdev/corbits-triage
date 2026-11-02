@@ -194,12 +194,14 @@ export async function approvalOnHead(gh: GithubFetch, input: { repo: string; num
 /** Marks a request for changes triage itself took back, which a later failure on its head may make again. */
 const DISMISSED_BY_TRIAGE_MARKER = "<!-- corbits-dismissed -->";
 
-/** The request-changes Do's review of `sha`, still standing or dismissed by a person, which is not made again: a person who dismissed it does not want it. */
-export async function changesRequestedOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<number | undefined> {
+/** The request-changes Do's review of `sha` that is not made again: still standing, or dismissed by a person, who does not want it. `standing` is only a review still CHANGES_REQUESTED, which is the one that replaces the verdict comment. */
+export async function changesRequestedOnHead(gh: GithubFetch, input: { repo: string; number: number; sha: string; login: string }): Promise<{ id: number; standing: boolean } | undefined> {
   const reviews = await reviewsBy(gh, input.repo, input.number, input.login);
-  return reviews.find((review) => review.commit_id === input.sha
-    && (review.state === "CHANGES_REQUESTED" || (review.state === "DISMISSED" && !review.body?.includes(DISMISSED_BY_TRIAGE_MARKER)))
-    && review.body?.includes(REQUEST_CHANGES_DO_MARKER))?.id;
+  const review = reviews.find((row) => row.commit_id === input.sha
+    && (row.state === "CHANGES_REQUESTED" || (row.state === "DISMISSED" && !row.body?.includes(DISMISSED_BY_TRIAGE_MARKER)))
+    && row.body?.includes(REQUEST_CHANGES_DO_MARKER));
+  if (review?.id === undefined) return undefined;
+  return { id: review.id, standing: review.state === "CHANGES_REQUESTED" };
 }
 
 async function dismissDoReviews(gh: GithubFetch, input: { repo: string; number: number; login: string }, state: string, marker: string, message: string): Promise<number[]> {
