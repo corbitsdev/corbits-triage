@@ -7,5 +7,8 @@ services:
     pull_policy: build
     entrypoint: ["true"]
   hub:
+    environment:
+      HUB_API_ORIGIN: ${HUB_API_ORIGIN:-http://host.docker.internal:3000}
+    extra_hosts: ["host.docker.internal:host-gateway"]
     volumes: ["${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock"]
     depends_on: { sidecar-image: { condition: service_completed_successfully } }

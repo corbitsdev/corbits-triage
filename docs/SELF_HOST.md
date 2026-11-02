@@ -388,7 +388,9 @@ docker compose -f compose.yml -f compose.docker.yml up -d
 ```
 
 That builds the sidecar image from the same checkout before the hub starts,
-and mounts the Docker socket into the hub. The hub then controls that
+and mounts the Docker socket into the hub. It also sets `HUB_API_ORIGIN` to
+`http://host.docker.internal:3000` and adds `extra_hosts` so sidecar
+containers can reach the hub's REST API on Linux and macOS alike. The hub then controls that
 machine's Docker, which on Linux is root on the machine: whoever takes over
 the hub takes over the machine. For a socket elsewhere, such as rootless
 Docker's or Podman's, set `DOCKER_SOCKET` in `.env` to its path. Pass the
