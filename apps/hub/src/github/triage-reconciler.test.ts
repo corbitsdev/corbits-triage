@@ -93,6 +93,8 @@ type HarnessOptions = {
   unreadable?: string;
   /** Build statuses of every head, for a host whose builds the reconciler polls. */
   headChecks?: CheckRun[];
+  /** Thrown by every read of a head's checks while set. */
+  headChecksError?: Error;
   /** Stored triage state of the repository before the first pass. */
   rows?: PrTriageRow[];
   /** Verdicts the hub recorded. */
@@ -141,7 +143,10 @@ function harness(runs: Runs | (() => Runs), prs: OpenPr[] | Record<string, OpenP
       const byRepo = typeof runs === "function" ? runs() : runs;
       return { byRepo: new Map(Object.entries(byRepo).map(([repo, byHead]) => [repo, new Map(Object.entries(byHead))])), roomless: new Set<string>() };
     },
-    headChecks: async () => options.headChecks ?? [],
+    headChecks: async () => {
+      if (options.headChecksError) throw options.headChecksError;
+      return options.headChecks ?? [];
+    },
     verdicts: { latest: async () => options.recorded ?? [] },
     store: store(),
     readCheckPack: async function readCheckPack(_tenantId, repo) {
@@ -696,5 +701,21 @@ describe("triage reconciler", () => {
     const { reconcile } = harness({}, [head(1)]);
     failNextRead = true;
     expect(await reconcile()).toEqual({ retry: true });
+  });
+
+  test("a build poll or waiting-CI read that hits the GitHub rate limit pauses the pass until resetAt without logging build_status_unread", async () => {
+    const resetAt = at(5).getTime();
+    const rateLimited = new GithubRateLimited("1", resetAt);
+    const waiting = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }] };
+    const polled = harness(runsOf([1, ran("run_1", 1, waiting)]), [head(1)], { recorded: [recordedOf("run_1", waiting)], headChecksError: rateLimited });
+    expect(await polled.reconcile()).toEqual({ retry: false, retryAt: resetAt });
+    expect(polled.logged.some((entry) => entry["msg"] === "build_status_unread")).toBe(false);
+    expect(polled.logged).toContainEqual(expect.objectContaining({ msg: "triage_github_rate_limited", resetAt: new Date(resetAt).toISOString() }));
+
+    const since = at(-5).toISOString();
+    const waitingCi = harness(runsOf([1, { runId: "run_1", source: "github", status: "completed", startedAt: since, waitingSince: since }]), [head(1)], { headChecksError: rateLimited });
+    expect(await waitingCi.reconcile()).toEqual({ retry: false, retryAt: resetAt });
+    expect(waitingCi.logged.some((entry) => entry["msg"] === "build_status_unread")).toBe(false);
+    expect(waitingCi.logged).toContainEqual(expect.objectContaining({ msg: "triage_github_rate_limited", resetAt: new Date(resetAt).toISOString() }));
   });
 });

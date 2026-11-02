@@ -229,6 +229,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       try {
         ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
       } catch (err) {
+        if (err instanceof GithubRateLimited) throw err;
         deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
         continue;
       }
@@ -267,6 +268,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         try {
           ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
         } catch (err) {
+          if (err instanceof GithubRateLimited) throw err;
           deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
           continue;
         }
