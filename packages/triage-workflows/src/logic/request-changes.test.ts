@@ -73,9 +73,11 @@ describe("the request-changes Do", () => {
     expect(suggested(await reviewFacts([markedRequest(APP)]))).toEqual([expect.objectContaining({ kind: "approve", list: "pass" })]);
   });
 
-  test("triage's own request is on this head only when that review is of this head", async () => {
+  test("triage's own request is on this head when that review is of this head, or names no commit", async () => {
     expect(await reviewFacts([markedRequest(APP)])).toMatchObject({ triageRequested: true, triageRequestedOnHead: false });
     expect(await reviewFacts([{ ...markedRequest(APP), commit_id: "def" }])).toMatchObject({ triageRequested: true, triageRequestedOnHead: true });
+    const { commit_id: _older, ...unscoped } = markedRequest(APP);
+    expect(await reviewFacts([unscoped])).toMatchObject({ triageRequested: true, triageRequestedOnHead: true });
   });
 
   test("another bot's request carrying the marker is still a reviewer's", async () => {

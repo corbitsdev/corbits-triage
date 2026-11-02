@@ -83,7 +83,8 @@ export function buildFacts(
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,
     triageRequested: ownRequests.length > 0,
-    triageRequestedOnHead: pr.sha !== undefined && ownRequests.some((r) => r.commitId === pr.sha),
+    // A missing commit, as Bitbucket needs-work can omit, still stands on this head. One that names an older head does not.
+    triageRequestedOnHead: pr.sha !== undefined && ownRequests.some((r) => r.commitId === undefined || r.commitId === pr.sha),
     reviewAnswered: reviewAnswered(reviews, comments, author, pr.sha ?? "", changesRequested),
     reviewedBy: reviewedOnHead(reviews, pr.sha ?? ""),
     labels: pr.labels ?? [],

@@ -9,7 +9,7 @@ type FakeThread = { isResolved: boolean; isOutdated: boolean; login: string; rev
 
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
-function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[]; threads?: FakeThread[] | "refused"; failReview?: boolean } = {}) {
+function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[]; threads?: FakeThread[] | "refused"; failReview?: boolean; failDelete?: boolean } = {}) {
   const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc0000000000000000000000000000000000000" }, base: { repo: { id: 1 } }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" })), ...(seed.approvals ?? [])];
@@ -65,6 +65,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
     }
     const removed = method === "DELETE" && /^\/repos\/acme\/widgets\/issues\/comments\/(\d+)$/.exec(path);
     if (removed) {
+      if (seed.failDelete) return Response.json({ message: "unavailable" }, { status: 503 });
       const index = comments.findIndex((comment) => comment.id === Number(removed[1]));
       if (index >= 0) comments.splice(index, 1);
       return new Response(null, { status: 204 });
@@ -279,6 +280,22 @@ describe("executeDo", () => {
     expect(await run(gh, task)).toEqual({ status: "satisfied", result: { reviewId: 100 } });
     expect(comments.map((comment) => comment.id)).toEqual([6]);
     expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual(["DELETE /repos/acme/widgets/issues/comments/9"]);
+  });
+
+  test("a verdict delete GitHub refuses still counts the posted review as done", async () => {
+    const verdict = { id: 4, user: APP, body: "<!-- corbits-triage -->\n**Triage: Fail**" };
+    const { gh, writes, comments } = fakeGithub({ comments: [verdict], failDelete: true });
+    const task = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
+    expect(await run(gh, task)).toMatchObject({ status: "done" });
+    expect(comments.map((comment) => comment.id)).toEqual([4]);
+    expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual([
+      "POST /repos/acme/widgets/pulls/8/reviews",
+      "DELETE /repos/acme/widgets/issues/comments/4",
+    ]);
+    writes.length = 0;
+    expect(await run(gh, task)).toEqual({ status: "satisfied", result: { reviewId: 100 } });
+    expect(comments.map((comment) => comment.id)).toEqual([4]);
+    expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual(["DELETE /repos/acme/widgets/issues/comments/4"]);
   });
 
   test("a request-changes review a person dismissed is not posted again and leaves the verdict comment", async () => {
