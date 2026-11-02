@@ -121,10 +121,17 @@ const ClearedInput = type({
 
 type Action = Verdict["actions"][number];
 
-/** `verdict` with `note` closing its comment, as said on the pull request and kept with the verdict. */
+/**
+ * `verdict` with `note` closing its comment, as said on the pull request and kept with the verdict. A blank mirror
+ * comment means a request-changes review was going to be posted. Holding that step shows the verdict comment again.
+ */
 function noted(verdict: Verdict, note: string): Verdict {
   const feedback = verdict.feedback ? `${verdict.feedback}\n\n${note}` : note;
-  const request = verdict.request && { ...verdict.request, comment: verdict.request.comment ? `${verdict.request.comment}\n\n${note}` : note };
+  const written = verdict.request?.comment;
+  const reviewHeld = verdict.actions.some((action) => action.kind === "request-changes" && "held" in action);
+  const standing = written || (reviewHeld && verdict.feedback);
+  const comment = standing ? `${standing}\n\n${note}` : note;
+  const request = verdict.request && { ...verdict.request, comment };
   return { ...verdict, feedback, ...(request && { request }) };
 }
 

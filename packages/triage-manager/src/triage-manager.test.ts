@@ -948,6 +948,32 @@ describe("triage-manager with code review", () => {
     expect(merge).toEqual(waiting);
   });
 
+  const FINDINGS = "please address the failing build\n\nNotes:\n- build failed";
+  const REQUEST_CHANGES = { list: "fail", index: 0, kind: "request-changes", effectId: "do:request-changes", target: {}, reason: "a rule failed" };
+  const BLANKED = { repo: PR.repo, number: PR.number, labels: [], owned: [], comment: "" };
+  const REVIEW_HELD = [{ pack: { actions: { fail: [{ do: "request-changes", when: { findings: { any: false } } }] } } }];
+
+  function heldReview(steps: object[], items: object[]) {
+    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: finding(2), taken: { blocks: ["code-review"], ...CODE_REVIEW } };
+    const evaluateRules = { ...PASSED, verdict: "fail", feedback: FINDINGS, actions: steps, request: BLANKED };
+    return actions.cleared({ take: { output: take }, rules: { output: { items } }, evaluateRules: { output: evaluateRules }, reviewScope: { output: { reviewed: true } } });
+  }
+
+  test("cleared holds a request-changes review evaluate would have blanked, and the mirror comment keeps the findings and the hold note", async () => {
+    const made = await heldReview([REQUEST_CHANGES], REVIEW_HELD);
+    const note = "Request changes held: code review has 1 finding open on this head.";
+    expect(made.actions).toContainEqual({ ...REQUEST_CHANGES, held: true, reason: OPEN });
+    expect(made.feedback).toBe(`${FINDINGS}\n\n${note}`);
+    expect(made.request.comment).toBe(`${FINDINGS}\n\n${note}`);
+  });
+
+  test("a request-changes review that is still posted does not also get the standing comment", async () => {
+    const made = await heldReview([APPROVE_DO, REQUEST_CHANGES], []);
+    expect(made.actions[1]).toEqual(REQUEST_CHANGES);
+    expect(made.request.comment).toBe("Approve held: code review has 1 finding open on this head.");
+    expect(made.request.comment).not.toContain(FINDINGS);
+  });
+
   const CI_GREEN = [{ name: "ci", status: "completed", conclusion: "success" }];
   /** Approve and merge, woken by the policy's own events, which do not include threads. */
   const RELEASING: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: [{ do: "approve" }, { do: "merge" }] } };
