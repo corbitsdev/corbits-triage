@@ -384,8 +384,8 @@ describe("sendCodeReview", () => {
       if (path.includes("/reviews?per_page")) return [];
       if (path.includes("/pulls/8/comments?per_page")) {
         return [
-          { id: 32, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 12, original_line: 13, body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._\n\nResolve this comment. Triage will not finish while it is open." },
-          { id: 31, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 10, original_line: 12, body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9.\n\nResolve this comment. Triage will not finish while it is open." },
+          { id: 32, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 12, original_line: 13, body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._" },
+          { id: 31, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 10, original_line: 12, body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9." },
         ];
       }
       if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: PATCH }];
@@ -480,6 +480,29 @@ describe("sendCodeReview", () => {
     const { gh, requests } = pull("def456");
     expect(await sendCodeReview(gh, review, login)).toMatchObject({ reviewId: null, sent: false });
     expect(requests.some((request) => request.method === "POST")).toBe(false);
+  });
+
+  test("an inline comment posted before the resolve sentence still matches, one with it still matches, and a different body does not", async () => {
+    const oldBody = "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9.";
+    const withResolve = `${oldBody}\n\nResolve this comment. Triage will not finish while it is open.`;
+    const newBody = "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._\n\nResolve this comment. Triage will not finish while it is open.";
+    const standing = { id: 9, user: APP, commit_id: "abc123", body: "<!-- corbits-code-review -->" };
+    function comments(first: string) {
+      return [
+        { id: 31, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 10, original_line: 12, body: first },
+        { id: 32, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 12, original_line: 13, body: newBody },
+      ];
+    }
+    function already(first: string) {
+      return recorder(function respond(path) {
+        if (path.includes("/reviews?per_page")) return [standing];
+        if (path.includes("/pulls/8/comments?per_page")) return comments(first);
+        return {};
+      }).gh;
+    }
+    expect(await sendCodeReview(already(oldBody), review, login)).toEqual({ reviewId: 9, sent: false, threads: [31, null, 32] });
+    expect(await sendCodeReview(already(withResolve), review, login)).toEqual({ reviewId: 9, sent: false, threads: [31, null, 32] });
+    expect(await sendCodeReview(already(`${oldBody}\n\nNot this finding.`), review, login)).toEqual({ reviewId: 9, sent: false, threads: null, unread: "1 of review 9's 2 inline comments matched no finding" });
   });
 });
 
