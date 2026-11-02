@@ -9,6 +9,7 @@ import { NO_FACTS } from "./logic/item.js";
 import { MAX_SYSTEM_ONE_QUESTIONS, MAX_SYSTEM_ONE_STATE_BYTES } from "./logic/quality.js";
 import { INSTRUCTED_REASON, NEEDS_JUDGE_REASON, progressComment, type Verdict } from "./logic/render.js";
 import { evaluate, parts, rules } from "./actions/index.js";
+import { verdictOnFacts } from "./actions/evaluate.js";
 import { waitingMark } from "./actions/waiting.js";
 import { MAX_DOS_PER_RUN, executeDos } from "./actions/execute.js";
 import { MAX_HISTORY_READS, READ_CHUNK, readFacts } from "./actions/facts.js";
@@ -395,6 +396,52 @@ describe("judge on a blocked pull request", () => {
     const { verdict } = await judgeAndEvaluate(await facts([], true, false, {}, code), undefined, []);
     expect(verdict.verdict).toBe("pass");
     expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "pass", reason: "no checks configured", evidence: [] });
+  });
+
+  test("a request-changes review that will post blanks only the mirror comment, and a later held or skipped one shows the verdict comment again, including Notes", async () => {
+    const checkPack: CheckPack = {
+      ...emptyPack("acme/widgets"),
+      checks: { "ci-green": { enabled: true }, "max-lines-changed-per-file": { enabled: true, onFail: "label", maxFileLines: 1 } },
+      actions: { ...defaultActions(), fail: [{ do: "request-changes" }] },
+    };
+    const request = {
+      kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack,
+      automatic: ["comment", "labels", "request-changes"], events: ["opened"],
+    };
+    const mail = { headers: { from: "github@acme.test", to: ["run_1@acme.test"] }, parts: [{ contentType: "text/plain", text: JSON.stringify(request) }] };
+    const file = { filename: "src/flag.ts", status: "added", additions: 2, deletions: 0, patch: "@@ -0,0 +1,2 @@\n+export const flag = true;\n+export const more = true;" };
+    const read = await readFacts(mail, () => answering({
+      github_list_open_prs: { prs: [{ number: 8, title: "Fix #3" }] },
+      "docs:0": { docs: [], rules: [], ref: "tree" },
+      "pr:8": { title: "Fix #3", author: "octocat", sha: "abc0000000000000000000000000000000000000", state: "open", draft: false, mergeable: true, requestedReviewers: 0 },
+      "reviews:8": { reviews: [] },
+      "commits:8": { commits: [] },
+      "files:8:0": { files: [file] },
+      "stack:8": { includes: [] },
+      "comments:8": { comments: [] },
+      "checks:8": { checks: [{ name: "build", status: "completed", conclusion: "failure" }] },
+    }));
+    const ruled = await rules(read, ctx, signal);
+    const item = ruled.items[0]!;
+    const posted = await evaluate(ruled, ctx, signal) as Verdict;
+    const review = posted.actions.find((action) => action.kind === "request-changes");
+    expect(review && "skipped" in review).toBe(false);
+    expect(review && "held" in review).toBe(false);
+    // The review is still the comment the mirror will write, so the standing comment is not posted beside it.
+    expect(posted.request.comment).toBe("");
+    expect(posted.feedback).toContain("please address");
+    expect(posted.feedback).toContain("Notes:");
+    const held = verdictOnFacts({ ...item, automatic: ["comment", "labels"] }, posted);
+    expect(held.actions).toContainEqual(expect.objectContaining({ kind: "request-changes", held: true }));
+    expect(held.feedback).toContain("please address");
+    expect(held.feedback).toContain("Notes:");
+    expect(held.request.comment).toContain("please address");
+    expect(held.request.comment).toContain("Notes:");
+    const skippedPack: CheckPack = { ...checkPack, actions: { ...defaultActions(), fail: [{ do: "request-changes", when: { author: ["OWNER"] } }] } };
+    const skipped = verdictOnFacts({ ...item, pack: skippedPack }, posted);
+    expect(skipped.actions).toContainEqual(expect.objectContaining({ kind: "request-changes", skipped: true }));
+    expect(skipped.request.comment).toContain("please address");
+    expect(skipped.request.comment).toContain("Notes:");
   });
 });
 
