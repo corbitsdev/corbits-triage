@@ -1,8 +1,4 @@
-import { and, eq } from "drizzle-orm";
-
 import {
-  InvokerModelPreferences,
-  ModelRequirements,
   credentialAad,
   type CredentialCipher,
   type ModelRequirement,
@@ -16,9 +12,11 @@ import {
   type ResolvedOffering,
 } from "./catalog-resolution";
 import type { DB } from "./client";
-import { resolveCredentialById } from "./credential-resolution";
+import {
+  resolveDeliverableCredential,
+  type DeliverableCredentialResolution,
+} from "./credential-resolution";
 import { parseModelOfferingRow } from "./parse-row";
-import { workflowDefinition } from "./schema/workflow-definitions";
 
 /**
  * Why a single offering could not be turned into a launchable source.
@@ -29,6 +27,7 @@ export type SourceSkip =
   | { reason: "wallet_backed"; provider: string }
   | { reason: "credential_unresolved"; provider: string }
   | { reason: "credential_unauthorized"; provider: string }
+  | { reason: "credential_inactive"; provider: string }
   | { reason: "provider_misconfigured"; provider: string };
 
 /**
@@ -117,6 +116,15 @@ function applyPreference(
   return preference.mode === "pin" ? named : [...named, ...rest];
 }
 
+const CREDENTIAL_SKIP_REASONS = {
+  unresolved: "credential_unresolved",
+  unauthorized: "credential_unauthorized",
+  inactive: "credential_inactive",
+} as const satisfies Record<
+  Exclude<DeliverableCredentialResolution, { ok: true }>["reason"],
+  SourceSkip["reason"]
+>;
+
 async function buildSource(
   db: DB["db"],
   tenantId: string,
@@ -144,37 +152,25 @@ async function buildSource(
     };
   }
 
-  // Resolve the secret through the tenant-scoped credential resolver so a
-  // provider row referencing a credential outside the tenant's ancestor
-  // chain cannot leak that secret (the chain is the authority).
-  const credential = await resolveCredentialById(
+  // Resolve the secret through the delivery resolver so a provider row
+  // referencing a credential outside the tenant's ancestor chain, a
+  // principal-owned credential, or a credential that is not active cannot leak
+  // its secret. Each refusal is a distinct skip so the operator sees why.
+  const resolution = await resolveDeliverableCredential(
     db,
     tenantId,
     provider.credentialId,
   );
-  if (credential === null) {
+  if (!resolution.ok) {
     return {
       ok: false,
-      skip: { reason: "credential_unresolved", provider: provider.name },
+      skip: {
+        reason: CREDENTIAL_SKIP_REASONS[resolution.reason],
+        provider: provider.name,
+      },
     };
   }
-
-  // Authority to use a credential through a catalog provider is ownership
-  // within the tenant hierarchy -- the same rule the credential-binding path
-  // resolves (`source: "tenant"`). `resolveCredentialById` above already proved
-  // the credential is reachable in this tenant's ancestor chain, so a
-  // tenant-owned credential (`principalId IS NULL`) is authorized here by
-  // ownership alone, with no personal grant and no role grant consulted. This
-  // runs live on every launch and rotation, so a catalog edit that adds an
-  // eligible credential is picked up without re-materializing any grant. A
-  // principal-owned credential is not usable through a shared catalog provider;
-  // fail closed.
-  if (credential.principalId !== null) {
-    return {
-      ok: false,
-      skip: { reason: "credential_unauthorized", provider: provider.name },
-    };
-  }
+  const credential = resolution.credential;
 
   // Validate the row once at this DB-to-runtime boundary. This narrows the
   // jsonb `quirks` from `unknown` to a `Record | null` and checks
@@ -211,6 +207,7 @@ async function buildSource(
       providerKey: provider.plugin,
       origin: provider.baseURL,
       secret,
+      secretVersion: credential.secretVersion,
     },
   };
 }
@@ -262,9 +259,10 @@ export async function resolveSourcesByOfferingIds(
  * agent unlaunchable.
  *
  * A credential-backed source is emitted only when the launching tenant owns
- * the referenced credential within its hierarchy (ownership is the authority);
- * otherwise the offering is skipped (`credential_unauthorized`) and its secret
- * is withheld.
+ * the referenced credential within its hierarchy (ownership is the authority)
+ * and the credential is active; otherwise the offering is skipped
+ * (`credential_unresolved`, `credential_unauthorized` or `credential_inactive`)
+ * and its secret is withheld.
  */
 export async function resolveModelSources(
   db: DB["db"],
@@ -343,132 +341,4 @@ export async function resolveModelSources(
   }
 
   return { ok: true, sources, materials: [...materials.values()] };
-}
-
-/**
- * Resolve an agent's model requirements to the credential-free
- * `{ provider, model }` inference preferences a folded workflow definition
- * carries on its step agent. Reuses `resolveModelSources` -- the same catalog
- * + creator-grant resolution the instance launch path runs -- and projects its
- * ordered sources to their `{ provider (plugin), model }` identity, dropping
- * the credentials: a definition's inference preference is hash-only, and the
- * credential-bearing sources are supplied per deploy on the workflow path.
- *
- * A requirement set that resolves to no source is a hard failure. A folded
- * agent whose model is unresolvable is undeployable, so this raises rather
- * than synthesizing an empty preference list that would silently strip the
- * agent's inference. It also raises when the resolved sources are not
- * injective on `(provider, model)` -- the projection would otherwise freeze
- * an ambiguous preference list whose lost `offering.id` distinctions cannot be
- * recovered after the agent's columns are dropped.
- */
-export async function resolveInferencePreferences(
-  db: DB["db"],
-  tenantId: string,
-  requirements: ModelRequirement[],
-  // Required even though the result discards the credential: this reuses the
-  // full `resolveModelSources` path, which decrypts each secret at its point of
-  // use in `buildSource` before the `{provider, model}` projection drops it. So
-  // the caller must still supply the edge's real cipher; a noop here would throw
-  // the moment a tenant's secret is stored encrypted.
-  credentialCipher: CredentialCipher,
-): Promise<{ provider: string; model: string }[]> {
-  const resolution = await resolveModelSources(
-    db,
-    tenantId,
-    requirements,
-    credentialCipher,
-  );
-  if (!resolution.ok) {
-    throw new Error(
-      `cannot resolve inference preferences for the folded definition: ${resolution.reason}`,
-    );
-  }
-
-  // The projection to `{ provider (plugin), model }` drops the `offering.id`
-  // that keys each resolved source. Two distinct offerings can share a
-  // provider plugin and canonical model -- the catalog permits two
-  // `model_provider` rows on the same plugin (uniqueness is on the provider
-  // name), each offering the same model -- so the projection is only
-  // well-defined when the resolved sources are injective on `(provider,
-  // model)`. If they collapse, the folded definition's inference preferences
-  // cannot distinguish which offering each entry meant, and once the agent's
-  // columns are dropped that distinction is unrecoverable. Refuse to
-  // synthesize an ambiguous preference list: fail loud so the collapse
-  // surfaces in the fold/materialize manifest rather than freezing silently.
-  const preferences = resolution.sources.map((source) => ({
-    provider: source.provider,
-    model: source.model,
-  }));
-  const seen = new Set<string>();
-  for (const preference of preferences) {
-    // Join on a NUL: it cannot appear in a provider plugin or canonical model
-    // name, so the composite key is collision-free. Written as an explicit
-    // unicode escape rather than an invisible raw control byte in the source.
-    const key = `${preference.provider}\u0000${preference.model}`;
-    if (seen.has(key)) {
-      throw new Error(
-        `cannot resolve inference preferences for the folded definition: ` +
-          `the model resolution is not injective on (provider, model) -- ` +
-          `two offerings collapse to (${preference.provider}, ${preference.model}); ` +
-          `a folded agent requires a distinguishable inference preference per source`,
-      );
-    }
-    seen.add(key);
-  }
-  return preferences;
-}
-
-/**
- * Resolves the ordered sources for a running instance from persisted state:
- * the definition's model requirements and the invoker's launch-time
- * preferences stored on the instance row. The credential-rotation and
- * catalog-edit source push resolves through this, so a running instance's
- * source list is a pure function of persisted state — re-resolution
- * reproduces the launch ordering, including the invoker's reorder/restrict.
- */
-export async function resolveInstanceModelSources(
-  db: DB["db"],
-  tenantId: string,
-  instance: { definitionId: string; modelPreferences: unknown },
-  credentialCipher: CredentialCipher,
-): Promise<CatalogSourceResolution> {
-  // Resolve from the run's own definition by primary key. This is the SAME row
-  // the launch resolves its requirements from, so a rotation or catalog edit
-  // reproduces the launch's model resolution rather than drifting. Scope to the
-  // resolving tenant, matching the launch route: a definition in another tenant
-  // resolves to nothing rather than contributing another tenant's models. A
-  // definition with no creator principal cannot authorize a credential-backed
-  // source, so it fails closed like a missing definition.
-  const definitionRow = await db.query.workflowDefinition.findFirst({
-    where: and(
-      eq(workflowDefinition.id, instance.definitionId),
-      eq(workflowDefinition.tenantId, tenantId),
-    ),
-  });
-  // A credential-backed source is authorized by tenant ownership of the
-  // credential (walked in `buildSource`), not by the definition's creator, so a
-  // definition with no creator can still launch a tenant-owned inference
-  // source. Only a missing definition (or one in another tenant) fails closed.
-  if (definitionRow === undefined) {
-    return { ok: false, reason: "no_requirements" };
-  }
-
-  const requirements =
-    definitionRow.modelRequirements !== null
-      ? ModelRequirements.assert(definitionRow.modelRequirements)
-      : [];
-
-  const preferences =
-    instance.modelPreferences !== null
-      ? InvokerModelPreferences.assert(instance.modelPreferences)
-      : [];
-  const invokerPreferences: Record<string, ProviderPreference> = {};
-  for (const preference of preferences) {
-    invokerPreferences[preference.model] = preference.providers;
-  }
-
-  return resolveModelSources(db, tenantId, requirements, credentialCipher, {
-    invokerPreferences,
-  });
 }

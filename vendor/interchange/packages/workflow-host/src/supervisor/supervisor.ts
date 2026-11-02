@@ -111,8 +111,15 @@ import type {
 import {
   assembleCredentialsSnapshot,
   type CredentialsSnapshot,
+  stepLayoutSnapshotOpts,
+  type StepLayout,
   toCredentialsSnapshotPayload,
 } from "./credentials";
+import {
+  type ChildDefinitionReport,
+  waitForDefinition,
+  waitForReady,
+} from "./child-handshake";
 import { commitCancelRequested } from "./cancel-signing";
 import { commitRunFailed } from "./terminal-commit";
 import { buildChildSpawnEnv } from "./spawn-env";
@@ -367,23 +374,11 @@ export interface WorkflowSupervisor {
 
 export type SpawnOpts = {
   /**
-   * Every step id in this deployment's flat step-id namespace -- the
-   * definition's own `stepOrder` plus the step ids of every `loop` body it
-   * carries -- for credentials assembly.
+   * The hub-approved wire hash of the deployment's workflow definition. The
+   * child verifies its closure against it, and the supervisor checks every
+   * child's reported definition against it too.
    */
-  stepOrder: readonly string[];
-  /** Content hash of the deployment's workflow definition. */
   definitionHash: string;
-  /**
-   * Whether the spawned child warm-keeps its agent across messages
-   * (design §3b). The host sets this true only for the single-step
-   * long-lived deployment the deploy projection marked a warm candidate;
-   * the supervisor threads it into the child's spawn env as `WARM_KEEP`
-   * so the child's run-loop builds a warm-agent cache. Carried
-   * explicitly so the warm-keep decision is deterministic and survives
-   * recycle (the recycle path re-spawns with the same env).
-   */
-  warmKeep: boolean;
   /**
    * Callback the supervisor invokes for each verified InferenceEvent
    * the child publishes. Mirrors the existing `agent.event` event
@@ -746,10 +741,13 @@ type ReadAuthority = {
 /**
  * A spawn that has not yet published `state`. A shutdown in that window
  * marks it cancelled and waits for `done`; the spawn then stops instead of
- * publishing, and kills its child if it already started one.
+ * publishing, and kills its child if it already started one. `cancel`
+ * resolves with the mark, so a wait on the child ends at the shutdown rather
+ * than at its own deadline.
  */
 type PendingSpawn = {
   cancelled: boolean;
+  cancel: PromiseWithResolvers<undefined>;
   done: PromiseWithResolvers<undefined>;
 };
 
@@ -1089,11 +1087,25 @@ export function createWorkflowSupervisor(
    * Cached per-spawn context the recycle path needs to respawn the
    * child against the same deploy tree. Populated on `spawn(opts)`;
    * cleared on `shutdown`. The recycle path never mutates the
-   * `stepOrder` or `definitionHash`: a deployment keeps them for its
-   * life, and a different deploy tree means a new deployment with its
-   * own supervisor.
+   * `definitionHash`: a deployment keeps it for its life, and a
+   * different deploy tree means a new deployment with its own supervisor.
    */
   let spawnContext: SpawnContext | null = null;
+  /**
+   * The step layout the host derived from the first child's verified
+   * definition. Set once, while `spawn` is still starting that child, and
+   * kept for the deployment's life: every later child reports a definition
+   * with the same approved hash.
+   */
+  let stepLayout: StepLayout | null = null;
+  function requireStepLayout(): StepLayout {
+    if (stepLayout === null) {
+      throw new Error(
+        "workflow-host supervisor: no step layout before the first child reported its definition",
+      );
+    }
+    return stepLayout;
+  }
   let recyclePolicy: RecyclePolicy | null = null;
   // Mutual-exclusion latch shared by every respawn path (operator/policy/
   // self recycle and crash-respawn). `runRespawn` owns the set/clear; each
@@ -2832,10 +2844,12 @@ export function createWorkflowSupervisor(
     hmacKey: Uint8Array;
     ipcKeypair: { privateKey: Uint8Array; publicKey: Uint8Array };
     handle: SubprocessHandle;
+    definitionHash: string;
     onInferenceEvent: (event: EventPayload) => void;
   }): Promise<{
     wiring: ChildWiring;
-    readyPromise: Promise<{ childPid: number }>;
+    definitionPromise: Promise<ChildDefinitionReport>;
+    readyPromise: Promise<void>;
     controlIncoming: AsyncGenerator<ControlPayload, void, void>;
   }> {
     const controlSender = createControlChannelSender({
@@ -2845,13 +2859,19 @@ export function createWorkflowSupervisor(
     });
 
     const controlIncoming = receiveControlChannel({
-      publicKey: { bootstrapFromReady: true },
+      publicKey: { bootstrapFromDefinition: true },
       channelId: args.channelId,
       reader: args.handle.controlReader,
       onCrash: onChildCrash,
     });
 
-    const readyPromise = waitForReady(controlIncoming);
+    const definitionPromise = waitForDefinition(
+      controlIncoming,
+      args.definitionHash,
+    );
+    const readyPromise = definitionPromise.then(() =>
+      waitForReady(controlIncoming),
+    );
 
     const eventIter = receiveEventChannel({
       hmacKey: args.hmacKey,
@@ -2872,6 +2892,7 @@ export function createWorkflowSupervisor(
         channelId: args.channelId,
         eventPump,
       },
+      definitionPromise,
       readyPromise,
       controlIncoming,
     };
@@ -2889,6 +2910,7 @@ export function createWorkflowSupervisor(
     // publishes, and settles the record on every exit before the publish.
     const pending: PendingSpawn = {
       cancelled: false,
+      cancel: Promise.withResolvers<undefined>(),
       done: Promise.withResolvers<undefined>(),
     };
     pendingSpawn = pending;
@@ -2921,9 +2943,7 @@ export function createWorkflowSupervisor(
         hostPublicKey: ipcKeypair.publicKey,
         anchorRunId: bindings.anchorRunId,
         deploymentMailAddress: bindings.deploymentMailAddress,
-        stepCount: bindings.stepCount,
         definitionHash: opts.definitionHash,
-        warmKeep: opts.warmKeep,
       });
 
       // The spawner throws synchronously when it cannot start the child.
@@ -2943,6 +2963,7 @@ export function createWorkflowSupervisor(
         hmacKey,
         ipcKeypair,
         handle,
+        definitionHash: opts.definitionHash,
         onInferenceEvent: opts.onInferenceEvent,
       });
     } catch (cause) {
@@ -2960,42 +2981,74 @@ export function createWorkflowSupervisor(
       throw cause;
     }
 
-    // The ready handshake below folds `wired.readyPromise` into an
-    // outcome value, handling its rejection. But a startup teardown that
-    // fires BEFORE the handshake -- a throw during credentials assembly
-    // or mail registration -- kills the child, and that kill rejects
-    // `readyPromise` (the control channel ends). Attach a benign handler
-    // now so the rejection is never unhandled on that path; the
-    // handshake's own fold still observes the outcome when it runs.
+    // The handshakes below fold `wired.definitionPromise` and
+    // `wired.readyPromise` into outcome values, handling their rejections.
+    // But a startup teardown that fires BEFORE a handshake -- a throw during
+    // credentials assembly or mail registration -- kills the child, and that
+    // kill rejects both (the control channel ends). Attach benign handlers
+    // now so the rejections are never unhandled on that path; the
+    // handshakes' own folds still observe the outcomes when they run.
+    void wired.definitionPromise.catch(() => {
+      /* handled by the definition-handshake fold below */
+    });
     void wired.readyPromise.catch(() => {
       /* handled by the ready-handshake fold when the handshake runs */
     });
 
-    // Read the run's authority before the new child becomes the live target.
-    // The `authority.set` frame below must be the first frame the child
-    // receives, and once `state` names this child, `deliverGrants` and
-    // `deliverCredentials` send to it. The child has no state record yet, so a
-    // failed read kills it here, as the wireChild failure above does. The
-    // cancel check below runs with no await before the publish.
+    // Learn the child's definition, then read the run's authority before the
+    // new child becomes the live target. The `authority.set` frame below must
+    // be the first frame the child receives, and once `state` names this
+    // child, `deliverGrants` and `deliverCredentials` send to it. The child
+    // has no state record yet, so a failure here kills it, as the wireChild
+    // failure above does. The cancel check below runs with no await before
+    // the publish.
     const killUnpublishedChild = () =>
       killChildHandle(handle, DEFAULT_KILL_TIMEOUT_MS, {
         setTimer: readySetTimer,
         clearTimer: readyClearTimer,
         logger,
       });
+    let childPid: number;
     let credentialsSnapshot: CredentialsSnapshot;
     let authority: ReadAuthority;
     try {
       try {
+        // Bound the definition handshake like the ready handshake below:
+        // evaluating the closure is the slow part of a child's startup, and a
+        // child that neither reports nor exits must not park the spawn, nor a
+        // shutdown waiting on it. The deadline is resolve-only and cleared on
+        // every path.
+        const definitionOutcome = wired.definitionPromise.then(
+          (report) => ({ kind: "reported" as const, report }),
+          (err: unknown) => ({ kind: "failed" as const, err }),
+        );
+        const definitionDeadline = waitDeadline(readySetTimer, readyTimeoutMs);
+        const definitionRace = await Promise.race([
+          definitionOutcome,
+          definitionDeadline.promise.then(() => ({ kind: "timeout" as const })),
+          pending.cancel.promise.then(() => ({ kind: "cancelled" as const })),
+        ]);
+        readyClearTimer(definitionDeadline.handle);
+        if (definitionRace.kind === "timeout") {
+          throw new Error(
+            `workflow-host supervisor: child did not report its definition within ${readyTimeoutMs}ms; killed`,
+          );
+        }
+        if (definitionRace.kind === "cancelled") {
+          throw new Error(
+            "workflow-host supervisor: shut down while the spawn waited for the child's definition; killed the new child",
+          );
+        }
+        if (definitionRace.kind === "failed") throw definitionRace.err;
+        childPid = definitionRace.report.childPid;
+        stepLayout = await bindings.layoutSteps(
+          definitionRace.report.projection,
+        );
         credentialsSnapshot = await assembleCredentialsSnapshot({
           repoStore: bindings.repoStore,
           principal: bindings.readPrincipal,
-          stepOrder: opts.stepOrder,
           anchorRunId: bindings.anchorRunId,
-          deriveStepAddress: bindings.deriveStepAddress,
-          ...(bindings.deriveStepRepoId !== undefined
-            ? { deriveStepRepoId: bindings.deriveStepRepoId }
-            : {}),
+          ...stepLayoutSnapshotOpts(stepLayout),
         });
         authority = await readAuthority(credentialsSnapshot);
       } catch (cause) {
@@ -3176,7 +3229,7 @@ export function createWorkflowSupervisor(
         wired.readyPromise,
         authoritySent,
       ]).then(
-        ([info]) => ({ kind: "ready" as const, info }),
+        () => ({ kind: "ready" as const }),
         (err: unknown) => ({ kind: "failed" as const, err }),
       );
       const readyDeadline = waitDeadline(readySetTimer, readyTimeoutMs);
@@ -3205,7 +3258,6 @@ export function createWorkflowSupervisor(
         // the subscription and registration via shutdownInternal.
         throw readyRace.err;
       }
-      const readyInfo = readyRace.info;
 
       // Transition to running. The dispatch loop (started below)
       // picks up any pre-ready buffered mail through the FIFO inbox
@@ -3261,14 +3313,12 @@ export function createWorkflowSupervisor(
       wakeDispatch();
 
       // Cache the spawn context for the recycle path. The recycle path
-      // reuses the same stepOrder/definitionHash/onInferenceEvent on
+      // reuses the same definitionHash/onInferenceEvent on
       // every respawn -- a deployment keeps them for its life, and the
       // supervisor never mutates them.
       const now = bindings.recyclePolicyNow ?? defaultNow;
       spawnContext = {
-        stepOrder: opts.stepOrder,
         definitionHash: opts.definitionHash,
-        warmKeep: opts.warmKeep,
         onInferenceEvent: opts.onInferenceEvent,
         spawnedAt: now(),
       };
@@ -3328,7 +3378,7 @@ export function createWorkflowSupervisor(
       }
 
       return {
-        pid: readyInfo.childPid,
+        pid: childPid,
         channelId,
         credentialsSnapshot,
       };
@@ -3554,6 +3604,7 @@ export function createWorkflowSupervisor(
       const snapshot = await bindings.onRunStart({
         runId,
         anchorRunId: bindings.anchorRunId,
+        layout: requireStepLayout(),
       });
       if (snapshot === null) {
         throw new Error(
@@ -4249,6 +4300,7 @@ export function createWorkflowSupervisor(
     if (shutdownPromise !== null) return shutdownPromise;
     if (state.phase === "idle" && pendingSpawn !== null) {
       pendingSpawn.cancelled = true;
+      pendingSpawn.cancel.resolve(undefined);
       return pendingSpawn.done.promise;
     }
     if (
@@ -4714,9 +4766,8 @@ export function createWorkflowSupervisor(
               return handle;
             },
           },
-          stepOrder: priorContext.stepOrder,
+          layout: requireStepLayout(),
           definitionHash: priorContext.definitionHash,
-          warmKeep: priorContext.warmKeep,
           onInferenceEvent: priorContext.onInferenceEvent,
           current: {
             handle: prior.handle,
@@ -4847,9 +4898,7 @@ export function createWorkflowSupervisor(
             // so the policy timer's uptime check resets on recycle.
             const now = bindings.recyclePolicyNow ?? defaultNow;
             spawnContext = {
-              stepOrder: priorContext.stepOrder,
               definitionHash: priorContext.definitionHash,
-              warmKeep: priorContext.warmKeep,
               onInferenceEvent: priorContext.onInferenceEvent,
               spawnedAt: now(),
             };
@@ -5097,6 +5146,7 @@ export function createWorkflowSupervisor(
       const snapshot = await bindings.onRunStart({
         runId: deriveWorkflowRunId(bindings.deploymentMailAddress),
         anchorRunId: bindings.anchorRunId,
+        layout: requireStepLayout(),
       });
       return { snapshot, revision, failed: false };
     } catch (cause) {
@@ -5175,6 +5225,7 @@ export function createWorkflowSupervisor(
       const snapshot = await bindings.onRunStart({
         runId,
         anchorRunId: bindings.anchorRunId,
+        layout: requireStepLayout(),
       });
       if (snapshot === null) {
         logger.warn`deliverGrants: run ${runId} has no grants file; nothing to refresh`;
@@ -5303,48 +5354,10 @@ type ActiveState = {
 };
 
 type SpawnContext = {
-  stepOrder: readonly string[];
   definitionHash: string;
-  /** Warm-keep flag carried on respawn env (unchanged across recycle). */
-  warmKeep: boolean;
   onInferenceEvent: (event: EventPayload) => void;
   spawnedAt: number;
 };
-
-/**
- * Iterate the control-channel receive iterator until the child's
- * `ready` frame arrives. Upstream payloads other than `ready` (e.g.
- * `recycle.request`) appear after `ready`; the supervisor's
- * `pumpUpstreamControl` consumes them off the same iterator after
- * spawn returns.
- */
-async function waitForReady(
-  iter: AsyncGenerator<ControlPayload, void, void>,
-): Promise<{ childPid: number }> {
-  // Use explicit `next()` rather than `for await ... return` so the
-  // generator is NOT finalized via `iter.return()` when ready lands.
-  // The supervisor's upstream-control pump continues iterating the
-  // same generator after `ready`, and a finalized generator would
-  // immediately yield `{done: true}` to the pump and silently drop
-  // the child's subsequent upstream frames (e.g. `recycle.request`).
-  while (true) {
-    const next = await iter.next();
-    if (next.done === true) {
-      throw new Error(
-        "workflow-host supervisor: control channel ended before child emitted ready",
-      );
-    }
-    const payload = next.value;
-    if (payload.type === "ready") {
-      return { childPid: payload.data.childPid };
-    }
-    // Drop other variants encountered before `ready`; the child is
-    // not supposed to send anything else first, but the receiver
-    // validated the envelope and signature, so a stray frame here is
-    // a programming bug worth surfacing in the warning channel
-    // rather than crashing the iterator.
-  }
-}
 
 function defaultNow(): number {
   return Date.now();

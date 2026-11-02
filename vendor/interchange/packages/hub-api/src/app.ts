@@ -459,7 +459,7 @@ export function mountHubRoutes(
   );
   app.route(
     "/api/tenants/:tenantId/providers",
-    createProviderRoutes({ db, requireGrant }),
+    createProviderRoutes({ db, sidecarRouter, requireGrant }),
   );
   app.route(
     "/api/tenants/:tenantId/oauth-clients",
@@ -480,30 +480,15 @@ export function mountHubRoutes(
   );
   app.route(
     "/api/tenants/:tenantId/catalog/models",
-    createModelCatalogRoutes({
-      db,
-      sidecarRouter,
-      requireGrant,
-      credentialCipher,
-    }),
+    createModelCatalogRoutes({ db, requireGrant }),
   );
   app.route(
     "/api/tenants/:tenantId/catalog/providers",
-    createModelProviderRoutes({
-      db,
-      sidecarRouter,
-      requireGrant,
-      credentialCipher,
-    }),
+    createModelProviderRoutes({ db, requireGrant }),
   );
   app.route(
     "/api/tenants/:tenantId/catalog/offerings",
-    createModelOfferingRoutes({
-      db,
-      sidecarRouter,
-      requireGrant,
-      credentialCipher,
-    }),
+    createModelOfferingRoutes({ db, requireGrant }),
   );
   app.route(
     "/api/tenants/:tenantId/models",

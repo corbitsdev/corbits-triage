@@ -62,6 +62,7 @@ import {
   createApp,
   createCorrespondentGrantMinter,
   createMailTriggeredRunGrantsMaterializer,
+  createRunGrantsLoader,
   type RunTokenRoute,
 } from "@intx/hub-api";
 import {
@@ -249,6 +250,7 @@ export async function createInterchangeHub({
       },
     ),
     loadRunCredentials,
+    loadRunGrants: createRunGrantsLoader({ db }),
     resolveSenderKey: (address) =>
       resolveFrameSenderKey(db, principalKeyStore, address),
     // The strict sibling for reconnect reconciliation: it preserves the strict

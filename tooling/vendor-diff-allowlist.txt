@@ -6,7 +6,7 @@
 # Lines starting with `#` and blank lines are ignored. Keep entries
 # justified: each must cite the tracking issue for its upstream resolution.
 #
-# Composite pin: stock 19d89be64de634ea6e0ecfbfa7036d3ced6f8bef plus the
+# Composite pin: stock 343983fcb0aceea351512a09a1d6ef41a80255a7 plus the
 # allowlisted deltas below. Full rationale is in vendor/interchange/VENDORED.md.
 #
 # CL-10210 local carry: consume a replayed signal mail the run already

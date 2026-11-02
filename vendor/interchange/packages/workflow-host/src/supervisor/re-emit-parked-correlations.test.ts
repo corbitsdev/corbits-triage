@@ -22,6 +22,8 @@ import {
   createMemoryFrameStream,
   createMemoryNdjsonStream,
   createStubRepoStore,
+  sendDefinition,
+  TEST_DEFINITION_HASH,
 } from "@intx/workflow-host/testing";
 
 import {
@@ -171,10 +173,11 @@ async function driveReadyAndAnswer(
       },
     },
   });
-  await childSender.send({
-    type: "ready",
-    data: { childPid: child.pid, childPublicKey: hexEncode(ipcKp.publicKey) },
+  await sendDefinition(childSender, {
+    childPid: child.pid,
+    childPublicKey: hexEncode(ipcKp.publicKey),
   });
+  await childSender.send({ type: "ready" });
 
   const receiver = receiveControlChannel({
     publicKey: ipcKp.publicKey,
@@ -254,11 +257,14 @@ async function setup(opts: {
     workflowRunRepoId: { kind: "workflow-run", id: DEPLOYMENT_ID },
     workflowRunRef: "refs/heads/main",
     anchorRunId: DEPLOYMENT_ID,
-    stepCount: 1,
     deploymentMailAddress: AGENT_ADDRESS,
     readPrincipal: { kind: "supervisor" },
-    deriveStepAddress: () => AGENT_ADDRESS,
-    deriveStepRepoId: () => ({ kind: "agent-state", id: DEPLOYMENT_ID }),
+    layoutSteps: () =>
+      Promise.resolve({
+        stepIds: ["step-1"],
+        deriveStepAddress: () => AGENT_ADDRESS,
+        deriveStepRepoId: () => ({ kind: "agent-state", id: DEPLOYMENT_ID }),
+      }),
     inboxPrimitives: createNoopInboxPrimitives(),
     ipcKeyPairFactory: () => Promise.resolve(ipcKp),
     drainTimeoutMs: 200,
@@ -268,9 +274,7 @@ async function setup(opts: {
   });
 
   const spawnPromise = supervisor.spawn({
-    stepOrder: ["step-1"],
-    definitionHash: "def-hash",
-    warmKeep: false,
+    definitionHash: TEST_DEFINITION_HASH,
 
     onInferenceEvent: () => undefined,
   });
@@ -524,11 +528,14 @@ describe("supervisor reEmitParkedCorrelations", () => {
       workflowRunRepoId: { kind: "workflow-run", id: DEPLOYMENT_ID },
       workflowRunRef: "refs/heads/main",
       anchorRunId: DEPLOYMENT_ID,
-      stepCount: 1,
       deploymentMailAddress: AGENT_ADDRESS,
       readPrincipal: { kind: "supervisor" },
-      deriveStepAddress: () => AGENT_ADDRESS,
-      deriveStepRepoId: () => ({ kind: "agent-state", id: DEPLOYMENT_ID }),
+      layoutSteps: () =>
+        Promise.resolve({
+          stepIds: ["step-1"],
+          deriveStepAddress: () => AGENT_ADDRESS,
+          deriveStepRepoId: () => ({ kind: "agent-state", id: DEPLOYMENT_ID }),
+        }),
       inboxPrimitives: createNoopInboxPrimitives(),
     });
 

@@ -25,7 +25,7 @@ import { createRuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { WorkflowProjectionDefinition } from "@intx/types/sidecar";
 import { projectLiveToInert, runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type StepInvokeRequest, type WorkflowDefinition } from "@intx/workflow";
 import { collectHubConsumers } from "@intx/workflow-deploy";
-import { createCredentialsBackedAuthorize, createGrantEvaluator, createLocalCredentialsSnapshot, createWorkflowStepInvoker, snapshotStepGrants } from "@intx/workflow-host/local";
+import { createCredentialsBackedAuthorize, createGrantEvaluator, createLocalCredentialsSnapshot, createSnapshotGrantsResolver, createWorkflowStepInvoker, snapshotStepGrants } from "@intx/workflow-host/local";
 import { DEFAULT_REPO_POLICY, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-manager/actions/index";
 import { mailDirector } from "@corbits/triage-manager/directors";
@@ -453,7 +453,7 @@ export async function modelStack(repo: string, { pack, automatic, review }: { pa
     const cell = { current: deliveryOf(run) };
     const requirements = await grantStore.collectGrants(run.principalId, TENANT);
     const snapshot = { current: createLocalCredentialsSnapshot({ definition: run.definition, directors, delivery: cell.current, grants: requirements }) };
-    const workflowAuthorize = createCredentialsBackedAuthorize(snapshot, createGrantEvaluator({ floorFor: noFloor }));
+    const workflowAuthorize = createCredentialsBackedAuthorize(createSnapshotGrantsResolver(snapshot, "local run"), createGrantEvaluator({ floorFor: noFloor }));
     async function routed(input: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
       if (url.origin === HUB_ORIGIN) return hubFetch(runId, serving, url, init);

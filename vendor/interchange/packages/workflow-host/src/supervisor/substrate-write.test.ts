@@ -57,6 +57,8 @@ import {
   createSupervisorReaper,
   createMockMailBus,
   waitForUpstreamPayload,
+  sendDefinition,
+  TEST_DEFINITION_HASH,
 } from "@intx/workflow-host/testing";
 
 import {
@@ -440,10 +442,14 @@ async function bootSupervisorToReady(
     workflowRunRepoId: { kind: "workflow-run", id: "deployment-x" },
     workflowRunRef: "refs/heads/main",
     anchorRunId: "deployment-x",
-    stepCount: 1,
     deploymentMailAddress: "deployment-x@example.com",
     readPrincipal: { kind: "supervisor" },
-    deriveStepAddress: ({ runId, stepId }) => `${runId}-${stepId}@example.com`,
+    layoutSteps: () =>
+      Promise.resolve({
+        stepIds: ["step-1"],
+        deriveStepAddress: ({ runId, stepId }) =>
+          `${runId}-${stepId}@example.com`,
+      }),
     ipcKeyPairFactory: () => Promise.resolve(supervisorIpcKeyPair),
     inboxPrimitives,
     ...(opts.onSelfTerminate !== undefined
@@ -454,9 +460,7 @@ async function bootSupervisorToReady(
   const supervisor = createWorkflowSupervisor(bindings);
   supervisors.track(supervisor);
   const spawnPromise = supervisor.spawn({
-    stepOrder: ["step-1"],
-    definitionHash: "def-hash-abc",
-    warmKeep: false,
+    definitionHash: TEST_DEFINITION_HASH,
 
     onInferenceEvent: () => {
       /* unused */
@@ -476,15 +480,14 @@ async function bootSupervisorToReady(
       },
     },
   });
+  // A child reports its definition as soon as it has loaded; the supervisor
+  // registers the mail address only after that.
+  await sendDefinition(childSender, {
+    childPid: 7777,
+    childPublicKey: hexEncode(childIpcKeyPair.publicKey),
+  });
   await mailBus.awaitRegistered("deployment-x@example.com");
-  const sendReady = (): Promise<void> =>
-    childSender.send({
-      type: "ready",
-      data: {
-        childPid: 7777,
-        childPublicKey: hexEncode(childIpcKeyPair.publicKey),
-      },
-    });
+  const sendReady = (): Promise<void> => childSender.send({ type: "ready" });
   return {
     supervisor,
     channelId,

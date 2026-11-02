@@ -287,9 +287,6 @@ function createMockSidecarRouter(
     routeMail(_addr, _msg) {
       return notImpl("routeMail");
     },
-    sendRunGrants(_addr, _runId, _stepGrants) {
-      return notImpl("sendRunGrants");
-    },
     noteSenderDeployStarted(_addr) {
       return notImpl("noteSenderDeployStarted");
     },
@@ -298,9 +295,6 @@ function createMockSidecarRouter(
     },
     sendAgentUndeploy(_addr, _reason) {
       return notImpl("sendAgentUndeploy");
-    },
-    sendSourcesUpdate(_addr, _sources, _defaultSource) {
-      return notImpl("sendSourcesUpdate");
     },
     sendCredentialsUpdate(_addr, _delivery) {
       return notImpl("sendCredentialsUpdate");

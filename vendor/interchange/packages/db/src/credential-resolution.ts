@@ -1,4 +1,4 @@
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 
 import { credentialBindingConsumer } from "@intx/authz";
 import { credentialAad } from "@intx/types";
@@ -49,6 +49,29 @@ export class CredentialUnauthorizedError extends Error {
   }
 }
 
+type InactiveCredentialStatus = Exclude<
+  (typeof credential.$inferSelect)["status"],
+  "active"
+>;
+
+/**
+ * Thrown when a referenced credential is a tenant-owned credential the given
+ * tenant can use, but its status is not `active`, so its secret must not be
+ * delivered. Distinct from `CredentialUnauthorizedError` so the operator sees a
+ * lifecycle problem (a revoked, expired or errored key), not a missing or
+ * foreign one.
+ */
+export class CredentialInactiveError extends Error {
+  readonly credentialId: string;
+  readonly status: InactiveCredentialStatus;
+  constructor(credentialId: string, status: InactiveCredentialStatus) {
+    super(`credential ${credentialId} has status ${status}, not active`);
+    this.name = "CredentialInactiveError";
+    this.credentialId = credentialId;
+    this.status = status;
+  }
+}
+
 /**
  * Resolve a credential USABLE by the launching tenant purely through ownership:
  * it exists, is reachable in the tenant's ancestor chain, and is tenant-owned
@@ -58,8 +81,11 @@ export class CredentialUnauthorizedError extends Error {
  * an ancestor) owns, and descendants inherit; a principal-owned credential is
  * never usable this way, its delegation flowing from its owner instead. It
  * wraps `resolveCredentialById` (the ancestor-chain check) with the tenant-owned
- * gate, so callers do not re-implement the predicate. `buildSource` expands it
- * inline only to distinguish an unresolved reference from a principal-owned one.
+ * gate, so callers do not re-implement the predicate. It does not consult the
+ * credential's status: a caller that only checks a reference (a catalog provider
+ * pointing at a credential) may name a credential that is not active yet. The
+ * rails that deliver a secret go through `resolveDeliverableCredential`, which
+ * adds the lifecycle rule.
  */
 export async function resolveTenantOwnedCredentialById(
   db: DB["db"],
@@ -70,23 +96,60 @@ export async function resolveTenantOwnedCredentialById(
   return row !== null && row.principalId === null ? row : null;
 }
 
+export type DeliverableCredentialResolution =
+  | { ok: true; credential: typeof credential.$inferSelect }
+  | { ok: false; reason: "unresolved" | "unauthorized" }
+  | { ok: false; reason: "inactive"; status: InactiveCredentialStatus };
+
+/**
+ * Resolve a credential whose secret may be DELIVERED to a run as inference
+ * material. Authority is ownership within the tenant hierarchy, the same rule
+ * the credential-binding path resolves (`source: "tenant"`): the credential must
+ * exist and be reachable in the tenant's ancestor chain (`unresolved`
+ * otherwise), and be tenant-owned (`unauthorized` for a principal-owned one,
+ * which is not usable through a shared catalog provider). No personal grant and
+ * no role grant is consulted. Delivery also requires `status = "active"`, the
+ * binding path's lifecycle rule, so a revoked, expired or errored credential is
+ * never delivered (`inactive`).
+ *
+ * The launch and deploy resolvers call this live, so a credential that becomes
+ * eligible is picked up without re-materializing any grant. A credential that
+ * a deployment already holds is re-resolved by `reresolveCurrentMaterials`
+ * instead, which keeps an expired or errored credential.
+ */
+export async function resolveDeliverableCredential(
+  db: DB["db"],
+  tenantId: string,
+  credentialId: string,
+): Promise<DeliverableCredentialResolution> {
+  const row = await resolveCredentialById(db, tenantId, credentialId);
+  if (row === null) return { ok: false, reason: "unresolved" };
+  if (row.principalId !== null) return { ok: false, reason: "unauthorized" };
+  if (row.status !== "active") {
+    return { ok: false, reason: "inactive", status: row.status };
+  }
+  return { ok: true, credential: row };
+}
+
 /**
  * Resolve a set of inference-source credentialIds into the credential material
  * delivered on a run's unified credential-material cell. An inference source
  * references its credential by id only; for each DISTINCT id this resolves the
- * secret under the SAME tenant-ownership authority `buildSource` uses -- the
- * credential must exist, be reachable in the tenant's ancestor chain, and be
- * tenant-owned (`principalId IS NULL`) -- then decrypts it at the single point of
- * use. `providerKey`/`origin` come from the credential's own provider row
- * (`provider.plugin` / `provider.apiBaseUrl`), so the material describes the
- * credential itself, independent of any caller-supplied source fields.
+ * secret under the SAME authority `buildSource` uses
+ * (`resolveDeliverableCredential`) -- the credential must exist, be reachable in
+ * the tenant's ancestor chain, be tenant-owned (`principalId IS NULL`), and be
+ * active -- then decrypts it at the single point of use. `providerKey`/`origin`
+ * come from the credential's own provider row (`provider.plugin` /
+ * `provider.apiBaseUrl`), so the material describes the credential itself,
+ * independent of any caller-supplied source fields.
  *
  * Fails CLOSED, by throwing, on the first credentialId that is unresolved, not
- * tenant-owned, references a missing provider, or whose provider has no API
- * origin to pin -- a secret is never dropped nor delivered without an origin. The
- * single resolver for every inference source credentialId -> material, shared by
- * the deploy composition (top-level + inline body sources) and any other caller
- * that must materialize inference credentials for the cell.
+ * tenant-owned, not active (`CredentialInactiveError`), references a missing
+ * provider, or whose provider has no API origin to pin -- a secret is never
+ * dropped nor delivered without an origin. The single resolver for every
+ * inference source credentialId -> material, shared by the deploy composition
+ * (top-level + inline body sources) and any other caller that must materialize
+ * inference credentials for the cell.
  */
 export async function resolveInferenceMaterials(
   db: DB["db"],
@@ -97,14 +160,18 @@ export async function resolveInferenceMaterials(
   const materials = new Map<string, CredentialMaterialEntry>();
   for (const credentialId of credentialIds) {
     if (materials.has(credentialId)) continue;
-    const row = await resolveTenantOwnedCredentialById(
+    const resolution = await resolveDeliverableCredential(
       db,
       tenantId,
       credentialId,
     );
-    if (row === null) {
+    if (!resolution.ok) {
+      if (resolution.reason === "inactive") {
+        throw new CredentialInactiveError(credentialId, resolution.status);
+      }
       throw new CredentialUnauthorizedError(credentialId, tenantId);
     }
+    const row = resolution.credential;
     const providerRow = await db.query.provider.findFirst({
       where: eq(provider.id, row.providerId),
     });
@@ -126,14 +193,88 @@ export async function resolveInferenceMaterials(
         row.secret,
         credentialAad(row.id, "secret"),
       ),
+      secretVersion: row.secretVersion,
     });
   }
   return [...materials.values()];
 }
 
+// A delivered credential stays LIVE until its row is gone or deliberately
+// revoked; otherwise its material must leave the sidecar. The one lifecycle
+// rule for eviction, shared by the reconnect re-resolve and the post-send
+// re-check.
+function isLiveCredential<
+  T extends { status: (typeof credential.$inferSelect)["status"] },
+>(row: T | undefined): row is T {
+  return row !== undefined && row.status !== "revoked";
+}
+
+/**
+ * Return the ids among `credentialIds` whose credential is removed: deleted or
+ * `revoked`. A caller that already delivered these ids sends a revoke for the
+ * result. It reads only id and status, so it never decrypts and never fails on
+ * a misconfigured provider -- a removal must not be blocked by an unrelated
+ * fault in a credential that is still alive.
+ */
+export async function findRemovedCredentialIds(
+  db: DB["db"],
+  credentialIds: Iterable<string>,
+): Promise<string[]> {
+  const ids = [...new Set(credentialIds)];
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({ id: credential.id, status: credential.status })
+    .from(credential)
+    .where(inArray(credential.id, ids));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return ids.filter((id) => !isLiveCredential(byId.get(id)));
+}
+
+/**
+ * Return the ids among `delivered` whose live credential holds a higher
+ * `secretVersion` than the one delivered: rotated since the delivery read it.
+ * A delivery with no version counts as version 0. Like
+ * `findRemovedCredentialIds`, it reads no secret and never decrypts.
+ */
+export async function findRotatedCredentialIds(
+  db: DB["db"],
+  delivered: readonly Pick<
+    CredentialMaterialEntry,
+    "credentialId" | "secretVersion"
+  >[],
+): Promise<string[]> {
+  if (delivered.length === 0) return [];
+  const rows = await db
+    .select({
+      id: credential.id,
+      status: credential.status,
+      secretVersion: credential.secretVersion,
+    })
+    .from(credential)
+    .where(
+      inArray(
+        credential.id,
+        delivered.map((material) => material.credentialId),
+      ),
+    );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const rotated = new Set<string>();
+  for (const material of delivered) {
+    const row = byId.get(material.credentialId);
+    if (
+      isLiveCredential(row) &&
+      row.secretVersion > (material.secretVersion ?? 0)
+    ) {
+      rotated.add(material.credentialId);
+    }
+  }
+  return [...rotated];
+}
+
 /**
  * Re-resolve the CURRENT material for a set of already-authorized credentialIds,
- * for the reconnect resync. Unlike `resolveInferenceMaterials`, a credential
+ * for the reconnect resync, the rotation push and the deploy-start re-check.
+ * Unlike `resolveInferenceMaterials`, a credential
  * that no longer exists or is `revoked` is DROPPED (omitted) rather than
  * throwing: the resync reflects credential lifecycle, so a dead id is simply
  * absent from the reconciled delivery and the child evicts it.
@@ -159,8 +300,7 @@ export async function reresolveCurrentMaterials(
     const row = await db.query.credential.findFirst({
       where: eq(credential.id, credentialId),
     });
-    if (row === undefined) continue; // deleted -> drop
-    if (row.status === "revoked") continue; // revoked -> drop
+    if (!isLiveCredential(row)) continue;
     const providerRow = await db.query.provider.findFirst({
       where: eq(provider.id, row.providerId),
     });
@@ -182,6 +322,7 @@ export async function reresolveCurrentMaterials(
         row.secret,
         credentialAad(row.id, "secret"),
       ),
+      secretVersion: row.secretVersion,
     });
   }
   return [...materials.values()];
@@ -496,6 +637,7 @@ export async function buildCredentialDelivery(args: {
           resolved.credential.secret,
           credentialAad(credentialId, "secret"),
         ),
+        secretVersion: resolved.credential.secretVersion,
       });
     }
   }

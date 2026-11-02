@@ -673,6 +673,353 @@ describe("SidecarRouter allocation routing", () => {
   });
 });
 
+describe("SidecarRouter current grants on signals and triggers", () => {
+  // The guard compares against the run id parsed from a run address.
+  const address = "run_grants@deploy.test";
+  const runId = "run_grants";
+  const runIdentity = { ...identity, workflowRunAddress: address };
+  const runTarget = { allocationId: runIdentity.allocationId, generation: 1 };
+  const stepGrants = [
+    {
+      id: "grt-1",
+      resource: "tool:posix",
+      action: "invoke",
+      effect: "allow" as const,
+      origin: "system" as const,
+      conditions: null,
+      expiresAt: null,
+      roleId: null,
+      principalId: "prn-run",
+    },
+  ];
+  const credentials = {
+    bindings: [],
+    materials: [
+      {
+        credentialId: "hub:action:a",
+        providerKey: "http",
+        origin: "https://hub.test",
+        secret: "itx_run_token",
+      },
+    ],
+  };
+
+  function createGrantsRouter(lookups: SidecarLookups) {
+    const router = createSidecarRouter({
+      withExecutableWorkflowRun: async (_target, send) => send(),
+      ...sidecarAuth(() => [runIdentity]),
+      validateSidecarIdentity: async () => true,
+      hubPublicKey: "a".repeat(64),
+      requestTimeoutMs: 500,
+      lookups,
+    });
+    router.fenceAllocation(runIdentity.allocationId, runIdentity.generation);
+    return router;
+  }
+
+  function signalFor(id: string) {
+    return {
+      agentAddress: address,
+      runId: id,
+      signalName: "approval",
+      signalId: "signal-1",
+      payload: { approved: true },
+    };
+  }
+
+  function types(ws: ReturnType<typeof createMockWs>): string[] {
+    return ws.sent.map((raw) => {
+      const frame: { type: string } = JSON.parse(raw);
+      return frame.type;
+    });
+  }
+
+  test("an allocated signal is preceded by the run's committed grants on the same generation", async () => {
+    const router = createGrantsRouter({
+      loadRunGrants: async () => stepGrants,
+      loadRunCredentials: async () => credentials,
+    });
+    const ws = await connect(router, [address]);
+    const before = ws.sent.length;
+    await router.sendSignalDeliverToAllocation(runTarget, signalFor(runId));
+    const sent = ws.sent
+      .slice(before)
+      .map((raw): Record<string, unknown> => JSON.parse(raw));
+    expect(sent).toEqual([
+      {
+        type: "run.grants",
+        agentAddress: address,
+        generation: runTarget.generation,
+        runId,
+        stepGrants: JSON.parse(JSON.stringify(stepGrants)),
+        credentials,
+      },
+      expect.objectContaining({
+        type: "signal.deliver",
+        generation: runTarget.generation,
+        runId,
+      }),
+    ]);
+  });
+
+  test("a direct signal is preceded by the run's committed grants", async () => {
+    const router = createGrantsRouter({
+      loadRunGrants: async () => stepGrants,
+    });
+    const ws = await connect(router, [address]);
+    const before = ws.sent.length;
+    await router.sendSignalDeliver(signalFor(runId));
+    expect(
+      ws.sent.slice(before).map((raw) => {
+        const frame: { type: string; generation: number } = JSON.parse(raw);
+        return [frame.type, frame.generation];
+      }),
+    ).toEqual([
+      ["run.grants", runIdentity.generation],
+      ["signal.deliver", runIdentity.generation],
+    ]);
+    expect(framesOf(ws, "run.grants")[0]).not.toHaveProperty("credentials");
+  });
+
+  test("an allocated signal whose grants load fails is still sent", async () => {
+    const router = createGrantsRouter({
+      loadRunGrants: async () => {
+        throw new Error("db down");
+      },
+    });
+    const ws = await connect(router, [address]);
+    const before = ws.sent.length;
+    await router.sendSignalDeliverToAllocation(runTarget, signalFor(runId));
+    expect(types(ws).slice(before)).toEqual(["signal.deliver"]);
+  });
+
+  test("an allocated signal aborted during its grants load sends nothing", async () => {
+    const gate = Promise.withResolvers<undefined>();
+    const loading = Promise.withResolvers<undefined>();
+    const router = createGrantsRouter({
+      loadRunGrants: async () => {
+        loading.resolve(undefined);
+        await gate.promise;
+        return stepGrants;
+      },
+    });
+    const ws = await connect(router, [address]);
+    const before = ws.sent.length;
+    const abort = new AbortController();
+    const sending = router.sendSignalDeliverToAllocation(
+      runTarget,
+      signalFor(runId),
+      abort.signal,
+    );
+    await loading.promise;
+    abort.abort();
+    gate.resolve(undefined);
+    await expect(sending).rejects.toBeDefined();
+    expect(ws.sent.slice(before)).toEqual([]);
+  });
+
+  test("a run with no grants, a failed load, or another run id sends only the signal", async () => {
+    let loads = 0;
+    for (const [loadRunGrants, id] of [
+      [async () => null, runId],
+      [
+        async () => {
+          throw new Error("db down");
+        },
+        runId,
+      ],
+      [
+        async () => {
+          loads += 1;
+          return stepGrants;
+        },
+        "child-run",
+      ],
+    ] as const) {
+      const router = createGrantsRouter({ loadRunGrants });
+      const ws = await connect(router, [address]);
+      const before = ws.sent.length;
+      await router.sendSignalDeliver(signalFor(id));
+      expect(types(ws).slice(before)).toEqual(["signal.deliver"]);
+    }
+    expect(loads).toBe(0);
+  });
+
+  function grantsOf(ws: ReturnType<typeof createMockWs>): unknown[] {
+    return framesOf(ws, "run.grants").map((frame) => frame["stepGrants"]);
+  }
+
+  // The grants a trigger was enqueued with, older than the loaded ones.
+  const enqueuedGrants = [
+    {
+      id: "grt-enqueued",
+      resource: "tool:posix",
+      action: "invoke",
+      effect: "ask" as const,
+      origin: "system" as const,
+      conditions: null,
+      expiresAt: null,
+      roleId: null,
+      principalId: "prn-run",
+    },
+  ];
+
+  function dispatch(
+    router: ReturnType<typeof createGrantsRouter>,
+    signal?: AbortSignal,
+  ) {
+    return router.sendWorkflowRunDispatchToAllocation(
+      runTarget,
+      address,
+      runId,
+      enqueuedGrants,
+      "cmF3LW1haWw=",
+      "sender@example.test",
+      "message-1",
+      signal,
+    );
+  }
+
+  test("a dispatched trigger carries the grants loaded at send time", async () => {
+    const router = createGrantsRouter({
+      loadRunGrants: async () => stepGrants,
+    });
+    const ws = await connect(router, [address]);
+    await dispatch(router);
+    expect(types(ws).slice(-2)).toEqual(["run.grants", "mail.inbound"]);
+    expect(grantsOf(ws)).toEqual([JSON.parse(JSON.stringify(stepGrants))]);
+  });
+
+  test("a dispatched trigger for a run with no principal carries no grants", async () => {
+    const router = createGrantsRouter({ loadRunGrants: async () => null });
+    const ws = await connect(router, [address]);
+    await dispatch(router);
+    expect(grantsOf(ws)).toEqual([[]]);
+  });
+
+  test("a dispatched trigger whose load fails keeps its enqueued grants", async () => {
+    const router = createGrantsRouter({
+      loadRunGrants: async () => {
+        throw new Error("db down");
+      },
+    });
+    const ws = await connect(router, [address]);
+    await dispatch(router);
+    expect(types(ws).slice(-2)).toEqual(["run.grants", "mail.inbound"]);
+    expect(grantsOf(ws)).toEqual([JSON.parse(JSON.stringify(enqueuedGrants))]);
+  });
+
+  test("a dispatched trigger aborted during its grants load sends nothing", async () => {
+    const controller = new AbortController();
+    const router = createGrantsRouter({
+      loadRunGrants: async () => {
+        controller.abort();
+        return stepGrants;
+      },
+    });
+    const ws = await connect(router, [address]);
+    const before = ws.sent.length;
+    await expect(dispatch(router, controller.signal)).rejects.toThrow();
+    expect(ws.sent.length).toBe(before);
+  });
+
+  test("a trigger replayed after a reconnect carries the grants loaded at replay time", async () => {
+    const router = createGrantsRouter({
+      loadRunGrants: async () => stepGrants,
+    });
+    const first = await connect(router, [address]);
+    expect(
+      await router.routeMail(
+        address,
+        "aGVsbG8=",
+        "sender@example.test",
+        "m-1",
+        {
+          runId,
+          stepGrants: [],
+        },
+      ),
+    ).toBe(true);
+    // The trigger went out with the grants it was routed with.
+    expect(grantsOf(first)).toEqual([[]]);
+    router.handleClose(first);
+
+    const second = createMockWs();
+    router.handleOpen(second);
+    router.handleMessage(
+      second,
+      helloFrame(runIdentity.sidecarId, liveIncarnations([address])),
+    );
+    await waitForFrame(second, (frame) => frame.type === "mail.inbound");
+    expect(grantsOf(second)).toEqual([JSON.parse(JSON.stringify(stepGrants))]);
+  });
+
+  // Reconnect the sidecar and wait for the replay of the trigger the caller
+  // routed.
+  async function reconnect(
+    router: ReturnType<typeof createGrantsRouter>,
+    previous: ReturnType<typeof createMockWs>,
+  ) {
+    router.handleClose(previous);
+    const next = createMockWs();
+    router.handleOpen(next);
+    router.handleMessage(
+      next,
+      helloFrame(runIdentity.sidecarId, liveIncarnations([address])),
+    );
+    await waitForFrame(next, (frame) => frame.type === "mail.inbound");
+    return next;
+  }
+
+  test("a replay whose load fails falls back to the grants the last replay sent", async () => {
+    let fail = false;
+    const router = createGrantsRouter({
+      loadRunGrants: async () => {
+        if (fail) throw new Error("db down");
+        return stepGrants;
+      },
+    });
+    const first = await connect(router, [address]);
+    await router.routeMail(address, "aGVsbG8=", "sender@example.test", "m-1", {
+      runId,
+      stepGrants: enqueuedGrants,
+    });
+    const second = await reconnect(router, first);
+    expect(grantsOf(second)).toEqual([JSON.parse(JSON.stringify(stepGrants))]);
+    fail = true;
+    const third = await reconnect(router, second);
+    expect(grantsOf(third)).toEqual([JSON.parse(JSON.stringify(stepGrants))]);
+  });
+
+  test("a replayed grants frame changes only its grants", async () => {
+    const router = createGrantsRouter({
+      loadRunGrants: async () => stepGrants,
+      loadRunCredentials: async () => credentials,
+    });
+    const first = await connect(router, [address]);
+    const senderIdentities = [
+      { address: "sender@example.test", publicKey: "b".repeat(64) },
+    ];
+    await router.routeMail(address, "aGVsbG8=", "sender@example.test", "m-1", {
+      runId,
+      stepGrants: enqueuedGrants,
+      senderIdentities,
+    });
+    const second = await reconnect(router, first);
+    expect(framesOf(second, "run.grants")).toEqual([
+      {
+        type: "run.grants",
+        agentAddress: address,
+        generation: runIdentity.generation,
+        runId,
+        stepGrants: JSON.parse(JSON.stringify(stepGrants)),
+        senderIdentities,
+        credentials,
+      },
+    ]);
+  });
+});
+
 type CapturedLog = {
   category: readonly string[];
   level: string;

@@ -141,17 +141,6 @@ function createMockRouter(): TestSidecarRouter & {
       calls.push({ method: "routeMail", args: [agentAddress, rawMessage] });
       return mock.routeMailResult;
     },
-    sendRunGrants: ((
-      agentAddress: string,
-      runId: string,
-      stepGrants: Parameters<SidecarRouter["sendRunGrants"]>[2],
-    ): boolean => {
-      calls.push({
-        method: "sendRunGrants",
-        args: [agentAddress, runId, stepGrants],
-      });
-      return mock.routeMailResult;
-    }) as SidecarRouter["sendRunGrants"],
     noteSenderDeployStarted: (address, attempt) => {
       calls.push({
         method: "noteSenderDeployStarted",
@@ -178,9 +167,6 @@ function createMockRouter(): TestSidecarRouter & {
     sendAgentUndeploy: track(
       "sendAgentUndeploy",
     ) as SidecarRouter["sendAgentUndeploy"],
-    sendSourcesUpdate: track(
-      "sendSourcesUpdate",
-    ) as SidecarRouter["sendSourcesUpdate"],
     sendCredentialsUpdate: track(
       "sendCredentialsUpdate",
     ) as SidecarRouter["sendCredentialsUpdate"],
@@ -1384,9 +1370,9 @@ describe("deployCodeSourcedWorkflow", () => {
       // The migrated deploy resolves each pinned source's credentialId to
       // tenant-owned material. Every source in these frame-shape tests (top
       // level and inline body) references the single credential "secret-only",
-      // so the mock answers with one tenant-owned row (principalId null) in the
-      // deploy tenant's own chain, backed by a provider with an API origin. The
-      // noop cipher passes the plaintext secret through unchanged.
+      // so the mock answers with one active tenant-owned row (principalId null)
+      // in the deploy tenant's own chain, backed by a provider with an API
+      // origin. The noop cipher passes the plaintext secret through unchanged.
       credential: {
         findFirst: () =>
           Promise.resolve({
@@ -1395,6 +1381,8 @@ describe("deployCodeSourcedWorkflow", () => {
             principalId: null,
             providerId: "prov-test",
             secret: "secret-only-plaintext",
+            secretVersion: 1,
+            status: "active",
           }),
       },
       tenant: {
@@ -2010,6 +1998,150 @@ describe("deployCodeSourcedWorkflow", () => {
           expect(writes).toEqual([]);
           // A rejected reservation must not clear an existing same-token marker.
           expect(capturedAnchorUpdate).toBeUndefined();
+        }
+      });
+    }
+
+    // What the credential row holds when the post-completion re-check reads
+    // it: as delivered, revoked, or rotated after the deploy read it.
+    const recheckCases = {
+      unchanged: { status: "active", secretVersion: 1 },
+      removed: { status: "revoked", secretVersion: 1 },
+      rotated: { status: "active", secretVersion: 2 },
+    } as const;
+    for (const [state, row] of Object.entries(recheckCases)) {
+      test(`prepared deploy re-checks its delivered credentials after completion (${state})`, async () => {
+        const writes: Record<string, unknown>[] = [];
+        // What the anchor rows held when the re-check read credential status.
+        let writesAtRecheck: Record<string, unknown>[] | undefined;
+        const tx = {
+          select: () => ({
+            from: () => ({
+              where: () => ({
+                for: async () => [{ id: "alloc-test", publicKey: null }],
+              }),
+            }),
+          }),
+          update: () => ({
+            set: (values: Record<string, unknown>) => {
+              writes.push(values);
+              return {
+                where: () => ({
+                  returning: async () => [{ id: ANCHOR_RUN_ID }],
+                }),
+              };
+            },
+          }),
+        };
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- transaction double plus the credential status read the post-completion re-check performs
+        const db = {
+          ...CAPTURING_DB,
+          transaction: async (run: (handle: typeof tx) => Promise<unknown>) =>
+            run(tx),
+          select: () => ({
+            from: () => ({
+              where: async () => {
+                writesAtRecheck = [...writes];
+                return [{ id: "secret-only", ...row }];
+              },
+            }),
+          }),
+        } as unknown as DB["db"];
+        const allocationRouter = createMockAllocationRouter();
+        allocationRouter.sendAgentDeployToAllocation = async (
+          _target,
+          _address,
+          _config,
+          _workflow,
+          _signal,
+          beforeSend,
+        ) => {
+          await beforeSend?.();
+          return { publicKey: "completed-key" };
+        };
+        const preparedRepoStore = createMockRepoStore();
+        preparedRepoStore.repoStore.resolveRef = async () => null;
+        const router = createMockRouter();
+        const service = createSessionService({
+          loadRunCredentials: async () => null,
+          sidecarRouter: router,
+          sidecarAllocationRouter: allocationRouter,
+          agentRepoStore: preparedRepoStore,
+          db,
+        });
+        const { approval, projection, closure } = await makeApproveOutput([
+          "inference.source:anthropic:mock-model",
+        ]);
+        if (!approval.ok) throw new Error("expected approval");
+        const result = await service.deployPreparedCodeSourcedWorkflow({
+          tenantId: TENANT,
+          anchorRunId: ANCHOR_RUN_ID,
+          deploymentDomain: DEPLOYMENT_DOMAIN,
+          agentAddress: DEPLOY_ADDRESS,
+          source: SOURCE,
+          approved: { approval, projection, closure },
+          config: CONFIG,
+          allocationTarget: { allocationId: "alloc-test", generation: 1 },
+          reconciliation: {
+            leaseId: "lease-test",
+            signal: new AbortController().signal,
+          },
+          credentialCipher: createNoopCredentialCipher(),
+        });
+        expect(result).toMatchObject({ publicKey: "completed-key" });
+
+        // The re-check reads after the completion committed the key and the
+        // credential refs, so a sidecar that reconnected before that commit
+        // still gets the revoke.
+        expect(writesAtRecheck).toBeDefined();
+        expect(
+          writesAtRecheck?.some(
+            (values) =>
+              values.publicKey === "completed-key" &&
+              "credentialRefs" in values,
+          ),
+        ).toBe(true);
+
+        const updates = router.calls.filter(
+          (call) => call.method === "sendCredentialsUpdate",
+        );
+        if (state === "removed") {
+          expect(updates).toEqual([
+            {
+              method: "sendCredentialsUpdate",
+              args: [
+                DEPLOY_ADDRESS,
+                { bindings: [], materials: [] },
+                ["secret-only"],
+              ],
+            },
+          ]);
+        } else if (state === "rotated") {
+          // The current material is re-sent; the double's row still reads
+          // the same secret, which is enough to show the re-send.
+          expect(updates).toEqual([
+            {
+              method: "sendCredentialsUpdate",
+              args: [
+                DEPLOY_ADDRESS,
+                {
+                  bindings: [],
+                  materials: [
+                    {
+                      credentialId: "secret-only",
+                      providerKey: "anthropic",
+                      origin: "https://api.example/anthropic",
+                      secret: "secret-only-plaintext",
+                      secretVersion: 1,
+                    },
+                  ],
+                },
+                undefined,
+              ],
+            },
+          ]);
+        } else {
+          expect(updates).toEqual([]);
         }
       });
     }
@@ -2724,6 +2856,7 @@ describe("deployCodeSourcedWorkflow", () => {
               principalId: null,
               providerId: "prov-test",
               secret: "secret-agent-plaintext",
+              status: "active",
             });
           },
         },
@@ -2901,6 +3034,7 @@ describe("deployCodeSourcedWorkflow", () => {
               principalId: null,
               providerId: "prov-test",
               secret: "secret-agent-plaintext",
+              status: "active",
             });
           },
         },

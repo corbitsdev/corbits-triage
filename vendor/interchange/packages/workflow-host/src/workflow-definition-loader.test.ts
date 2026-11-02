@@ -322,20 +322,6 @@ export const workflow = defineWorkflow({
     expect(definition.id).toBe("named-export-workflow");
   });
 
-  test("busts the ESM module cache with importCacheKey", async () => {
-    const packageDir = await createClosureFixture({
-      workflowEntry: "./workflow.js",
-      entrySource: DEFAULT_EXPORT_ENTRY,
-    });
-
-    const definition = await loadWorkflowDefinitionFromClosure({
-      packageDir,
-      importCacheKey: "sha512-fixture",
-    });
-
-    expect(definition.id).toBe("fixture-workflow");
-  });
-
   test("rejects a package.json without an interchange.workflow field", async () => {
     const packageDir = await createClosureFixture({ workflowEntry: null });
 
@@ -1406,12 +1392,16 @@ describe("loadVerifiedWorkflowDefinitionFromClosure", () => {
   test("accepts a closure whose plugin tools match the approved hash", async () => {
     const packageDir = await createPluginClosure([{ name: "lsp" }]);
 
-    const definition = await loadVerifiedWorkflowDefinitionFromClosure({
-      packageDir,
-      approvedHash: await closureWireHash(packageDir),
-    });
+    const approvedHash = await closureWireHash(packageDir);
+    const { definition, projection } =
+      await loadVerifiedWorkflowDefinitionFromClosure({
+        packageDir,
+        approvedHash,
+      });
 
     expect(definition.id).toBe("plugin-workflow");
+    // The projection it returns is the one it verified.
+    expect(await computeWireDefinitionHash(projection)).toBe(approvedHash);
   });
 
   test("routes the plugin tools import through importModule", async () => {
