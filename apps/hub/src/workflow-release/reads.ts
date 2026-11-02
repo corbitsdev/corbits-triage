@@ -77,9 +77,9 @@ export async function deploymentState(db: DB["db"], runId: string): Promise<Depl
 }
 
 /**
- * The allocation generation a deployment runs on once its first deploy completed, which stock's router then routes its
- * mail to, and how long that deployment may stay disconnected; undefined while it starts or once it stops. Callers that
- * only route mail use the allocation id and generation.
+ * The allocation generation a deployment runs on once its deploy or sidecar restore completed, which stock's router
+ * then routes its mail to, and how long that deployment may stay disconnected; undefined while it starts or restores,
+ * or once it stops. Callers that only route mail use the allocation id and generation.
  */
 export async function deployedAllocation(db: DB["db"], runId: string): Promise<(AllocatedSidecarTarget & { readonly maxDisconnectedMs: number }) | undefined> {
   const [row] = await db
