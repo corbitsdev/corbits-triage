@@ -66,26 +66,30 @@ export function createGithubUsage(now: () => number = Date.now) {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  function refuseWhileLimited(installation: string): void {
-    const until = blockedUntil.get(installation);
+  function poolOf(installation: string, route: string): string {
+    return route === "/graphql" ? `${installation}/graphql` : installation;
+  }
+
+  function refuseWhileLimited(installation: string, pool: string): void {
+    const until = blockedUntil.get(pool);
     if (until === undefined) return;
     if (until <= now()) {
-      blockedUntil.delete(installation);
+      blockedUntil.delete(pool);
       return;
     }
-    bump(blocked, installation);
+    bump(blocked, pool);
     throw new GithubRateLimited(installation, until);
   }
 
-  async function observe(installation: string, response: Response): Promise<void> {
+  async function observe(installation: string, pool: string, response: Response): Promise<void> {
     const remaining = response.headers.get("x-ratelimit-remaining");
     const reset = response.headers.get("x-ratelimit-reset");
     if (remaining !== null && reset !== null) {
-      rateLimits.set(installation, { remaining: Number(remaining), resetAt: new Date(Number(reset) * 1000).toISOString() });
+      rateLimits.set(pool, { remaining: Number(remaining), resetAt: new Date(Number(reset) * 1000).toISOString() });
     }
     const until = await limitedUntil(response, now());
     if (until !== undefined && until > now()) {
-      blockedUntil.set(installation, until);
+      blockedUntil.set(pool, until);
       throw new GithubRateLimited(installation, until);
     }
   }
@@ -93,12 +97,14 @@ export function createGithubUsage(now: () => number = Date.now) {
   return {
     gate(gh: GithubFetch): GithubFetch {
       return async function gatedFetch(path, init) {
+        const route = routeOf(path);
         const installation = new Headers(init?.headers).get(INSTALLATION_SELECTOR_HEADER);
-        if (installation !== null) refuseWhileLimited(installation);
-        bump(routes, `${init?.method ?? "GET"} ${routeOf(path)}`);
+        const pool = installation !== null ? poolOf(installation, route) : null;
+        if (installation !== null && pool !== null) refuseWhileLimited(installation, pool);
+        bump(routes, `${init?.method ?? "GET"} ${route}`);
         bump(installations, installation ?? UNSELECTED);
         const response = await gh(path, init);
-        if (installation !== null) await observe(installation, response);
+        if (installation !== null && pool !== null) await observe(installation, pool, response);
         return response;
       };
     },

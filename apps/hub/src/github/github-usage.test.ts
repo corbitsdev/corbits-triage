@@ -61,4 +61,33 @@ describe("github usage", () => {
     });
     expect(usage.flush()).toBeUndefined();
   });
+
+  test("REST and GraphQL rate-limit pools are tracked and gated separately per installation", async () => {
+    const usage = createGithubUsage(() => 1_000_000);
+    const gh = usage.gate(async function github(path) {
+      if (path === "/graphql") {
+        return Response.json({}, { headers: { "x-ratelimit-remaining": "4866", "x-ratelimit-reset": "2000" } });
+      }
+      return new Response("rate limited", {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1060", date: new Date(1_000_000).toUTCString() },
+      });
+    });
+
+    await expect(gh("/repos/o/r/pulls", SELECTED)).rejects.toMatchObject({ installation: "7", resetAt: 1_060_000 });
+    expect((await gh("/graphql", { ...SELECTED, method: "POST" })).status).toBe(200);
+    await expect(gh("/repos/o/r/pulls/1", SELECTED)).rejects.toMatchObject({ installation: "7", resetAt: 1_060_000 });
+
+    expect(usage.flush()).toEqual({
+      level: "info",
+      msg: "github_calls",
+      routes: { "GET /repos/:owner/:repo/pulls": 1, "POST /graphql": 1 },
+      installations: { "7": 2 },
+      blocked: { "7": 1 },
+      rateLimits: {
+        "7": { remaining: 0, resetAt: "1970-01-01T00:17:40.000Z" },
+        "7/graphql": { remaining: 4866, resetAt: "1970-01-01T00:33:20.000Z" },
+      },
+    });
+  });
 });
