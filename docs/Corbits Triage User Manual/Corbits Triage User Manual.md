@@ -1,7 +1,5 @@
 # Corbits Triage User Manual
 
-Oct 29, 2026 · @Brian J. Fox
-
 ## Contents
 
 1. [What Corbits Triage is](#what-corbits-triage-is)
@@ -193,6 +191,12 @@ rules:
 `reason` and `evidence` are optional.
 
 A coding agent can write the file for you with the skill in [`skills/corbits-triage-setup`](../../skills/corbits-triage-setup/SKILL.md). It reads your last 50 merged pull requests on GitHub and suggests rules from what the repository already does, each with the number behind it, such as size limits at the 90th percentile or a linked-issue rule when most pull requests name an issue. You pick which to keep; it suggests and never decides a stricter policy for you. On Bitbucket Data Center, or with no merged pull requests, the size limits stay at the starter's 30 files and 3,000 lines. It then writes or edits `.corbits-triage.yml` and checks it the same way Triage reads it. When nobody is there to answer, as in an agent run, it writes its suggestions and lists each one under **Waiting on you** in the pull request. To use it, copy the `corbits-triage-setup` folder into your coding agent's skills folder, such as `.claude/skills/` in the repository for Claude Code or `.agents/skills/` for agents that read that path, then ask the agent to set up Corbits Triage.
+
+**Configure Prompt**
+
+```text
+Use the corbits-triage-setup skill to write a policy for this repository. Look around first, suggest rules, and ask me what should happen on Pass, Fail and Unsure.
+```
 
 A file can also start from another repository's policy with `extends: owner/name` (on Bitbucket, `PROJECT/slug`), and then set only what differs for this repository. This is useful when many repositories should follow the same rules: keep them in one repository's `.corbits-triage.yml` and extend it everywhere else. That repository must be connected to the same workspace, and its own file must not use `extends`. A change merged into it applies to every repository extending it from their next verdict.
 
