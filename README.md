@@ -40,7 +40,7 @@ Set up Corbits Triage on this machine with the corbits-triage-install skill. Use
 **With Docker.** Compose builds from a checkout.
 
 ```sh
-cp .env.example .env
+cp .env.example .env   # set the four secrets: openssl rand -hex 32 each
 docker compose up -d
 ```
 
@@ -48,7 +48,7 @@ Open http://localhost:3000. Ports, logs and running on a server are in [Self-hos
 
 **From source.** With Bun 1.4.4+ and Postgres 15+, see [Development](docs/DEV.md). The portal for that path is http://localhost:5173.
 
-Then create an account, open **Set up Triage**, and save the decision model. To have an agent write the policy, use the [Configure Prompt](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#writing-the-file).
+Then create an account, follow **Set up Triage**, and save a decision model in **Settings → Triage**. To have an agent write the policy, use the [Configure Prompt](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#writing-the-file).
 
 ## Docs
 
@@ -58,7 +58,7 @@ Then create an account, open **Set up Triage**, and save the decision model. To 
 - [AGENTS.md](AGENTS.md): conventions for coding agents.
 - [skills/](skills): agent skills to install Triage and write a policy.
 - [Product](docs/PRODUCT.md): rules, verdicts, actions and the policy file. [Bitbucket Data Center](docs/BITBUCKET_DATACENTER.md): connecting that host.
-- [GitHub emulator](docs/DEV.md#github-emulator-no-github-account), the [policy-check Action](packages/policy-check-action/action.yml) and the [browser extension](apps/extension/README.md).
+- [GitHub emulator](docs/DEV.md#github-emulator-no-github-account), the [policy-check Action](packages/policy-check-action/README.md) and the [browser extension](apps/extension/README.md).
 
 Triage runs as workflows on an [Interchange](https://github.com/faremeter/interchange) hub, which owns identity, grants, credentials, runs and audit.
 

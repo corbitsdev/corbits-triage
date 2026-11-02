@@ -5,8 +5,8 @@ portal setup, and every setting. Local development is in [DEV.md](DEV.md).
 
 ## What you need
 
-To try it on your machine, the requirements and portal address for each way
-to run it are in the [README](../README.md#get-started).
+To try it on your machine, the ways to run it and the portal address for each
+are in the [README](../README.md#quick-start).
 
 GitHub cannot deliver webhooks to localhost, and it refuses to create an
 App whose webhook URL it cannot reach. So when the hub runs on localhost,
