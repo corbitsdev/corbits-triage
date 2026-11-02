@@ -1,3 +1,4 @@
+#!/usr/bin/env -S bun --conditions=intx-src
 import { readFileSync, statSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { asRepo } from "@corbits/common";
