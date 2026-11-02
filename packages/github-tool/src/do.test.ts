@@ -12,6 +12,7 @@ const APP = { login: "corbits-triage[bot]", type: "Bot" };
 function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[]; threads?: FakeThread[] | "refused"; failReview?: boolean; failDelete?: boolean } = {}) {
   const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc0000000000000000000000000000000000000" }, base: { repo: { id: 1 } }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
+  let nextCommentId = Math.max(0, ...comments.map((comment) => comment.id)) + 1;
   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" })), ...(seed.approvals ?? [])];
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
   async function gh(path: string, init?: RequestInit): Promise<Response> {
@@ -46,7 +47,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
     }
     if (path.includes("/issues/8/comments?")) return Response.json(comments);
     if (path.endsWith("/issues/8/comments")) {
-      comments.push({ id: comments.length + 1, user: APP, body: body.body });
+      comments.push({ id: nextCommentId++, user: APP, body: body.body });
       return Response.json(comments.at(-1));
     }
     if (path.endsWith("/issues/8/labels")) {

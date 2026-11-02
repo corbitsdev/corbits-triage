@@ -12,6 +12,7 @@ const PR_PATH = `${REPO_PATH}/pull-requests/1`;
 function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number; failBuild?: boolean; failStatus?: boolean; failDelete?: boolean; participants?: unknown[]; openReads?: number; threads?: unknown[] | "refused" } = {}) {
   const pr = { id: 1, version: 4, state: "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: seed.participants ?? [] };
   const comments: Comment[] = seed.comments ?? [];
+  let nextCommentId = comments.length + 10;
   const builds: Array<Record<string, unknown>> = [];
   const writes: Array<{ method: string; path: string; body: any }> = [];
   const requested: string[] = [];
@@ -36,7 +37,7 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
     if (path === `${PR_PATH}/diff/src/untouched.ts?withComments=false`) return Response.json({ fromHash: "base", toHash: "abc", diffs: [] });
     if (method === "POST" && path === `${PR_PATH}/comments`) {
       if (writes.filter((w) => w.path === path).length === seed.failPost) return Response.json({ errors: [{ message: "unavailable" }] }, { status: 503 });
-      comments.push({ id: comments.length + 10, version: 0, text: body.text, author: BOT, updatedDate: 1_791_999_000_000 });
+      comments.push({ id: nextCommentId++, version: 0, text: body.text, author: BOT, updatedDate: 1_791_999_000_000 });
       return Response.json(comments.at(-1));
     }
     const edited = comments.find((c) => method === "PUT" && path === `${PR_PATH}/comments/${c.id}`);

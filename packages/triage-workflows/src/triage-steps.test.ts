@@ -459,6 +459,9 @@ describe("judge on a blocked pull request", () => {
     expect(skippedOnHead.request.comment).toBe("");
     expect(skippedOnHead.feedback).toContain("please address");
     expect(skippedOnHead.feedback).toContain("Notes:");
+    const unwokenOnHead = verdictOnFacts({ ...item, facts: { ...item.facts, events: ["commented"], triageRequestedOnHead: true } }, posted);
+    expect(unwokenOnHead.actions).toEqual([]);
+    expect(unwokenOnHead.request.comment).toBe("");
   });
 });
 

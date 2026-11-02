@@ -214,9 +214,8 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
     ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
   };
   const request = toMirrorRequest(verdict, owned, it.source);
-  // The review already on this head is the only comment, held or skipped alike. Feedback keeps the findings, so the comment can return once that review is gone.
-  const requestsChanges = actions.some((action) => action.kind === "request-changes");
-  if (it.facts.triageRequestedOnHead && requestsChanges) return { ...verdict, request: { ...request, comment: "" } };
+  // The review already on this head is the only comment while it stands, held or skipped alike. Feedback keeps the findings, so the comment can return once that review is gone.
+  if (it.facts.triageRequestedOnHead && wanted === true) return { ...verdict, request: { ...request, comment: "" } };
   return { ...verdict, request };
 }
 
