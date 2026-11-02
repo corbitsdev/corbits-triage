@@ -987,6 +987,10 @@ describe("triage-manager with code review", () => {
     const withLabel = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `${FINDINGS}\n\nTriage will label, request changes.`);
     expect(withLabel.request.comment).toBe(`${FINDINGS}\n\nTriage will label.\n\n${note}`);
     expect(withLabel.feedback).toBe(`${FINDINGS}\n\nTriage will label.\n\n${note}`);
+
+    const withGap = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `please address:\n\n\ncode block\n\n${WILL_REQUEST}`);
+    expect(withGap.request.comment).toBe(`please address:\n\n\ncode block\n\n${note}`);
+    expect(withGap.feedback).toBe(`please address:\n\n\ncode block\n\n${note}`);
   });
 
   test("holding one request-changes step while another will still be posted does not restore the verdict comment", async () => {

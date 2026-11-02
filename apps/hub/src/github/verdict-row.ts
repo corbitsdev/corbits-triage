@@ -99,9 +99,11 @@ function evidenceFor(reason: unknown, ruled: Ruled | undefined): string[] {
   return ruled ? ruled.evidence : [];
 }
 
-function detailOf(verdict: Record<string, unknown>, ruled: Ruled | undefined, notPosted: string | undefined): VerdictDetail | undefined {
+function detailOf(verdict: Record<string, unknown>, ruled: Ruled | undefined, notPosted: string | undefined, comment: string | undefined): VerdictDetail | undefined {
   const evidence = evidenceFor(verdict["reason"], ruled);
-  const detail = VerdictDetail({ ...verdict, evidence, ...(ruled && { facts: ruled.facts }), ...(notPosted !== undefined && { notPosted }) });
+  // A verdict whose request-changes review takes the standing comment's place keeps feedback for a later pass, while its mirror comment is blank.
+  const feedback = comment ?? verdict["feedback"];
+  const detail = VerdictDetail({ ...verdict, ...(typeof feedback === "string" && { feedback }), evidence, ...(ruled && { facts: ruled.facts }), ...(notPosted !== undefined && { notPosted }) });
   return detail instanceof type.errors ? undefined : detail;
 }
 
@@ -114,7 +116,7 @@ export function summaryOf(verdict: Record<string, unknown>, at: unknown, trigger
   const fields = SummaryFields(verdict);
   if (fields instanceof type.errors || typeof at !== "string" || verdict["repo"] !== trigger.repo || verdict["number"] !== trigger.number) return undefined;
   const outcome = mirrored.get(mirrorCallId(trigger.repo, trigger.number));
-  const detail = detailOf(verdict, ruled, notPostedOf(outcome));
+  const detail = detailOf(verdict, ruled, notPostedOf(outcome), fields.request?.comment);
   return {
     verdictAt: new Date(at),
     settled: unsettledBy(verdict, trigger.headSha).unsettled === undefined,

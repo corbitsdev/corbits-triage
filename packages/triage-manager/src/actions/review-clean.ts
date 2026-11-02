@@ -139,20 +139,19 @@ function noted(verdict: Verdict, note: string): Verdict {
 
 const WILL_PREFIX = "Triage will ";
 
-function withoutRequestChanges(line: string): string[] {
-  if (!line.startsWith(WILL_PREFIX) || !line.endsWith(".")) return [line];
+function withoutRequestChanges(line: string): string {
+  if (!line.startsWith(WILL_PREFIX) || !line.endsWith(".")) return line;
   const names = line.slice(WILL_PREFIX.length, -1).split(", ");
-  if (!names.includes(DO_NAMES["request-changes"])) return [line];
+  if (!names.includes(DO_NAMES["request-changes"])) return line;
   const kept = names.filter((name) => name !== DO_NAMES["request-changes"]);
-  return kept.length > 0 ? [`${WILL_PREFIX}${kept.join(", ")}.`] : [];
+  return `${WILL_PREFIX}${kept.join(", ")}.`;
 }
 
 /** The verdict comment once request-changes is held. The Do that the review will still be posted is no longer true. */
 function heldComment(feedback: string): string {
-  const lines = feedback.split("\n");
-  const kept = lines.flatMap(withoutRequestChanges);
-  if (kept.length === lines.length && kept.every((line, i) => line === lines[i])) return feedback;
-  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const withoutAlone = feedback.replace(/\n\nTriage will request changes\.(?=\n\n|$)|(?<=\n)Triage will request changes\.\n|\nTriage will request changes\.$|^Triage will request changes\.(?:\n\n|\n|$)/, "");
+  if (withoutAlone !== feedback) return withoutAlone;
+  return feedback.split("\n").map(withoutRequestChanges).join("\n");
 }
 
 /**
