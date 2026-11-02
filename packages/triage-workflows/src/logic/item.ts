@@ -29,7 +29,7 @@ export interface Item {
 
 export const NO_FACTS: PrFacts = {
   repo: "", number: 0, title: "", author: "", tier: "external", headSha: "", state: "open", draft: false, mergeable: null,
-  checks: "none", failingChecks: [], pendingChecks: [], cancelledChecks: [], reviewers: [], approvals: 0, changesRequested: [], triageRequested: false,
+  checks: "none", failingChecks: [], pendingChecks: [], cancelledChecks: [], reviewers: [], approvals: 0, changesRequested: [], triageRequested: false, triageRequestedOnHead: false,
   reviewAnswered: false, reviewedBy: [], labels: [], assignees: [], changedFiles: 0, additions: 0, deletions: 0, paths: [], files: [],
   body: "", rawBody: "", commits: [], commitMessages: [], docs: {}, rules: {}, branch: "", authorTeams: [], authorTeamsUnknown: [], events: [], hidden: [],
 };

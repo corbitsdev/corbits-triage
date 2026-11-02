@@ -123,16 +123,18 @@ type Action = Verdict["actions"][number];
 
 /**
  * `verdict` with `note` closing its comment, as said on the pull request and kept with the verdict. A blank mirror
- * comment means a request-changes review was going to be posted. Holding that step shows the verdict comment again,
- * taken from `feedback`, which already carries earlier notes, rather than from a shorter comment a previous note wrote.
- * That restored comment drops "Triage will request changes.", which was written while the review was still going to be posted.
+ * comment while `feedback` is non-empty means the request-changes review already stands on this head, so the mirror
+ * comment stays blank. When request-changes is held before that review is posted, the comment drops
+ * "Triage will request changes.", which was written while the review was still going to be posted.
  */
 function noted(verdict: Verdict, note: string): Verdict {
   const reviewHeld = !postsRequestChanges(verdict.actions) && verdict.actions.some((action) => action.kind === "request-changes" && "held" in action);
   const kept = reviewHeld ? heldComment(verdict.feedback) : verdict.feedback;
   const feedback = kept ? `${kept}\n\n${note}` : note;
-  const standing = reviewHeld ? kept : verdict.request?.comment;
-  const comment = standing ? `${standing}\n\n${note}` : note;
+  const reviewOnHead = verdict.feedback !== "" && verdict.request?.comment === "";
+  const standing = reviewHeld && verdict.request?.comment ? heldComment(verdict.request.comment) : verdict.request?.comment;
+  const notedStanding = standing ? `${standing}\n\n${note}` : note;
+  const comment = reviewOnHead ? "" : notedStanding;
   const request = verdict.request && { ...verdict.request, comment };
   return { ...verdict, feedback, ...(request && { request }) };
 }

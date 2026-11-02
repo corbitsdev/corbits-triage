@@ -139,10 +139,7 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
 }
 
-/**
- * A request-changes review the run will post is what the mirror writes instead of the verdict comment. The verdict
- * keeps that comment, so a later skipped or held review can show it again.
- */
+/** Whether the run will post a request-changes review on this pass. */
 export function postsRequestChanges(actions: readonly SuggestedAction[]): boolean {
   return actions.some((action) => action.kind === "request-changes" && !("skipped" in action) && !("held" in action));
 }
@@ -217,9 +214,9 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
     ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
   };
   const request = toMirrorRequest(verdict, owned, it.source);
-  // The blank is only what the mirror is told to write. Storing it would leave a later held or skipped review with nothing to show.
-  if (!postsRequestChanges(actions)) return { ...verdict, request };
-  return { ...verdict, request: { ...request, comment: "" } };
+  // The review already on this head is the only comment while it stands, held or skipped alike. Feedback keeps the findings, so the comment can return once that review is gone.
+  if (it.facts.triageRequestedOnHead && wanted === true) return { ...verdict, request: { ...request, comment: "" } };
+  return { ...verdict, request };
 }
 
 /** What `verdict` rendered, without what verdictFrom made of it on `it`. */

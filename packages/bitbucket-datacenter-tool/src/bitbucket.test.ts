@@ -9,9 +9,10 @@ const REPO_PATH = "/rest/api/1.0/projects/TRI/repos/widgets";
 const PR_PATH = `${REPO_PATH}/pull-requests/1`;
 
 // Shapes recorded from Bitbucket Data Center 10.5, trimmed to the fields read.
-function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number; failBuild?: boolean; participants?: unknown[]; openReads?: number; threads?: unknown[] | "refused" } = {}) {
+function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number; failBuild?: boolean; failStatus?: boolean; failDelete?: boolean; participants?: unknown[]; openReads?: number; threads?: unknown[] | "refused" } = {}) {
   const pr = { id: 1, version: 4, state: "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: seed.participants ?? [] };
   const comments: Comment[] = seed.comments ?? [];
+  let nextCommentId = comments.length + 10;
   const builds: Array<Record<string, unknown>> = [];
   const writes: Array<{ method: string; path: string; body: any }> = [];
   const requested: string[] = [];
@@ -36,7 +37,7 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
     if (path === `${PR_PATH}/diff/src/untouched.ts?withComments=false`) return Response.json({ fromHash: "base", toHash: "abc", diffs: [] });
     if (method === "POST" && path === `${PR_PATH}/comments`) {
       if (writes.filter((w) => w.path === path).length === seed.failPost) return Response.json({ errors: [{ message: "unavailable" }] }, { status: 503 });
-      comments.push({ id: comments.length + 10, version: 0, text: body.text, author: BOT, updatedDate: 1_791_999_000_000 });
+      comments.push({ id: nextCommentId++, version: 0, text: body.text, author: BOT, updatedDate: 1_791_999_000_000 });
       return Response.json(comments.at(-1));
     }
     const edited = comments.find((c) => method === "PUT" && path === `${PR_PATH}/comments/${c.id}`);
@@ -53,10 +54,20 @@ function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: 
     }
     if (path.startsWith("/rest/build-status/1.0/commits/old?")) return Response.json({ values: [], isLastPage: true });
     if (method === "POST" && path === "/rest/build-status/1.0/commits/old") return new Response(null, { status: 204 });
-    if (method === "PUT" && path === `${PR_PATH}/participants/triage-bot`) return Response.json({ status: body.status });
+    if (method === "PUT" && path === `${PR_PATH}/participants/triage-bot`) {
+      if (seed.failStatus) return Response.json({ errors: [{ message: "unavailable" }] }, { status: 503 });
+      return Response.json({ status: body.status });
+    }
     if (method === "GET" && path === `${PR_PATH}/merge`) return Response.json(seed.merge ?? { canMerge: true, conflicted: false, outcome: "CLEAN", vetoes: [] });
     if (method === "POST" && path === `${PR_PATH}/merge?version=4`) return Response.json({ ...pr, state: "MERGED" });
     if (method === "POST" && path === `${PR_PATH}/decline?version=4`) return Response.json({ ...pr, state: "DECLINED" });
+    if (method === "DELETE" && path.startsWith(`${PR_PATH}/comments/`)) {
+      if (seed.failDelete) return Response.json({ errors: [{ message: "unavailable" }] }, { status: 503 });
+      const id = Number(path.slice(`${PR_PATH}/comments/`.length).split("?")[0]);
+      const index = comments.findIndex((comment) => comment.id === id);
+      if (index >= 0) comments.splice(index, 1);
+      return new Response(null, { status: 204 });
+    }
     throw new Error(`unexpected ${method} ${path}`);
   }
   return { bb: bb satisfies BitbucketFetch, comments, builds, writes, requested };
@@ -239,6 +250,103 @@ describe("executeAction close", () => {
     const fake = fakeBitbucket({ failPost: 1 });
     await expect(executeAction(fake.bb, CLOSE, user)).rejects.toThrow("503");
     expect(fake.writes.map((w) => `${w.method} ${w.path}`)).toEqual([`POST ${PR_PATH}/comments`]);
+  });
+});
+
+describe("executeAction request-changes", () => {
+  const verdict = { id: 2, version: 1, text: "[corbits-triage]: #abc\nFail", author: BOT };
+  const action = { id: 3, version: 0, text: "[corbits-action]: #other\nLeave this", author: BOT };
+  const copied = { id: 4, version: 0, text: "[corbits-triage]: #copied\nNot ours", author: AUTHOR };
+  const task = { request: REQUEST, step: step("request-changes", { body: "Fix the checks" }) };
+
+  test("drops the verdict comment only after the comment is posted and needs-work is set", async () => {
+    const fake = fakeBitbucket({ comments: [{ ...verdict }, { ...action }, { ...copied }] });
+    expect((await executeAction(fake.bb, task, user)).status).toBe("done");
+    expect(fake.comments.map((comment) => comment.id)).toEqual([3, 4, 13]);
+    expect(fake.comments.find((comment) => comment.id === 13)!.text).toBe("[corbits-action]: #e1\nFix the checks");
+    expect(fake.writes.map((write) => `${write.method} ${write.path}`)).toEqual([
+      `POST ${PR_PATH}/comments`,
+      `PUT ${PR_PATH}/participants/triage-bot`,
+      `DELETE ${PR_PATH}/comments/2?version=1`,
+    ]);
+  });
+
+  test("a comment Bitbucket refuses leaves the verdict comment", async () => {
+    const fake = fakeBitbucket({ comments: [{ ...verdict }], failPost: 1 });
+    await expect(executeAction(fake.bb, task, user)).rejects.toThrow("503");
+    expect(fake.comments.map((comment) => comment.id)).toEqual([2]);
+    expect(fake.writes.map((write) => write.method)).toEqual(["POST"]);
+  });
+
+  test("needs-work Bitbucket refuses leaves the verdict comment", async () => {
+    const fake = fakeBitbucket({ comments: [{ ...verdict }], failStatus: true });
+    await expect(executeAction(fake.bb, task, user)).rejects.toThrow("503");
+    expect(fake.comments.map((comment) => comment.id)).toEqual([2, 11]);
+    expect(fake.writes.map((write) => write.method)).toEqual(["POST", "PUT"]);
+  });
+
+  test("needs-work already set on this head deletes the verdict comment and does not post another", async () => {
+    const reasons = { ...action, text: "[corbits-action]: #e1\nFix the checks" };
+    const standing = fakeBitbucket({ comments: [{ ...verdict }, reasons, { ...copied }], participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "abc" }] });
+    expect(await executeAction(standing.bb, task, user)).toEqual({ status: "satisfied", result: { status: "NEEDS_WORK" } });
+    expect(standing.comments.map((comment) => comment.id)).toEqual([3, 4]);
+    expect(standing.writes.map((write) => `${write.method} ${write.path}`)).toEqual([`DELETE ${PR_PATH}/comments/2?version=1`]);
+  });
+
+  test("needs-work set by hand posts this action's comment before deleting the verdict", async () => {
+    const hand = fakeBitbucket({ comments: [{ ...verdict }, { ...action }, { ...copied }], participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "abc" }] });
+    expect(await executeAction(hand.bb, task, user)).toEqual({ status: "done", result: { commentId: 13, status: "NEEDS_WORK" } });
+    expect(hand.comments.map((comment) => comment.id)).toEqual([3, 4, 13]);
+    expect(hand.comments.find((comment) => comment.id === 13)!.text).toBe("[corbits-action]: #e1\nFix the checks");
+    expect(hand.writes.map((write) => `${write.method} ${write.path}`)).toEqual([
+      `POST ${PR_PATH}/comments`,
+      `DELETE ${PR_PATH}/comments/2?version=1`,
+    ]);
+  });
+
+  test("a comment refused while needs-work is already on this head leaves the verdict comment", async () => {
+    const hand = fakeBitbucket({ comments: [{ ...verdict }], failPost: 1, participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "abc" }] });
+    await expect(executeAction(hand.bb, task, user)).rejects.toThrow("503");
+    expect(hand.comments.map((comment) => comment.id)).toEqual([2]);
+    expect(hand.writes.map((write) => write.method)).toEqual(["POST"]);
+  });
+
+  test("a verdict delete Bitbucket refuses still counts the posted needs-work as done", async () => {
+    const fake = fakeBitbucket({ comments: [{ ...verdict }], failDelete: true });
+    expect(await executeAction(fake.bb, task, user)).toMatchObject({ status: "done", result: { commentId: 11, status: "NEEDS_WORK" } });
+    expect(fake.comments.map((comment) => comment.id)).toEqual([2, 11]);
+    expect(fake.writes.map((write) => `${write.method} ${write.path}`)).toEqual([
+      `POST ${PR_PATH}/comments`,
+      `PUT ${PR_PATH}/participants/triage-bot`,
+      `DELETE ${PR_PATH}/comments/2?version=1`,
+    ]);
+  });
+
+  test("needs-work from an older head still posts this head's comment, then drops the verdict", async () => {
+    const older = fakeBitbucket({ comments: [{ ...verdict }], participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "old" }] });
+    expect((await executeAction(older.bb, task, user)).status).toBe("done");
+    expect(older.comments.map((comment) => comment.id)).toEqual([11]);
+    expect(older.comments[0]!.text).toBe("[corbits-action]: #e1\nFix the checks");
+    expect(older.writes.map((write) => `${write.method} ${write.path}`)).toEqual([
+      `POST ${PR_PATH}/comments`,
+      `PUT ${PR_PATH}/participants/triage-bot`,
+      `DELETE ${PR_PATH}/comments/2?version=1`,
+    ]);
+  });
+
+  test("a comment refused while an older needs-work stands leaves the verdict comment", async () => {
+    const older = fakeBitbucket({ comments: [{ ...verdict }], failPost: 1, participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "old" }] });
+    await expect(executeAction(older.bb, task, user)).rejects.toThrow("503");
+    expect(older.comments.map((comment) => comment.id)).toEqual([2]);
+    expect(older.writes.map((write) => write.method)).toEqual(["POST"]);
+  });
+
+  test("a request-changes write skipped because the head moved leaves the verdict comment", async () => {
+    const moved = fakeBitbucket({ comments: [{ ...verdict }] });
+    const stepMoved = { request: REQUEST, step: { ...task.step, headSha: "old" } };
+    await expect(executeAction(moved.bb, stepMoved, user)).rejects.toThrow("new commits");
+    expect(moved.comments.map((comment) => comment.id)).toEqual([2]);
+    expect(moved.writes).toEqual([]);
   });
 });
 

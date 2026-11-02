@@ -60,8 +60,8 @@ const APP = "corbits-triage[bot]";
 async function reviewFacts(rows: unknown[]): Promise<Partial<PrFacts>> {
   const gh: GithubFetch = async () => Response.json(rows);
   const reviews = await getReviews(gh, "acme/widgets", 8, APP);
-  const { changesRequested, reviewAnswered, triageRequested } = buildFacts("acme/widgets", 8, { author: "octocat", branch: "a", sha: "def" }, [], reviews, [], DEFAULT_REPO_POLICY);
-  return { changesRequested, reviewAnswered, triageRequested };
+  const { changesRequested, reviewAnswered, triageRequested, triageRequestedOnHead } = buildFacts("acme/widgets", 8, { author: "octocat", branch: "a", sha: "def" }, [], reviews, [], DEFAULT_REPO_POLICY);
+  return { changesRequested, reviewAnswered, triageRequested, triageRequestedOnHead };
 }
 
 function markedRequest(login: string) {
@@ -71,6 +71,13 @@ function markedRequest(login: string) {
 describe("the request-changes Do", () => {
   test("triage's own request on an earlier head is not a reviewer's, so the fixed head approves", async () => {
     expect(suggested(await reviewFacts([markedRequest(APP)]))).toEqual([expect.objectContaining({ kind: "approve", list: "pass" })]);
+  });
+
+  test("triage's own request is on this head when that review is of this head, or names no commit", async () => {
+    expect(await reviewFacts([markedRequest(APP)])).toMatchObject({ triageRequested: true, triageRequestedOnHead: false });
+    expect(await reviewFacts([{ ...markedRequest(APP), commit_id: "def" }])).toMatchObject({ triageRequested: true, triageRequestedOnHead: true });
+    const { commit_id: _older, ...unscoped } = markedRequest(APP);
+    expect(await reviewFacts([unscoped])).toMatchObject({ triageRequested: true, triageRequestedOnHead: true });
   });
 
   test("another bot's request carrying the marker is still a reviewer's", async () => {

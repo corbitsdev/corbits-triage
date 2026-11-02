@@ -6,6 +6,7 @@ import {
   addReviewers,
   createComment,
   declinePr,
+  deleteTriageComments,
   listComments,
   mergePr,
   mergeVeto,
@@ -117,9 +118,18 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
       onHead(pr.sha, request, step);
       const me = await user();
       if (pr.author.id === me.id) throw new ActionNotRunnableError(OWN_PULL_REQUEST);
-      if (statusOf(pr, me) === "NEEDS_WORK") return { status: "satisfied", result: { status: "NEEDS_WORK" } };
+      const own = [...pr.reviewers, ...pr.participants].find((participant) => participant.user.id === me.id);
+      // A needs-work set by hand has no reasons comment. That comment is posted before the verdict goes, and a failed post leaves it.
       const comment = await postOnce(bb, { repo, number, userId: me.id, marker: actionMarker(step.effectId), body: target.body });
-      return { status: "done", result: { ...(comment.result as object), ...(await setStatus(bb, { repo, number, slug: me.slug, status: "NEEDS_WORK" })) } };
+      // Needs-work is one status for the pull request, stamped with the commit it reviewed, or paired with this head's comment when Bitbucket omits the commit.
+      const reviewedHead = own?.status === "NEEDS_WORK" && (own.lastReviewedCommit === step.headSha || (own.lastReviewedCommit === undefined && comment.status === "satisfied"));
+      const status = reviewedHead ? { status: "NEEDS_WORK" as const } : await setStatus(bb, { repo, number, slug: me.slug, status: "NEEDS_WORK" });
+      // Needs-work is the comment now. A write that did not happen leaves the standing verdict comment.
+      try {
+        await deleteTriageComments(bb, repo, number, me);
+      } catch { /* needs-work already stands */ }
+      if (reviewedHead && comment.status === "satisfied") return { status: "satisfied", result: { status: "NEEDS_WORK" } };
+      return { status: "done", result: { ...(comment.result as object), ...status } };
     }
     case "close": {
       onHead(pr.sha, request, step);

@@ -56,6 +56,7 @@ type GithubSeed = { history?: string[] | "unread"; missing?: boolean; unreadFile
 function fakeGithub({ history = [], missing = false, unreadFiles = false, files = [FLAG], labels = [], prior, failComments = false, stacked, title = "Fix #3", body, bodyHtml, commits = [], contents = {} }: GithubSeed = {}) {
   const requests: Recorded[] = [];
   const comments: Comment[] = prior === undefined ? [] : [{ id: 5, user: APP, body: prior }];
+  let nextCommentId = 10;
   const reviews: Review[] = [];
   const pr: { head: string; state: "open" | "closed"; draft: boolean; ci: Ci; dismissible: boolean; unreadFiles: boolean; threads: Array<{ isResolved: boolean; login: string }> } = { head: "abc0000000000000000000000000000000000000", state: "open", draft: false, ci: "none", dismissible: true, unreadFiles, threads: [] };
   async function gh(path: string, init?: RequestInit): Promise<Response> {
@@ -99,7 +100,7 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
     if (path.startsWith(`/repos/${REPO}/issues/8/comments?`)) return Response.json(comments);
     if (method === "POST" && path === `/repos/${REPO}/issues/8/comments`) {
       if (failComments) return Response.json({ message: "Server Error" }, { status: 500 });
-      comments.push({ id: comments.length + 10, user: APP, body: JSON.parse(String(init?.body)).body, updated_at: `2026-10-13T00:00:${requests.length}Z` });
+      comments.push({ id: nextCommentId++, user: APP, body: JSON.parse(String(init?.body)).body, updated_at: `2026-10-13T00:00:${requests.length}Z` });
       return Response.json(comments.at(-1));
     }
     const edited = comments.find((comment) => method === "PATCH" && path === `/repos/${REPO}/issues/comments/${comment.id}`);
@@ -119,6 +120,12 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
     }
     if (method === "POST" && path === `/repos/${REPO}/issues/8/labels`) labels.push(...JSON.parse(String(init?.body)).labels);
     if (method === "DELETE" && path.startsWith(`/repos/${REPO}/issues/8/labels/`)) labels.splice(labels.indexOf(decodeURIComponent(path.slice(path.lastIndexOf("/") + 1))), 1);
+    const removed = method === "DELETE" && /^\/repos\/acme\/widgets\/issues\/comments\/(\d+)$/.exec(path);
+    if (removed) {
+      const index = comments.findIndex((comment) => comment.id === Number(removed[1]));
+      if (index >= 0) comments.splice(index, 1);
+      return new Response(null, { status: 204 });
+    }
     if (method === "GET") return Response.json([]);
     return Response.json({});
   }
@@ -879,7 +886,8 @@ describe("pr-triage body", () => {
     expect(posted && "skipped" in posted).toBe(false);
     expect(posted && "held" in posted).toBe(false);
     expect((verdict as Verdict).labelled).toContainEqual(expect.objectContaining({ check: "max-lines-changed-per-file", result: "fail" }));
-    expect((verdict as Verdict).request.comment).toBe("");
+    expect((verdict as Verdict).request.comment).toContain("please address");
+    expect((verdict as Verdict).request.comment).toContain("Notes:");
     expect(github.reviews).toEqual([expect.objectContaining({ state: "CHANGES_REQUESTED", body: expect.stringContaining("Triage requests changes:") })]);
     expect(github.comments.filter((comment) => comment.body.includes("please address") || comment.body.includes("Notes:"))).toEqual([]);
   });

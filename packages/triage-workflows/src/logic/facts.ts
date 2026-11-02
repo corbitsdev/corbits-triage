@@ -63,6 +63,7 @@ export function buildFacts(
   const changesRequested = reviewersWith(latest, "CHANGES_REQUESTED");
   const association = authorAssociation(pr.authorAssociation);
   const authorKind = authorKindOf(association, pr.authorBot === true);
+  const ownRequests = reviews.filter((r) => r.triageRequest && r.state === "CHANGES_REQUESTED");
   return {
     repo,
     number,
@@ -81,7 +82,9 @@ export function buildFacts(
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,
-    triageRequested: reviews.some((r) => r.triageRequest && r.state === "CHANGES_REQUESTED"),
+    triageRequested: ownRequests.length > 0,
+    // A missing commit, as Bitbucket needs-work can omit, still stands on this head. One that names an older head does not.
+    triageRequestedOnHead: pr.sha !== undefined && ownRequests.some((r) => r.commitId === undefined || r.commitId === pr.sha),
     reviewAnswered: reviewAnswered(reviews, comments, author, pr.sha ?? "", changesRequested),
     reviewedBy: reviewedOnHead(reviews, pr.sha ?? ""),
     labels: pr.labels ?? [],

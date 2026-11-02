@@ -25,6 +25,7 @@ import {
   changesRequestedOnHead,
   createIssueComment,
   createReview,
+  deleteTriageComments,
   dismissDoChangeRequests,
   mergePr,
   mirror,
@@ -140,10 +141,24 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
     case "request-changes": {
       if (!("body" in target)) throw new Error("this request-changes Do has no body");
       onHead(pr.sha, request, step);
-      const reviewId = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login });
-      if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
+      const review = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login });
+      if (review !== undefined) {
+        // Already on this head, so it is not posted again. A standing review replaces the verdict; one a person dismissed does not.
+        if (review.standing) {
+          // Cleanup. A delete the host refuses leaves the verdict for a later run, and does not fail the Do.
+          try {
+            await deleteTriageComments(gh, repo, number, login);
+          } catch { /* the review already stands */ }
+        }
+        return { status: "satisfied", result: { reviewId: review.id } };
+      }
       const body = `${REQUEST_CHANGES_DO_MARKER}\n${target.body}`;
-      return { status: "done", result: await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha }) };
+      const posted = await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha });
+      // The review is the comment now. A write that did not happen leaves the standing verdict comment.
+      try {
+        await deleteTriageComments(gh, repo, number, login);
+      } catch { /* the review already stands */ }
+      return { status: "done", result: posted };
     }
     case "close": {
       onHead(pr.sha, request, step);
