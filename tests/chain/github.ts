@@ -1,5 +1,9 @@
 // GitHub as the hub and the workflows' sidecars reach it: one App installed on one account, its repositories, their
 // policy files and open pull requests. Writes change what later reads answer and are kept in order for the test.
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { POLICY_FILE_PATH } from "@corbits/triage-contracts";
 
 export const OWNER = "acme";
@@ -9,8 +13,9 @@ const TOKEN = "installation-token";
 /** What the hub mints for code review, asked with the permissions it narrows to. */
 const READ_TOKEN = "read-token";
 
-export type File = { filename: string; status: string; additions: number; deletions: number; patch: string };
+export type File = { filename: string; status: string; additions: number; deletions: number; patch: string; contents?: string };
 export type CheckRun = { name: string; status: "queued" | "in_progress" | "completed"; conclusion: "success" | "failure" | "cancelled" | null };
+export type Review = { id: number; user: typeof BOT; state: string; body: string; commit_id: string; comments: unknown[] };
 export type Pull = {
   number: number;
   title: string;
@@ -21,6 +26,9 @@ export type Pull = {
   commits: string[];
   labels: string[];
   comments: { id: number; user: typeof BOT; body: string }[];
+  reviews: Review[];
+  /** Inline review comments posted via review submissions. */
+  reviewComments: { id: number; pull_request_review_id: number; path: string; body: string; original_line: number | null; original_start_line: number | null }[];
   draft?: boolean;
 };
 export type Write = { method: string; path: string; body: unknown };
@@ -33,7 +41,7 @@ export function pullOf(number: number, head: string): Pull {
   return {
     number, title: "fix: widget sizing", body: "Fixes the widget's size.", author: "octocat", head,
     files: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-export const size = 1;\n+export const size = 2;" }],
-    commits: ["fix: widget sizing"], labels: [], comments: [],
+    commits: ["fix: widget sizing"], labels: [], comments: [], reviews: [], reviewComments: [],
   };
 }
 
@@ -47,6 +55,26 @@ export function labelled(writes: readonly Write[]): string[] {
 
 /** A null `policy` is a repository with no policy file. */
 type Repo = { name: string; policy: string | null; pulls: Map<number, Pull>; checks: Map<string, CheckRun[]> };
+
+/** Builds a gzipped tarball with one top-level directory containing the pull's files, matching GitHub's archive layout. */
+function buildTarball(repo: Repo, ref: string): Uint8Array {
+  const pull = [...repo.pulls.values()].find((p) => p.head === ref);
+  const dir = mkdtempSync(join(tmpdir(), "fake-gh-tarball-"));
+  const repoShort = repo.name.split("/")[1]!;
+  const root = join(dir, `${repoShort}-${ref}`);
+  mkdirSync(root, { recursive: true });
+  const files = pull ? pull.files : [];
+  for (const file of files) {
+    const filePath = join(root, file.filename);
+    mkdirSync(join(filePath, ".."), { recursive: true });
+    writeFileSync(filePath, file.contents ?? "");
+  }
+  const archive = join(dir, "archive.tar.gz");
+  execFileSync("tar", ["-czf", archive, "-C", dir, `${repoShort}-${ref}`], { env: { PATH: "/usr/bin:/bin", COPYFILE_DISABLE: "1" } });
+  const bytes = readFileSync(archive);
+  rmSync(dir, { recursive: true, force: true });
+  return bytes;
+}
 
 export function fakeGithub() {
   const repos = new Map<string, Repo>();
@@ -84,8 +112,9 @@ export function fakeGithub() {
         return Response.json(pull.files.slice((page - 1) * perPage, page * perPage));
       }
       if (tail === "/commits") return Response.json(pull.commits.map((message, index) => ({ sha: index === pull.commits.length - 1 ? pull.head : `c${index}`.padEnd(40, "0"), commit: { message } })));
-      if (tail === "/reviews") return Response.json([]);
-      if (tail === "/comments") return Response.json(pulled[1] === "issues" ? pull.comments : []);
+      if (tail === "/reviews") return Response.json(pull.reviews);
+      if (tail.startsWith("/reviews/")) return Response.json([]);
+      if (tail === "/comments") return Response.json(pulled[1] === "issues" ? pull.comments : pull.reviewComments);
       if (tail === "/labels") return Response.json(pull.labels.map((name) => ({ name })));
       if (tail === "/requested_reviewers") return Response.json({ users: [], teams: [] });
       if (tail === "/timeline" || tail === "/events") return Response.json([]);
@@ -101,6 +130,8 @@ export function fakeGithub() {
     if (rest.startsWith("/compare/")) return Response.json({ status: "ahead", ahead_by: 1, behind_by: 0, commits: [] });
     if (rest.startsWith("/git/trees/")) return Response.json({ sha: "tree", tree: [], truncated: false });
     if (rest.startsWith("/collaborators/")) return Response.json({ permission: "read", role_name: "read" });
+    const tarballMatch = /^\/tarball\/([0-9a-f]+)$/.exec(rest);
+    if (tarballMatch) return new Response(Buffer.from(buildTarball(repo, tarballMatch[1]!)), { headers: { "content-type": "application/gzip" } });
     if (rest === "/labels" || rest.startsWith("/labels?")) return Response.json([]);
     return undefined;
   }
@@ -126,6 +157,31 @@ export function fakeGithub() {
     }
     if (pull && tail === "/assignees" && method === "POST") return Response.json(pullJson(repo, pull), { status: 201 });
     if (pull && tail === "/requested_reviewers" && method === "POST") return Response.json({ ...pullJson(repo, pull), requested_reviewers: (body["reviewers"] as string[]).map((login) => ({ login })) }, { status: 201 });
+    if (pull && tail === "/reviews" && method === "POST") {
+      ids += 1;
+      const review: Review = { id: ids, user: BOT, state: String(body["event"] ?? "COMMENTED"), body: String(body["body"] ?? ""), commit_id: String(body["commit_id"] ?? pull.head), comments: [] };
+      pull.reviews.push(review);
+      const inlineComments = (body["comments"] ?? []) as { path: string; body: string; line?: number; start_line?: number }[];
+      for (const c of inlineComments) {
+        ids += 1;
+        pull.reviewComments.push({ id: ids, pull_request_review_id: review.id, path: c.path, body: c.body, original_line: c.line ?? null, original_start_line: c.start_line ?? null });
+      }
+      return Response.json(review, { status: 200 });
+    }
+    const dismissed = /^\/pulls\/(\d+)\/reviews\/(\d+)\/dismissals$/.exec(rest);
+    if (dismissed && method === "PUT") {
+      const dismissedPull = repo.pulls.get(Number(dismissed[1]));
+      const review = dismissedPull?.reviews.find((r) => r.id === Number(dismissed[2]));
+      if (review) review.state = "DISMISSED";
+      return Response.json(review ?? {});
+    }
+    const reviewPatch = /^\/pulls\/(\d+)\/reviews\/(\d+)$/.exec(rest);
+    if (reviewPatch && method === "PUT") {
+      const patchedPull = repo.pulls.get(Number(reviewPatch[1]));
+      const review = patchedPull?.reviews.find((r) => r.id === Number(reviewPatch[2]));
+      if (review && body["body"] !== undefined) review.body = String(body["body"]);
+      return Response.json(review ?? {});
+    }
     const edited = /^\/issues\/comments\/(\d+)$/.exec(rest);
     const comment = edited && method === "PATCH" ? [...repo.pulls.values()].flatMap((each) => each.comments).find((row) => row.id === Number(edited[1])) : undefined;
     if (comment) {
@@ -150,6 +206,14 @@ export function fakeGithub() {
     if (pathname === "/app/installations") return Response.json([{ id: INSTALLATION, account: { login: OWNER }, html_url: "https://github.com/settings/installations/1", repository_selection: "selected", suspended_at: null }]);
     if (pathname === `/app/installations/${INSTALLATION}/access_tokens`) return mint(await req.text());
     if (pathname === "/installation/repositories") return Response.json({ total_count: repos.size, repositories: [...repos.keys()].map((name) => ({ full_name: name })) });
+    if (pathname === "/graphql" && req.method === "POST") {
+      const gql = JSON.parse(await req.text()) as { query: string; variables: Record<string, unknown> };
+      writes.push({ method: "POST", path: "/graphql", body: gql });
+      if (gql.query.includes("reviewThreads")) {
+        return Response.json({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
+      }
+      return Response.json({ data: { repository: null } });
+    }
     const named = /^\/repos\/([^/]+\/[^/]+)(.*)$/.exec(pathname);
     const repo = named ? repos.get(named[1]!) : undefined;
     if (repo && req.method === "GET") {

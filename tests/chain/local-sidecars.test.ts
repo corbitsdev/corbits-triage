@@ -54,7 +54,7 @@ function pullOf(head: string): Pull {
   return {
     number: 1, title: "fix: widget sizing", body: "Fixes the widget's size.", author: "octocat", head,
     files: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-export const size = 1;\n+export const size = 2;" }],
-    commits: ["fix: widget sizing"], labels: [], comments: [],
+    commits: ["fix: widget sizing"], labels: [], comments: [], reviews: [], reviewComments: [],
   };
 }
 
