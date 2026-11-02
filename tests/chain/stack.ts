@@ -9,8 +9,8 @@ import { createDB, schema } from "@intx/db";
 import { ApiError, type Transport } from "@intx/hub-client";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
 import { packWorkflows } from "../../apps/web/scripts/build-workflows.ts";
-import { DECISION_MODEL_ALIAS, DEFAULT_TIMINGS, INFERENCE_PROVIDER, TIMING_VARIABLES, TRIAGE_LISTENERS, type Timings } from "@corbits/triage-contracts";
-import { currentDeployment, INFERENCE_CREDENTIAL_NAME, patchAppConfig, readDeployedVersions } from "../../apps/web/src/lib/hub-api.ts";
+import { ANTHROPIC_PROVIDER, CODE_REVIEW_PROVIDERS, DECISION_MODEL_ALIAS, DEFAULT_TIMINGS, INFERENCE_PROVIDER, TIMING_VARIABLES, TRIAGE_LISTENERS, type Timings } from "@corbits/triage-contracts";
+import { ANTHROPIC_CREDENTIAL_NAME, currentDeployment, INFERENCE_CREDENTIAL_NAME, patchAppConfig, readDeployedVersions } from "../../apps/web/src/lib/hub-api.ts";
 import { connectGithubApp } from "../../apps/web/src/lib/github-manifest.ts";
 import type { FakeGithub } from "./github.ts";
 
@@ -272,6 +272,11 @@ export async function setUpWorkspace(workspace: Workspace, github: FakeGithub, m
   });
   const decisionKey = await vaultKey(workspace, { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER, apiBaseUrl: modelOrigin }, INFERENCE_CREDENTIAL_NAME);
   await offer(workspace, { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER, baseURL: modelOrigin, credentialId: decisionKey }, [{ name: DECISION_MODEL_ALIAS, quirks: { model: "stub" } }]);
+  const anthropicKey = await vaultKey(workspace, { name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, apiBaseUrl: modelOrigin }, ANTHROPIC_CREDENTIAL_NAME);
+  await offer(workspace, { name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, baseURL: modelOrigin, credentialId: anthropicKey }, [
+    { name: CODE_REVIEW_PROVIDERS.anthropic.models.smart, quirks: { model: "stub" } },
+    { name: CODE_REVIEW_PROVIDERS.anthropic.models.fast, quirks: { model: "stub" } },
+  ]);
 }
 
 /** The portal build the hub serves and publishes: its page, and the workflow packages `bun run dev` builds on start. */
