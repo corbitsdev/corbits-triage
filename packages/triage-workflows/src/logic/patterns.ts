@@ -95,6 +95,16 @@ export function filesToRead(files: readonly PrFileFacts[], source: RepoSource): 
   return toRead;
 }
 
+function coversAdded(added: ReadonlySet<number>, first: number, last: number): boolean {
+  for (let line = first; line <= last; line++) if (added.has(line)) return true;
+  return false;
+}
+
+function lastMatchLine(end: { line: number; column: number }): number {
+  // ast-grep's end is exclusive: column 0 is the next line, after a newline the node consumed.
+  return end.column === 0 ? end.line : end.line + 1;
+}
+
 function fileMatches(file: PrFileFacts, patch: string, content: string, grammar: Grammar, rules: PatternRule[]): string[] {
   const added = addedLines(patch);
   const root = parse(grammar.lang, content).root();
@@ -102,11 +112,10 @@ function fileMatches(file: PrFileFacts, patch: string, content: string, grammar:
   for (const rule of rules.filter((candidate) => candidate.language === grammar.language && patternRuleApplies(candidate, file.path))) {
     for (const match of root.findAll({ rule: rule.rule })) {
       const { start, end } = match.range();
-      for (let line = start.line + 1; line <= end.line + 1; line++) {
-        if (!added.has(line)) continue;
-        out.add(`${file.path}:${line} ${rule.message}`);
-        break;
-      }
+      const first = start.line + 1;
+      const last = lastMatchLine(end);
+      if (last < first || !coversAdded(added, first, last)) continue;
+      out.add(`${file.path}:${first === last ? String(first) : `${first}-${last}`} ${rule.id}: ${rule.message.replace(/\s+/g, " ").trim()}`);
     }
   }
   return [...out];

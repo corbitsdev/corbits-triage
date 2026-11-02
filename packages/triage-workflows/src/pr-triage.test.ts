@@ -311,7 +311,7 @@ describe("pr-triage body", () => {
     const pack: CheckPack = { ...emptyPack(REPO), custom: [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }] };
     const { path, verdict } = await triage(pack, { files, contents });
     expect(path).toEqual(RULES_PATH);
-    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.", "src/build/b.ts:2 Invented fallback `?? 0`; handle the missing value instead."] });
+    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.", "src/build/b.ts:2 zero-fallback: Invented fallback `?? 0`; handle the missing value instead."] });
     const unread = await triage(pack, { files });
     expect((unread.verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
   });
@@ -343,7 +343,7 @@ describe("pr-triage body", () => {
     const contents = { "src/a.ts": "const a = 1;\n", "src/a%E2%80%8B.ts": "const b = y ?? 0;\n" };
     const pack: CheckPack = { ...emptyPack(REPO), custom: [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }] };
     const { verdict } = await triage(pack, { files, contents });
-    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:1 Invented fallback `?? 0`; handle the missing value instead."] });
+    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:1 zero-fallback: Invented fallback `?? 0`; handle the missing value instead."] });
   });
 
   test("a reference-style link in the body still links the issue", async () => {

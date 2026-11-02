@@ -375,17 +375,53 @@ rules:
 
   test("matches on added lines only, never a counter's default, and a rule's own pattern wins over the preset's on a shared id", () => {
     const result = patterns([file], { "src/a.ts": content });
-    const fallback = "src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.";
-    expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", onFail: "ask", evidence: [fallback, "src/a.ts:3 Nested ternary; use if statements or a lookup."] });
-    expect(result.checks.find((check) => check.check === "no-ternaries")).toMatchObject({ result: "fail", evidence: [fallback, "src/a.ts:3 Our own nested ternary rule."] });
+    const fallback = "src/a.ts:2 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.";
+    expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", onFail: "ask", evidence: [fallback, "src/a.ts:3 nested-ternary: Nested ternary; use if statements or a lookup."] });
+    expect(result.checks.find((check) => check.check === "no-ternaries")).toMatchObject({ result: "fail", evidence: [fallback, "src/a.ts:3 nested-ternary: Our own nested ternary rule."] });
     expect(result.checks.find((check) => check.check === "no-ternaries")?.onFail).toBeUndefined();
+  });
+
+  test("a match spanning lines records the whole range and the rule id when any added line is inside it, and a one-line match is not start-end", () => {
+    const spanned = "const kept = p ? 1\n  : q ? 2 : 3;\nconst added = x ?? 0;\n";
+    const patch = "@@ -1 +1,3 @@\n const kept = p ? 1\n+  : q ? 2 : 3;\n+const added = x ?? 0;\n";
+    const pack = readCheckPack(readPolicyFile(FILE, "acme/widgets"));
+    function collapsedTernary(rule: (typeof pack.custom)[number]) {
+      if (!isPatternsCheck(rule) || rule.id !== "no-ternaries") return rule;
+      const [pattern, ...rest] = rule.patterns;
+      if (!pattern) throw new Error("missing pattern");
+      return { ...rule, patterns: [{ ...pattern, message: "Nested\nternary." }, ...rest] };
+    }
+    const result = patterns([{ ...file, additions: 2, patch }], { "src/a.ts": spanned }, { ...pack, custom: pack.custom.map(collapsedTernary) });
+    const fallback = "src/a.ts:3 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.";
+    expect(result.checks.find((check) => check.check === "conventions")?.evidence).toEqual([fallback, "src/a.ts:1-2 nested-ternary: Nested ternary; use if statements or a lookup."]);
+    expect(result.checks.find((check) => check.check === "no-ternaries")?.evidence).toEqual([fallback, "src/a.ts:1-2 nested-ternary: Nested ternary."]);
+  });
+
+  test("a node that ends on a consumed newline does not include the next line, or fail because only that next line was added", () => {
+    const policy = `rules:
+  - id: whole
+    check: code-patterns
+    text: Whole file.
+    reason: R.
+    evidence: [maintainer-stated]
+    patterns:
+      - id: prog
+        language: typescript
+        message: whole file
+        rule: { kind: program }
+`;
+    const pack = readCheckPack(readPolicyFile(policy, "acme/widgets"));
+    const both = patterns([{ path: "src/a.ts", status: "added", additions: 2, deletions: 0, patch: "@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n" }], { "src/a.ts": "const a = 1;\nconst b = 2;\n" }, pack);
+    expect(both.checks.find((check) => check.check === "whole")?.evidence).toEqual(["src/a.ts:1-2 prog: whole file"]);
+    const onlyNext = patterns([{ path: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@\n const a = 1;\n+const b = 2;\n" }], { "src/a.ts": "const a = 1;\n" }, pack);
+    expect(onlyNext.checks.find((check) => check.check === "whole")).toMatchObject({ result: "pass", evidence: [] });
   });
 
   test("the preset checks JavaScript as TypeScript, and a rule's own pattern replaces the preset's id in both", () => {
     for (const path of ["src/a.js", "src/a.mjs", "src/a.jsx"]) {
       const result = patterns([{ ...file, path }], { [path]: content });
-      const fallback = `${path}:2 Invented fallback \`?? 0\`; handle the missing value instead.`;
-      expect(result.checks.find((check) => check.check === "conventions")?.evidence).toEqual([fallback, `${path}:3 Nested ternary; use if statements or a lookup.`]);
+      const fallback = `${path}:2 zero-fallback: Invented fallback \`?? 0\`; handle the missing value instead.`;
+      expect(result.checks.find((check) => check.check === "conventions")?.evidence).toEqual([fallback, `${path}:3 nested-ternary: Nested ternary; use if statements or a lookup.`]);
       expect(result.checks.find((check) => check.check === "no-ternaries")?.evidence).toEqual([fallback]);
     }
   });
@@ -417,7 +453,7 @@ rules:
   test("a rule's files and ignores scope it as in ast-grep; the shipped fallbacks ignore test files", () => {
     for (const testPath of ["src/a.test.ts", "src/a.test.js"]) {
       const inTest = patterns([{ ...file, path: testPath }], { [testPath]: content });
-      expect(inTest.checks.find((check) => check.check === "conventions")?.evidence).toEqual([`${testPath}:3 Nested ternary; use if statements or a lookup.`]);
+      expect(inTest.checks.find((check) => check.check === "conventions")?.evidence).toEqual([`${testPath}:3 nested-ternary: Nested ternary; use if statements or a lookup.`]);
     }
     function scoped(scope: string) {
       return readPolicyFile(`rules:

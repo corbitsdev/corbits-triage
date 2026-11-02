@@ -3,7 +3,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
 import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type RepoSource, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
-import { authorFailures, isLabelledFinding } from "./render.js";
+import { authorFailures, bounded, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
 import { unrunnable } from "./execute-do.js";
 
@@ -91,12 +91,23 @@ function changesFor({ checks, pack }: Pick<ActionInput, "checks" | "pack">): Che
   return authorFailures(checks, classificationSources(pack));
 }
 
+function findingLines(check: CheckResult): string[] {
+  const skipped = check.skipped;
+  if (skipped === undefined) return check.evidence.map((item) => `  - ${item}`);
+  const omitted = new Set(skipped);
+  return check.evidence.filter((item) => !omitted.has(item)).map((item) => `  - ${item}`);
+}
+
 /** Only what the author must fix is requested; anything else waits on a maintainer, not on the author. */
 function changesBody(input: ActionInput): string {
-  const { pack } = input;
   const failed = changesFor(input);
   if (!failed.length) throw new Error("nothing that failed is the author's to fix");
-  return ["Triage requests changes:", ...failed.map((c) => `- ${checkName(pack, c.check)}: ${c.reason}`)].join("\n");
+  const lines = ["Triage requests changes:"];
+  for (const check of failed) {
+    lines.push(`- ${checkName(input.pack, check.check)}: ${check.reason}`);
+    lines.push(...findingLines(check));
+  }
+  return bounded(lines);
 }
 
 /** The labels a derived step wants, and the ones it owns on the pull request that no longer apply. */
