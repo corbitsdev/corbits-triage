@@ -166,3 +166,13 @@ If a workflow already uses `corbitsdev/corbits-triage/packages/policy-check-acti
 When the change goes up as a pull request, its description names each rule removed from an existing file and why, each changed limit and action step, and each rule dropped for the cap. If nobody could answer, it ends with a `Waiting on you` heading that lists every suggestion written, with its number, so a maintainer can change it before merging.
 
 Then tell the user, in two lines, which rules are on and that the policy applies once the file is merged to the default branch.
+
+## 7. Tell the coding agents
+
+The policy file is what Triage reads after a push. A coding agent does not read it unless the repository says to. In the same change, add this paragraph to `AGENTS.md` at the repository root. Create the file if there is none. If it already has a paragraph that names Corbits Triage and `.corbits-triage.yml`, leave that paragraph. Otherwise append:
+
+```
+This repository uses Corbits Triage to keep the code within its rules. Read `.corbits-triage.yml` while writing and reviewing, and follow the checks it turns on. When code review is on, its findings are review comments on the pull request. Resolve each one or the pull request cannot merge. Deterministic checks are comments from the Triage bot.
+```
+
+Skip this only when the person says not to touch `AGENTS.md`, and say that you skipped it.

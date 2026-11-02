@@ -68,7 +68,7 @@ To try it without a GitHub account, use the GitHub emulator on the own-Postgres 
 
 ## 5. Add a policy file
 
-Either the person presses **Start a policy file** on the repository and merges the pull request, or you write one with the corbits-triage-setup skill (`skills/corbits-triage-setup`) in that repository. Once it is merged, the hub picks it up within a few minutes; no restart is needed.
+Either the person presses **Start a policy file** on the repository and merges the pull request, or you write one with the corbits-triage-setup skill (`skills/corbits-triage-setup`) in that repository. That skill also adds a short paragraph to the repository's `AGENTS.md` telling coding agents to read `.corbits-triage.yml`, to resolve code review comments before a pull request can merge, and that deterministic checks are comments from the Triage bot. Once the policy file is merged, the hub picks it up within a few minutes; no restart is needed.
 
 ## 6. Turn triage on
 
