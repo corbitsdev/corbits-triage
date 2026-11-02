@@ -106,7 +106,23 @@ describe("facts policy", () => {
     const policy = { enabled: true, triageDrafts: true };
     const listed = { prs: [{ number: 7, title: "WIP", draft: true }, { number: 8, title: "Fix", draft: false }] };
     await readFacts({ kind: "backlog", repo: "acme/widgets", policy, checkPack: emptyPack("acme/widgets") }, () => answering({ github_list_open_prs: listed }, calls));
+    expect(calls[0]?.id).toBe("github_list_open_prs");
     expect(calls.slice(1, 6).map((call) => call.id)).toEqual(["pr:8", "reviews:8", "comments:8", "commits:8", "files:8:0"]);
+  });
+
+  test("a targeted pull request skips listing open pull requests unless duplicate-pr is enabled", async () => {
+    const calls: ToolCall[] = [];
+    const request = { kind: "pr", repo: "acme/widgets", prNumber: 8, policy: { enabled: true }, checkPack: emptyPack("acme/widgets") };
+    const results: Record<string, unknown> = {
+      "pr:8": { title: "Fix", author: "octocat", sha: "abc0000000000000000000000000000000000000", state: "open", draft: false, mergeable: true, base: "main" },
+      "reviews:8": { reviews: [] },
+      "comments:8": { comments: [] },
+      "commits:8": { commits: [] },
+      "checks:8": { checks: [] },
+      "files:8:0": { files: [] },
+    };
+    await readFacts(request, () => answering(results, calls));
+    expect(calls.map((call) => call.name)).not.toContain("github_list_open_prs");
   });
 
   test("a disabled repository replies an error item without fetching", async () => {
