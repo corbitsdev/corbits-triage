@@ -5,6 +5,8 @@ import {
   codeownersFor,
   codeownersForPr,
   CODE_REVIEW_MARKER,
+  createDocsReader,
+  createPrFilesReader,
   getChecks,
   getPostedCodeReview,
   json,
@@ -232,7 +234,8 @@ describe("listPrFilesPage", () => {
       return { filename, status: "modified", additions: 1, deletions: 0, patch };
     }
     const big = `${[1, 2, 3, 4].map(hunk).join("\n")}\n+${"\"".repeat(9_000)}`;
-    const { gh } = recorder(() => [row("a.ts", hunk(1)), row("big.ts", big), row("c.ts", hunk(1))]);
+    const { gh, requests } = recorder(() => [row("a.ts", hunk(1)), row("big.ts", big), row("c.ts", hunk(1))]);
+    const list = createPrFilesReader(gh);
     const pages: PrFilesPage[] = [];
     function nextCursor(page: PrFilesPage): { offset: number; patchOffset?: number } | undefined {
       if (page.next === undefined) return undefined;
@@ -241,14 +244,17 @@ describe("listPrFilesPage", () => {
     }
     let cursor: { offset: number; patchOffset?: number } | undefined = { offset: 0 };
     while (cursor) {
-      const page: PrFilesPage = await listPrFilesPage(gh, "acme/widgets", 8, cursor);
+      const page: PrFilesPage = await list("acme/widgets", 8, cursor);
       pages.push(page);
       cursor = nextCursor(page);
     }
+    expect(pages.length).toBeGreaterThan(1);
     expect(pages.every((page) => JSON.stringify(page).length <= 10_000)).toBe(true);
     const files = pages.flatMap((page) => page.files);
     expect([...new Set(files.map((file) => file.path))]).toEqual(["a.ts", "big.ts", "c.ts"]);
     expect(files.filter((file) => file.path === "big.ts").map((file) => file.patch).join("")).toBe(big);
+    expect((await list("acme/widgets", 8, { patches: false })).files.map((file) => file.patch)).toEqual([undefined, undefined, undefined]);
+    expect(requests.map((request) => request.path)).toEqual(["/repos/acme/widgets/pulls/8/files?per_page=100&page=1"]);
     expect((await listPrFilesPage(gh, "acme/widgets", 8, { patches: false })).files.map((file) => file.patch)).toEqual([undefined, undefined, undefined]);
   });
 });
@@ -294,6 +300,7 @@ describe("readRepoDocsPage", () => {
 
   function repo() {
     return recorder((path) => {
+      if (path === "/repos/o/r") return { default_branch: "main" };
       if (path.includes("/git/trees/")) return { sha: "tree", tree: docs.map(([doc, text], index) => ({ path: doc, type: "blob", sha: `blob${index}`, size: new TextEncoder().encode(text).byteLength })) };
       const blob = /\/git\/blobs\/blob(\d+)$/.exec(path);
       return blob ? new Response(docs[Number(blob[1])]![1]) : null;
@@ -323,6 +330,27 @@ describe("readRepoDocsPage", () => {
     const sent = pages.flatMap((page) => page.docs.map((doc) => doc.path));
     expect(sent.filter((path, index) => sent.indexOf(path) !== index && sent[index - 1] !== path)).toEqual([]);
     expect(requests.filter((request) => request.path.includes("/git/blobs/"))).toHaveLength(sent.length);
+  });
+
+  test("createDocsReader fetches the default branch, tree and each doc blob once across pages", async () => {
+    const { gh, requests } = repo();
+    const read = createDocsReader(gh);
+    const pages: RepoDocsPage[] = [];
+    let offset: number | undefined = 0;
+    let ref: string | undefined;
+    while (offset !== undefined) {
+      const page = await read("o/r", { ref, offset });
+      pages.push(page);
+      offset = page.next;
+      ref = page.ref;
+    }
+    expect(pages.length).toBeGreaterThan(1);
+    expect(repoDocs(pages).docs["docs/guide.md"]).toBeDefined();
+    const paths = requests.map((request) => request.path);
+    expect(paths.filter((path) => path === "/repos/o/r")).toHaveLength(1);
+    expect(paths.filter((path) => path.includes("/git/trees/"))).toEqual(["/repos/o/r/git/trees/main?recursive=1"]);
+    const blobs = paths.filter((path) => path.includes("/git/blobs/"));
+    expect(blobs).toEqual([...new Set(blobs)]);
   });
 });
 

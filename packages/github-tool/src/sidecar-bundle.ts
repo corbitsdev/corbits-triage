@@ -5,6 +5,8 @@ import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import {
   authorTeams,
   codeownersForPr,
+  createDocsReader,
+  createPrFilesReader,
   getChecks,
   getPr,
   getReviews,
@@ -15,11 +17,9 @@ import {
   listOpenPrsInto,
   listPathCommits,
   listPrCommits,
-  listPrFilesPage,
   readFileAt,
   readPrDiff,
   readPrTemplates,
-  readRepoDocsPage,
   readStack,
   unresolvedThreadsHold,
   type GithubFetch,
@@ -257,12 +257,16 @@ async function runDo(gh: GithubFetch, args: unknown, login: string) {
   }
 }
 
-/** A file at a commit, fetched once per tool instance however many windows of it are read. */
-type FileAt = (repo: string, sha: string, path: string) => Promise<string | undefined>;
+/** Each file at a commit, each doc tree and blob, and each 100-file pull request page is fetched once per tool instance. */
+type Reads = {
+  docs: ReturnType<typeof createDocsReader>;
+  prFiles: ReturnType<typeof createPrFilesReader>;
+  files: ReturnType<typeof cachedLoads<string | undefined>>;
+};
 
-async function readWindow(fileAt: FileAt, a: Record<string, any>) {
+async function readWindow(gh: GithubFetch, reads: Reads, a: Record<string, any>) {
   checkTarget(a.repo, a.sha, a.path);
-  const text = await fileAt(a.repo, a.sha, a.path);
+  const text = await reads.files(`${a.repo}@${a.sha}:${a.path}`, () => readFileAt(gh, a.repo, a.sha, a.path));
   if (text === undefined) throw new Error(`${a.path} is not in ${a.repo} at ${a.sha}`);
   if (a.whole === true) return { path: a.path, text };
   return linesOf(a.path, text, a.start, a.end);
@@ -284,7 +288,7 @@ function appLoginOf(call: ToolCallInput): string {
   return login;
 }
 
-async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): Promise<unknown> {
+async function dispatch(gh: GithubFetch, call: ToolCallInput, reads: Reads): Promise<unknown> {
   const a = call.arguments;
   if (REPO_TOOLS.has(call.name)) checkArgs(a);
   switch (call.name) {
@@ -307,9 +311,9 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
     case "github_pr_diff_hash":
       return { hash: diffHash(await readPrDiff(gh, a.repo, a.number)) ?? null };
     case "github_list_pr_files":
-      return listPrFilesPage(gh, a.repo, a.number, { offset: a.offset, patchOffset: a.patchOffset, patches: a.patches !== false });
+      return reads.prFiles(a.repo, a.number, { offset: a.offset, patchOffset: a.patchOffset, patches: a.patches !== false });
     case "github_read_repo_docs":
-      return readRepoDocsPage(gh, a.repo, { ref: a.ref, offset: a.offset });
+      return reads.docs(a.repo, { ref: a.ref, offset: a.offset });
     case "github_read_pr_templates":
       return { templates: await readPrTemplates(gh, a.repo) };
     case "github_list_issue_comments":
@@ -325,7 +329,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
     case "github_finding_thread_states":
       return { threads: await findingThreadStates(gh, a.repo, a.number, a.ids) };
     case "github_read_file":
-      return readWindow(fileAt, a);
+      return readWindow(gh, reads, a);
     case "github_mirror":
     case "github_mirror_auto": {
       const login = appLoginOf(call);
@@ -372,16 +376,14 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, fileAt: FileAt): P
   }
 }
 
-/** Each file read is asked of GitHub once per tool instance, so once per step of a run. */
+/** Each file, doc tree, doc blob and 100-file pull request page is asked of GitHub once per tool instance, so once per step of a run. */
 function createGithubTools(definitions: ToolDefinition[], getFetch: () => Promise<GithubFetch>) {
-  const files = cachedLoads<string | undefined>();
+  let reads: Reads | undefined;
   async function run(call: ToolCallInput) {
     try {
       const gh = await getFetch();
-      function fileAt(repo: string, sha: string, path: string) {
-        return files(`${repo}@${sha}:${path}`, () => readFileAt(gh, repo, sha, path));
-      }
-      const content = await dispatch(gh, call, fileAt);
+      reads ??= { docs: createDocsReader(gh), prFiles: createPrFilesReader(gh), files: cachedLoads() };
+      const content = await dispatch(gh, call, reads);
       return { callId: call.id, content: content as Record<string, unknown> };
     } catch (err) {
       return {

@@ -323,6 +323,31 @@ describe("github tool arguments", () => {
     expect(requests).toEqual([]);
     expect(await run({ id: "c", name: "github_nope", arguments: {} })).toMatchObject({ isError: true, content: "unknown tool github_nope" });
   });
+
+  test("githubCalls caches docs and PR files REST pages across calls on the same tool instance", async () => {
+    const doc = "Run it.\n".repeat(1_500);
+    const patch = `@@ -1 +1 @@\n+${"x".repeat(12_000)}`;
+    const { gh, requests } = recorder(function respond(path) {
+      if (path === "/repos/acme/widgets") return { default_branch: "main" };
+      if (path.includes("/git/trees/")) return { sha: "tree1", tree: [{ path: "README.md", type: "blob", sha: "blob0", size: doc.length }] };
+      if (path.endsWith("/git/blobs/blob0")) return new Response(doc);
+      if (path.includes("/pulls/8/files")) return [{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch }];
+      throw new Error(`unexpected ${path}`);
+    });
+    const run = githubCalls(async () => gh);
+    const docs1 = (await run({ id: "d1", name: "github_read_repo_docs", arguments: { repo: "acme/widgets" } })).content as { next?: number; ref: string };
+    expect(docs1.next).toBeDefined();
+    await run({ id: "d2", name: "github_read_repo_docs", arguments: { repo: "acme/widgets", ref: docs1.ref, offset: docs1.next } });
+    const files1 = (await run({ id: "f1", name: "github_list_pr_files", arguments: { repo: "acme/widgets", number: 8 } })).content as { next?: number; patchNext?: number };
+    expect(files1.patchNext).toBeDefined();
+    await run({ id: "f2", name: "github_list_pr_files", arguments: { repo: "acme/widgets", number: 8, offset: files1.next, patchOffset: files1.patchNext } });
+    expect(requests.map((request) => request.path)).toEqual([
+      "/repos/acme/widgets",
+      "/repos/acme/widgets/git/trees/main?recursive=1",
+      "/repos/acme/widgets/git/blobs/blob0",
+      "/repos/acme/widgets/pulls/8/files?per_page=100&page=1",
+    ]);
+  });
 });
 
 describe("mergePr", () => {
