@@ -139,6 +139,11 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
 }
 
+/** A request-changes review the run will post is the comment; a skipped or held one leaves the verdict comment. */
+function postsRequestChanges(actions: readonly SuggestedAction[]): boolean {
+  return actions.some((action) => action.kind === "request-changes" && !("skipped" in action) && !("held" in action));
+}
+
 /** `feedback` without the Dos `withDos` closed it with. */
 function withoutDos(feedback: string, actions: SuggestedAction[]): string {
   const dos = withDos(" ", actions).slice(1);
@@ -197,7 +202,8 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
   const held = approvalHeldBy(rendered.verdict, it.facts.checks);
   const automatic = it.automatic;
   const actions = suggestedDos(it, rendered, it.pack?.actions[rendered.verdict] ?? []);
-  const feedback = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
+  const shown = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
+  const feedback = postsRequestChanges(actions) ? "" : shown;
   // What reading the policy left out is said on every verdict, so the policy can be fixed.
   const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
   const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;

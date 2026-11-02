@@ -180,10 +180,12 @@ and Triage never writes to it. A model that does not answer leaves the verdict U
 and Triage checks it again.
 
 Triage keeps one comment on the pull request: the verdict, the reasons, and
-what Triage did or what waits on a maintainer. A re-triage edits it in place,
-or writes nothing when nothing changed. When only a policy change flips the
-verdict on the same head, Triage posts a new comment naming the policy
-versions and marks the earlier one superseded.
+what Triage did or what waits on a maintainer. When Triage requests changes,
+that review is the comment, and the standing verdict comment is not posted
+beside it. A re-triage edits the standing comment in place, or writes nothing
+when nothing changed. When only a policy change flips the verdict on the same
+head, Triage posts a new comment naming the policy versions and marks the
+earlier one superseded.
 
 ## Steps
 
