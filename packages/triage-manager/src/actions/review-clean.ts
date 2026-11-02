@@ -123,16 +123,25 @@ type Action = Verdict["actions"][number];
 
 /**
  * `verdict` with `note` closing its comment, as said on the pull request and kept with the verdict. A blank mirror
- * comment means a request-changes review was going to be posted. Holding that step shows the verdict comment again.
+ * comment means a request-changes review was going to be posted. Holding that step shows the verdict comment again,
+ * taken from `feedback`, which already carries earlier notes, rather than from a shorter comment a previous note wrote.
+ * That restored comment drops "Triage will request changes.", which was written while the review was still going to be posted.
  */
 function noted(verdict: Verdict, note: string): Verdict {
   const feedback = verdict.feedback ? `${verdict.feedback}\n\n${note}` : note;
-  const written = verdict.request?.comment;
   const reviewHeld = verdict.actions.some((action) => action.kind === "request-changes" && "held" in action);
-  const standing = written || (reviewHeld && verdict.feedback);
+  const standing = reviewHeld ? heldComment(verdict.feedback) : verdict.request?.comment;
   const comment = standing ? `${standing}\n\n${note}` : note;
   const request = verdict.request && { ...verdict.request, comment };
   return { ...verdict, feedback, ...(request && { request }) };
+}
+
+/** The verdict comment once request-changes is held. The line that the review will still be posted is no longer true. */
+function heldComment(feedback: string): string {
+  const lines = feedback.split("\n");
+  if (!lines.includes("Triage will request changes.")) return feedback;
+  const kept = lines.filter((line) => line !== "Triage will request changes.");
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**

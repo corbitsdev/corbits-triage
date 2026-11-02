@@ -953,9 +953,9 @@ describe("triage-manager with code review", () => {
   const BLANKED = { repo: PR.repo, number: PR.number, labels: [], owned: [], comment: "" };
   const REVIEW_HELD = [{ pack: { actions: { fail: [{ do: "request-changes", when: { findings: { any: false } } }] } } }];
 
-  function heldReview(steps: object[], items: object[]) {
+  function heldReview(steps: object[], items: object[], feedback = FINDINGS) {
     const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: finding(2), taken: { blocks: ["code-review"], ...CODE_REVIEW } };
-    const evaluateRules = { ...PASSED, verdict: "fail", feedback: FINDINGS, actions: steps, request: BLANKED };
+    const evaluateRules = { ...PASSED, verdict: "fail", feedback, actions: steps, request: BLANKED };
     return actions.cleared({ take: { output: take }, rules: { output: { items } }, evaluateRules: { output: evaluateRules }, reviewScope: { output: { reviewed: true } } });
   }
 
@@ -972,6 +972,37 @@ describe("triage-manager with code review", () => {
     expect(made.actions[1]).toEqual(REQUEST_CHANGES);
     expect(made.request.comment).toBe("Approve held: code review has 1 finding open on this head.");
     expect(made.request.comment).not.toContain(FINDINGS);
+  });
+
+  const WILL_REQUEST = "Triage will request changes.";
+
+  test("holding request-changes restores the verdict comment without saying it will still be posted", async () => {
+    const made = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `${FINDINGS}\n\n${WILL_REQUEST}`);
+    const note = "Request changes held: code review has 1 finding open on this head.";
+    expect(made.actions).toContainEqual({ ...REQUEST_CHANGES, held: true, reason: OPEN });
+    expect(made.request.comment).toBe(`${FINDINGS}\n\n${note}`);
+    expect(made.request.comment).not.toContain(WILL_REQUEST);
+    expect(made.feedback).toContain(FINDINGS);
+  });
+
+  test("a second note after request-changes is held still keeps the verdict text", async () => {
+    const approve = "Approve held: code review has 1 finding open on this head.";
+    const stopped = "Triage stopped waiting for CI to finish after 3 hours, so no action ran on its own.";
+    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: finding(2), taken: { blocks: ["code-review"], ...CODE_REVIEW }, stopped: ["ci"] };
+    const evaluateRules = { ...PASSED, verdict: "fail", feedback: `${FINDINGS}\n\n${WILL_REQUEST}`, actions: [APPROVE_DO, REQUEST_CHANGES], request: BLANKED };
+    const made = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: evaluateRules }, reviewScope: { output: { reviewed: true } } });
+    expect(made.actions).toContainEqual({ ...REQUEST_CHANGES, held: true, reason: stopped });
+    expect(made.request.comment).toBe(`${FINDINGS}\n\n${approve}\n\n${stopped}`);
+    expect(made.request.comment).not.toContain(WILL_REQUEST);
+    expect(made.feedback).toContain(FINDINGS);
+  });
+
+  test("a review that is still going to be posted does not get the verdict comment", async () => {
+    const made = await heldReview([APPROVE_DO, REQUEST_CHANGES], [], `${FINDINGS}\n\n${WILL_REQUEST}`);
+    expect(made.actions[1]).toEqual(REQUEST_CHANGES);
+    expect(made.request.comment).toBe("Approve held: code review has 1 finding open on this head.");
+    expect(made.request.comment).not.toContain(FINDINGS);
+    expect(made.feedback).toContain(WILL_REQUEST);
   });
 
   const CI_GREEN = [{ name: "ci", status: "completed", conclusion: "success" }];
