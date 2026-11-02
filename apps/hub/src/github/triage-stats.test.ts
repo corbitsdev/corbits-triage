@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { TriageStats, type TriageOutcomes } from "@corbits/triage-contracts";
 import type { OutcomeReader } from "./pr-outcomes.js";
 import { createTriageStats } from "./triage-stats.js";
+import { summaryOf } from "./verdict-row.js";
 
 const NOW = new Date("2026-10-14T12:00:00Z");
 const MEASURED: TriageOutcomes = {
@@ -87,4 +88,17 @@ test("a name on both hosts is measured once per host, with the grant and reads o
   for (const source of ["github", "bitbucket-datacenter"]) await handle(new Request(`http://hub.test/api/integrations/triage-stats/t?repo=o/r&source=${source}`), { tenantId: "t", principalId: "p" });
   expect(granted).toEqual(["github", "bitbucket-datacenter"]);
   expect(asked).toEqual(["github", "bitbucket-datacenter"]);
+});
+
+test("summaryOf records the mirror comment as detail.feedback so a verdict whose standing comment was blanked for a request-changes review is not stored as a draft comment", () => {
+  const trigger = { repo: "o/r", source: "github" as const, number: 8, headSha: "sha8", startedAt: NOW.toISOString() };
+  const base = {
+    repo: "o/r", number: 8, headSha: "sha8", verdict: "fail", state: "needs-author-update", actor: "author", humanGated: false, degraded: null,
+    feedback: "**Triage: Fail**\n\n@octocat, please address the following:\n- build failed",
+    checks: [], actions: [],
+  };
+  const blanked = summaryOf({ ...base, request: { repo: "o/r", number: 8, labels: [], owned: [], comment: "" } }, NOW.toISOString(), trigger, new Map(), undefined);
+  expect(blanked?.detail?.feedback).toBe("");
+  const standing = summaryOf({ ...base, request: { repo: "o/r", number: 8, labels: [], owned: [], comment: base.feedback } }, NOW.toISOString(), trigger, new Map(), undefined);
+  expect(standing?.detail?.feedback).toBe(base.feedback);
 });

@@ -139,8 +139,11 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
   return lines.length ? `${feedback}\n\n${lines.join("\n")}` : feedback;
 }
 
-/** A request-changes review the run will post is the comment; a skipped or held one leaves the verdict comment. */
-function postsRequestChanges(actions: readonly SuggestedAction[]): boolean {
+/**
+ * A request-changes review the run will post is what the mirror writes instead of the verdict comment. The verdict
+ * keeps that comment, so a later skipped or held review can show it again.
+ */
+export function postsRequestChanges(actions: readonly SuggestedAction[]): boolean {
   return actions.some((action) => action.kind === "request-changes" && !("skipped" in action) && !("held" in action));
 }
 
@@ -203,18 +206,20 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
   const automatic = it.automatic;
   const actions = suggestedDos(it, rendered, it.pack?.actions[rendered.verdict] ?? []);
   const shown = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
-  const feedback = postsRequestChanges(actions) ? "" : shown;
   // What reading the policy left out is said on every verdict, so the policy can be fixed.
   const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
   const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
   const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
   const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none", it.appLogin);
   const verdict = {
-    ...stamp(it, it.facts.headSha), ...rendered, labels, reasons, feedback, automatic, actions,
+    ...stamp(it, it.facts.headSha), ...rendered, labels, reasons, feedback: shown, automatic, actions,
     ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),
     ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
   };
-  return { ...verdict, request: toMirrorRequest(verdict, owned, it.source) };
+  const request = toMirrorRequest(verdict, owned, it.source);
+  // The blank is only what the mirror is told to write. Storing it would leave a later held or skipped review with nothing to show.
+  if (!postsRequestChanges(actions)) return { ...verdict, request };
+  return { ...verdict, request: { ...request, comment: "" } };
 }
 
 /** What `verdict` rendered, without what verdictFrom made of it on `it`. */

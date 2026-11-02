@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { counted } from "@corbits/common";
 import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, ThreadRead, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
-import { DO_NAMES } from "@corbits/triage-workflows/actions/evaluate";
+import { DO_NAMES, postsRequestChanges } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
 import { LIFETIME_MS, storedReviewer, TakeOutput } from "./manager.js";
@@ -121,11 +121,37 @@ const ClearedInput = type({
 
 type Action = Verdict["actions"][number];
 
-/** `verdict` with `note` closing its comment, as said on the pull request and kept with the verdict. */
+/**
+ * `verdict` with `note` closing its comment, as said on the pull request and kept with the verdict. A blank mirror
+ * comment means a request-changes review was going to be posted. Holding that step shows the verdict comment again,
+ * taken from `feedback`, which already carries earlier notes, rather than from a shorter comment a previous note wrote.
+ * That restored comment drops "Triage will request changes.", which was written while the review was still going to be posted.
+ */
 function noted(verdict: Verdict, note: string): Verdict {
-  const feedback = verdict.feedback ? `${verdict.feedback}\n\n${note}` : note;
-  const request = verdict.request && { ...verdict.request, comment: verdict.request.comment ? `${verdict.request.comment}\n\n${note}` : note };
+  const reviewHeld = !postsRequestChanges(verdict.actions) && verdict.actions.some((action) => action.kind === "request-changes" && "held" in action);
+  const kept = reviewHeld ? heldComment(verdict.feedback) : verdict.feedback;
+  const feedback = kept ? `${kept}\n\n${note}` : note;
+  const standing = reviewHeld ? kept : verdict.request?.comment;
+  const comment = standing ? `${standing}\n\n${note}` : note;
+  const request = verdict.request && { ...verdict.request, comment };
   return { ...verdict, feedback, ...(request && { request }) };
+}
+
+const WILL_PREFIX = "Triage will ";
+
+function withoutRequestChanges(line: string): string {
+  if (!line.startsWith(WILL_PREFIX) || !line.endsWith(".")) return line;
+  const names = line.slice(WILL_PREFIX.length, -1).split(", ");
+  if (!names.includes(DO_NAMES["request-changes"])) return line;
+  const kept = names.filter((name) => name !== DO_NAMES["request-changes"]);
+  return `${WILL_PREFIX}${kept.join(", ")}.`;
+}
+
+/** The verdict comment once request-changes is held. The Do that the review will still be posted is no longer true. */
+function heldComment(feedback: string): string {
+  const withoutAlone = feedback.replace(/\n\nTriage will request changes\.(?=\n\n|$)|(?<=\n)Triage will request changes\.\n|\nTriage will request changes\.$|^Triage will request changes\.(?:\n\n|\n|$)/, "");
+  if (withoutAlone !== feedback) return withoutAlone;
+  return feedback.split("\n").map(withoutRequestChanges).join("\n");
 }
 
 /**
