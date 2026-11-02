@@ -9,6 +9,9 @@ export const INCOMPLETE_NOTE = "This review did not read the whole change; appro
 /** Shown with a finding none of whose file's lines could be read. */
 export const UNVERIFIED_FINDING = "Not checked against the file";
 
+/** The last line of every finding comment: Triage stays unfinished until someone resolves it. */
+const RESOLVE_FINDING = "Resolve this comment. Triage will not finish while it is open.";
+
 /** Why a merge waits on the review threads, given who opened each unresolved one; undefined when none is. */
 export function threadsHold(openers: readonly string[]): string | undefined {
   if (openers.length === 0) return undefined;
@@ -108,12 +111,12 @@ function unverifiedNote(finding: CodeReviewComment): string[] {
 
 /** An inline comment's text for a finding shown at `at`. */
 export function inlineFindingText(finding: CodeReviewComment, at: FindingLines): string {
-  return [findingHeadline(finding), finding.body, ...alsoCovers(finding, at), ...unverifiedNote(finding)].join("\n\n");
+  return [findingHeadline(finding), finding.body, ...alsoCovers(finding, at), ...unverifiedNote(finding), RESOLVE_FINDING].join("\n\n");
 }
 
 /** A finding the diff does not show, as a section of the review's summary. */
 export function findingSection(finding: CodeReviewComment): string {
-  return [`${findingHeadline(finding)} · \`${finding.path}:${lineRange(finding)}\``, finding.body, ...unverifiedNote(finding)].join("\n\n");
+  return [`${findingHeadline(finding)} · \`${finding.path}:${lineRange(finding)}\``, finding.body, ...unverifiedNote(finding), RESOLVE_FINDING].join("\n\n");
 }
 
 /**

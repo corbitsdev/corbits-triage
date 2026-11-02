@@ -288,8 +288,8 @@ test("PostgreSQL: a code review is sent once per head as one COMMENT review, inl
   expect(sentReviews).toEqual([{
     commit_id: HEAD,
     event: "COMMENT",
-    body: "Fixes the widget.\n\nStopped early: the reviewer reached its limit for reading the repository.\n\nThis review did not read the whole change; approve and merge are held until a review does.\n\n**P3 · Stale import** · `src/other.ts:5`\n\nRemove it.\n\n<!-- corbits-code-review -->",
-    comments: [{ path: "src/widget.ts", line: 1, side: "RIGHT", body: "**P1 · Unchecked input**\n\nValidate it first.\n\nAlso lines 2–3." }],
+    body: "Fixes the widget.\n\nStopped early: the reviewer reached its limit for reading the repository.\n\nThis review did not read the whole change; approve and merge are held until a review does.\n\n**P3 · Stale import** · `src/other.ts:5`\n\nRemove it.\n\nResolve this comment. Triage will not finish while it is open.\n\n<!-- corbits-code-review -->",
+    comments: [{ path: "src/widget.ts", line: 1, side: "RIGHT", body: "**P1 · Unchecked input**\n\nValidate it first.\n\nAlso lines 2–3.\n\nResolve this comment. Triage will not finish while it is open." }],
   }]);
 
   const again = await prActions(send, member("usr_approver"));

@@ -384,8 +384,8 @@ describe("sendCodeReview", () => {
       if (path.includes("/reviews?per_page")) return [];
       if (path.includes("/pulls/8/comments?per_page")) {
         return [
-          { id: 32, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 12, original_line: 13, body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._" },
-          { id: 31, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 10, original_line: 12, body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9." },
+          { id: 32, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 12, original_line: 13, body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._\n\nResolve this comment. Triage will not finish while it is open." },
+          { id: 31, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 10, original_line: 12, body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9.\n\nResolve this comment. Triage will not finish while it is open." },
         ];
       }
       if (path.includes("/files?per_page")) return [{ filename: "src/a.ts", status: "modified", patch: PATCH }];
@@ -400,10 +400,10 @@ describe("sendCodeReview", () => {
     expect(requests.find((request) => request.method === "POST")?.body).toEqual({
       commit_id: "abc123",
       event: "COMMENT",
-      body: "**Between hunks** · `src/a.ts:20–30`\n\nC.\n\n_Not checked against the file._\n\n<!-- corbits-code-review -->",
+      body: "**Between hunks** · `src/a.ts:20–30`\n\nC.\n\n_Not checked against the file._\n\nResolve this comment. Triage will not finish while it is open.\n\n<!-- corbits-code-review -->",
       comments: [
-        { path: "src/a.ts", start_line: 10, start_side: "RIGHT", line: 12, side: "RIGHT", body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9." },
-        { path: "src/a.ts", start_line: 12, start_side: "RIGHT", line: 13, side: "RIGHT", body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._" },
+        { path: "src/a.ts", start_line: 10, start_side: "RIGHT", line: 12, side: "RIGHT", body: "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9.\n\nResolve this comment. Triage will not finish while it is open." },
+        { path: "src/a.ts", start_line: 12, start_side: "RIGHT", line: 13, side: "RIGHT", body: "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._\n\nResolve this comment. Triage will not finish while it is open." },
       ],
     });
   });
