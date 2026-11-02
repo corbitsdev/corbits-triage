@@ -2,7 +2,7 @@
   <img src="https://github.com/corbitsdev/corbits-triage/raw/main/apps/web/public/corbits-mark.svg" alt="Corbits Triage" width="96">
 </p>
 <h1 align="center">Corbits Triage</h1>
-<p align="center">For each pull request, you get Pass, Fail or Unsure, the reasons, and the actions your repository's policy names.</p>
+<p align="center">Take control of your PRs and your dev team</p>
 <p align="center">
   <a href="https://github.com/corbitsdev/corbits-triage/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/corbitsdev/corbits-triage/actions/workflows/ci.yml/badge.svg"></a>
 </p>
