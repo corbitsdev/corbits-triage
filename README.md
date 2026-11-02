@@ -21,9 +21,9 @@
 2. **Add a policy.** `.corbits-triage.yml` on the default branch, or **Start a policy file**.
 3. **Save a decision model.** In Settings, not as a hub variable.
 4. **Turn triage on** for the repository.
-5. **Read the queue.** Verdict, reasons, and the actions the policy names.
+5. **Read the queue.** Verdict, reasons, and the actions the policy names. Triage posts its verdict and runs the actions the policy names on its own; turn that off in **Settings → Triage** to hold them for a click instead.
 
-Nothing runs until triage is on for the repository and a decision model is saved.
+Nothing runs until `.corbits-triage.yml` is on the default branch, triage is on for the repository, and a decision model is saved.
 
 ## Quick start
 
