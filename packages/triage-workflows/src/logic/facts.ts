@@ -63,6 +63,8 @@ export function buildFacts(
   const changesRequested = reviewersWith(latest, "CHANGES_REQUESTED");
   const association = authorAssociation(pr.authorAssociation);
   const authorKind = authorKindOf(association, pr.authorBot === true);
+  const headSha = pr.sha ?? "";
+  const ownRequests = reviews.filter((r) => r.triageRequest && r.state === "CHANGES_REQUESTED");
   return {
     repo,
     number,
@@ -70,7 +72,7 @@ export function buildFacts(
     author,
     ...(authorKind ? { authorKind } : {}),
     tier: tierOf(association, author, policy.approvedAuthors),
-    headSha: pr.sha ?? "",
+    headSha,
     state: pr.state === "closed" ? "closed" : "open",
     draft: pr.draft === true,
     mergeable: pr.mergeable ?? null,
@@ -81,9 +83,10 @@ export function buildFacts(
     reviewers: pr.reviewers ?? [],
     approvals: reviewersWith(latest, "APPROVED").length,
     changesRequested,
-    triageRequested: reviews.some((r) => r.triageRequest && r.state === "CHANGES_REQUESTED"),
-    reviewAnswered: reviewAnswered(reviews, comments, author, pr.sha ?? "", changesRequested),
-    reviewedBy: reviewedOnHead(reviews, pr.sha ?? ""),
+    triageRequested: ownRequests.length > 0,
+    triageRequestedOnHead: ownRequests.some((r) => r.commitId === headSha),
+    reviewAnswered: reviewAnswered(reviews, comments, author, headSha, changesRequested),
+    reviewedBy: reviewedOnHead(reviews, headSha),
     labels: pr.labels ?? [],
     assignees: pr.assignees ?? [],
     changedFiles: Number(pr.changedFiles ?? 0),

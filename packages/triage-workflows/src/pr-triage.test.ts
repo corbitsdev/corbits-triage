@@ -119,6 +119,12 @@ function fakeGithub({ history = [], missing = false, unreadFiles = false, files 
     }
     if (method === "POST" && path === `/repos/${REPO}/issues/8/labels`) labels.push(...JSON.parse(String(init?.body)).labels);
     if (method === "DELETE" && path.startsWith(`/repos/${REPO}/issues/8/labels/`)) labels.splice(labels.indexOf(decodeURIComponent(path.slice(path.lastIndexOf("/") + 1))), 1);
+    const removed = method === "DELETE" && /^\/repos\/acme\/widgets\/issues\/comments\/(\d+)$/.exec(path);
+    if (removed) {
+      const index = comments.findIndex((comment) => comment.id === Number(removed[1]));
+      if (index >= 0) comments.splice(index, 1);
+      return new Response(null, { status: 204 });
+    }
     if (method === "GET") return Response.json([]);
     return Response.json({});
   }
@@ -879,7 +885,8 @@ describe("pr-triage body", () => {
     expect(posted && "skipped" in posted).toBe(false);
     expect(posted && "held" in posted).toBe(false);
     expect((verdict as Verdict).labelled).toContainEqual(expect.objectContaining({ check: "max-lines-changed-per-file", result: "fail" }));
-    expect((verdict as Verdict).request.comment).toBe("");
+    expect((verdict as Verdict).request.comment).toContain("please address");
+    expect((verdict as Verdict).request.comment).toContain("Notes:");
     expect(github.reviews).toEqual([expect.objectContaining({ state: "CHANGES_REQUESTED", body: expect.stringContaining("Triage requests changes:") })]);
     expect(github.comments.filter((comment) => comment.body.includes("please address") || comment.body.includes("Notes:"))).toEqual([]);
   });

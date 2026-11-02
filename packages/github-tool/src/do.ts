@@ -25,6 +25,7 @@ import {
   changesRequestedOnHead,
   createIssueComment,
   createReview,
+  deleteTriageComments,
   dismissDoChangeRequests,
   mergePr,
   mirror,
@@ -141,9 +142,16 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
       if (!("body" in target)) throw new Error("this request-changes Do has no body");
       onHead(pr.sha, request, step);
       const reviewId = await changesRequestedOnHead(gh, { repo, number, sha: step.headSha, login });
-      if (reviewId !== undefined) return { status: "satisfied", result: { reviewId } };
+      if (reviewId !== undefined) {
+        // Already on this head, so it is not posted again. Drop the verdict comment a later mirror may have put back.
+        await deleteTriageComments(gh, repo, number, login);
+        return { status: "satisfied", result: { reviewId } };
+      }
       const body = `${REQUEST_CHANGES_DO_MARKER}\n${target.body}`;
-      return { status: "done", result: await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha }) };
+      const posted = await createReview(gh, { repo, number, body, event: "REQUEST_CHANGES", commitId: step.headSha });
+      // The review is the comment now. A write that did not happen leaves the standing verdict comment.
+      await deleteTriageComments(gh, repo, number, login);
+      return { status: "done", result: posted };
     }
     case "close": {
       onHead(pr.sha, request, step);

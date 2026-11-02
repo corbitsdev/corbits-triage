@@ -78,6 +78,8 @@ export interface PrFacts {
   approvals: number;
   changesRequested: string[];
   triageRequested: boolean;
+  /** Triage's own request-changes review of this head, still standing. */
+  triageRequestedOnHead: boolean;
   reviewAnswered: boolean;
   reviewedBy: string[];
   labels: string[];

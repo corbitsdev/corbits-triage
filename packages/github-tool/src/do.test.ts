@@ -9,7 +9,7 @@ type FakeThread = { isResolved: boolean; isOutdated: boolean; login: string; rev
 
 const APP = { login: "corbits-triage[bot]", type: "Bot" };
 
-function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[]; threads?: FakeThread[] | "refused" } = {}) {
+function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: string[]; approvals?: FakeReview[]; comments?: FakeComment[]; checkRuns?: unknown[]; threads?: FakeThread[] | "refused"; failReview?: boolean } = {}) {
   const pr = { state: "open", merged: false, mergeable: true, head: { sha: "abc0000000000000000000000000000000000000" }, base: { repo: { id: 1 } }, labels: (seed.labels ?? []).map((name) => ({ name })), assignees: [], requested_reviewers: (seed.reviewers ?? []).map((login) => ({ login })) };
   const comments = seed.comments ?? [];
   const reviews: FakeReview[] = [...(seed.reviews ?? []).map((login, index) => ({ id: index + 1, user: { login, type: "User" }, state: "APPROVED", commit_id: "abc0000000000000000000000000000000000000" })), ...(seed.approvals ?? [])];
@@ -28,6 +28,7 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
       return Response.json(pr);
     }
     if (path.endsWith("/pulls/8/reviews")) {
+      if (method === "POST" && seed.failReview) return Response.json({ message: "review refused" }, { status: 422 });
       reviews.push({ id: reviews.length + 100, user: APP, state: body.event === "APPROVE" ? "APPROVED" : "CHANGES_REQUESTED", commit_id: body.commit_id, body: body.body });
       return Response.json(reviews.at(-1));
     }
@@ -62,13 +63,19 @@ function fakeGithub(seed: { labels?: string[]; reviewers?: string[]; reviews?: s
       pr.state = "closed";
       return Response.json({ merged: true, sha: "merged" });
     }
+    const removed = method === "DELETE" && /^\/repos\/acme\/widgets\/issues\/comments\/(\d+)$/.exec(path);
+    if (removed) {
+      const index = comments.findIndex((comment) => comment.id === Number(removed[1]));
+      if (index >= 0) comments.splice(index, 1);
+      return new Response(null, { status: 204 });
+    }
     if (path.endsWith("/pulls/8/requested_reviewers")) {
       pr.requested_reviewers.push(...body.reviewers.map((login: string) => ({ login })));
       return Response.json(pr);
     }
     throw new Error(`unexpected ${method} ${path}`);
   }
-  return { gh: gh satisfies GithubFetch, writes };
+  return { gh: gh satisfies GithubFetch, writes, comments };
 }
 
 function step(kind: DoStep["kind"], target: ResolvedTarget): DoStep {
@@ -244,6 +251,50 @@ describe("executeDo", () => {
   ])("%s is not written once the pull request has moved on", async (_, task) => {
     const { gh, writes } = fakeGithub();
     await expect(run(gh, { ...task, headSha: "older" })).rejects.toBeInstanceOf(HeadMovedError);
+    expect(writes).toEqual([]);
+  });
+
+  test("request-changes drops the standing verdict comment only after the review is posted", async () => {
+    const verdict = { id: 4, user: APP, body: "<!-- corbits-triage -->\n**Triage: Fail**" };
+    const reviewNote = { id: 5, user: APP, body: "<!-- corbits-request-changes -->\nFix it" };
+    const copied = { id: 6, user: { login: "mallory", type: "User" }, body: "<!-- corbits-triage -->\nCopied" };
+    const { gh, writes, comments } = fakeGithub({ comments: [verdict, reviewNote, copied] });
+    const task = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
+    expect(await run(gh, task)).toMatchObject({ status: "done" });
+    expect(comments.map((comment) => comment.id)).toEqual([5, 6]);
+    expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual([
+      "POST /repos/acme/widgets/pulls/8/reviews",
+      "DELETE /repos/acme/widgets/issues/comments/4",
+    ]);
+  });
+
+  test("a second request-changes deletes the verdict comment and does not post another review", async () => {
+    const verdict = { id: 4, user: APP, body: "<!-- corbits-triage -->\n**Triage: Fail**" };
+    const copied = { id: 6, user: { login: "mallory", type: "User" }, body: "<!-- corbits-triage -->\nCopied" };
+    const { gh, writes, comments } = fakeGithub({ comments: [verdict, copied] });
+    const task = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
+    expect(await run(gh, task)).toMatchObject({ status: "done" });
+    comments.push({ id: 9, user: APP, body: "<!-- corbits-triage -->\n**Triage: Fail**" });
+    writes.length = 0;
+    expect(await run(gh, task)).toEqual({ status: "satisfied", result: { reviewId: 100 } });
+    expect(comments.map((comment) => comment.id)).toEqual([6]);
+    expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual(["DELETE /repos/acme/widgets/issues/comments/9"]);
+  });
+
+  test("a request-changes review GitHub refuses leaves the verdict comment", async () => {
+    const verdict = { id: 4, user: APP, body: "<!-- corbits-triage -->\n**Triage: Fail**" };
+    const { gh, writes, comments } = fakeGithub({ comments: [verdict], failReview: true });
+    await expect(run(gh, step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" }))).rejects.toThrow("422");
+    expect(comments.map((comment) => comment.id)).toEqual([4]);
+    expect(writes.map((write) => write.method)).toEqual(["POST"]);
+  });
+
+  test("a request-changes write skipped because the head moved leaves the verdict comment", async () => {
+    const verdict = { id: 4, user: APP, body: "<!-- corbits-triage -->\n**Triage: Fail**" };
+    const { gh, writes, comments } = fakeGithub({ comments: [{ ...verdict }] });
+    const task = step("request-changes", { body: "Triage requests changes:\n- CI: CI failed" });
+    await expect(run(gh, { ...task, headSha: "older" })).rejects.toBeInstanceOf(HeadMovedError);
+    expect(comments.map((comment) => comment.id)).toEqual([4]);
     expect(writes).toEqual([]);
   });
 });

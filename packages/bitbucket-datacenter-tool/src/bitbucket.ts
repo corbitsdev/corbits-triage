@@ -160,7 +160,7 @@ async function writeTriageComment(bb: BitbucketFetch, input: { repo: string; num
   return writeUnheadedComment(host, LINK_REFERENCE_MARKERS, LINK_REFERENCE_MARKER, current, input.body, input.keepVerdictOn);
 }
 
-async function deleteTriageComments(bb: BitbucketFetch, repo: string, number: number, user: TokenUser) {
+export async function deleteTriageComments(bb: BitbucketFetch, repo: string, number: number, user: TokenUser) {
   for (const comment of marked(await listComments(bb, repo, number), user)) {
     await json(bb, `${prPath(repo, number)}/comments/${comment.id}?version=${comment.version}`, { method: "DELETE" });
   }

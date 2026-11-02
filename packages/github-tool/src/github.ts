@@ -89,7 +89,7 @@ function markedComment(row: MarkedRow): MarkedComment {
   return { id: row.id, body: row.body, ...(row.updated_at && { updatedAt: row.updated_at }) };
 }
 
-async function deleteTriageComments(gh: GithubFetch, repo: string, number: number, login: string) {
+export async function deleteTriageComments(gh: GithubFetch, repo: string, number: number, login: string) {
   for (const candidate of marked(await issueComments(gh, repo, number), login)) {
     const path = `/repos/${repo}/issues/comments/${candidate.id}`;
     const res = await gh(path, { method: "DELETE", headers: { accept: "application/vnd.github+json" } });

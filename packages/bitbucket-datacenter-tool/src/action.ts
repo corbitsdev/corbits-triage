@@ -6,6 +6,7 @@ import {
   addReviewers,
   createComment,
   declinePr,
+  deleteTriageComments,
   listComments,
   mergePr,
   mergeVeto,
@@ -117,9 +118,16 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
       onHead(pr.sha, request, step);
       const me = await user();
       if (pr.author.id === me.id) throw new ActionNotRunnableError(OWN_PULL_REQUEST);
-      if (statusOf(pr, me) === "NEEDS_WORK") return { status: "satisfied", result: { status: "NEEDS_WORK" } };
+      if (statusOf(pr, me) === "NEEDS_WORK") {
+        // Already set, so it is not posted again. Drop the verdict comment a later mirror may have put back.
+        await deleteTriageComments(bb, repo, number, me);
+        return { status: "satisfied", result: { status: "NEEDS_WORK" } };
+      }
       const comment = await postOnce(bb, { repo, number, userId: me.id, marker: actionMarker(step.effectId), body: target.body });
-      return { status: "done", result: { ...(comment.result as object), ...(await setStatus(bb, { repo, number, slug: me.slug, status: "NEEDS_WORK" })) } };
+      const status = await setStatus(bb, { repo, number, slug: me.slug, status: "NEEDS_WORK" });
+      // Needs-work is the comment now. A write that did not happen leaves the standing verdict comment.
+      await deleteTriageComments(bb, repo, number, me);
+      return { status: "done", result: { ...(comment.result as object), ...status } };
     }
     case "close": {
       onHead(pr.sha, request, step);

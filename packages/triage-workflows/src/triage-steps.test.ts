@@ -398,7 +398,7 @@ describe("judge on a blocked pull request", () => {
     expect(verdict.checks.find((c) => c.check === "ci-green")).toMatchObject({ result: "pass", reason: "no checks configured", evidence: [] });
   });
 
-  test("a request-changes review that will post blanks only the mirror comment, and a later held or skipped one shows the verdict comment again, including Notes", async () => {
+  test("a planned request-changes review keeps the verdict comment for the mirror, and a later held or skipped one still shows it, including Notes", async () => {
     const checkPack: CheckPack = {
       ...emptyPack("acme/widgets"),
       checks: { "ci-green": { enabled: true }, "max-lines-changed-per-file": { enabled: true, onFail: "label", maxFileLines: 1 } },
@@ -427,10 +427,17 @@ describe("judge on a blocked pull request", () => {
     const review = posted.actions.find((action) => action.kind === "request-changes");
     expect(review && "skipped" in review).toBe(false);
     expect(review && "held" in review).toBe(false);
-    // The review is still the comment the mirror will write, so the standing comment is not posted beside it.
-    expect(posted.request.comment).toBe("");
+    // The review is not posted yet, so the mirror still carries the standing verdict comment.
+    expect(posted.request.comment).toContain("please address");
+    expect(posted.request.comment).toContain("Notes:");
     expect(posted.feedback).toContain("please address");
     expect(posted.feedback).toContain("Notes:");
+    const again = verdictOnFacts({ ...item, facts: { ...item.facts, triageRequestedOnHead: true } }, posted);
+    expect(again.actions).toContainEqual(expect.objectContaining({ kind: "request-changes" }));
+    expect(again.actions.some((action) => action.kind === "request-changes" && ("skipped" in action || "held" in action))).toBe(false);
+    expect(again.request.comment).toBe("");
+    expect(again.feedback).toContain("please address");
+    expect(again.feedback).toContain("Notes:");
     const held = verdictOnFacts({ ...item, automatic: ["comment", "labels"] }, posted);
     expect(held.actions).toContainEqual(expect.objectContaining({ kind: "request-changes", held: true }));
     expect(held.feedback).toContain("please address");
@@ -442,6 +449,12 @@ describe("judge on a blocked pull request", () => {
     expect(skipped.actions).toContainEqual(expect.objectContaining({ kind: "request-changes", skipped: true }));
     expect(skipped.request.comment).toContain("please address");
     expect(skipped.request.comment).toContain("Notes:");
+    const heldOnHead = verdictOnFacts({ ...item, automatic: ["comment", "labels"], facts: { ...item.facts, triageRequestedOnHead: true } }, posted);
+    expect(heldOnHead.actions).toContainEqual(expect.objectContaining({ kind: "request-changes", held: true }));
+    expect(heldOnHead.request.comment).toContain("please address");
+    const skippedOnHead = verdictOnFacts({ ...item, pack: skippedPack, facts: { ...item.facts, triageRequestedOnHead: true } }, posted);
+    expect(skippedOnHead.actions).toContainEqual(expect.objectContaining({ kind: "request-changes", skipped: true }));
+    expect(skippedOnHead.request.comment).toContain("please address");
   });
 });
 
