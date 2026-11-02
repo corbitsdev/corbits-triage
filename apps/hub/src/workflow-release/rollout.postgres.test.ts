@@ -660,6 +660,84 @@ test("a failed route check that is not a disconnect does not replace the listene
   ]);
 });
 
+test("a listener whose deploy or sidecar restore stays unfinished past the start deadline is replaced once, and finishing resets the clock", async () => {
+  let clock = 1_000;
+  let deployed = false;
+  const listeners = { github: { runId: "run_github" } };
+  const rolled: Array<RepoSource[]> = [];
+  const entered = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  const replaced = Promise.withResolvers<void>();
+  const rollout = {
+    async roll(_tenantId: string, redeploy: ReadonlySet<RepoSource>): Promise<RollOutcome> {
+      rolled.push([...redeploy].sort());
+      entered.resolve();
+      await gate.promise;
+      listeners.github = { runId: "run_github_next" };
+      replaced.resolve();
+      return SUCCEEDED;
+    },
+  };
+  const logged: Record<string, unknown>[] = [];
+  const queue = createRolloutQueue(rollout, { quietMs: 0, retryMs: 60_000, concurrency: 2, random: Math.random }, function ignore() {});
+  const watch = createListenerWatch({
+    async connectedSources() {
+      return ["github"];
+    },
+    async listener() {
+      return listeners.github;
+    },
+    async stuck() {
+      return [];
+    },
+    async allocation(runId) {
+      if (!deployed) return undefined;
+      return { allocationId: runId === "run_github" ? "alc_github" : "alc_next", generation: 2, maxDisconnectedMs: 15 * 60_000 };
+    },
+    async routable() {
+      return true;
+    },
+    ensure() {
+      throw new Error("The host has a listener.");
+    },
+    replace: queue.replace,
+    now() {
+      return new Date(clock);
+    },
+    log(entry) {
+      logged.push(entry);
+    },
+  });
+  await watch("tnt_restore");
+  clock = 1_000 + START_DEADLINE_MS;
+  await watch("tnt_restore");
+  expect(rolled).toEqual([]);
+  deployed = true;
+  await watch("tnt_restore");
+  deployed = false;
+  clock = 10_000 + START_DEADLINE_MS;
+  await watch("tnt_restore");
+  clock += START_DEADLINE_MS;
+  await watch("tnt_restore");
+  expect(rolled).toEqual([]);
+  clock += 1;
+  await watch("tnt_restore");
+  await entered.promise;
+  await watch("tnt_restore");
+  expect(rolled).toEqual([["github"]]);
+  gate.resolve();
+  await replaced.promise;
+  await Bun.sleep(10);
+  await watch("tnt_restore");
+  clock += START_DEADLINE_MS;
+  await watch("tnt_restore");
+  await Bun.sleep(10);
+  expect(rolled).toEqual([["github"]]);
+  expect(logged).toEqual([
+    { level: "warn", msg: "listener_unroutable", tenantId: "tnt_restore", source: "github", deployment: "run_github", unstartedMs: START_DEADLINE_MS + 1, reason: "its deploy or sidecar restore did not finish within five minutes" },
+  ]);
+});
+
 test("PostgreSQL: a person keeps the Deployer role until a roll leaves every host's listener running", async () => {
   const { tenantId, principalId, fake, rollout } = await workspace("revoke");
   await rollout.roll(tenantId, NO_REDEPLOY);
