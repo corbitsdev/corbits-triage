@@ -6,7 +6,7 @@ import { deriveState, type PrFacts } from "./checks.js";
 import { buildFacts } from "./facts.js";
 import { NO_FACTS } from "./item.js";
 import { patternsResult } from "./patterns.js";
-import { MAX_MIRROR_COMMENT_BYTES, renderVerdict } from "./render.js";
+import { inlineCode, MAX_MIRROR_COMMENT_BYTES, renderVerdict } from "./render.js";
 
 const facts: PrFacts = {
   ...NO_FACTS,
@@ -85,7 +85,7 @@ describe("the request-changes Do", () => {
 
   test("lists every failed rule that is the author's to fix, and stops wanting changes once they are fixed", () => {
     expect(suggested({ checks: "failure", failingChecks: ["build"], mergeable: false })).toEqual([
-      expect.objectContaining({ kind: "request-changes", list: "fail", target: { body: "Triage requests changes:\n- CI green: required checks are failing\n  - build\n- Merge conflicts: merge conflicts with base" } }),
+      expect.objectContaining({ kind: "request-changes", list: "fail", target: { body: `Triage requests changes:\n- CI green: required checks are failing\n  - ${inlineCode("build")}\n- Merge conflicts: merge conflicts with base` } }),
     ]);
     expect(changesWanted(input({}).input)).toBe(false);
   });
@@ -120,7 +120,7 @@ describe("the request-changes Do", () => {
     const patterns = Object.fromEntries(using.custom.filter(isPatternsCheck).map((rule) => [rule.id, patternsResult(rule, files, { "src/a.ts": content }, "github")]));
     const actions = suggested({ files, patterns, checks: "success", mergeable: true }, using);
     const body = reviewBody(actions);
-    expect(body).toBe("Triage requests changes:\n- Conventions: added code matches a code pattern\n  - src/a.ts:1 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.\n  - src/a.ts:2-3 nested-ternary: Nested ternary; use if statements or a lookup.");
+    expect(body).toBe(`Triage requests changes:\n- Conventions: added code matches a code pattern\n  - ${inlineCode("src/a.ts:1 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.")}\n  - ${inlineCode("src/a.ts:2-3 nested-ternary: Nested ternary; use if statements or a lookup.")}`);
     expect(body).not.toContain("vendor/c.ts");
     expect(body).not.toContain("Style notes");
     expect(actions).toEqual([expect.objectContaining({ kind: "request-changes", list: "fail" })]);
@@ -129,7 +129,7 @@ describe("the request-changes Do", () => {
   test("cuts the review at the byte cap and counts the finding lines left out", () => {
     const names = Array.from({ length: 900 }, (_, index) => `check-${String(index).padStart(4, "0")}-${"x".repeat(60)}`);
     const body = reviewBody(suggested({ checks: "failure", failingChecks: names, mergeable: false }));
-    const full = ["Triage requests changes:", "- CI green: required checks are failing", ...names.map((name) => `  - ${name}`), "- Merge conflicts: merge conflicts with base"];
+    const full = ["Triage requests changes:", "- CI green: required checks are failing", ...names.map((name) => `  - ${inlineCode(name)}`), "- Merge conflicts: merge conflicts with base"];
     const lines = body.split("\n");
     const trailer = lines.at(-1) ?? "";
     const prefix = lines.slice(0, -1);

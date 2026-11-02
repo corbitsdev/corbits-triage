@@ -3,7 +3,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
 import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type RepoSource, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
-import { authorFailures, bounded, isLabelledFinding } from "./render.js";
+import { authorFailures, bounded, inlineCode, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
 import { unrunnable } from "./execute-do.js";
 
@@ -93,9 +93,9 @@ function changesFor({ checks, pack }: Pick<ActionInput, "checks" | "pack">): Che
 
 function findingLines(check: CheckResult): string[] {
   const skipped = check.skipped;
-  if (skipped === undefined) return check.evidence.map((item) => `  - ${item}`);
+  if (skipped === undefined) return check.evidence.map((item) => `  - ${inlineCode(item)}`);
   const omitted = new Set(skipped);
-  return check.evidence.filter((item) => !omitted.has(item)).map((item) => `  - ${item}`);
+  return check.evidence.filter((item) => !omitted.has(item)).map((item) => `  - ${inlineCode(item)}`);
 }
 
 /** Only what the author must fix is requested; anything else waits on a maintainer, not on the author. */

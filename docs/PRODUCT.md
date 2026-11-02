@@ -257,8 +257,10 @@ pull request is unresolved, and while Triage cannot read the threads. Threads
 on Triage's own code review findings do not count; code review's own rule
 covers them. Resolving the last thread lets the merge go ahead and releases
 no other action. Branch protection stays the
-backstop. Request changes lists the failed rules, once per head, each finding
-naming the rule and the line or range, and is dismissed once none still fails.
+backstop. Request changes lists the failed rules, once per head, and under each
+what that rule found. A code-pattern finding names the pattern and the line or
+range. Other rules list what they found, such as a failing check's name, or
+nothing. It is dismissed once none still fails.
 
 ### In progress
 
