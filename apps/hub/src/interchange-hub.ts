@@ -202,7 +202,7 @@ export async function createInterchangeHub({
   // a receiving deployment's definition. The E2E test seeds fixtures
   // directly through this service object.
   const httpRegistries = new Map([
-    ["npmjs", { url: "https://registry.npmjs.org" }],
+    ["npmjs", { url: settings.npmRegistryUrl ?? "https://registry.npmjs.org" }],
   ]);
 
   const assetService = createAssetService({

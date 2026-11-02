@@ -97,6 +97,7 @@ const HubEnvSchema = type({
   "HOME?": "string",
   "TMPDIR?": "string",
   "DB_STATEMENT_TIMEOUT_MS?": "string.integer",
+  "NPM_REGISTRY_URL?": "string.url",
 });
 
 export type HubEnv = typeof HubEnvSchema.infer;
@@ -360,6 +361,7 @@ export type InterchangeSettings = {
   sidecarLink: { requestTimeoutMs?: number; mailHoldTTLMs: number; mailAckRetryIntervalMs: number; mailAckMaxRetries: number };
   sidecarWebSocketUrl: string;
   defaultLifecyclePolicy: ResolvedWorkflowLifecyclePolicy;
+  npmRegistryUrl?: string;
 };
 
 function numberOr(value: string | undefined, stock: number): number {
@@ -399,5 +401,6 @@ export function interchangeSettings(env: HubEnv): InterchangeSettings {
       // Run history lives on the hub, so an ended run's sidecar has nothing left to keep.
       capacityRetention: { completed: "0s", failed: "0s", cancelled: "0s" },
     },
+    ...(env.NPM_REGISTRY_URL !== undefined && { npmRegistryUrl: env.NPM_REGISTRY_URL }),
   };
 }

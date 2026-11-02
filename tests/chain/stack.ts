@@ -13,6 +13,7 @@ import { DECISION_MODEL_ALIAS, DEFAULT_TIMINGS, INFERENCE_PROVIDER, TIMING_VARIA
 import { currentDeployment, INFERENCE_CREDENTIAL_NAME, patchAppConfig, readDeployedVersions } from "../../apps/web/src/lib/hub-api.ts";
 import { connectGithubApp } from "../../apps/web/src/lib/github-manifest.ts";
 import type { FakeGithub } from "./github.ts";
+import { fakeNpmRegistry } from "./npm-registry.ts";
 
 const ROOT = resolve(import.meta.dir, "../..");
 /** The logs of every chain file, kept after the run for CI to upload; `tmp/` is gitignored. */
@@ -121,6 +122,8 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const logFile = join(logDir, "hub.log");
   writeFileSync(logFile, "");
   console.log(`Hub log: ${logFile}`);
+  // Keep npm fetches off the public registry so chain tests reach no outside service.
+  const npmRegistry = fakeNpmRegistry();
   const child = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
     cwd: ROOT,
     env: {
@@ -137,6 +140,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
       HUB_MAIL_HOLD_TTL_MS: String(MAIL_HOLD_MS),
       // Every sidecar a local process, as on a hub without Docker, so each reaches the fake GitHub and model on loopback.
       DOCKER_HOST: "unix:///nonexistent/docker.sock",
+      NPM_REGISTRY_URL: npmRegistry.origin,
       ...env,
     },
     stdin: "ignore",
@@ -149,6 +153,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
     child.kill("SIGTERM");
     await Promise.race([child.exited, Bun.sleep(STOP_MS)]);
     if (child.exitCode === null) child.kill("SIGKILL");
+    npmRegistry.stop();
     rmSync(dataDir, { recursive: true, force: true });
   }
   const deadline = Date.now() + READY_MS;
