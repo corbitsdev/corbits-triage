@@ -311,7 +311,7 @@ describe("pr-triage body", () => {
     const pack: CheckPack = { ...emptyPack(REPO), custom: [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }] };
     const { path, verdict } = await triage(pack, { files, contents });
     expect(path).toEqual(RULES_PATH);
-    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 Invented fallback `?? 0`; handle the missing value instead.", "src/build/b.ts:2 Invented fallback `?? 0`; handle the missing value instead."] });
+    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:2 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.", "src/build/b.ts:2 zero-fallback: Invented fallback `?? 0`; handle the missing value instead."] });
     const unread = await triage(pack, { files });
     expect((unread.verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed" });
   });
@@ -343,7 +343,7 @@ describe("pr-triage body", () => {
     const contents = { "src/a.ts": "const a = 1;\n", "src/a%E2%80%8B.ts": "const b = y ?? 0;\n" };
     const pack: CheckPack = { ...emptyPack(REPO), custom: [{ id: "conventions", name: "Conventions", group: "pull-request", kind: "code-patterns", presets: ["convention"], patterns: [] }] };
     const { verdict } = await triage(pack, { files, contents });
-    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:1 Invented fallback `?? 0`; handle the missing value instead."] });
+    expect((verdict as Verdict).checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: ["src/a.ts:1 zero-fallback: Invented fallback `?? 0`; handle the missing value instead."] });
   });
 
   test("a reference-style link in the body still links the issue", async () => {
@@ -863,6 +863,46 @@ describe("pr-triage body", () => {
     github.pr.ci = "success";
     await triage(pack, { github });
     expect(github.reviews).toEqual([expect.objectContaining({ commit_id: "abc0000000000000000000000000000000000000", state: "DISMISSED" })]);
+  });
+
+  test("failing CI that requests changes posts the review and not a verdict comment", async () => {
+    const github = fakeGithub({ files: [{ ...FLAG, additions: 2 }] });
+    github.pr.ci = "failure";
+    const pack: CheckPack = {
+      ...emptyPack(REPO),
+      checks: { "ci-green": { enabled: true }, "max-lines-changed-per-file": { enabled: true, onFail: "label", maxFileLines: 1 } },
+      actions: REQUEST_CHANGES,
+    };
+    const { verdict } = await triage(pack, { github });
+    const posted = (verdict as Verdict).actions.find((action) => action.kind === "request-changes");
+    expect(verdict).toMatchObject({ verdict: "fail" });
+    expect(posted && "skipped" in posted).toBe(false);
+    expect(posted && "held" in posted).toBe(false);
+    expect((verdict as Verdict).labelled).toContainEqual(expect.objectContaining({ check: "max-lines-changed-per-file", result: "fail" }));
+    expect((verdict as Verdict).request.comment).toBe("");
+    expect(github.reviews).toEqual([expect.objectContaining({ state: "CHANGES_REQUESTED", body: expect.stringContaining("Triage requests changes:") })]);
+    expect(github.comments.filter((comment) => comment.body.includes("please address") || comment.body.includes("Notes:"))).toEqual([]);
+  });
+
+  test("a skipped or held request-changes still leaves the verdict comment", async () => {
+    const skippedHost = fakeGithub();
+    skippedHost.pr.ci = "failure";
+    const skippedPack: CheckPack = {
+      ...emptyPack(REPO),
+      checks: { "ci-green": { enabled: true } },
+      actions: { ...defaultActions(), fail: [{ do: "request-changes", when: { author: ["OWNER"] } }] },
+    };
+    const skipped = await triage(skippedPack, { github: skippedHost });
+    expect((skipped.verdict as Verdict).actions).toEqual([expect.objectContaining({ kind: "request-changes", skipped: true })]);
+    expect((skipped.verdict as Verdict).request.comment).toContain("please address");
+    expect(skippedHost.reviews).toEqual([]);
+    expect(skippedHost.comments.some((comment) => comment.body.includes("please address"))).toBe(true);
+    const { github, pack } = requesting();
+    const held = await triage(pack, { github, automatic: ["comment", "labels"] });
+    expect((held.verdict as Verdict).actions).toEqual([expect.objectContaining({ kind: "request-changes", held: true })]);
+    expect((held.verdict as Verdict).request.comment).toContain("please address");
+    expect(github.reviews).toEqual([]);
+    expect(github.comments.some((comment) => comment.body.includes("please address"))).toBe(true);
   });
 
   test("a verdict that changes on a new head says what reached the branch since, in the same comment, and keeps saying it on a rerun, through an in-progress comment too", async () => {

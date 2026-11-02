@@ -604,16 +604,20 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).byteLength;
 }
 
+function isBullet(line: string): boolean {
+  return line.trimStart().startsWith("- ");
+}
+
 /** Cut at line boundaries so the comment stays postable, counting the list lines left out. */
-function bounded(lines: string[]): string {
+export function bounded(lines: string[]): string {
   const whole = lines.join("\n");
   if (byteLength(whole) <= MAX_MIRROR_COMMENT_BYTES) return whole;
   for (let kept = lines.length - 1; kept > 0; kept--) {
-    const omitted = lines.slice(kept).filter((line) => line.startsWith("- ")).length;
+    const omitted = lines.slice(kept).filter(isBullet).length;
     const cut = [...lines.slice(0, kept), ...(omitted > 0 ? [`- and ${omitted} more`] : [])].join("\n");
     if (byteLength(cut) <= MAX_MIRROR_COMMENT_BYTES) return cut;
   }
-  return `- and ${lines.filter((line) => line.startsWith("- ")).length} more`;
+  return `- and ${lines.filter(isBullet).length} more`;
 }
 
 /** Docs names the files that need docs; other checks, scoped custom ones included, name what they found. */

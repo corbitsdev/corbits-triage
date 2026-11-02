@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { getReviews, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
-import { DEFAULT_REPO_POLICY, defaultActions, emptyPack, type CheckPack } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, defaultActions, emptyPack, isPatternsCheck, readCheckPack, readPolicyFile, type CheckPack } from "@corbits/triage-contracts";
 import { approvalHeldBy, changesWanted, evaluateActions, heldApprovals } from "./actions.js";
 import { deriveState, type PrFacts } from "./checks.js";
 import { buildFacts } from "./facts.js";
 import { NO_FACTS } from "./item.js";
-import { renderVerdict } from "./render.js";
+import { patternsResult } from "./patterns.js";
+import { inlineCode, MAX_MIRROR_COMMENT_BYTES, renderVerdict } from "./render.js";
 
 const facts: PrFacts = {
   ...NO_FACTS,
@@ -46,6 +47,13 @@ function suggested(over: Partial<PrFacts>, using = pack) {
   return heldApprovals(evaluateActions(actionInput), approvalHeldBy(rendered.verdict, actionInput.facts.checks), actionInput.facts);
 }
 
+function reviewBody(actions: ReturnType<typeof suggested>): string {
+  for (const action of actions) {
+    if (action.kind === "request-changes" && "target" in action && "body" in action.target) return action.target.body;
+  }
+  throw new Error("no request-changes body");
+}
+
 const APP = "corbits-triage[bot]";
 
 /** So only the App's own marked review is triage's. */
@@ -77,12 +85,65 @@ describe("the request-changes Do", () => {
 
   test("lists every failed rule that is the author's to fix, and stops wanting changes once they are fixed", () => {
     expect(suggested({ checks: "failure", failingChecks: ["build"], mergeable: false })).toEqual([
-      expect.objectContaining({ kind: "request-changes", list: "fail", target: { body: "Triage requests changes:\n- CI green: required checks are failing\n- Merge conflicts: merge conflicts with base" } }),
+      expect.objectContaining({ kind: "request-changes", list: "fail", target: { body: `Triage requests changes:\n- CI green: required checks are failing\n  - ${inlineCode("build")}\n- Merge conflicts: merge conflicts with base` } }),
     ]);
     expect(changesWanted(input({}).input)).toBe(false);
   });
 
   test("is skipped when nothing failed is the author's to fix", () => {
     expect(suggested({ changesRequested: ["maya"] })).toEqual([expect.objectContaining({ kind: "request-changes", skipped: true })]);
+  });
+
+  test("names each code-pattern finding under the rule, and leaves out a skipped file and a rule asked of a maintainer", () => {
+    const policy = `rules:
+  - id: conventions
+    check: code-patterns
+    text: Follow our conventions.
+    reason: Review time.
+    evidence: [maintainer-stated]
+    presets: [convention]
+  - id: style-notes
+    check: code-patterns
+    text: Style.
+    reason: Review time.
+    evidence: [maintainer-stated]
+    onFail: ask
+    presets: [convention]
+`;
+    const using = { ...readCheckPack(readPolicyFile(policy, "acme/widgets")), actions: { ...defaultActions(), fail: [{ do: "request-changes" as const }] } };
+    const content = "const b = y ?? 0;\nconst c = p ? 1\n  : q ? 2 : 3;\n";
+    const patch = "@@ -0,0 +1,3 @@\n+const b = y ?? 0;\n+const c = p ? 1\n+  : q ? 2 : 3;\n";
+    const files = [
+      { path: "src/a.ts", status: "added", additions: 3, deletions: 0, patch },
+      { path: "vendor/c.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const c = z ?? 0;\n" },
+    ];
+    const patterns = Object.fromEntries(using.custom.filter(isPatternsCheck).map((rule) => [rule.id, patternsResult(rule, files, { "src/a.ts": content }, "github")]));
+    const actions = suggested({ files, patterns, checks: "success", mergeable: true }, using);
+    const body = reviewBody(actions);
+    expect(body).toBe(`Triage requests changes:\n- Conventions: added code matches a code pattern\n  - ${inlineCode("src/a.ts:1 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.")}\n  - ${inlineCode("src/a.ts:2-3 nested-ternary: Nested ternary; use if statements or a lookup.")}`);
+    expect(body).not.toContain("vendor/c.ts");
+    expect(body).not.toContain("Style notes");
+    expect(actions).toEqual([expect.objectContaining({ kind: "request-changes", list: "fail" })]);
+  });
+
+  test("cuts the review at the byte cap and counts the finding lines left out", () => {
+    const names = Array.from({ length: 900 }, (_, index) => `check-${String(index).padStart(4, "0")}-${"x".repeat(60)}`);
+    const body = reviewBody(suggested({ checks: "failure", failingChecks: names, mergeable: false }));
+    const full = ["Triage requests changes:", "- CI green: required checks are failing", ...names.map((name) => `  - ${inlineCode(name)}`), "- Merge conflicts: merge conflicts with base"];
+    const lines = body.split("\n");
+    const trailer = lines.at(-1) ?? "";
+    const prefix = lines.slice(0, -1);
+    const omitted = full.slice(prefix.length).filter((line) => line.trimStart().startsWith("- ")).length;
+    expect(new TextEncoder().encode(full.join("\n")).byteLength).toBeGreaterThan(MAX_MIRROR_COMMENT_BYTES);
+    expect(new TextEncoder().encode(body).byteLength).toBeLessThanOrEqual(MAX_MIRROR_COMMENT_BYTES);
+    expect(full.slice(0, prefix.length)).toEqual(prefix);
+    expect(trailer).toBe(`- and ${omitted} more`);
+    expect(omitted).toBeGreaterThan(0);
+    const next = full[prefix.length];
+    if (next !== undefined) {
+      const still = full.slice(prefix.length + 1).filter((line) => line.trimStart().startsWith("- ")).length;
+      const longer = [...prefix, next, ...(still > 0 ? [`- and ${still} more`] : [])].join("\n");
+      expect(new TextEncoder().encode(longer).byteLength).toBeGreaterThan(MAX_MIRROR_COMMENT_BYTES);
+    }
   });
 });

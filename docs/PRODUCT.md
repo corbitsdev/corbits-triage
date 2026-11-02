@@ -180,10 +180,12 @@ and Triage never writes to it. A model that does not answer leaves the verdict U
 and Triage checks it again.
 
 Triage keeps one comment on the pull request: the verdict, the reasons, and
-what Triage did or what waits on a maintainer. A re-triage edits it in place,
-or writes nothing when nothing changed. When only a policy change flips the
-verdict on the same head, Triage posts a new comment naming the policy
-versions and marks the earlier one superseded.
+what Triage did or what waits on a maintainer. When Triage requests changes,
+that review is the comment, and the standing verdict comment is not posted
+beside it. A re-triage edits the standing comment in place, or writes nothing
+when nothing changed. When only a policy change flips the verdict on the same
+head, Triage posts a new comment naming the policy versions and marks the
+earlier one superseded.
 
 ## Steps
 
@@ -257,8 +259,10 @@ pull request is unresolved, and while Triage cannot read the threads. Threads
 on Triage's own code review findings do not count; code review's own rule
 covers them. Resolving the last thread lets the merge go ahead and releases
 no other action. Branch protection stays the
-backstop. Request changes lists the failed rules, once per head, and is
-dismissed once none still fails.
+backstop. Request changes lists the failed rules, once per head, and under each
+what that rule found. A code-pattern finding names the pattern and the line or
+range. Other rules list what they found, such as a failing check's name, or
+nothing. It is dismissed once none still fails.
 
 ### In progress
 

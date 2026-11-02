@@ -89,8 +89,8 @@ test("a code pattern is matched on the committed and the uncommitted text", asyn
   const { exitCode, stdout } = await check(root);
   expect(exitCode).toBe(1);
   const [committed, working] = stdout.split("# Working tree");
-  expect(committed).toContain("src/a.ts:2 Invented fallback `?? 0`");
-  expect(working).toContain("src/a.ts:3 Invented fallback `?? []`");
+  expect(committed).toContain("src/a.ts:2 zero-fallback: Invented fallback `?? 0`");
+  expect(working).toContain("src/a.ts:3 empty-list-fallback: Invented fallback `?? []`");
   expect(working).not.toContain("?? 0`");
 }, 30_000);
 
@@ -99,7 +99,7 @@ test("a skipped vendored file stays out of a code pattern's failure text", async
   const root = repository(policy, {}, "feat: b", { "src/a.ts": "const b = y ?? 0;\n", "vendor/c.ts": "const c = z ?? 0;\n" });
   const { exitCode, stdout } = await check(root);
   expect(exitCode).toBe(1);
-  expect(stdout).toContain("src/a.ts:1 Invented fallback `?? 0`");
+  expect(stdout).toContain("src/a.ts:1 zero-fallback: Invented fallback `?? 0`");
   expect(stdout).not.toContain("vendor/c.ts");
 }, 30_000);
 
