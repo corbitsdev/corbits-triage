@@ -976,13 +976,27 @@ describe("triage-manager with code review", () => {
 
   const WILL_REQUEST = "Triage will request changes.";
 
-  test("holding request-changes restores the verdict comment without saying it will still be posted", async () => {
+  test("holding request-changes restores the verdict comment without saying it will still be posted, keeping other Dos on the line", async () => {
     const made = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `${FINDINGS}\n\n${WILL_REQUEST}`);
     const note = "Request changes held: code review has 1 finding open on this head.";
     expect(made.actions).toContainEqual({ ...REQUEST_CHANGES, held: true, reason: OPEN });
     expect(made.request.comment).toBe(`${FINDINGS}\n\n${note}`);
     expect(made.request.comment).not.toContain(WILL_REQUEST);
-    expect(made.feedback).toContain(FINDINGS);
+    expect(made.feedback).toBe(`${FINDINGS}\n\n${note}`);
+
+    const withLabel = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `${FINDINGS}\n\nTriage will label, request changes.`);
+    expect(withLabel.request.comment).toBe(`${FINDINGS}\n\nTriage will label.\n\n${note}`);
+    expect(withLabel.feedback).toBe(`${FINDINGS}\n\nTriage will label.\n\n${note}`);
+  });
+
+  test("holding one request-changes step while another will still be posted does not restore the verdict comment", async () => {
+    const second = { ...REQUEST_CHANGES, index: 1, effectId: "do:request-changes-2" };
+    const pack = [{ pack: { actions: { fail: [{ do: "request-changes", when: { findings: { any: false } } }, { do: "request-changes" }] } } }];
+    const made = await heldReview([REQUEST_CHANGES, second], pack, `${FINDINGS}\n\n${WILL_REQUEST}`);
+    const note = "Request changes held: code review has 1 finding open on this head.";
+    expect(made.actions).toEqual([{ ...REQUEST_CHANGES, held: true, reason: OPEN }, second]);
+    expect(made.request.comment).toBe(note);
+    expect(made.request.comment).not.toContain(FINDINGS);
   });
 
   test("a second note after request-changes is held still keeps the verdict text", async () => {

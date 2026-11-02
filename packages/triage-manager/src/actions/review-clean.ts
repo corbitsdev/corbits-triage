@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { counted } from "@corbits/common";
 import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, ThreadRead, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
-import { DO_NAMES } from "@corbits/triage-workflows/actions/evaluate";
+import { DO_NAMES, postsRequestChanges } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
 import { LIFETIME_MS, storedReviewer, TakeOutput } from "./manager.js";
@@ -128,19 +128,30 @@ type Action = Verdict["actions"][number];
  * That restored comment drops "Triage will request changes.", which was written while the review was still going to be posted.
  */
 function noted(verdict: Verdict, note: string): Verdict {
-  const feedback = verdict.feedback ? `${verdict.feedback}\n\n${note}` : note;
-  const reviewHeld = verdict.actions.some((action) => action.kind === "request-changes" && "held" in action);
-  const standing = reviewHeld ? heldComment(verdict.feedback) : verdict.request?.comment;
+  const reviewHeld = !postsRequestChanges(verdict.actions) && verdict.actions.some((action) => action.kind === "request-changes" && "held" in action);
+  const kept = reviewHeld ? heldComment(verdict.feedback) : verdict.feedback;
+  const feedback = kept ? `${kept}\n\n${note}` : note;
+  const standing = reviewHeld ? kept : verdict.request?.comment;
   const comment = standing ? `${standing}\n\n${note}` : note;
   const request = verdict.request && { ...verdict.request, comment };
   return { ...verdict, feedback, ...(request && { request }) };
 }
 
-/** The verdict comment once request-changes is held. The line that the review will still be posted is no longer true. */
+const WILL_PREFIX = "Triage will ";
+
+function withoutRequestChanges(line: string): string[] {
+  if (!line.startsWith(WILL_PREFIX) || !line.endsWith(".")) return [line];
+  const names = line.slice(WILL_PREFIX.length, -1).split(", ");
+  if (!names.includes(DO_NAMES["request-changes"])) return [line];
+  const kept = names.filter((name) => name !== DO_NAMES["request-changes"]);
+  return kept.length > 0 ? [`${WILL_PREFIX}${kept.join(", ")}.`] : [];
+}
+
+/** The verdict comment once request-changes is held. The Do that the review will still be posted is no longer true. */
 function heldComment(feedback: string): string {
   const lines = feedback.split("\n");
-  if (!lines.includes("Triage will request changes.")) return feedback;
-  const kept = lines.filter((line) => line !== "Triage will request changes.");
+  const kept = lines.flatMap(withoutRequestChanges);
+  if (kept.length === lines.length && kept.every((line, i) => line === lines[i])) return feedback;
   return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 

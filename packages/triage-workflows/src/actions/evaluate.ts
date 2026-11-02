@@ -143,7 +143,7 @@ function withDos(feedback: string, actions: SuggestedAction[]): string {
  * A request-changes review the run will post is what the mirror writes instead of the verdict comment. The verdict
  * keeps that comment, so a later skipped or held review can show it again.
  */
-function postsRequestChanges(actions: readonly SuggestedAction[]): boolean {
+export function postsRequestChanges(actions: readonly SuggestedAction[]): boolean {
   return actions.some((action) => action.kind === "request-changes" && !("skipped" in action) && !("held" in action));
 }
 
