@@ -12,6 +12,7 @@ export {
 } from "./pg-error";
 export type { DBConfig } from "./config";
 export { runMigrations, dropSchema } from "./migrate";
+export { credentialSecretColumns } from "./credential-secret";
 export {
   rekeyCredentialSecrets,
   type RekeyReport,
@@ -165,7 +166,10 @@ export {
   resolveTenantOwnedCredentialById,
   resolveInferenceMaterials,
   reresolveCurrentMaterials,
+  findRemovedCredentialIds,
+  findRotatedCredentialIds,
   AmbiguousCredentialError,
+  CredentialInactiveError,
   CredentialUnauthorizedError,
   buildCredentialDelivery,
 } from "./credential-resolution";
@@ -194,8 +198,6 @@ export {
 } from "./catalog-resolution";
 export {
   resolveModelSources,
-  resolveInferencePreferences,
-  resolveInstanceModelSources,
   resolveSourcesByOfferingIds,
   type CatalogSourceResolution,
   type OfferingSourceResolution,

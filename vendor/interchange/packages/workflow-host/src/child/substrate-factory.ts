@@ -58,7 +58,6 @@ import {
   driveConnectorReplies,
   type AgentEventStream,
   type ConnectorReplyDrain,
-  type CredentialMaterialCell,
   type CredentialProviderRegistry,
 } from "@intx/harness";
 import { createSSHSignature } from "@intx/crypto";
@@ -103,6 +102,7 @@ import { createWorkflowRunRepoStore } from "../adapters/repo-store";
 import {
   createInMemorySpawnChild,
   createInMemorySpawnSuspendableChild,
+  type ChildInheritance,
   type RunChildWorkflow,
   type RunSuspendableChild,
 } from "../adapters/spawn-child";
@@ -138,7 +138,6 @@ import {
   stepGrantsResolver,
   type SidecarStepCredentialContext,
 } from "./action-credentials";
-import { loadVerifiedWorkflowDefinitionFromClosure } from "./verified-definition-loader";
 import type { SubstrateFactory, SubstrateFactoryEnv } from "./from-process-env";
 import { createMailboxWatchRegistry } from "./mailbox-watch-registry";
 import type { ChildOutboundMailBridge } from "./outbound-mail-bridge";
@@ -147,12 +146,14 @@ import { createProxyWorkflowRunRepoStore } from "./proxy-repo-store";
 import {
   createCredentialsBackedAuthorize,
   createGrantEvaluator,
-  resolveSnapshotStepGrants,
+  createSnapshotGrantsResolver,
   type CredentialsSnapshotRef,
   type GrantEvaluator,
+  type StepGrantsResolver,
 } from "./credentials-backed-authorize";
 import {
   eagerlyResolveActionHandlers,
+  isWarmKeptDeployment,
   type CredentialWiring,
   type RunWorkflowChildBindings,
   type SourcesSnapshotRef,
@@ -451,6 +452,12 @@ interface SidecarSubstrateFactoryDeps {
   ) => ReadonlySet<string>;
   filterGrantsToDeclaredResources: (
     parentGrants: readonly unknown[],
+    declared: ReadonlySet<string>,
+    credentialConsumers: ReadonlySet<string>,
+  ) => readonly unknown[];
+  applyStandingDecisions: (
+    childGrants: readonly unknown[],
+    rootGrants: readonly unknown[],
     declared: ReadonlySet<string>,
     credentialConsumers: ReadonlySet<string>,
   ) => readonly unknown[];
@@ -1331,8 +1338,10 @@ interface SidecarRunChildDeps {
   /**
    * Collect the resources the child body declares, the credential consumers
    * it instantiates, and narrow the parent grant array to that pair. The
-   * process that boots the child supplies all three. This factory persists
-   * the filter's array and does not import the walk.
+   * process that boots the child supplies all three, and the read-time
+   * overlay of the top-level run's standing decisions on a live child's
+   * grants. This factory persists the filter's array and does not import the
+   * walk.
    */
   collectDeclaredResources: (
     definition: WorkflowDefinition,
@@ -1346,6 +1355,12 @@ interface SidecarRunChildDeps {
   ) => ReadonlySet<string>;
   filterGrantsToDeclaredResources: (
     parentGrants: readonly unknown[],
+    declared: ReadonlySet<string>,
+    credentialConsumers: ReadonlySet<string>,
+  ) => readonly unknown[];
+  applyStandingDecisions: (
+    childGrants: readonly unknown[],
+    rootGrants: readonly unknown[],
     declared: ReadonlySet<string>,
     credentialConsumers: ReadonlySet<string>,
   ) => readonly unknown[];
@@ -1458,7 +1473,7 @@ export function createSidecarRunChild(
       resumeFromEvents,
     },
     onEvent,
-    credentialMaterial,
+    inherited,
   ) => {
     const {
       env,
@@ -1477,9 +1492,7 @@ export function createSidecarRunChild(
       // The parent drives this child across its parks and relays each one
       // down onto this channel. The child run itself stays unaddressable.
       hasUpstreamSignalResolver: true,
-      ...(credentialMaterial !== undefined
-        ? { materialCell: credentialMaterial }
-        : {}),
+      ...(inherited !== undefined ? { inherited } : {}),
     });
     // Thread this rung's depth/ceiling into the child run so its own
     // childWorkflow spawns keep counting against the tree-wide bound (the
@@ -1576,7 +1589,7 @@ export function createSidecarSpawnSuspendableChild(
       resumeFromEvents,
     },
     onEvent,
-    credentialMaterial,
+    inherited,
   ) => {
     const {
       env: baseEnv,
@@ -1605,9 +1618,7 @@ export function createSidecarSpawnSuspendableChild(
       // a decision back down onto the body's own channel, so a park here is
       // answerable even though the body run carries no address of its own.
       hasUpstreamSignalResolver: true,
-      ...(credentialMaterial !== undefined
-        ? { materialCell: credentialMaterial }
-        : {}),
+      ...(inherited !== undefined ? { inherited } : {}),
     });
 
     return createSuspendableChildHandle(baseEnv, {
@@ -1625,14 +1636,15 @@ export function createSidecarSpawnSuspendableChild(
 }
 
 /**
- * Read the parent run's grants, cap them to what `definition` declares, and
+ * Read the parent run's grants, cap them to what the child body declares
+ * (`capInputs`), and
  * persist the capped set as the child run's own `runs/<childRunId>/grants.json`
  * -- the file the next spawn hop (a childWorkflow grandchild) reads back as its
  * ceiling. Returns the capped grants so a caller building a fresh child env can
  * also key its credentials snapshot on them.
  *
- * `definition` MUST be the PRE-rewrite body, its childWorkflow grandchildren
- * still INLINE: both collectors skip a `{ ref }` body, so a rewritten
+ * `capInputs` MUST collect from the PRE-rewrite body, its childWorkflow
+ * grandchildren still INLINE: both collectors skip a `{ ref }` body, so a rewritten
  * definition would drop the grandchild's declared resources and the factories
  * only its inline body instantiates, and under-authorize it. Every birth path
  * materializes a run's grants file, so a
@@ -1655,11 +1667,12 @@ export function createSidecarSpawnSuspendableChild(
  */
 async function capAndPersistChildGrants(args: {
   deps: SidecarRunChildDeps;
-  definition: WorkflowDefinition;
   childRunId: string;
   parentRunId: string;
+  // Called only when the grants file is born, so a read-back costs nothing.
+  capInputs: () => Promise<ChildCapInputs>;
 }): Promise<readonly unknown[]> {
-  const { deps, definition, childRunId, parentRunId } = args;
+  const { deps, childRunId, parentRunId } = args;
   const existingChildGrants = await readRunGrants({
     repoStore: deps.substrate,
     anchorRunId: deps.workflowRunRepoId.id,
@@ -1676,23 +1689,7 @@ async function capAndPersistChildGrants(args: {
       `sidecar runChild: parent run ${parentRunId} has no grants file at ${runGrantsPath(parentRunId)}; refusing to spawn child ${childRunId} under-authorized`,
     );
   }
-  const pluginDefs: ReadonlyMap<string, readonly ToolDeclaration[]> =
-    deps.closurePackageDir === undefined
-      ? new Map<string, readonly ToolDeclaration[]>()
-      : await loadWorkflowPluginToolDefinitionsFromClosure({
-          packageDir: deps.closurePackageDir,
-          plugins: collectDeclaredPluginNames(definition),
-        });
-  const declaredResources = deps.collectDeclaredResources(
-    definition,
-    deps.directors,
-    pluginDefs,
-  );
-  const credentialConsumers = deps.collectDeclaredCredentialConsumers(
-    definition,
-    deps.directors,
-    pluginDefs,
-  );
+  const { declaredResources, credentialConsumers } = await args.capInputs();
   const childGrants = deps.filterGrantsToDeclaredResources(
     parentGrants,
     declaredResources,
@@ -1707,6 +1704,104 @@ async function capAndPersistChildGrants(args: {
     grants: childGrants,
   });
   return childGrants;
+}
+
+// What a child body declares: the inputs of its grant cap.
+type ChildCapInputs = {
+  declaredResources: ReadonlySet<string>;
+  credentialConsumers: ReadonlySet<string>;
+};
+
+/**
+ * Collect a child body's cap inputs. `definition` MUST be the PRE-rewrite
+ * body, for the reason `capAndPersistChildGrants` states.
+ */
+async function collectChildCapInputs(
+  deps: SidecarRunChildDeps,
+  definition: WorkflowDefinition,
+): Promise<ChildCapInputs> {
+  const pluginDefs: ReadonlyMap<string, readonly ToolDeclaration[]> =
+    deps.closurePackageDir === undefined
+      ? new Map<string, readonly ToolDeclaration[]>()
+      : await loadWorkflowPluginToolDefinitionsFromClosure({
+          packageDir: deps.closurePackageDir,
+          plugins: collectDeclaredPluginNames(definition),
+        });
+  return {
+    declaredResources: deps.collectDeclaredResources(
+      definition,
+      deps.directors,
+      pluginDefs,
+    ),
+    credentialConsumers: deps.collectDeclaredCredentialConsumers(
+      definition,
+      deps.directors,
+      pluginDefs,
+    ),
+  };
+}
+
+/**
+ * The grants resolver of a live child run: its capped snapshot with the
+ * top-level run's standing decisions applied (`applyStandingDecisions`).
+ * An approval with scope `always` updates the top-level run's grants
+ * snapshot, and the child reads the decision on its next step. The overlaid
+ * snapshot is built again only when the top-level snapshot object changes,
+ * which a `grants-updated` or `authority.set` frame does by replacing it.
+ * A top-level snapshot that is not active throws, as the top-level resolver
+ * does: a child must not keep running on frozen grants after the top-level
+ * run loses its authority.
+ */
+function createStandingDecisionGrantsResolver(args: {
+  childSnapshot: CredentialsSnapshot;
+  rootGrants: CredentialsSnapshotRef;
+  capInputs: ChildCapInputs;
+  applyStandingDecisions: SidecarRunChildDeps["applyStandingDecisions"];
+}): StepGrantsResolver {
+  let cached:
+    | { root: CredentialsSnapshot; resolve: StepGrantsResolver }
+    | undefined;
+  return (stepId) => {
+    const root = args.rootGrants.current;
+    if (root === null) {
+      throw new Error(
+        `sidecar child: the top-level run has no credentials snapshot active for step ${stepId}; the host must set one before any step runs`,
+      );
+    }
+    if (cached === undefined || cached.root !== root) {
+      const rootGrants = root.steps.flatMap((step) => step.grants);
+      // The child's steps share one grants array; overlay each array once.
+      const overlaid = new Map<readonly unknown[], readonly unknown[]>();
+      const overlay = (grants: readonly unknown[]): readonly unknown[] => {
+        let result = overlaid.get(grants);
+        if (result === undefined) {
+          result = args.applyStandingDecisions(
+            grants,
+            rootGrants,
+            args.capInputs.declaredResources,
+            args.capInputs.credentialConsumers,
+          );
+          overlaid.set(grants, result);
+        }
+        return result;
+      };
+      cached = {
+        root,
+        resolve: createSnapshotGrantsResolver(
+          {
+            current: {
+              steps: args.childSnapshot.steps.map((step) => ({
+                ...step,
+                grants: overlay(step.grants),
+              })),
+            },
+          },
+          "sidecar child",
+        ),
+      };
+    }
+    return cached.resolve(stepId);
+  };
 }
 
 /**
@@ -1735,14 +1830,11 @@ async function buildChildRunEnv(args: {
    */
   onEvent: (event: InferenceEvent) => void;
   /**
-   * The parent run's live credential-material cell. Threaded so the child's
-   * inference resolves its source secret by `credentialId` against the run's
-   * current delivery -- reached live through the shared reference on a rotation.
-   * Absent when a non-sidecar executor carries no credential material, in which
-   * case no credential context is assembled and the child's inference reader
-   * stays unset.
+   * What the child inherits from the top-level run. Absent when a non-sidecar
+   * executor carries no credential material, in which case no credential
+   * context is assembled and the child's inference reader stays unset.
    */
-  materialCell?: CredentialMaterialCell;
+  inherited?: ChildInheritance;
   /**
    * Whether a park in this child can be answered from outside it. The two
    * seams that share this builder differ precisely here, so neither gets a
@@ -1766,7 +1858,7 @@ async function buildChildRunEnv(args: {
     childRunId,
     parentRunId,
     onEvent,
-    materialCell,
+    inherited,
   } = args;
   // A rung may itself embed a child (grandchild recursion) as an inline
   // `childWorkflow`. Lift each to an internal `{ ref }` and run the rewritten
@@ -1825,11 +1917,18 @@ async function buildChildRunEnv(args: {
   // the capped set as the child's own `runs/<childRunId>/grants.json` (the file
   // a grandchild reads as its ceiling). `definition` here is the childWorkflow-
   // inline form, so the cap keeps a grandchild's declared resources.
+  // The cap inputs are needed on a birth and, for the overlay, on every
+  // build of a live child; collect them once.
+  let capInputsOnce: Promise<ChildCapInputs> | undefined;
+  const capInputs = (): Promise<ChildCapInputs> => {
+    capInputsOnce ??= collectChildCapInputs(deps, definition);
+    return capInputsOnce;
+  };
   const childGrants = await capAndPersistChildGrants({
     deps,
-    definition,
     childRunId,
     parentRunId,
+    capInputs,
   });
   // The child's credentials snapshot applies the capped grant set
   // uniformly across every step the child definition declares, keyed on
@@ -1891,8 +1990,21 @@ async function buildChildRunEnv(args: {
   const credentialsRef: CredentialsSnapshotRef = {
     current: credentialsSnapshot,
   };
+  // Shared by `authorize` and the credential context below, so both read the
+  // same grants. A child that inherits from a top-level run reads the
+  // top-level standing decisions through the overlay; one with no
+  // inheritance (a non-sidecar executor) reads its capped snapshot.
+  const resolveChildStepGrants =
+    inherited === undefined
+      ? createSnapshotGrantsResolver(credentialsRef, "sidecar child")
+      : createStandingDecisionGrantsResolver({
+          childSnapshot: credentialsSnapshot,
+          rootGrants: inherited.rootGrants,
+          capInputs: await capInputs(),
+          applyStandingDecisions: deps.applyStandingDecisions,
+        });
   const authorize = createCredentialsBackedAuthorize(
-    credentialsRef,
+    resolveChildStepGrants,
     deps.evaluateGrants,
   );
   // An action this env can run needs its own invoker: the same
@@ -1954,7 +2066,7 @@ async function buildChildRunEnv(args: {
     runChild,
   });
   const spawnChild: WorkflowRuntimeEnv["spawnChild"] = (spawnInput) =>
-    spawnHost(spawnInput, childOnEvent, materialCell);
+    spawnHost(spawnInput, childOnEvent, inherited);
   // Assemble the per-step credential context from the run's live material cell
   // (threaded in from the parent) when one is present, so the child's inference
   // resolves its source secret by `credentialId` against the parent's current
@@ -1965,17 +2077,11 @@ async function buildChildRunEnv(args: {
   // threaded (a non-sidecar executor), which leaves the child's inference
   // reader unset and gives action handlers no credential source.
   const childCredentialContext: SidecarStepCredentialContext | undefined =
-    materialCell === undefined
+    inherited === undefined
       ? undefined
       : {
-          materialCell,
-          resolveStepGrants: (stepId) =>
-            resolveSnapshotStepGrants(
-              credentialsSnapshot,
-              stepId,
-              (lookupStepId) =>
-                `sidecar child credential wiring: credentials snapshot has no entry for step ${lookupStepId}`,
-            ),
+          materialCell: inherited.material,
+          resolveStepGrants: resolveChildStepGrants,
           providers: deps.credentialProviders,
         };
   // Per-step invocation seam. The runtime body invokes `env.invokeStep` with
@@ -2061,9 +2167,9 @@ async function buildChildRunEnv(args: {
         // iteration appends its first event.
         await capAndPersistChildGrants({
           deps,
-          definition: preRewriteBody,
           childRunId: loopInput.childRunId,
           parentRunId: loopInput.parentRunId,
+          capInputs: () => collectChildCapInputs(deps, preRewriteBody),
         });
         const iterationSignalChannel = createWorkflowHostSignalChannel({
           repoStore: deps.substrate,
@@ -2209,6 +2315,7 @@ export function createSidecarSubstrateFactory(
         `sidecar workflow-child substrate config failed validation: ${validated.summary}`,
       );
     }
+    const warmKeep = isWarmKeptDeployment(env.definition);
 
     const stepInferenceSources = parseStepInferenceSources(
       validated.STEP_INFERENCE_SOURCES,
@@ -2330,17 +2437,17 @@ export function createSidecarSubstrateFactory(
     // and each store restores its prior snapshot from the substrate on
     // first acquire.
     const conversationSigner = createStepStorageSigner(signingKey);
-    const durableConversation: DurableConversationRegistry | undefined = env
-      .spawn.warmKeep
-      ? createDurableConversationRegistry({
-          dataDir: validated.SIDECAR_DATA_DIR,
-          workflowRunRepoId,
-          workflowRunRef: validated.WORKFLOW_RUN_REF,
-          substrate,
-          principal,
-          signer: conversationSigner,
-        })
-      : undefined;
+    const durableConversation: DurableConversationRegistry | undefined =
+      warmKeep
+        ? createDurableConversationRegistry({
+            dataDir: validated.SIDECAR_DATA_DIR,
+            workflowRunRepoId,
+            workflowRunRef: validated.WORKFLOW_RUN_REF,
+            substrate,
+            principal,
+            signer: conversationSigner,
+          })
+        : undefined;
 
     // Per-step tool-mark floor grants, keyed by base step id. The step
     // env builder derives and records each step's floor from its
@@ -2353,21 +2460,13 @@ export function createSidecarSubstrateFactory(
     const toolMarkFloorByStep = new Map<string, GrantRule[]>();
 
     // The step env's director registry is the closure-composed one, built
-    // from the SAME frozen closure the run-child loads, so a step agent's
+    // from the SAME frozen closure the run-child runs, so a step agent's
     // `director` ref resolves to a custom director shipped by the workflow
     // package or a package in its node_modules slots. The loader resolves only
-    // the ids the definition references, so the verified definition is
-    // evaluated here too. The import is ESM-cached, so the run-child reuses the
-    // module and only re-pays the project-then-hash check. A definition
-    // whose hash no longer matches the approval therefore fails the lineage
-    // build here, before any child spawns.
-    const stepDefinition = await loadVerifiedWorkflowDefinitionFromClosure({
-      packageDir: env.spawn.closurePackageDir,
-      approvedHash: env.spawn.definitionHash,
-    });
+    // the ids the verified definition references.
     const stepDirectors = await loadWorkflowDirectorRegistryFromClosure({
       packageDir: env.spawn.closurePackageDir,
-      definition: stepDefinition,
+      definition: env.definition,
     });
 
     const buildStepEnv = createSidecarStepBuildEnv({
@@ -2375,7 +2474,7 @@ export function createSidecarSubstrateFactory(
       workflowRunRepoId,
       signer: conversationSigner,
       mailboxAddress: env.spawn.mailboxAddress,
-      stepCount: env.spawn.stepCount,
+      stepCount: env.definition.stepOrder.length,
       outboundMailBridge: env.outboundMailBridge,
       cache: stepToolCache,
       adapters: childAdapterRegistry,
@@ -2456,7 +2555,7 @@ export function createSidecarSubstrateFactory(
       workflowRunRepoId,
       signer: conversationSigner,
       mailboxAddress: env.spawn.mailboxAddress,
-      stepCount: env.spawn.stepCount,
+      stepCount: env.definition.stepOrder.length,
       outboundMailBridge: env.outboundMailBridge,
       cache: stepToolCache,
       adapters: childAdapterRegistry,
@@ -2527,13 +2626,12 @@ export function createSidecarSubstrateFactory(
     // authorize closure vary per step.
     //
     // The `warmCache` (design §3b) is the run-loop's per-deployment
-    // warm-agent cache, present only for the single-step long-lived
-    // deployment the deploy projection marked a warm candidate. When
-    // supplied, the adapter builds the agent once and reuses it across
-    // messages; when absent, it keeps instantiate-send-teardown per
-    // step. Forwarding it here is the only warm-keep wiring this binding
-    // needs -- the adapter and the run-loop own the rest of the
-    // lifecycle.
+    // warm-agent cache, present only for a single-step deployment's
+    // long-lived agent. When supplied, the adapter builds the agent once
+    // and reuses it across messages; when absent, it keeps
+    // instantiate-send-teardown per step. Forwarding it here is the only
+    // warm-keep wiring this binding needs -- the adapter and the run-loop
+    // own the rest of the lifecycle.
     // Run-boundary durability flush (design §3c). When the deployment is
     // warm-kept, mirror the warm agent's conversation snapshot to the
     // workflow-run substrate after each message's send settles. The key
@@ -2656,6 +2754,7 @@ export function createSidecarSubstrateFactory(
       collectDeclaredCredentialConsumers:
         deps.collectDeclaredCredentialConsumers,
       filterGrantsToDeclaredResources: deps.filterGrantsToDeclaredResources,
+      applyStandingDecisions: deps.applyStandingDecisions,
       // A spawned child's steps resolve `director` refs against the same
       // closure-composed registry the parent's steps use.
       directors: stepDirectors,
@@ -2679,7 +2778,7 @@ export function createSidecarSubstrateFactory(
     // termination for inspection until allocation cleanup. Internal cold runs
     // can reclaim their own scratch once they finish.
     let cleanupRunStorage: ((runId: string) => Promise<void>) | undefined;
-    if (!env.spawn.warmKeep) {
+    if (!warmKeep) {
       const topLevelRun = parseRunAddress(env.spawn.mailboxAddress);
       if (topLevelRun === null)
         throw new Error(
@@ -2710,7 +2809,7 @@ export function createSidecarSubstrateFactory(
       attempt,
       correlationId,
     }) =>
-      env.spawn.warmKeep
+      warmKeep
         ? readWarmParkedApprovalSnapshot({
             substrate,
             workflowRunRepoId,
@@ -2740,7 +2839,7 @@ export function createSidecarSubstrateFactory(
       attempt,
     }) =>
       toParkedApprovalOps(
-        env.spawn.warmKeep
+        warmKeep
           ? await readWarmParkedPendingOperations({
               substrate,
               workflowRunRepoId,
@@ -2778,9 +2877,9 @@ export function createSidecarSubstrateFactory(
       }) => {
         await capAndPersistChildGrants({
           deps: childRunDeps,
-          definition,
           childRunId,
           parentRunId,
+          capInputs: () => collectChildCapInputs(childRunDeps, definition),
         });
       },
       scheduler,

@@ -19,6 +19,8 @@ import { type } from "arktype";
 
 import { generateKeyPair } from "@intx/crypto";
 import { hexEncode } from "@intx/types";
+import type { CredentialDelivery } from "@intx/types/credential-delivery";
+import type { WorkflowProjectionDefinition } from "@intx/types/sidecar";
 import type { RepoId } from "@intx/hub-sessions";
 import {
   createMemoryFrameStream,
@@ -29,6 +31,9 @@ import {
   waitForTriggerFireRunIds,
   waitForUpstreamPayload,
   createStubRepoStore,
+  sendDefinition,
+  TEST_DEFINITION,
+  TEST_DEFINITION_HASH,
 } from "@intx/workflow-host/testing";
 
 import {
@@ -43,6 +48,7 @@ import {
 } from "./index";
 import { createRecyclePolicy, type RecyclePolicyBounds } from "./recycle";
 import { waitUntil } from "@intx/types/testing";
+import { mergeCredentialDelivery } from "../child/credential-cell";
 import { parseSpawnTimeEnv } from "../child/env-bootstrap";
 import { defaultStepRepoId, STEP_GRANTS_PATH } from "./credentials";
 import {
@@ -199,9 +205,18 @@ function createSpawnTracker(opts: {
   };
 }
 
-async function driveReady(
+// The sender each fake child reported its definition on, so its `ready`
+// follows on the same sender and sequence.
+const definitionSenders = new WeakMap<
+  FakeChild,
+  ReturnType<typeof createControlChannelSender>
+>();
+
+// Report the child's definition, the first frame a real child sends.
+async function driveDefinition(
   child: FakeChild,
   ipcKeypair: { privateKey: Uint8Array; publicKey: Uint8Array },
+  projection: WorkflowProjectionDefinition = TEST_DEFINITION,
 ): Promise<ReturnType<typeof createControlChannelSender>> {
   if (child.channelId === undefined) {
     throw new Error("test child has no channelId; spawn did not invoke env");
@@ -215,13 +230,22 @@ async function driveReady(
       },
     },
   });
-  await childSender.send({
-    type: "ready",
-    data: {
-      childPid: child.pid,
-      childPublicKey: hexEncode(ipcKeypair.publicKey),
-    },
+  await sendDefinition(childSender, {
+    childPid: child.pid,
+    childPublicKey: hexEncode(ipcKeypair.publicKey),
+    projection,
   });
+  definitionSenders.set(child, childSender);
+  return childSender;
+}
+
+async function driveReady(
+  child: FakeChild,
+  ipcKeypair: { privateKey: Uint8Array; publicKey: Uint8Array },
+): Promise<ReturnType<typeof createControlChannelSender>> {
+  const childSender =
+    definitionSenders.get(child) ?? (await driveDefinition(child, ipcKeypair));
+  await childSender.send({ type: "ready" });
   return childSender;
 }
 
@@ -383,10 +407,14 @@ async function buildBindings(opts: {
     workflowRunRepoId: { kind: "workflow-run", id: "run_deployment-x" },
     workflowRunRef: "refs/heads/main",
     anchorRunId: "run_deployment-x",
-    stepCount: 1,
     deploymentMailAddress: "run_deployment-x@example.com",
     readPrincipal: { kind: "supervisor" },
-    deriveStepAddress: ({ runId, stepId }) => `${runId}-${stepId}@example.com`,
+    layoutSteps: () =>
+      Promise.resolve({
+        stepIds: ["step-1"],
+        deriveStepAddress: ({ runId, stepId }) =>
+          `${runId}-${stepId}@example.com`,
+      }),
     ipcKeyPairFactory: () => Promise.resolve(opts.ipcKeypair),
     inboxPrimitives: opts.inboxPrimitives ?? createMemoryInboxPrimitives(),
     ...(opts.recyclePolicy !== undefined
@@ -428,9 +456,7 @@ async function spawnSupervisor(opts: {
   });
   const supervisor = createWorkflowSupervisor(bindings);
   const spawnPromise = supervisor.spawn({
-    stepOrder: ["step-1"],
-    definitionHash: "def-hash-abc",
-    warmKeep: false,
+    definitionHash: TEST_DEFINITION_HASH,
 
     onInferenceEvent: () => undefined,
   });
@@ -444,6 +470,40 @@ async function spawnSupervisor(opts: {
   const firstSender = await driveReady(first, opts.ipcKeypair);
   const result = await spawnPromise;
   return { supervisor, spawnResult: result, firstSender };
+}
+
+// A new child's handshake arms one deadline for its definition and, once
+// that arrives, one for its `ready`. A test fires them by hand rather than
+// racing a real clock. Any other timer, such as a kill escalation, fires on
+// the next macrotask unless it is cleared first.
+function createHandshakeDeadlines(readyTimeoutMs: number) {
+  const deadlines: (() => void)[] = [];
+  const cleared = new Set<unknown>();
+  const changes = createChangeNotifier();
+  return {
+    timers: {
+      readyTimeoutMs,
+      setTimer: (cb: () => void, ms: number): unknown => {
+        const handle = {};
+        if (ms === readyTimeoutMs) {
+          deadlines.push(cb);
+          changes.notify();
+        } else {
+          setTimeout(() => {
+            if (!cleared.has(handle)) cb();
+          }, 0);
+        }
+        return handle;
+      },
+      clearTimer: (handle: unknown) => {
+        cleared.add(handle);
+      },
+    },
+    fire: async (nth: number): Promise<void> => {
+      await changes.until(() => deadlines.length > nth);
+      deadlines[nth]?.();
+    },
+  };
 }
 
 describe("supervisor spawn: failure cleanup", () => {
@@ -469,22 +529,24 @@ describe("supervisor spawn: failure cleanup", () => {
       mailBus,
       ipcKeypair,
     });
+    const deadlines = createHandshakeDeadlines(4_242);
     const supervisor = createWorkflowSupervisor({
       ...bindings,
-      readyTimeoutMs: 20,
+      ...deadlines.timers,
     });
 
-    // Spawn but never drive the child's `ready` frame, so the handshake
-    // times out.
-    await expect(
-      supervisor.spawn({
-        stepOrder: ["step-1"],
-        definitionHash: "def-hash-abc",
-        warmKeep: false,
-
-        onInferenceEvent: () => undefined,
-      }),
-    ).rejects.toThrow(/did not emit ready/);
+    // The child reports its definition but never sends `ready`, so the
+    // handshake times out after the address is registered.
+    const spawning = supervisor.spawn({
+      definitionHash: TEST_DEFINITION_HASH,
+      onInferenceEvent: () => undefined,
+    });
+    await tracker.awaitChildren(1);
+    const child = tracker.children[0];
+    if (child === undefined) throw new Error("tracker.children[0] missing");
+    await driveDefinition(child, ipcKeypair);
+    await deadlines.fire(1);
+    await expect(spawning).rejects.toThrow(/did not emit ready/);
 
     // The address must not remain registered, and the history must carry
     // both the register and its matching unregister.
@@ -534,30 +596,29 @@ describe("supervisor spawn: failure cleanup", () => {
       mailBus,
       ipcKeypair,
     });
+    const deadlines = createHandshakeDeadlines(4_242);
     const supervisor = createWorkflowSupervisor({
       ...bindings,
-      readyTimeoutMs: 20,
+      ...deadlines.timers,
     });
 
-    // Never drive `ready`, so the handshake times out. The spawn cause
-    // (ready timeout) must surface even though the teardown then throws
-    // its own error.
-    await expect(
-      supervisor.spawn({
-        stepOrder: ["step-1"],
-        definitionHash: "def-hash-abc",
-        warmKeep: false,
-
-        onInferenceEvent: () => undefined,
-      }),
-    ).rejects.toThrow(/did not emit ready/);
+    // Report the definition but never drive `ready`, so the handshake
+    // times out after the mail subscription exists. The spawn cause (ready
+    // timeout) must surface even though the teardown then throws its own
+    // error.
+    const spawning = supervisor.spawn({
+      definitionHash: TEST_DEFINITION_HASH,
+      onInferenceEvent: () => undefined,
+    });
+    await tracker.awaitChildren(1);
+    const child = tracker.children[0];
+    if (child === undefined) throw new Error("tracker.children[0] missing");
+    await driveDefinition(child, ipcKeypair);
+    await deadlines.fire(1);
+    await expect(spawning).rejects.toThrow(/did not emit ready/);
 
     // The child was reaped during the unwind despite the throwing
     // unsubscribe -- a throwing teardown step leaves nothing orphaned.
-    const child = tracker.children[0];
-    if (child === undefined) {
-      throw new Error("tracker.children[0] missing");
-    }
     expect(child.killSignals.length).toBeGreaterThan(0);
   });
 });
@@ -590,9 +651,7 @@ describe("supervisor spawn: dynamic env", () => {
     });
 
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
 
       onInferenceEvent: () => undefined,
     });
@@ -621,10 +680,10 @@ describe("supervisor spawn: dynamic env", () => {
 describe("supervisor recycle: operator-initiated", () => {
   test("the recycle respawn env satisfies the child spawn-time env contract", async () => {
     // Regression: the recycle respawn env must carry every required
-    // spawn-time key. A recycle env that omitted a required key (STEP_COUNT)
-    // made the respawned child abort in parseSpawnTimeEnv before opening
-    // IPC, so every recycle tore the deployment down. The fake spawner does
-    // not run parseSpawnTimeEnv, so this asserts the captured env against it
+    // spawn-time key. A recycle env that omitted a required key made the
+    // respawned child abort in parseSpawnTimeEnv before opening IPC, so
+    // every recycle tore the deployment down. The fake spawner does not run
+    // parseSpawnTimeEnv, so this asserts the captured env against it
     // directly -- the check the real child binary performs at boot.
     const baseDir = await makeTempDir("recycle-env-");
     const ipcKeypair = await generateKeyPair();
@@ -653,9 +712,11 @@ describe("supervisor recycle: operator-initiated", () => {
       throw new Error("expected two captured spawn envs");
     }
     // Both the initial spawn and the recycle respawn must satisfy the
-    // child's spawn-time env contract, with the same step count.
-    expect(parseSpawnTimeEnv(spawnEnv).stepCount).toBe(1);
-    expect(parseSpawnTimeEnv(respawnEnv).stepCount).toBe(1);
+    // child's spawn-time env contract, for the same definition.
+    const spawned = parseSpawnTimeEnv(spawnEnv);
+    const respawned = parseSpawnTimeEnv(respawnEnv);
+    expect(respawned.definitionHash).toBe(spawned.definitionHash);
+    expect(respawned.closurePackageDir).toBe(spawned.closurePackageDir);
   });
 
   test("drain mail sends, child is killed, fresh child spawns with a new channelId", async () => {
@@ -731,9 +792,7 @@ describe("supervisor recycle: failure after the cohort handoff", () => {
     });
     const supervisor = createWorkflowSupervisor(bindings);
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
 
       onInferenceEvent: () => undefined,
     });
@@ -765,84 +824,96 @@ describe("supervisor recycle: failure after the cohort handoff", () => {
 });
 
 describe("supervisor recycle: respawn handshake bound", () => {
-  test("a respawn that never emits ready times out, reaps the new child, and reaches a clean stopped state", async () => {
-    const baseDir = await makeTempDir("recycle-ready-timeout-");
-    const ipcKeypair = await generateKeyPair();
-    const mailBus = createMockMailBus();
-    // sigtermExits:false so the reap escalates SIGTERM -> SIGKILL: a wedged
-    // respawn is exactly the child that ignores SIGTERM, and the reap must
-    // still guarantee it dies.
-    const tracker = createSpawnTracker({ sigtermExits: false });
-    await seedStepGrants(
-      baseDir,
-      defaultStepRepoId({ runId: "run_deployment-x", stepId: "step-1" }),
-      [{ resource: "thing", action: "read" }],
-    );
-    const bindings = await buildBindings({
-      baseDir,
-      spawner: tracker.spawner,
-      mailBus,
-      ipcKeypair,
-    });
-    const selfTerminations: {
-      phase: "stopped" | "crash-looping";
-      reason: string;
-    }[] = [];
-    const supervisor = createWorkflowSupervisor({
-      ...bindings,
-      // Collapse the recycle path's ready deadline and kill-escalation
-      // deadline to the next macrotask so the wedged-respawn path resolves
-      // without real-time waits. The child never emits ready, so timeout
-      // always wins the handshake race. The spawn path keeps the default
-      // real timer, so the first child readies normally.
-      recyclePolicySetTimer: (cb) => setTimeout(cb, 0),
-      recyclePolicyClearTimer: () => undefined,
-      onSelfTerminate: (info) => selfTerminations.push(info),
-    });
-    const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+  // Each frame of the respawn's handshake has its own deadline, so a child
+  // that hangs while it loads its closure is told apart from one that hangs
+  // resuming its runs.
+  test.each([
+    {
+      frame: "its definition",
+      reportsDefinition: false,
+      deadline: 0,
+      error: /child did not report its definition within 4242ms; killed/,
+    },
+    {
+      frame: "ready",
+      reportsDefinition: true,
+      deadline: 1,
+      error: /child did not emit ready within 4242ms; killed/,
+    },
+  ])(
+    "a respawn that never sends $frame times out, reaps the new child, and reaches a clean stopped state",
+    async ({ reportsDefinition, deadline, error }) => {
+      const baseDir = await makeTempDir("recycle-handshake-timeout-");
+      const ipcKeypair = await generateKeyPair();
+      const mailBus = createMockMailBus();
+      // sigtermExits:false so the reap escalates SIGTERM -> SIGKILL: a wedged
+      // respawn is exactly the child that ignores SIGTERM, and the reap must
+      // still guarantee it dies.
+      const tracker = createSpawnTracker({ sigtermExits: false });
+      await seedStepGrants(
+        baseDir,
+        defaultStepRepoId({ runId: "run_deployment-x", stepId: "step-1" }),
+        [{ resource: "thing", action: "read" }],
+      );
+      const bindings = await buildBindings({
+        baseDir,
+        spawner: tracker.spawner,
+        mailBus,
+        ipcKeypair,
+      });
+      const selfTerminations: {
+        phase: "stopped" | "crash-looping";
+        reason: string;
+      }[] = [];
+      // The recycle path's handshake deadlines fire by hand and its kill
+      // escalations on the next macrotask. The spawn path keeps real timers,
+      // so the first child readies normally.
+      const deadlines = createHandshakeDeadlines(4_242);
+      const supervisor = createWorkflowSupervisor({
+        ...bindings,
+        readyTimeoutMs: deadlines.timers.readyTimeoutMs,
+        recyclePolicySetTimer: deadlines.timers.setTimer,
+        recyclePolicyClearTimer: deadlines.timers.clearTimer,
+        onSelfTerminate: (info) => selfTerminations.push(info),
+      });
+      const spawnPromise = supervisor.spawn({
+        definitionHash: TEST_DEFINITION_HASH,
 
-      onInferenceEvent: () => undefined,
-    });
-    await tracker.awaitChildren(1);
-    const first = tracker.children[0];
-    if (first === undefined) throw new Error("first child missing");
-    await driveReady(first, ipcKeypair);
-    await spawnPromise;
+        onInferenceEvent: () => undefined,
+      });
+      await tracker.awaitChildren(1);
+      const first = tracker.children[0];
+      if (first === undefined) throw new Error("first child missing");
+      await driveReady(first, ipcKeypair);
+      await spawnPromise;
 
-    // Recycle spawns a second child but never drives its ready frame, so
-    // the bounded handshake times out.
-    let caught: unknown;
-    try {
-      await supervisor.recycle({ reason: "ready-timeout-test" });
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    expect(caught instanceof Error && caught.message).toMatch(
-      /did not emit ready/,
-    );
+      const recycling = supervisor.recycle({
+        reason: "handshake-timeout-test",
+      });
+      await tracker.awaitChildren(2);
+      const second = tracker.children[1];
+      if (second === undefined) throw new Error("second child missing");
+      if (reportsDefinition) await driveDefinition(second, ipcKeypair);
+      await deadlines.fire(deadline);
+      await expect(recycling).rejects.toThrow(error);
 
-    // The wedged respawn was reaped through the full SIGTERM -> SIGKILL
-    // ladder rather than left running as an orphan.
-    const second = tracker.children[1];
-    if (second === undefined) throw new Error("second child missing");
-    expect(second.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      // The wedged respawn was reaped through the full SIGTERM -> SIGKILL
+      // ladder rather than left running as an orphan.
+      expect(second.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
 
-    // The recycle failure routed through shutdownInternal to `stopped`, so
-    // a follow-up shutdown is a no-op.
-    await supervisor.shutdown();
+      // The recycle failure routed through shutdownInternal to `stopped`, so
+      // a follow-up shutdown is a no-op.
+      await supervisor.shutdown();
 
-    // The recycle failure is a self-termination: the supervisor drove itself
-    // down without a host `shutdown()` request, so the sink fired once with
-    // the terminal `stopped` phase. The no-op follow-up shutdown above must
-    // not add a second fire.
-    expect(selfTerminations).toHaveLength(1);
-    expect(selfTerminations[0]?.phase).toBe("stopped");
-    expect(selfTerminations[0]?.reason).toMatch(/recycle failed/);
-  });
+      // The recycle failure is a self-termination: the supervisor drove itself
+      // down without a host `shutdown()` request, so the sink fired once with
+      // the terminal `stopped` phase. The no-op follow-up shutdown above must
+      // not add a second fire.
+      expect(selfTerminations).toHaveLength(1);
+      expect(selfTerminations[0]?.phase).toBe("stopped");
+      expect(selfTerminations[0]?.reason).toMatch(/recycle failed/);
+    },
+  );
 
   test("a respawn whose control channel ends before ready rejects and reaps the new child", async () => {
     const baseDir = await makeTempDir("recycle-ready-failed-");
@@ -867,9 +938,7 @@ describe("supervisor recycle: respawn handshake bound", () => {
     // control-channel-end failure wins the handshake race deterministically.
     const supervisor = createWorkflowSupervisor(bindings);
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
 
       onInferenceEvent: () => undefined,
     });
@@ -883,8 +952,9 @@ describe("supervisor recycle: respawn handshake bound", () => {
     await tracker.awaitChildren(2);
     const second = tracker.children[1];
     if (second === undefined) throw new Error("second child missing");
-    // End the new child's control channel before it emits ready: the
-    // handshake fails rather than hangs.
+    // End the new child's control channel after it reports its definition
+    // but before it emits ready: the handshake fails rather than hangs.
+    await driveDefinition(second, ipcKeypair);
     second.childToSupervisor.close();
 
     let caught: unknown;
@@ -898,6 +968,59 @@ describe("supervisor recycle: respawn handshake bound", () => {
       /control channel ended before child emitted ready/,
     );
     expect(second.killSignals).toContain("SIGTERM");
+
+    await supervisor.shutdown();
+  });
+
+  test("a respawn whose definition does not hash to the approved hash rejects and reaps the new child", async () => {
+    const baseDir = await makeTempDir("recycle-definition-mismatch-");
+    const ipcKeypair = await generateKeyPair();
+    const tracker = createSpawnTracker({ sigtermExits: true });
+    await seedStepGrants(
+      baseDir,
+      defaultStepRepoId({ runId: "run_deployment-x", stepId: "step-1" }),
+      [{ resource: "thing", action: "read" }],
+    );
+    const bindings = await buildBindings({
+      baseDir,
+      spawner: tracker.spawner,
+      mailBus: createMockMailBus(),
+      ipcKeypair,
+    });
+    let layoutCalls = 0;
+    const supervisor = createWorkflowSupervisor({
+      ...bindings,
+      layoutSteps: (definition) => {
+        layoutCalls += 1;
+        return bindings.layoutSteps(definition);
+      },
+    });
+    const spawnPromise = supervisor.spawn({
+      definitionHash: TEST_DEFINITION_HASH,
+      onInferenceEvent: () => undefined,
+    });
+    await tracker.awaitChildren(1);
+    const first = tracker.children[0];
+    if (first === undefined) throw new Error("first child missing");
+    await driveReady(first, ipcKeypair);
+    await spawnPromise;
+
+    const recyclePromise = supervisor.recycle({ reason: "mismatch-test" });
+    await tracker.awaitChildren(2);
+    const second = tracker.children[1];
+    if (second === undefined) throw new Error("second child missing");
+    await driveDefinition(second, ipcKeypair, {
+      ...TEST_DEFINITION,
+      id: "a-different-workflow",
+    });
+
+    await expect(recyclePromise).rejects.toThrow(/not the approved/);
+    expect(second.killSignals).toContain("SIGTERM");
+    // As on first spawn, a child whose definition does not check out never
+    // receives the run's authority.
+    expect(authoritySetFrames(second.supervisorToChild.flushed())).toEqual([]);
+    // The layout stays the one the first child's report fixed.
+    expect(layoutCalls).toBe(1);
 
     await supervisor.shutdown();
   });
@@ -924,9 +1047,7 @@ describe("supervisor recycle: deliverSignal phase guard", () => {
     });
     const supervisor = createWorkflowSupervisor(bindings);
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
 
       onInferenceEvent: () => undefined,
     });
@@ -1219,9 +1340,7 @@ describe("supervisor recycle: terminal-event broadcaster cohort", () => {
     };
     const supervisor = createWorkflowSupervisor(bindings);
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
 
       onInferenceEvent: () => undefined,
     });
@@ -1328,9 +1447,7 @@ describe("supervisor recycle: drain-side processing replay", () => {
     };
     const supervisor = createWorkflowSupervisor(bindingsWithSpawner);
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
 
       onInferenceEvent: () => undefined,
     });
@@ -1385,9 +1502,7 @@ describe("supervisor recycle: shutdown during the kill/respawn gap", () => {
       });
       const supervisor = createWorkflowSupervisor(bindings);
       const spawning = supervisor.spawn({
-        stepOrder: ["step-1"],
-        definitionHash: "def-hash-shutdown-race",
-        warmKeep: false,
+        definitionHash: TEST_DEFINITION_HASH,
         onInferenceEvent: () => undefined,
       });
       await tracker.awaitChildren(1);
@@ -1465,9 +1580,7 @@ describe("supervisor recycle: shutdown during the kill/respawn gap", () => {
       },
     });
     const spawning = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-shutdown-before-spawn",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
       onInferenceEvent: () => undefined,
     });
     await tracker.awaitChildren(1);
@@ -1542,9 +1655,7 @@ describe("supervisor recycle: shutdown owns the retiring dispatch loop", () => {
     });
     const supervisor = createWorkflowSupervisor(bindings);
     const spawning = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-retiring-loop",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
       onInferenceEvent: () => undefined,
     });
     await tracker.awaitChildren(1);
@@ -1613,9 +1724,7 @@ describe("supervisor recycle: external drain phase guard", () => {
     });
     const supervisor = createWorkflowSupervisor(bindings);
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-drain-guard",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
 
       onInferenceEvent: () => undefined,
     });
@@ -1846,7 +1955,8 @@ describe("supervisor recycle: the new child's authority", () => {
     };
   }
 
-  // A supervisor whose spawn is started but whose child has not readied.
+  // A supervisor whose spawn is started and whose child has reported its
+  // definition but not readied.
   async function startSpawn(opts: {
     baseDir: string;
     tracker: SpawnTracker;
@@ -1867,11 +1977,15 @@ describe("supervisor recycle: the new child's authority", () => {
     });
     const supervisor = createWorkflowSupervisor(bindings);
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
       onInferenceEvent: () => undefined,
     });
+    // The supervisor reads the run's grants once the child has reported
+    // its definition.
+    await opts.tracker.awaitChildren(1);
+    const child = opts.tracker.children[0];
+    if (child === undefined) throw new Error("child missing");
+    await driveDefinition(child, opts.ipcKeypair);
     return { supervisor, spawnPromise };
   }
 
@@ -2100,9 +2214,7 @@ describe("supervisor recycle: the new child's authority", () => {
       ipcKeyPairFactory: opts.keypair,
     });
     const spawnPromise = supervisor.spawn({
-      stepOrder: ["step-1"],
-      definitionHash: "def-hash-abc",
-      warmKeep: false,
+      definitionHash: TEST_DEFINITION_HASH,
       onInferenceEvent: () => undefined,
     });
     return { supervisor, spawnPromise };
@@ -2122,9 +2234,7 @@ describe("supervisor recycle: the new child's authority", () => {
     const supervisor = createWorkflowSupervisor(bindings);
     await expect(
       supervisor.spawn({
-        stepOrder: ["step-1"],
-        definitionHash: "def-hash-abc",
-        warmKeep: false,
+        definitionHash: TEST_DEFINITION_HASH,
         onInferenceEvent: () => undefined,
       }),
     ).rejects.toThrow(/synthetic spawn ENOENT/);
@@ -2334,6 +2444,44 @@ describe("supervisor recycle: the new child's authority", () => {
     expect(child?.killSignals.length).toBeGreaterThan(0);
   });
 
+  test("a shutdown during the spawn's definition wait kills the new child without waiting for the deadline", async () => {
+    const baseDir = await makeTempDir("recycle-definition-wait-shutdown-");
+    const ipcKeypair = await generateKeyPair();
+    const tracker = createSpawnTracker({ sigtermExits: true });
+    await seedStepGrants(
+      baseDir,
+      defaultStepRepoId({ runId: "run_deployment-x", stepId: "step-1" }),
+      [{ resource: "thing", action: "read" }],
+    );
+    const bindings = await buildBindings({
+      baseDir,
+      spawner: tracker.spawner,
+      mailBus: createMockMailBus(),
+      ipcKeypair,
+    });
+    // The definition deadline only fires by hand, and this test never fires
+    // it, so only the shutdown can end the wait.
+    const deadlines = createHandshakeDeadlines(4_242);
+    const supervisor = createWorkflowSupervisor({
+      ...bindings,
+      readyTimeoutMs: deadlines.timers.readyTimeoutMs,
+      setTimer: deadlines.timers.setTimer,
+      clearTimer: deadlines.timers.clearTimer,
+    });
+    const spawnPromise = supervisor.spawn({
+      definitionHash: TEST_DEFINITION_HASH,
+      onInferenceEvent: () => undefined,
+    });
+    await tracker.awaitChildren(1);
+
+    await supervisor.shutdown();
+    await expect(spawnPromise).rejects.toThrow(
+      /shut down while the spawn waited for the child's definition/,
+    );
+    const child = tracker.children[0];
+    expect(child?.killSignals.length).toBeGreaterThan(0);
+  });
+
   test("a recycled child's first frame is authority.set with the run's grants and the current credentials", async () => {
     const baseDir = await makeTempDir("recycle-authority-");
     const ipcKeypair = await generateKeyPair();
@@ -2367,6 +2515,61 @@ describe("supervisor recycle: the new child's authority", () => {
     expect(
       authority?.delivery?.materials.map((m) => m.credentialId).sort(),
     ).toEqual(["cred_a", "cred_b"]);
+
+    await supervisor.shutdown();
+  });
+
+  test("an older secret that arrives after a newer one leaves the child and the next child on the newer one", async () => {
+    const baseDir = await makeTempDir("recycle-secret-order-");
+    const ipcKeypair = await generateKeyPair();
+    const tracker = createSpawnTracker({});
+    // The deploy delivery carries no version, as a record sealed before
+    // versions existed restores it.
+    const { supervisor } = await spawnSupervisor({
+      baseDir,
+      tracker,
+      mailBus: createMockMailBus(),
+      ipcKeypair,
+      onRunStart: async () => runSnapshot,
+      credentialDelivery: { bindings: [], materials: [material("cred_a")] },
+    });
+    const rotated = (secret: string, secretVersion: number) => ({
+      delivery: {
+        bindings: [],
+        materials: [{ ...material("cred_a"), secret, secretVersion }],
+      },
+    });
+    await supervisor.deliverCredentials(rotated("sk-v3", 3));
+    await supervisor.deliverCredentials(rotated("sk-v2", 2));
+
+    // The child applies `authority.set` as a replace and each
+    // `credentials-updated` frame through the same merge.
+    const first = tracker.children[0];
+    if (first === undefined) throw new Error("first child missing");
+    let cell: CredentialDelivery | null = null;
+    for (const frame of parseControlFrames(first.supervisorToChild.flushed())) {
+      if (frame.type === "authority.set") {
+        cell = frame.data.delivery ?? null;
+      } else if (frame.type === "credentials-updated") {
+        cell = mergeCredentialDelivery(
+          cell,
+          frame.data.delivery,
+          frame.data.revoke,
+        );
+      }
+    }
+    expect(cell?.materials.map((m) => m.secret)).toEqual(["sk-v3"]);
+
+    const recyclePromise = supervisor.recycle({ reason: "authority" });
+    await tracker.awaitChildren(2);
+    const second = tracker.children[1];
+    if (second === undefined) throw new Error("second child missing");
+    await driveReady(second, ipcKeypair);
+    await recyclePromise;
+    const [authority] = authoritySetFrames(second.supervisorToChild.flushed());
+    expect(authority?.delivery?.materials.map((m) => m.secret)).toEqual([
+      "sk-v3",
+    ]);
 
     await supervisor.shutdown();
   });

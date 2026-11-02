@@ -53,7 +53,6 @@
 
 import { getLogger } from "@intx/log";
 import { generateKeyPair } from "@intx/crypto";
-import { hexEncode } from "@intx/types/hex";
 
 import type {
   Principal,
@@ -108,6 +107,7 @@ import { createWorkflowRunRepoStore } from "../adapters/repo-store";
 import { createCancellationBarrier } from "./cancellation-barrier";
 import { createWorkflowRunBlobSubstrate } from "../adapters/blob-substrate";
 import type {
+  ChildInheritance,
   HostSpawnSuspendableChild,
   HostSpawnChild,
   RunSuspendableChild,
@@ -141,7 +141,6 @@ import {
 } from "../supervisor/credentials";
 
 import type { SpawnTimeEnv } from "./env-bootstrap";
-import { loadVerifiedWorkflowDefinitionFromClosure } from "./verified-definition-loader";
 import {
   loadWorkflowActionHandlersFromClosure,
   loadWorkflowDirectorRegistryFromClosure,
@@ -161,9 +160,10 @@ import { createWarmAgentCache, type WarmAgentCache } from "./warm-agent-cache";
 import { mergeCredentialDelivery } from "./credential-cell";
 import {
   createCredentialsBackedAuthorize,
-  resolveSnapshotStepGrants,
+  createSnapshotGrantsResolver,
   type CredentialsSnapshotRef,
   type GrantEvaluator,
+  type StepGrantsResolver,
 } from "./credentials-backed-authorize";
 
 const logger = getLogger(["workflow-host", "child"]);
@@ -245,7 +245,7 @@ export type DrainController = WorkflowHostDrainController;
  */
 export interface CredentialWiring {
   readonly materialRef: CredentialMaterialRef;
-  readonly resolveStepGrants: (stepId: string) => readonly unknown[];
+  readonly resolveStepGrants: StepGrantsResolver;
 }
 
 export type ChildStepInvoker = (
@@ -412,15 +412,15 @@ export interface RunWorkflowChildBindings {
    */
   initialSources?: Record<string, InferenceSource[]>;
   /**
-   * Optional override for the child's Ed25519 keypair factory. The
-   * child mints a fresh keypair at startup, holds the private half
-   * in its own address space, signs every upstream control frame
-   * with it, and publishes the public half in the `ready` frame so
-   * the supervisor can verify subsequent upstream frames. Production
-   * wires this against `@intx/crypto`'s `generateKeyPair`;
-   * tests inject a deterministic factory so they can assert on the
-   * published key. The supervisor's private key is NEVER threaded
-   * into the child -- the child holds only its own private half.
+   * Optional override for the child's Ed25519 keypair factory, used only
+   * when the caller supplies no `upstreamSender`. The child then mints a
+   * keypair, holds the private half in its own address space, and signs
+   * every upstream control frame with it. The process entry supplies its
+   * own sender and publishes that sender's public half in its `definition`
+   * frame; a test that drives `runWorkflowChild` directly injects a
+   * deterministic factory so it knows the key that verifies the child's
+   * frames. The supervisor's private key is NEVER threaded into the
+   * child -- the child holds only its own private half.
    */
   ipcChildKeyPairFactory?: () => Promise<{
     privateKey: Uint8Array;
@@ -431,6 +431,12 @@ export interface RunWorkflowChildBindings {
 export interface RunWorkflowChildOpts {
   /** Parsed spawn-time env. */
   env: SpawnTimeEnv;
+  /**
+   * The deployment's live workflow definition, already evaluated from the
+   * closure at `env.closurePackageDir` and verified against
+   * `env.definitionHash` (`loadVerifiedWorkflowDefinitionFromClosure`).
+   */
+  definition: WorkflowDefinition;
   /** Control-channel reader (supervisor -> child). */
   controlReader: NdjsonReader;
   /**
@@ -592,38 +598,23 @@ export async function runWorkflowChild(
     current: opts.bindings.initialSources ?? {},
   };
   const credentialMaterialRef: CredentialMaterialRef = { current: null };
+  // The run's grants resolver, shared by `authorize` and the credential
+  // wiring so both read the same grants.
+  const resolveStepGrants = createSnapshotGrantsResolver(
+    credentialsRef,
+    "workflow-child",
+  );
   // The per-run credential wiring the top-level step invoker carries to the
-  // substrate: the live material cell and a resolver for a step's grants from
-  // the same credentials snapshot `authorize` reads. Built once over the two
-  // refs; every step build reads them live, so a rotation -- or a revoking
-  // re-push that swaps a ref -- is reflected without rebuilding the wiring.
+  // substrate: the live material cell and the run's grants resolver. Built
+  // once over the two refs; every step build reads them live, so a rotation
+  // -- or a revoking re-push that swaps a ref -- is reflected without
+  // rebuilding the wiring.
   const credentialWiring: CredentialWiring = {
     materialRef: credentialMaterialRef,
-    resolveStepGrants: (stepId) => {
-      const snapshot = credentialsRef.current;
-      if (snapshot === null) {
-        throw new Error(
-          `workflow-child credential wiring: no credentials snapshot for step ${stepId}; a step that uses credentials cannot resolve its grants before the run carries any`,
-        );
-      }
-      return resolveSnapshotStepGrants(
-        snapshot,
-        stepId,
-        (lookupStepId) =>
-          `workflow-child credential wiring: credentials snapshot has no entry for step ${lookupStepId}`,
-      );
-    },
+    resolveStepGrants,
   };
   const clock = opts.bindings.clock ?? defaultClock;
   const newId = opts.bindings.newId ?? defaultNewId;
-
-  // Mint the child's own upstream-signing keypair. The private half
-  // never leaves this address space; the public half rides on the
-  // `ready` frame's payload so the supervisor can verify subsequent
-  // upstream frames against it.
-  const childKeyPair = await (
-    opts.bindings.ipcChildKeyPairFactory ?? generateKeyPair
-  )();
 
   const runtimeRepoStore = createWorkflowRunRepoStore({
     substrate: opts.bindings.substrate,
@@ -638,40 +629,28 @@ export async function runWorkflowChild(
     writer: opts.eventWriter,
   });
 
-  // Re-verify barrier at the load boundary. Source-ref is the only deploy
-  // lineage: the inert projection is a non-executable approval surface (agents
-  // carry `modelSources`/no `inference`, tool factories are plain data), so the
-  // child EVALUATES the pinned code closure to a live definition and re-verifies
-  // by projecting it back to inert and hashing it against
-  // `opts.env.definitionHash`; a divergent closure fails closed. The
-  // load happens once before both the resume loop and the trigger loop, so the
-  // same verified definition serves every fresh trigger AND every resume.
-  //
-  // Post-verify structural rewrite: the re-verify above hashed the closure's
-  // INLINE onTrigger bodies (matching the frozen approval); now lift each to a
-  // `{ ref }` so the runtime dispatches to the body child, and keep the
+  // Post-verify structural rewrite: the verified definition still carries the
+  // closure's INLINE onTrigger bodies (matching the frozen approval); lift each
+  // to a `{ ref }` so the runtime dispatches to the body child, and keep the
   // extracted body definitions in an in-memory map. The suspendable-child
-  // resolver runs each body from THIS map -- the parent's already-re-verified
-  // closure -- with no disk read and no separate per-body re-verify. The rewrite
-  // MUST follow the re-verify: rewriting first would diverge from the frozen
-  // inline-body hash.
-  const verifiedDefinition = await loadVerifiedWorkflowDefinitionFromClosure({
-    packageDir: opts.env.closurePackageDir,
-    approvedHash: opts.env.definitionHash,
-  });
-  const { workflow, bodies } = rewriteInlineOnTriggerBodies(verifiedDefinition);
+  // resolver runs each body from THIS map -- the already-verified closure --
+  // with no disk read and no separate per-body re-verify. The rewrite MUST
+  // follow the verify: rewriting first would diverge from the frozen
+  // inline-body hash. The same definition serves every fresh trigger AND
+  // every resume.
+  const { workflow, bodies } = rewriteInlineOnTriggerBodies(opts.definition);
   let definition: WorkflowDefinition = workflow;
   const bodiesMap = new Map<string, WorkflowDefinition>(
     bodies.map((b) => [b.ref, b.definition]),
   );
 
   // An owned `childWorkflow` import embeds its child inline in the parent's
-  // definition (folded into the parent's hash and approval), so it is already
-  // covered by the re-verify above. Lift each inline child to an internal
-  // `{ ref }` -- the form the runtime dispatches -- and keep the lifted
-  // definitions in an in-memory map. The terminal childWorkflow resolver below
-  // runs each child from THIS map, with no on-disk asset read and no separate
-  // per-child re-verify.
+  // definition (folded into the parent's hash and approval), so the process
+  // entry's verify of the parent already covers it. Lift each inline child to
+  // an internal `{ ref }` -- the form the runtime dispatches -- and keep the
+  // lifted definitions in an in-memory map. The terminal childWorkflow
+  // resolver below runs each child from THIS map, with no on-disk asset read
+  // and no separate per-child re-verify.
   const childRewrite = rewriteInlineChildWorkflowBodies(definition);
   definition = childRewrite.workflow;
   const childBodiesMap = new Map(
@@ -721,7 +700,7 @@ export async function runWorkflowChild(
   // before onTrigger/childWorkflow bodies lift to `{ ref }` placeholders.
   const directors = await loadWorkflowDirectorRegistryFromClosure({
     packageDir: opts.env.closurePackageDir,
-    definition: verifiedDefinition,
+    definition: opts.definition,
   });
 
   // Loop `while`/`carry` functions resolve from the pinned closure's
@@ -759,12 +738,12 @@ export async function runWorkflowChild(
   // Suspendable-child resolver (onTrigger section bodies and loop bodies),
   // selected ONCE per deployment: the bodies map is immutable and the per-run
   // `onEvent` is injected later in `buildRuntimeEnv`. Resolve each body from the
-  // parent's in-memory closure (already re-verified above) via the raw executor
-  // binding. A deployment that carries bodies but whose host wired no executor is
-  // a misconfiguration -- fail loud at startup rather than silently falling back
-  // to a disk read (the exact behaviour this arm exists to avoid). A deployment
-  // with no suspendable body leaves the host undefined; its slot is never
-  // invoked.
+  // parent's in-memory closure (verified at the process entry) via the raw
+  // executor binding. A deployment that carries bodies but whose host wired no
+  // executor is a misconfiguration -- fail loud at startup rather than silently
+  // falling back to a disk read (the exact behaviour this arm exists to avoid).
+  // A deployment with no suspendable body leaves the host undefined; its slot
+  // is never invoked.
   let suspendableChildHost: HostSpawnSuspendableChild | undefined;
   if (bodiesMap.size > 0) {
     const executor = opts.bindings.runSuspendableChild;
@@ -821,22 +800,23 @@ export async function runWorkflowChild(
   }
 
   const authorize = createCredentialsBackedAuthorize(
-    credentialsRef,
+    resolveStepGrants,
     opts.bindings.evaluateGrants,
   );
 
   const drainController = createWorkflowHostDrainController({ definition });
 
   // Warm-agent cache (design §3b). Built only when the deployment is a
-  // warm candidate (the single-step long-lived agent the deploy
-  // projection marked). The cache lives in this run-loop's address
-  // space, holds the constructed agent across messages, and is evicted
-  // -- running the wrapped `agent.close()` that kills the LSP subprocess
-  // -- at the loop's teardown points (the shutdown frame and the
-  // exit-path `finally` below). A multi-step deployment leaves this
-  // `undefined`, so its steps keep instantiate-send-teardown and no
-  // multi-step agent is ever warm-kept.
-  const warmCache: WarmAgentCache | undefined = opts.env.warmKeep
+  // warm candidate (a single-step deployment's long-lived agent). The
+  // cache lives in this run-loop's address space, holds the constructed
+  // agent across messages, and is evicted -- running the wrapped
+  // `agent.close()` that kills the LSP subprocess -- at the loop's
+  // teardown points (the shutdown frame and the exit-path `finally`
+  // below). A multi-step deployment leaves this `undefined`, so its steps
+  // keep instantiate-send-teardown and no multi-step agent is ever
+  // warm-kept.
+  const warmKeep = isWarmKeptDeployment(opts.definition);
+  const warmCache: WarmAgentCache | undefined = warmKeep
     ? createWarmAgentCache()
     : undefined;
 
@@ -851,7 +831,9 @@ export async function runWorkflowChild(
     opts.upstreamSender ??
     holdControlChannelSender(
       createControlChannelSender({
-        privateKeySeed: childKeyPair.privateKey,
+        privateKeySeed: (
+          await (opts.bindings.ipcChildKeyPairFactory ?? generateKeyPair)()
+        ).privateKey,
         channelId: opts.env.channelId,
         writer: opts.controlWriter,
       }),
@@ -926,6 +908,7 @@ export async function runWorkflowChild(
       warmCache,
       sourcesRef,
       credentialWiring,
+      credentialsRef,
       ...(opts.mailboxCallBridge !== undefined
         ? { mailboxCallBridge: opts.mailboxCallBridge }
         : {}),
@@ -949,7 +932,7 @@ export async function runWorkflowChild(
     void handle.complete
       .then((result) => {
         reclaimRunStorageIfCold({
-          warmKeep: opts.env.warmKeep,
+          warmKeep,
           cleanupRunStorage: opts.bindings.cleanupRunStorage,
           runId: run.runId,
         });
@@ -969,25 +952,17 @@ export async function runWorkflowChild(
   // attach a terminal-event emitter onto every resumed run's
   // `complete` promise; the same sender lives behind the pack-push
   // bridge the process wrapper builds (when the caller supplies one),
-  // so the upstream frame sequence is monotonic across `ready`,
-  // every `pack.push.request`, every `terminal.event`, and any
-  // future child-originated upstream payload. Upstream frames are
-  // signed by the child's own private key; the `ready` payload
-  // publishes the matching public half so the supervisor can verify
-  // every subsequent upstream frame.
+  // so the upstream frame sequence is monotonic across the process
+  // entry's `definition` frame, `ready`, every `pack.push.request`,
+  // every `terminal.event`, and any future child-originated upstream
+  // payload.
   //
-  // The supervisor accepts `ready` only as the first frame, and seeds its
-  // cohort tracking from `resumed.runs` before it reads anything else. A
-  // due timer or a resumed run can send during startup, so the sender holds
-  // their frames until both of these are out.
+  // The supervisor accepts `ready` only right after `definition`, and
+  // seeds its cohort tracking from `resumed.runs` before it reads anything
+  // else. A due timer or a resumed run can send during startup, so the
+  // sender holds their frames until both of these are out.
   try {
-    await upstreamSender.sendNow({
-      type: "ready",
-      data: {
-        childPid: process.pid,
-        childPublicKey: hexEncode(childKeyPair.publicKey),
-      },
-    });
+    await upstreamSender.sendNow({ type: "ready" });
 
     // Report self-discovered runs so the supervisor seeds its cohort
     // tracking before the dispatch loop starts.
@@ -1016,7 +991,6 @@ export async function runWorkflowChild(
     for await (const payload of iter) {
       if (
         await handleControlPayload(payload, {
-          env: opts.env,
           bindings: opts.bindings,
           credentialsRef,
           runtimeRepoStore,
@@ -1134,7 +1108,6 @@ export async function runWorkflowChild(
 async function handleControlPayload(
   payload: ControlPayload,
   ctx: {
-    env: SpawnTimeEnv;
     bindings: RunWorkflowChildBindings;
     credentialsRef: CredentialsSnapshotRef;
     runtimeRepoStore: ReturnType<typeof createWorkflowRunRepoStore>;
@@ -1214,6 +1187,7 @@ async function handleControlPayload(
         warmCache: ctx.warmCache,
         sourcesRef: ctx.sourcesRef,
         credentialWiring: ctx.credentialWiring,
+        credentialsRef: ctx.credentialsRef,
         ...(ctx.mailboxCallBridge !== undefined
           ? { mailboxCallBridge: ctx.mailboxCallBridge }
           : {}),
@@ -1241,7 +1215,7 @@ async function handleControlPayload(
       void handle.complete
         .then((result) => {
           reclaimRunStorageIfCold({
-            warmKeep: ctx.env.warmKeep,
+            warmKeep: isWarmKeptDeployment(ctx.definition),
             cleanupRunStorage: ctx.bindings.cleanupRunStorage,
             runId: payload.data.runId,
           });
@@ -1432,9 +1406,8 @@ async function handleControlPayload(
           "workflow-child sources-updated: single-step deployment has no step id",
         );
       }
-      // A sources-updated only reaches a warm single-step deployment, which
-      // always builds a warm cache. An absent cache is a routing bug, not a
-      // silent no-op.
+      // A single-step deployment always builds a warm cache, so an absent
+      // cache breaks an invariant rather than being a silent no-op.
       if (ctx.warmCache === undefined) {
         throw new Error(
           "workflow-child sources-updated: no warm cache; a sources rotation must target a warm single-step deployment",
@@ -1452,12 +1425,13 @@ async function handleControlPayload(
       ctx.sourcesRef.current = { [stepId]: payload.data.sources };
       return false;
     }
+    case "definition":
     case "ready": {
-      // `ready` is a child->supervisor frame; receiving one on the
-      // child's downstream side is a protocol violation that the
-      // sender should not be able to produce against the typed union.
+      // `definition` and `ready` are child->supervisor frames; receiving
+      // one on the child's downstream side is a protocol violation that
+      // the sender should not be able to produce against the typed union.
       throw new Error(
-        "workflow-child received a `ready` frame on its inbound control channel; this is a supervisor-only payload",
+        `workflow-child received a \`${payload.type}\` frame on its inbound control channel; this is a supervisor-only payload`,
       );
     }
     case "recycle.request": {
@@ -1715,6 +1689,7 @@ function buildRuntimeEnv(args: {
   warmCache: WarmAgentCache | undefined;
   sourcesRef: SourcesSnapshotRef;
   credentialWiring: CredentialWiring;
+  credentialsRef: CredentialsSnapshotRef;
   mailboxCallBridge?: ChildMailboxCallBridge;
   onEvent: (event: EventPayload) => void;
   upstreamSender: ControlChannelSender;
@@ -1773,27 +1748,22 @@ function buildRuntimeEnv(args: {
   // narrow contract with no event slot. The run's live credential-material cell
   // rides the same seam so the body's inference resolves its source secret
   // against the parent's current delivery, reached live on a rotation.
+  const inherited: ChildInheritance = {
+    material: args.credentialWiring.materialRef,
+    rootGrants: args.credentialsRef,
+  };
   const hostSuspendable = args.suspendableChildHost;
   const spawnSuspendableChild: SpawnSuspendableChild | undefined =
     hostSuspendable === undefined
       ? undefined
-      : (spawnInput) =>
-          hostSuspendable(
-            spawnInput,
-            args.onEvent,
-            args.credentialWiring.materialRef,
-          );
+      : (spawnInput) => hostSuspendable(spawnInput, args.onEvent, inherited);
   // Same adaptation for the terminal childWorkflow seam: inject THIS run's event
   // funnel so a child's live inference events ride the parent run's channel, and
   // the live credential-material cell so the child's inference resolves its
   // source secret against the parent's current delivery, while the runtime env
   // keeps the narrow `SpawnChildWorkflow` (no event slot).
   const spawnChild: SpawnChildWorkflow = (spawnInput) =>
-    args.spawnChild(
-      spawnInput,
-      args.onEvent,
-      args.credentialWiring.materialRef,
-    );
+    args.spawnChild(spawnInput, args.onEvent, inherited);
   const env: WorkflowRuntimeEnv = {
     repoStore: args.runtimeRepoStore,
     scheduler: args.bindings.scheduler,
@@ -2061,6 +2031,15 @@ export function emitTerminalEvent(
       const message = cause instanceof Error ? cause.message : String(cause);
       logger.error`terminal.event upstream send failed for runId=${result.runId}: ${message}`;
     });
+}
+
+/**
+ * Whether a deployment's agent is warm-kept across messages (design §3b): the
+ * sole step of a single-step deployment is the long-lived agent, and every
+ * multi-step agent runs instantiate-send-teardown per step.
+ */
+export function isWarmKeptDeployment(definition: WorkflowDefinition): boolean {
+  return definition.stepOrder.length === 1;
 }
 
 /**

@@ -4,6 +4,7 @@ import { describeRoute, validator } from "hono-openapi";
 
 import { credential, grant as grantTable, provider } from "@intx/db/schema";
 import {
+  credentialSecretColumns,
   getAncestorChain,
   isReferencedRowViolation,
   resolveCredentialByName,
@@ -36,7 +37,7 @@ import {
 import { jsonResponse } from "../openapi";
 import {
   pushCredentialRevoke,
-  pushSourceUpdates,
+  pushCredentialRotation,
   type SidecarRouter,
 } from "@intx/hub-sessions";
 
@@ -333,12 +334,17 @@ export function createCredentialRoutes({
       if (body.name !== undefined) updates["name"] = body.name;
       if (body.description !== undefined)
         updates["description"] = body.description;
-      // Re-encrypt a rotated secret under the same row/column binding. A null
-      // refreshSecret clears it; a present value is encrypted.
+      // Re-encrypt a rotated secret under the same row/column binding, and
+      // advance its version. A null refreshSecret clears it; a present value
+      // is encrypted.
       if (body.secret !== undefined)
-        updates["secret"] = await credentialCipher.encrypt(
-          body.secret,
-          credentialAad(credentialId, "secret"),
+        Object.assign(
+          updates,
+          await credentialSecretColumns(
+            credentialCipher,
+            credentialId,
+            body.secret,
+          ),
         );
       if (body.refreshSecret !== undefined)
         updates["refreshSecret"] =
@@ -369,23 +375,22 @@ export function createCredentialRoutes({
         return errorResponse(c, "not_found", "Credential not found");
       }
 
-      // If the secret was updated, push new inference sources to running
-      // instances -- UNLESS the same request also revokes the credential. A
-      // revoke and a secret re-resolve target overlapping addresses with no
-      // ordering guarantee (both fire-and-forget), and the source re-resolve
-      // does not consult credential status, so it would re-deliver the rotated
-      // material and could re-populate the revoked secret in a live child's
-      // cell. The revoke wins.
+      // If the secret was updated, push it to the live deployments that hold
+      // the credential -- UNLESS the same request also revokes it. The
+      // rotation re-resolves the credential after this update commits and
+      // finds nothing to deliver for a revoked one, so skipping it only saves
+      // the lookup. The revoke below does the eviction.
       if (body.secret !== undefined && body.status !== "revoked") {
-        void pushSourceUpdates(
+        void pushCredentialRotation(
           db,
           sidecarRouter,
           updated.tenantId,
+          updated.id,
           credentialCipher,
         );
       }
 
-      // A deliberate revocation must evict the credential from any running
+      // A deliberate revocation must evict the credential from any live
       // deployment that holds it -- a re-resolve alone would leave the revoked
       // secret in a live child's cell. Fire-and-forget, best effort.
       if (body.status === "revoked") {
@@ -481,7 +486,7 @@ export function createCredentialRoutes({
         return errorResponse(c, "not_found", "Credential not found");
       }
 
-      // The credential row is gone; evict its material from any running
+      // The credential row is gone; evict its material from any live
       // deployment that still holds it so a live child cannot keep using it.
       // Fire-and-forget, best effort.
       void pushCredentialRevoke(db, sidecarRouter, tenantCtx.id, credentialId);

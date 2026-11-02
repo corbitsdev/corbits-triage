@@ -835,6 +835,29 @@ export async function loadCommittedRunGrants(
 }
 
 /**
+ * The sidecar router's `loadRunGrants` lookup: a run's committed grants by run
+ * id, read at send time, or null when the run has no run row or no run
+ * principal (a child run has none).
+ */
+export function createRunGrantsLoader(deps: {
+  db: DB["db"];
+}): (runId: string) => Promise<RunGrantsFrame["stepGrants"] | null> {
+  return async (runId) => {
+    const run = await deps.db.query.workflowRun.findFirst({
+      where: eq(workflowRun.id, runId),
+      columns: { tenantId: true },
+    });
+    if (run === undefined) return null;
+    const committed = await loadCommittedRunGrants(
+      deps.db,
+      run.tenantId,
+      runId,
+    );
+    return committed === null ? null : committed.stepGrants;
+  };
+}
+
+/**
  * The tool name an approval names, read from its `toolDefinition` snapshot. The
  * name lives in untyped jsonb; validate it through the `ToolDefinition` arktype
  * rather than reaching in, so a malformed snapshot fails loudly instead of
@@ -852,8 +875,10 @@ export function approvalToolName(
  * approves-always sets `allow` (stop asking, let it through); one who
  * rejects-always sets `deny` (stop asking, block it). The grant stays with the
  * run: every later read (the child's enforcement floor, the authorization view,
- * and the per-dispatch re-establish) sees the standing effect, so the tool is
- * not asked again for the life of the run.
+ * and the grants the sidecar router sends ahead of each signal and trigger)
+ * sees the standing effect, so the tool is not asked again for the life of the
+ * run. Two grant sends for one run can arrive out of order, and then the
+ * sidecar holds the older grants until the next send.
  *
  * Guarded to only change a grant currently gated `ask`: the `effect = "ask"`
  * predicate means it only ever resolves the checkpoint, never overrides an

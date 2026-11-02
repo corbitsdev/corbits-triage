@@ -1,218 +1,129 @@
-// Hub-side producers that push credential-material changes to running
+// Hub-side producers that push credential-material changes to live
 // deployments over `credentials.update`.
 //
-// Two shapes, one per removal semantic:
-//   - Source re-resolve (`pushSourceUpdates`, `pushSourceUpdatesSubtree`): after
-//     a credential secret rotation or a catalog edit, re-resolve each running
-//     instance's inference sources and push the refreshed material followed by
-//     the `sources.update` that references it. An inference source references
-//     its credential by id only, so the rotated secret rides the cell.
+// Two shapes:
+//   - Rotation (`pushCredentialRotation`): after a credential secret rotation,
+//     push the rotated material to every live deployment that holds the
+//     credential.
 //   - Flat named revoke (`pushCredentialRevoke`): after a credential is deleted
 //     or deliberately revoked, broadcast a `revoke` naming that credentialId so
-//     every running deployment drops it. The removed id is NAMED by the actor,
+//     every live deployment drops it. The removed id is NAMED by the actor,
 //     so this needs no diff against a prior delivery.
 
-import { eq, and, inArray, isNull, isNotNull } from "drizzle-orm";
+import { eq, and, inArray, isNotNull } from "drizzle-orm";
 import {
   type RunCredentialsLoader,
   withRunCredentials,
 } from "./run-credentials";
 import { getLogger } from "@intx/log";
-import { hubConsumersOf, workflowRun } from "@intx/db/schema";
 import {
-  resolveInstanceModelSources,
+  hubConsumersOf,
+  liveWorkflowRunStatuses,
+  workflowRun,
+} from "@intx/db/schema";
+import {
+  findRemovedCredentialIds,
+  findRotatedCredentialIds,
   getDescendantTenants,
   reresolveCurrentMaterials,
 } from "@intx/db";
 import type { DB } from "@intx/db";
 import type { CredentialCipher } from "@intx/types";
-import type { CredentialDelivery } from "@intx/types/credential-delivery";
+import type {
+  CredentialDelivery,
+  CredentialMaterialEntry,
+} from "@intx/types/credential-delivery";
 
 import type { SidecarRouter } from "./ws/sidecar-handler";
 
 const log = getLogger(["hub", "credentials"]);
 
 /**
- * Re-resolve a single running instance's inference sources from the catalog
- * (the definition's model requirements plus the invoker preferences persisted
- * on the instance) and push the ordered list to its sidecar. The head of the
- * catalog-priority-ordered list is the active default; the tail is the
- * failover chain.
+ * After a credential's secret is rotated, deliver the new secret to every live
+ * deployment in the tenant AND its descendants (which resolve an ancestor's
+ * credential through the tenant walk-up) whose delivered refs
+ * (`credentialRefs`) name the credential. The current material is pushed as a
+ * merge. A deployment's child runs have no address and route through the
+ * deployment's sidecar, so this push covers them. The material carries its
+ * `secretVersion`, so a push that arrives after a later rotation's push cannot
+ * restore the older secret.
  *
- * No-op when the instance resolves to no launchable source — the resolver's
- * own logger is the signal for why.
+ * Callers fire this without awaiting, so it must never reject. A deployment
+ * whose sidecar has no route fails its send; that is logged and not retried,
+ * because the reconnect reconcile re-resolves the current secret.
  */
-export async function pushInstanceSourceUpdate(
+export async function pushCredentialRotation(
   db: DB["db"],
-  sidecarRouter: Pick<
-    SidecarRouter,
-    "sendSourcesUpdate" | "sendCredentialsUpdate"
-  >,
-  instance: {
-    address: string;
-    definitionId: string;
-    tenantId: string;
-    modelPreferences: unknown;
-  },
+  sidecarRouter: Pick<SidecarRouter, "sendCredentialsUpdate">,
+  tenantId: string,
+  credentialId: string,
   credentialCipher: CredentialCipher,
 ): Promise<void> {
-  const resolution = await resolveInstanceModelSources(
-    db,
-    instance.tenantId,
-    instance,
-    credentialCipher,
-  );
-  if (!resolution.ok) return;
-  const [head] = resolution.sources;
-  if (head === undefined) return;
-  // Push the credential material before the source list. A source references
-  // its credential by id, so the cell must hold the (possibly rotated) secret
-  // before the source list that points at it lands. Inference sources carry no
-  // binding descriptor. A failure here propagates and aborts the source push --
-  // never a stale secret paired with a fresh source list.
-  if (resolution.materials.length > 0) {
-    const delivery: CredentialDelivery = {
-      bindings: [],
-      materials: resolution.materials,
-    };
-    await sidecarRouter.sendCredentialsUpdate(instance.address, delivery);
-  }
-  await sidecarRouter.sendSourcesUpdate(
-    instance.address,
-    resolution.sources,
-    head.id,
-  );
-}
-
-/**
- * Re-resolve every running instance in the given tenants against the catalog
- * and push the updates to sidecars. The running instances are the folded runs
- * a launch produces: born running, with a routing address and no deployment.
- * Deployment-anchor runs (which own a deployment id and a workflow-derived
- * address) and address-less child runs route via the deployment, not this
- * per-instance push, so they are excluded. Each instance re-resolves from its
- * own tenant's context (its ancestor chain), so the rotated/edited upstream
- * entry flows through. Errors are logged per-instance but do not propagate.
- */
-async function pushSourceUpdatesToTenants(
-  db: DB["db"],
-  sidecarRouter: SidecarRouter,
-  tenantIds: string[],
-  credentialCipher: CredentialCipher,
-): Promise<void> {
-  if (tenantIds.length === 0) return;
-
-  // Callers fire this without awaiting, so it must never reject: a failure to
-  // enumerate or push is logged and dropped, not propagated as an unhandled
-  // rejection. The push is best effort — the next mutation or a sidecar
-  // reconnect re-resolves sources.
+  let tenantIds: string[];
   try {
-    // The instance-shaped runs: running, addressable, and not anchored on a
-    // deployment. `anchorRunId IS NULL` excludes the deployment-anchor runs
-    // (which set it to their own id), so no deployment-anchor run address can
-    // reach the address-targeted push below. Mirrors the /me/workflows/runs and
-    // tenant run-list predicate.
-    const instances = await db.query.workflowRun.findMany({
+    tenantIds = await getDescendantTenants(db, tenantId);
+  } catch (err: unknown) {
+    log.warn`Failed to enumerate descendants for credential rotation: ${String(err)}`;
+    return;
+  }
+  try {
+    // Only a deployment anchor carries `credentialRefs`, and it is cleared
+    // when the anchor's allocation generation advances. The refs hold few
+    // ids and no index covers them, so the credential filter runs here.
+    const runs = await db.query.workflowRun.findMany({
       where: and(
         inArray(workflowRun.tenantId, tenantIds),
-        eq(workflowRun.status, "running"),
-        isNull(workflowRun.anchorRunId),
+        inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
         isNotNull(workflowRun.address),
+        isNotNull(workflowRun.credentialRefs),
       ),
+      columns: { id: true, address: true, credentialRefs: true },
     });
-
-    if (instances.length === 0) return;
-
-    const results = await Promise.allSettled(
-      instances.map(async (instance) => {
-        // The isNotNull(address) filter guarantees a value; a null here is a
-        // broken invariant. The callback is async, so this throw becomes a
-        // rejected promise captured per-instance by allSettled and logged
-        // below -- one bad row is surfaced, not fatal to the whole batch.
-        if (instance.address === null) {
-          throw new Error(
-            `running run ${instance.id} matched the non-null-address filter but has a null address`,
-          );
-        }
-        if (instance.definitionId === null) {
-          throw new Error(
-            `running run ${instance.id} has no workflow definition`,
-          );
-        }
-        return pushInstanceSourceUpdate(
-          db,
-          sidecarRouter,
-          {
-            address: instance.address,
-            definitionId: instance.definitionId,
-            tenantId: instance.tenantId,
-            modelPreferences: instance.modelPreferences,
-          },
-          credentialCipher,
+    const addresses = new Set<string>();
+    for (const run of runs) {
+      if (run.credentialRefs?.credentialIds.includes(credentialId) !== true) {
+        continue;
+      }
+      // The isNotNull(address) filter guarantees a value; a null here is a
+      // broken invariant, surfaced rather than silently skipped.
+      if (run.address === null) {
+        throw new Error(
+          `live run ${run.id} matched the non-null-address filter but has a null address`,
         );
-      }),
-    );
+      }
+      addresses.add(run.address);
+    }
+    if (addresses.size === 0) return;
 
+    // Empty when the credential was removed after the rotation: its own
+    // revoke push evicts it, so there is nothing to deliver.
+    const materials = await reresolveCurrentMaterials(
+      db,
+      [credentialId],
+      credentialCipher,
+    );
+    if (materials.length === 0) return;
+    const delivery: CredentialDelivery = { bindings: [], materials };
+    const results = await Promise.allSettled(
+      [...addresses].map((address) =>
+        deliverThenRevokeRemoved(db, sidecarRouter, address, { delivery }, [
+          credentialId,
+        ]),
+      ),
+    );
     for (const result of results) {
       if (result.status === "rejected") {
-        log.warn`Failed to push source update: ${String(result.reason)}`;
+        log.warn`Failed to push rotated credential: ${String(result.reason)}`;
       }
     }
   } catch (err: unknown) {
-    log.warn`Failed to push source updates: ${String(err)}`;
+    log.warn`Failed to push rotated credential: ${String(err)}`;
   }
-}
-
-/**
- * After a credential secret is rotated, re-resolve every running instance in
- * the tenant against the catalog and push the updates. A rotated secret flows
- * through because resolution dereferences the provider's credential reference
- * to the current secret.
- */
-export async function pushSourceUpdates(
-  db: DB["db"],
-  sidecarRouter: SidecarRouter,
-  tenantId: string,
-  credentialCipher: CredentialCipher,
-): Promise<void> {
-  await pushSourceUpdatesToTenants(
-    db,
-    sidecarRouter,
-    [tenantId],
-    credentialCipher,
-  );
-}
-
-/**
- * After a catalog edit in a tenant, re-resolve and push to every running
- * instance in that tenant AND its descendants. Descendants inherit the
- * edited tenant's catalog, so a change there (a disabled provider, a new
- * offering, a price update) alters their resolved sources too.
- */
-export async function pushSourceUpdatesSubtree(
-  db: DB["db"],
-  sidecarRouter: SidecarRouter,
-  tenantId: string,
-  credentialCipher: CredentialCipher,
-): Promise<void> {
-  let tenants: string[];
-  try {
-    tenants = await getDescendantTenants(db, tenantId);
-  } catch (err: unknown) {
-    log.warn`Failed to enumerate descendants for source push: ${String(err)}`;
-    return;
-  }
-  await pushSourceUpdatesToTenants(
-    db,
-    sidecarRouter,
-    tenants,
-    credentialCipher,
-  );
 }
 
 /**
  * After a credential is deleted or deliberately revoked, evict it from every
- * running deployment in the tenant AND its descendants. A descendant resolves
+ * live deployment in the tenant AND its descendants. A descendant resolves
  * an ancestor's tenant-owned credential through the tenant walk-up, so a
  * revoke in one tenant can affect a descendant's run. The push is a flat named
  * revocation: the child drops the credentialId's material and any binding that
@@ -221,7 +132,7 @@ export async function pushSourceUpdatesSubtree(
  *
  * Callers fire this without awaiting, so it must never reject: a failure to
  * enumerate or push is logged and dropped. This closes the ONLINE revocation
- * window (a running deployment stops holding the credential now); the offline
+ * window (a live deployment stops holding the credential now); the offline
  * window -- a run whose sidecar was disconnected when the revoke fired -- is
  * closed by the reconnect resync, not here.
  */
@@ -240,15 +151,15 @@ export async function pushCredentialRevoke(
   }
 
   try {
-    // Every running, addressable run in the subtree. Unlike the source-update
-    // push this does NOT exclude deployment-anchor runs (`anchorRunId IS NULL`):
+    // Every live, addressable run in the subtree, deployment anchors included:
     // a deployed workflow is the primary credential consumer, and a flat revoke
     // is safe to deliver to any address -- a run that never held the credential
-    // no-ops on it.
+    // no-ops on it. "Live" includes a "deployed" anchor that no trigger has
+    // started yet: it already holds its deploy-time credentials.
     const runs = await db.query.workflowRun.findMany({
       where: and(
         inArray(workflowRun.tenantId, tenants),
-        eq(workflowRun.status, "running"),
+        inArray(workflowRun.status, [...liveWorkflowRunStatuses]),
         isNotNull(workflowRun.address),
       ),
       columns: { id: true, address: true },
@@ -260,7 +171,7 @@ export async function pushCredentialRevoke(
       // broken invariant, surfaced rather than silently skipped.
       if (run.address === null) {
         throw new Error(
-          `running run ${run.id} matched the non-null-address filter but has a null address`,
+          `live run ${run.id} matched the non-null-address filter but has a null address`,
         );
       }
       addresses.add(run.address);
@@ -286,6 +197,121 @@ export async function pushCredentialRevoke(
 }
 
 /**
+ * Revoke, on `agentAddress`, every id in `credentialIds` that is now removed
+ * (deleted or `revoked`). A caller that delivered material it read EARLIER runs
+ * this AFTER the delivery reaches the sidecar: a removal that committed before
+ * this read is caught here, and one that commits after it is pushed by its own
+ * online revoke, which the sidecar applies after the delivery because both ride
+ * the address's ordered lane. Sends nothing when nothing was removed.
+ *
+ * Fire-and-forget safe: it never rejects; a failure is logged and dropped.
+ */
+export async function revokeRemovedCredentials(
+  db: DB["db"],
+  sidecarRouter: Pick<SidecarRouter, "sendCredentialsUpdate">,
+  agentAddress: string,
+  credentialIds: Iterable<string>,
+): Promise<void> {
+  try {
+    const removed = await findRemovedCredentialIds(db, credentialIds);
+    if (removed.length === 0) return;
+    await sidecarRouter.sendCredentialsUpdate(
+      agentAddress,
+      { bindings: [], materials: [] },
+      removed,
+    );
+  } catch (err: unknown) {
+    log.warn`Failed to revoke removed credentials for ${agentAddress}: ${String(err)}`;
+  }
+}
+
+/**
+ * Bring a deployment's sidecar up to date with the credentials its deploy
+ * frame delivered, once the deploy's initialization commits `credentialRefs`.
+ * The frame carried material read during prepare. Until that commit, neither
+ * the online revoke nor the rotation push can find the deployment, so a
+ * credential removed or rotated in between is handled here: a removed one is
+ * revoked, and a rotated one is re-sent at its current version. A change that
+ * commits after this read is pushed by its own revoke or rotation, because
+ * the refs are committed by then.
+ *
+ * It reads versions without decrypting, and re-resolves only the rotated
+ * credentials. Fire-and-forget safe: it never rejects; a failure is logged and
+ * dropped, and the reconnect reconcile re-resolves the current secrets.
+ */
+export async function recheckDeliveredCredentials(
+  db: DB["db"],
+  sidecarRouter: Pick<SidecarRouter, "sendCredentialsUpdate">,
+  agentAddress: string,
+  delivered: readonly Pick<
+    CredentialMaterialEntry,
+    "credentialId" | "secretVersion"
+  >[],
+  credentialCipher: CredentialCipher,
+): Promise<void> {
+  await revokeRemovedCredentials(
+    db,
+    sidecarRouter,
+    agentAddress,
+    delivered.map((material) => material.credentialId),
+  );
+  try {
+    const rotated = await findRotatedCredentialIds(db, delivered);
+    if (rotated.length === 0) return;
+    const materials = await reresolveCurrentMaterials(
+      db,
+      rotated,
+      credentialCipher,
+    );
+    if (materials.length === 0) return;
+    await deliverThenRevokeRemoved(
+      db,
+      sidecarRouter,
+      agentAddress,
+      { delivery: { bindings: [], materials } },
+      materials.map((material) => material.credentialId),
+    );
+  } catch (err: unknown) {
+    log.warn`Failed to re-send rotated credentials to ${agentAddress}: ${String(err)}`;
+  }
+}
+
+/**
+ * Send a delivery of material read EARLIER, then re-check it with
+ * `revokeRemovedCredentials`. Without the re-check, a removal that commits
+ * after the read and is pushed while the delivery is in flight lands BEFORE the
+ * delivery's upsert, and the upsert puts the removed secret back. The re-check
+ * runs even when the send fails: a lost ack does not prove the sidecar did not
+ * apply the delivery. The send's own failure still propagates.
+ *
+ * `upsertedCredentialIds` names the credential rows the delivery upserts. It
+ * excludes hub run tokens, which are not credential rows: the re-check would
+ * find no row for one and revoke it.
+ */
+async function deliverThenRevokeRemoved(
+  db: DB["db"],
+  sidecarRouter: Pick<SidecarRouter, "sendCredentialsUpdate">,
+  agentAddress: string,
+  frame: { delivery: CredentialDelivery; revoke?: string[] },
+  upsertedCredentialIds: readonly string[],
+): Promise<void> {
+  try {
+    await sidecarRouter.sendCredentialsUpdate(
+      agentAddress,
+      frame.delivery,
+      frame.revoke,
+    );
+  } finally {
+    await revokeRemovedCredentials(
+      db,
+      sidecarRouter,
+      agentAddress,
+      upsertedCredentialIds,
+    );
+  }
+}
+
+/**
  * Reconcile a reconnecting deployment's credentials against its deploy-time set.
  * Re-resolve the CURRENT material for every credentialId the deployment
  * persisted at deploy (`workflow_run.credentialRefs`), then push a MERGE that
@@ -299,12 +325,18 @@ export async function pushCredentialRevoke(
  * re-resolved. The merge upserts survivors and names the dead ids in `revoke`,
  * leaving anything else the child holds untouched. A hub token is never in
  * `revoke`: the Hub refuses a deleted one, so its material is inert. It does
- * NOT handle an id-CHANGING rotation of a deploy-time source (the new id is
- * not in `credentialRefs`); a later source push delivers that.
+ * NOT handle an id-CHANGING change of a deploy-time source (an offering
+ * re-pointed to a provider with another credential): the new id is not in
+ * `credentialRefs`, and a deployment resolves its sources only at deploy, so
+ * the change reaches it at its next deploy.
  *
  * The run's hub credentials ride the same merge: its current run tokens when
  * it has any, and nothing when it has none. They are not credential rows, so
  * they never pass through the re-resolution.
+ *
+ * The upsert carries secrets read before the send, so a revoke that commits in
+ * between could land first and be undone; the send therefore goes through
+ * `deliverThenRevokeRemoved`, which re-checks the upserted ids after it.
  *
  * No-op when the run persisted no credential refs (a folded run, or a
  * deployment with neither credentials nor hub consumers). Fire-and-forget
@@ -355,10 +387,12 @@ export async function pushCredentialReconcile(
       hubConsumers.length > 0 ? await loadRunCredentials(run.id) : null;
     const delivery = withRunCredentials({ bindings, materials }, hub);
 
-    await sidecarRouter.sendCredentialsUpdate(
+    await deliverThenRevokeRemoved(
+      db,
+      sidecarRouter,
       agentAddress,
-      delivery,
-      revoke.length > 0 ? revoke : undefined,
+      { delivery, ...(revoke.length > 0 ? { revoke } : {}) },
+      [...resolvedIds],
     );
   } catch (err: unknown) {
     log.warn`Failed to reconcile credentials for ${agentAddress}: ${String(err)}`;

@@ -3,12 +3,14 @@
 ## Baseline
 
 - Upstream: <https://github.com/faremeter/interchange>
-- Stock ref: `19d89be64de634ea6e0ecfbfa7036d3ced6f8bef`
-- Composite pin: stock `19d89be6` (`v0.5.0-103`) plus the local CL-10210
-  carry, the INTR-666 adaptive-thinking model ids and Anthropic structured
-  outputs, the host run-token routes, the deployer's manage grant, and the
-  Railway connect deadline (CL-11829). Do not treat any
-  delta as a new stock pin.
+- Stock ref: `343983fcb0aceea351512a09a1d6ef41a80255a7`
+- Composite pin: stock `343983fc` plus the same six local carries: the CL-10210
+  consume-signal carry, the INTR-666 adaptive-thinking model ids, the INTR-666
+  Anthropic structured outputs, the host run-token routes, the deployer's
+  manage grant, and the Railway connect deadline (CL-11829). Upstream has no
+  tag for this sha. `v0.5.0-103` named the previous composite in this ledger
+  only; it was not an upstream tag, and this pin does not mint a new local
+  sequence number. Do not treat any delta as a new stock pin.
 - Drift gate: `sh tooling/vendor-diff-check.sh`
 - Health command: `bun run vendor:health`
 
@@ -46,7 +48,9 @@ Stock `cb0bdfb4` stops the child appending a duplicate `SignalReceived`, but
 `dispatchOne` still redelivers the mail and waits for the run to park, which
 a dropped duplicate does not do, so the carry stays. Stock `19d89be6` changed
 `workflow-run-kind.ts` and `supervisor.ts` in unrelated places, and the carry
-applies to them unchanged.
+applies to them unchanged. Stock `343983fc` changed `supervisor.ts` and
+`supervisor.test.ts` for the child-definition handshake; the consume check is
+re-applied on that handshake and does not replace it.
 
 The check also counts the mail a run's `RunStarted` records as its
 `consumedMessageId`. A long-lived onTrigger run consumes its first trigger

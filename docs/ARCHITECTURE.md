@@ -1299,8 +1299,8 @@ tenant's advisory lock, and a renewal stores its token only while the key it
 minted from is still the workspace's, so a replaced App is never overwritten
 with the old one's token. Each renewal then calls stock
 `pushCredentialReconcile` for every running deployment holding the credential,
-since a secret update alone reaches a deployment only when its sidecar
-reconnects. One token covers one installation: the workspace uses the one its
+since renewal writes straight to Postgres rather than through the stock
+credential route. One token covers one installation: the workspace uses the one its
 repositories came from, else the oldest; installation sync and the
 installation webhook leave out other accounts' repositories. A `github-app`
 key and `github-read` token whose `github` credential was deleted are dropped by the renewal loop. A

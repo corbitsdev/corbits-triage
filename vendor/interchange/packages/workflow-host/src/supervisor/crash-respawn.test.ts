@@ -36,6 +36,8 @@ import {
   createMockMailBus,
   createChangeNotifier,
   createLogCapture,
+  sendDefinition,
+  TEST_DEFINITION_HASH,
 } from "@intx/workflow-host/testing";
 
 import {
@@ -219,13 +221,11 @@ async function driveReady(
       },
     },
   });
-  await childSender.send({
-    type: "ready",
-    data: {
-      childPid: child.pid,
-      childPublicKey: hexEncode(ipcKeypair.publicKey),
-    },
+  await sendDefinition(childSender, {
+    childPid: child.pid,
+    childPublicKey: hexEncode(ipcKeypair.publicKey),
   });
+  await childSender.send({ type: "ready" });
   return childSender;
 }
 
@@ -400,10 +400,14 @@ async function buildBindings(opts: {
     workflowRunRepoId: { kind: "workflow-run", id: "run_deployment-x" },
     workflowRunRef: "refs/heads/main",
     anchorRunId: "run_deployment-x",
-    stepCount: 1,
     deploymentMailAddress: "run_deployment-x@example.com",
     readPrincipal: { kind: "supervisor" },
-    deriveStepAddress: ({ runId, stepId }) => `${runId}-${stepId}@example.com`,
+    layoutSteps: () =>
+      Promise.resolve({
+        stepIds: ["step-1"],
+        deriveStepAddress: ({ runId, stepId }) =>
+          `${runId}-${stepId}@example.com`,
+      }),
     ipcKeyPairFactory: () => Promise.resolve(opts.ipcKeypair),
     inboxPrimitives: opts.inboxPrimitives,
     ...(opts.crashLoopMaxCount !== undefined
@@ -478,9 +482,7 @@ async function spawnSupervisor(opts: {
   });
   const supervisor = createWorkflowSupervisor(bindings);
   const spawnPromise = supervisor.spawn({
-    stepOrder: ["step-1"],
-    definitionHash: "def-hash-abc",
-    warmKeep: false,
+    definitionHash: TEST_DEFINITION_HASH,
     onInferenceEvent: () => undefined,
   });
   await opts.tracker.awaitChildren(1);
