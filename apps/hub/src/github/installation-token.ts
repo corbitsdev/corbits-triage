@@ -1,10 +1,10 @@
 // Keeps each workspace's `github` credential holding a live installation token,
 // and its `github-read` credential one that can only read contents, both minted on
 // the hub from the App key, and pushes each new one to the running deployments that
-// hold the credential: a stock secret update alone reaches them only when their
-// sidecar reconnects.
+// hold the credential, since renewal writes straight to Postgres rather than through
+// the stock credential route.
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { schema, type DB } from "@intx/db";
+import { credentialSecretColumns, schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { pushCredentialReconcile, type RunCredentialsLoader } from "@intx/hub-sessions";
 import { credentialAad, type CredentialCipher } from "@intx/types";
@@ -94,13 +94,18 @@ export async function storeReadToken(tx: Tx, cipher: CredentialCipher, github: {
   });
 }
 
+async function secretValues(cipher: CredentialCipher, id: string, secret: string, replacing: boolean) {
+  if (replacing) return credentialSecretColumns(cipher, id, secret);
+  return { secret: await cipher.encrypt(secret, credentialAad(id, "secret")) };
+}
+
 async function readTokenValues(cipher: CredentialCipher, id: string, current: { expiresAt: Date | null; metadata: unknown } | undefined, read: NonNullable<IssuedApp["read"]>, stamp: Date) {
-  if ("withdrawn" in read) return { secret: await cipher.encrypt("", credentialAad(id, "secret")), expiresAt: stamp, status: "expired" as const, metadata: null };
+  if ("withdrawn" in read) return { ...(await secretValues(cipher, id, "", current !== undefined)), expiresAt: stamp, status: "expired" as const, metadata: null };
   if ("error" in read) {
     const live = (current?.expiresAt ?? stamp) > stamp;
     return { metadata: { ...asRecord(current?.metadata), [TOKEN_ERROR]: read.error }, ...(!live && { status: "expired" as const }) };
   }
-  return { secret: await cipher.encrypt(read.token, credentialAad(id, "secret")), expiresAt: new Date(read.expiresAt), status: "active" as const, metadata: null };
+  return { ...(await secretValues(cipher, id, read.token, current !== undefined)), expiresAt: new Date(read.expiresAt), status: "active" as const, metadata: null };
 }
 
 export type GithubTokenDeps = {
@@ -176,7 +181,7 @@ export function createGithubTokenRenewal(deps: GithubTokenDeps) {
       const key = await lockedCredential(tx, tenantId, GITHUB_APP_KEY_CREDENTIAL);
       if (!github || github.status === "revoked" || key?.status !== "active") return false;
       if ((await decryptSecret(deps.cipher, key)) !== appJson || isGithubAppJson(await decryptSecret(deps.cipher, github))) return false;
-      const token = issued.token && { secret: await deps.cipher.encrypt(issued.token.token, credentialAad(github.id, "secret")), expiresAt: new Date(issued.token.expiresAt), status: "active" as const };
+      const token = issued.token && { ...(await credentialSecretColumns(deps.cipher, github.id, issued.token.token)), expiresAt: new Date(issued.token.expiresAt), status: "active" as const };
       // updatedAt stays: a GitHub setup that replaces the App refuses to commit once it moved, and a renewal replaces nothing.
       await tx.update(credential).set({ metadata: renewedMetadata(github.metadata, issued.slug), ...token }).where(eq(credential.id, github.id));
       if (issued.read) await storeReadToken(tx, deps.cipher, github, issued.read);

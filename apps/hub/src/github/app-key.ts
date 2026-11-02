@@ -1,7 +1,7 @@
 // The GitHub App's private key is read only on the hub, from a credential no
 // workflow binds; the `github` credential workflows bind holds an installation token.
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { schema, type DB } from "@intx/db";
+import { credentialSecretColumns, schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import { asRecord } from "@corbits/common";
@@ -66,13 +66,13 @@ async function keyProviderId(tx: Tx, tenantId: string): Promise<string> {
 export async function storeAppKey(tx: Tx, cipher: CredentialCipher, { tenantId, appJson }: { tenantId: string; appJson: string }): Promise<void> {
   const held = await lockedCredential(tx, tenantId, GITHUB_APP_KEY_CREDENTIAL);
   const id = held?.id ?? generateId("credential");
-  const secret = await cipher.encrypt(appJson, credentialAad(id, "secret"));
   const providerId = await keyProviderId(tx, tenantId);
   const stamp = new Date();
   if (held) {
-    await tx.update(credential).set({ secret, providerId, status: "active", updatedAt: stamp }).where(eq(credential.id, id));
+    await tx.update(credential).set({ ...(await credentialSecretColumns(cipher, id, appJson)), providerId, status: "active", updatedAt: stamp }).where(eq(credential.id, id));
     return;
   }
+  const secret = await cipher.encrypt(appJson, credentialAad(id, "secret"));
   await tx.insert(credential).values({
     id, tenantId, principalId: null, providerId, oauthClientId: null, name: GITHUB_APP_KEY_CREDENTIAL,
     type: "api_key", description: null, secret, refreshSecret: null, scopes: null, expiresAt: null,
@@ -95,8 +95,7 @@ export async function moveAppKey({ db, cipher }: Pick<AppKeyDeps, "db" | "cipher
     if (!isGithubAppJson(appJson)) return false;
     await storeAppKey(tx, cipher, { tenantId, appJson });
     const stamp = new Date();
-    const noToken = await cipher.encrypt("", credentialAad(github.id, "secret"));
-    await tx.update(credential).set({ secret: noToken, expiresAt: stamp, updatedAt: stamp }).where(eq(credential.id, github.id));
+    await tx.update(credential).set({ ...(await credentialSecretColumns(cipher, github.id, "")), expiresAt: stamp, updatedAt: stamp }).where(eq(credential.id, github.id));
     return true;
   });
 }

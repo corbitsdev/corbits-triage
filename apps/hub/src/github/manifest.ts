@@ -298,7 +298,7 @@ export function createGithubManifestIntegration({
       const stamp = now();
       for (const value of prepared.values) {
         if (prepared.replacement) {
-          await tx.update(credential).set({ secret: value.secret, providerId: state.providerId, status: "active", metadata: value.metadata, expiresAt: null, updatedAt: stamp })
+          await tx.update(credential).set({ secret: value.secret, secretVersion: sql`${credential.secretVersion} + 1`, providerId: state.providerId, status: "active", metadata: value.metadata, expiresAt: null, updatedAt: stamp })
             .where(and(eq(credential.id, value.id), eq(credential.tenantId, state.tenantId), eq(credential.name, value.name)));
         } else {
           await tx.insert(credential).values({

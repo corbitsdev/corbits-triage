@@ -3,7 +3,7 @@
 // never lands in the credential workflows bind.
 import { and, eq } from "drizzle-orm";
 import { type } from "arktype";
-import { schema, type DB } from "@intx/db";
+import { credentialSecretColumns, schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import { credentialAad, type CredentialCipher } from "@intx/types";
 import { errorText } from "@corbits/common";
@@ -42,15 +42,15 @@ export function createGithubAppConnection(deps: GithubAppConnectionDeps) {
       const id = current?.id ?? generateId("credential");
       const stamp = new Date();
       const values = {
-        secret: await cipher.encrypt(issued.token?.token ?? "", credentialAad(id, "secret")),
         expiresAt: issued.token ? new Date(issued.token.expiresAt) : stamp,
         metadata: renewedMetadata(current?.metadata, issued.slug),
         providerId, status: "active" as const, updatedAt: stamp,
       };
       if (current) {
-        await tx.update(credential).set(values).where(eq(credential.id, id));
+        await tx.update(credential).set({ ...(await credentialSecretColumns(cipher, id, issued.token?.token ?? "")), ...values }).where(eq(credential.id, id));
       } else {
-        await tx.insert(credential).values({ ...values, id, tenantId, principalId: null, oauthClientId: null, name: GITHUB_CREDENTIAL, type: "api_key", description: null, refreshSecret: null, scopes: null, createdAt: stamp });
+        const secret = await cipher.encrypt(issued.token?.token ?? "", credentialAad(id, "secret"));
+        await tx.insert(credential).values({ ...values, secret, id, tenantId, principalId: null, oauthClientId: null, name: GITHUB_CREDENTIAL, type: "api_key", description: null, refreshSecret: null, scopes: null, createdAt: stamp });
       }
       if (issued.read) await storeReadToken(tx, cipher, { tenantId, providerId }, issued.read);
       await connectTriage(tx, tenantId, [id], stamp);
