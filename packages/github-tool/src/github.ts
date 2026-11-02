@@ -284,10 +284,14 @@ function writtenLines(row: ReviewCommentRow): FindingLines | undefined {
   return { start: row.original_start_line ?? row.original_line, end: row.original_line };
 }
 
-/** Whether `row` is the inline comment written for `finding`: on its file, within its lines, with exactly its text there. */
+/** Whether `row` is the inline comment written for `finding`: on its file, within its lines, with exactly its text there. A comment posted before the resolve line is that same text without the line. */
 function writtenFor(finding: CodeReviewComment, row: ReviewCommentRow): boolean {
   const at = writtenLines(row);
-  return at !== undefined && row.path === finding.path && at.start >= finding.start && at.end <= finding.end && row.body === inlineFindingText(finding, at);
+  if (at === undefined || row.path !== finding.path || at.start < finding.start || at.end > finding.end) return false;
+  const current = inlineFindingText(finding, at);
+  if (row.body === current) return true;
+  const resolve = "\n\nResolve this comment. Triage will not finish while it is open.";
+  return current.endsWith(resolve) && row.body === current.slice(0, -resolve.length);
 }
 
 /**

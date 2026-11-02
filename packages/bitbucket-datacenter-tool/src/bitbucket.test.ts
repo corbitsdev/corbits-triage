@@ -261,10 +261,10 @@ describe("sendCodeReview", () => {
     expect(await sendCodeReview(fake.bb, { ...REVIEW, sha: "d36740c", reviewed: "abc" }, user)).toEqual({ commentId: 11, sent: false, threads: [10, null] });
     expect(fake.writes.map((w) => w.body)).toEqual([
       {
-        text: expect.stringMatching(/^\[corbits-code-review\]: #abc\/[0-9a-f]{12}\n\*\*P1 · Off by one\*\*\n\nThe loop stops early\.\n\nAlso lines 12–14\.$/),
+        text: expect.stringMatching(/^\[corbits-code-review\]: #abc\/[0-9a-f]{12}\n\*\*P1 · Off by one\*\*\n\nThe loop stops early\.\n\nAlso lines 12–14\.\n\nResolve this comment\. Triage will not finish while it is open\.$/),
         anchor: { path: "src/app.ts", line: 11, lineType: "ADDED", fileType: "TO", diffType: "EFFECTIVE", fromHash: "base", toHash: "abc" },
       },
-      { text: "[corbits-code-review]: #abc\nTwo findings.\n\n**Unused import** · `src/app.ts:40`\n\nRemove it." },
+      { text: "[corbits-code-review]: #abc\nTwo findings.\n\n**Unused import** · `src/app.ts:40`\n\nRemove it.\n\nResolve this comment. Triage will not finish while it is open." },
     ]);
   });
 
