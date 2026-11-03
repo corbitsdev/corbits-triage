@@ -165,6 +165,7 @@ function readCancelled(verdict: { detail?: VerdictDetail | null }): boolean {
 }
 
 export function createTriageReconciler(deps: TriageReconcilerDeps) {
+  const bootAt = deps.now();
   /** Heads whose builds were read since their verdict; lost on restart, when the verdict's own time starts the interval again. */
   const buildPolls = new Map<string, BuildPoll>();
   /** Repositories skipped last pass and why, so the skip is logged once rather than every pass. */
@@ -415,6 +416,7 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       roomless: managed.roomless,
       now: deps.now(),
       policy: deps.policy,
+      bootAt,
     });
     const polled: LoadedRepo[] = [];
     const settled: Settled[] = [];

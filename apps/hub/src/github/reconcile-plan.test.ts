@@ -268,6 +268,19 @@ describe("reconcile plan", () => {
     expect(enqueued(plan([pr(1)], [{ ...rows[0]!, cappedRetries: policy.cappedRetryCycles }], at(1_000 * hour)))).toEqual([]);
   });
 
+  test("a hub restart resets pre-boot unstarted and undelivered attempt caps immediately without resetting deterministic run failures", () => {
+    const preBoot = [
+      row(1, { status: "failed", attempts: policy.maxAttempts, error: "run never started", queuedAt: at(-20).toISOString(), updatedAt: at(-5).toISOString() }),
+      row(2, { status: "failed", attempts: policy.maxAttempts, error: "delivery failed: Error: ENOSPC", undeliveredSince: at(-20).toISOString(), queuedAt: at(-20).toISOString(), updatedAt: at(-5).toISOString() }),
+      row(3, { status: "failed", attempts: policy.maxAttempts, error: "run failed", queuedAt: at(-20).toISOString(), updatedAt: at(-5).toISOString() }),
+    ];
+    const booted = planTenant({ repos: [{ name: REPO, prs: [pr(1), pr(2), pr(3)], rows: preBoot }], runs: new Map(), roomless: new Set(), now: at(1), policy, bootAt: at(0) }).get(REPO)!;
+    expect(enqueued(booted)).toEqual([1, 2]);
+    expect(status(booted, 1)).toMatchObject({ status: "queued", attempts: 1 });
+    expect(status(booted, 2)).toMatchObject({ status: "queued", attempts: 1 });
+    expect(status(booted, 3)).toMatchObject({ status: "failed", attempts: policy.maxAttempts });
+  });
+
   test("a stuck run from before the hub queued the head again does not fail the new attempt", () => {
     const queued = plan([pr(1)], [], at(200)).rows;
     const result = plan([pr(1)], queued, at(205), [[pr(1), [run("run_dead", "running", 0)]]]);
