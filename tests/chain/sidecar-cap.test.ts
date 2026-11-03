@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { createDB } from "@intx/db";
 import { parseTriageState, triageStateName, WAITING_FOR_CAPACITY, type PrTriageRow } from "@corbits/triage-contracts";
-import { fakeGithub, OWNER, type Pull } from "./github.ts";
+import { fakeGithub, OWNER, pullOf } from "./github.ts";
 import { DEFAULT_MAIL_HOLD_MS } from "../../apps/hub/src/timings.ts";
 import { stubModel } from "./model.ts";
 import { buildPortal, cleanup, createDatabase, deliver, dropDatabase, failOnCleanupErrors, hubLogTail, listenerStarted, POLL_MS, setUpWorkspace, signUp, startHub, type Database, type Hub, type Workspace } from "./stack.ts";
@@ -54,11 +54,7 @@ function sha(seed: string): string {
 }
 
 async function pushed(repo: string, head: string): Promise<void> {
-  const pull: Pull = {
-    number: 1, title: "fix: widget sizing", body: "Fixes the widget's size.", author: "octocat", head,
-    files: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 1, patch: "@@ -1 +1 @@\n-export const size = 1;\n+export const size = 2;" }],
-    commits: ["fix: widget sizing"], labels: [], comments: [],
-  };
+  const pull = pullOf(1, head);
   github.open(repo, pull);
   await deliver(hub, workspace, "pull_request", {
     action: "opened", installation: { id: 1 }, repository: { full_name: repo },
