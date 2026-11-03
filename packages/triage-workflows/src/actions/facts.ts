@@ -422,7 +422,7 @@ async function fetchListed(read: Host, repo: string, targets: number[] | undefin
   // Only GitHub hides a template's comments, so only there are they told apart from the author's.
   const templated = read.stamp.repoSource === "github" && catalogCheckEnabled(pack, "hidden-content");
   const templatesTool = toolName(read.stamp.repoSource, "read_pr_templates");
-  const r = await runAll(read.host, [call(listTool, { repo }), ...(judged ? [docsCall(read.stamp.repoSource, repo, 0)] : []), ...(templated ? [call(templatesTool, { repo }, "templates")] : [])]);
+  const r = await runAll(read.host, [...(targets === undefined ? [call(listTool, { repo })] : []), ...(judged ? [docsCall(read.stamp.repoSource, repo, 0)] : []), ...(templated ? [call(templatesTool, { repo }, "templates")] : [])]);
   const list = data<{ prs: Array<{ number: number; draft?: boolean }> }>(r.get(listTool));
   if (!list && targets === undefined) return fail(`${listTool} failed`, read.stamp.automatic);
   const triageable = (list?.prs ?? []).filter((p) => p.draft !== true).map((p) => p.number);
