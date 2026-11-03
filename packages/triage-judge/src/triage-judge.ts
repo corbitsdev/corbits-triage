@@ -13,7 +13,7 @@ const JUDGED = { project: { from: "steps" }, fields: ["judge"] } as const;
 
 const BOTH_JUDGED = { project: { from: "steps" }, fields: ["judge", "judgeParts"] } as const;
 
-/** The chunks are already in the run log twice; evaluate re-derives them from the items the manager mailed. */
+/** The chunks are already in the run log twice; evaluate re-derives them from the items the manager attached. */
 const RULED = { project: { from: "steps.judgeRequest.output" }, fields: ["items", "batch"] } as const;
 
 function hubAction(handler: string, input: Selector, after: readonly string[]) {
@@ -36,7 +36,7 @@ export function triageJudge({ id }: { id: string }) {
     ],
     mailAccept: { invoker: true },
     steps: {
-      rules: step({ agent: rulesMailAgent, input: { from: "trigger.payload" } }),
+      rules: step({ agent: rulesMailAgent, input: { from: "trigger.payload" }, timeout: TIMEOUT }),
       judgeRequest: action({ handler: "judgeRequest", input: { from: "steps.rules.output" }, after: ["rules"] }),
       judge: map({ over: { from: "steps.judgeRequest.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["judgeRequest"] }),
       parts: action({ handler: "parts", input: { merge: [RULED, JUDGED] }, after: ["judge"] }),

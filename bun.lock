@@ -352,7 +352,6 @@
       "name": "@corbits/triage-judge",
       "version": "0.1.0",
       "dependencies": {
-        "@corbits/common": "workspace:*",
         "@corbits/triage-contracts": "workspace:*",
         "@corbits/triage-manager": "workspace:*",
         "@corbits/triage-workflows": "workspace:*",

@@ -32,7 +32,8 @@ const large = once(async function large() {
   const files = Array.from({ length: 40 }, (_, i) => ({ filename: `src/file-${i}.ts`, status: "added", additions: 400, deletions: 0, patch: `@@ -0,0 +1,400 @@\n${line.repeat(400)}` }));
   const asked = model.decisions.length;
   await pushed(JUDGED, { ...pullOf(2, head), files });
-  await settled(JUDGED, 2);
+  // A manager pass over this much rules output takes about a minute, past the default budget.
+  await settled(JUDGED, 2, 1, 400_000);
   return { head, asked: model.decisions.slice(asked).map((row) => row.id), pull: github.pull(JUDGED, 2) };
 });
 

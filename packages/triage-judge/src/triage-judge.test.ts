@@ -125,7 +125,6 @@ test("the judge runs the chunks the manager attached, reports the whole verdict 
   expect(calls.at(-1)).toEqual({ method: "DELETE", path: `/api/tenants/${TENANT}/workflows/runs/${RUN}` });
 });
 
-
 test("a judge whose mail carries no rules reports that it did not finish and stops", async () => {
   const { calls } = await runJudge([]);
   expect(calls).toEqual([

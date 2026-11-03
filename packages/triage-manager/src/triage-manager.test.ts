@@ -1488,7 +1488,6 @@ describe("triage-manager with a judge", () => {
   });
 });
 
-/** The mail a first pass sends the judge it deploys. */
 /** The rules output a judge's mail attaches. */
 function rulesOf(mail: unknown): MailedRules {
   const [attachment] = (mail as { attachments: { name: string; content: string }[] }).attachments;
@@ -1496,6 +1495,7 @@ function rulesOf(mail: unknown): MailedRules {
   return JSON.parse(attachment!.content) as MailedRules;
 }
 
+/** The mail a first pass sends the judge it deploys. */
 async function firstJudgeMail(request = hubRequest(JUDGED)): Promise<{ content: string }> {
   const mailed: unknown[] = [];
   await runMail(github, wake(), githubHost().host, fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] }).hub, mailed);

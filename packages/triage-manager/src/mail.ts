@@ -3,7 +3,7 @@
 import { defineAgent, defineDirector, defineTool, type AgentDefinition, type BaseEnv, type ToolBundle } from "@intx/agent";
 import { WorkflowRunResponse } from "@intx/types";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import type { ReactorDirector } from "@intx/types/runtime";
+import type { MessageAttachment, ReactorDirector } from "@intx/types/runtime";
 import type { RuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { type } from "arktype";
 import { errorText } from "@corbits/common";
@@ -13,12 +13,12 @@ import { hasEnded } from "./actions/hub.js";
 const MAIL_TOOL = "mail";
 const READY_POLL_MS = 2_000;
 
+const Attachment = type({ name: "string > 0", contentType: "string > 0", content: "string" });
+
 /**
  * A mail to the run `to` in this run's tenant. With `readyBy`, the run was just deployed and its public key may not be
  * published yet, so the mail waits until it is.
  */
-const Attachment = type({ name: "string > 0", contentType: "string > 0", content: "string" });
-
 export const MailInput = type({ tenantId: "string > 0", to: "string > 0", content: "string > 0", "attachments?": Attachment.array(), "readyBy?": "string.date.iso" });
 export type MailInput = typeof MailInput.infer;
 
@@ -28,7 +28,7 @@ interface MailEnv extends BaseEnv {
   capabilities: RuntimeCapabilities;
   address: string;
   transport: {
-    send: (message: { to: string; type: string; content: string; attachments?: { name: string; contentType: string; data: Uint8Array }[] }, signal: AbortSignal) => Promise<{ messageId: string; status: string }>;
+    send: (message: { to: string; type: string; content: string; attachments?: MessageAttachment[] }, signal: AbortSignal) => Promise<{ messageId: string; status: string }>;
   };
 }
 
