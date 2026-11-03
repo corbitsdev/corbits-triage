@@ -229,10 +229,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       try {
         ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
       } catch (err) {
-        if (err instanceof GithubRateLimited) {
-          if (limitedUntil === undefined || err.resetAt > limitedUntil) limitedUntil = err.resetAt;
-          return;
-        }
+        // Rethrow so reconcileTenant skips settledWaiting and deliverRepo while the installation is rate-limited.
+        if (err instanceof GithubRateLimited) throw err;
         deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
         continue;
       }
@@ -266,18 +264,16 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       if (since === undefined) continue;
       const waited = now.getTime() - Date.parse(since);
       if (waited < CI_WAIT_MS) {
+        read += 1;
         let ci: ReturnType<typeof summarizeChecks>;
         try {
           ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
         } catch (err) {
-          if (err instanceof GithubRateLimited) {
-            if (limitedUntil === undefined || err.resetAt > limitedUntil) limitedUntil = err.resetAt;
-            continue;
-          }
+          // Rethrow so reconcileTenant stops reading remaining waiting heads and skips deliverRepo while rate-limited.
+          if (err instanceof GithubRateLimited) throw err;
           deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
           continue;
         }
-        read += 1;
         if (ci === "pending" || (ci === "none" && waited < CI_START_MS)) continue;
       }
       settled.push({ plan, row, since });
