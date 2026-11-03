@@ -17,7 +17,9 @@ const READY_POLL_MS = 2_000;
  * A mail to the run `to` in this run's tenant. With `readyBy`, the run was just deployed and its public key may not be
  * published yet, so the mail waits until it is.
  */
-export const MailInput = type({ tenantId: "string > 0", to: "string > 0", content: "string > 0", "readyBy?": "string.date.iso" });
+const Attachment = type({ name: "string > 0", contentType: "string > 0", content: "string" });
+
+export const MailInput = type({ tenantId: "string > 0", to: "string > 0", content: "string > 0", "attachments?": Attachment.array(), "readyBy?": "string.date.iso" });
 export type MailInput = typeof MailInput.infer;
 
 const Run = WorkflowRunResponse.pick("status", "publicKey");
@@ -26,7 +28,7 @@ interface MailEnv extends BaseEnv {
   capabilities: RuntimeCapabilities;
   address: string;
   transport: {
-    send: (message: { to: string; type: string; content: string }, signal: AbortSignal) => Promise<{ messageId: string; status: string }>;
+    send: (message: { to: string; type: string; content: string; attachments?: { name: string; contentType: string; data: Uint8Array }[] }, signal: AbortSignal) => Promise<{ messageId: string; status: string }>;
   };
 }
 
@@ -54,7 +56,7 @@ function mailBundle(env: MailEnv): ToolBundle {
     definitions: [{
       name: MAIL_TOOL,
       description: "Mail a run in this tenant as this run.",
-      inputSchema: { type: "object", properties: { tenantId: { type: "string" }, to: { type: "string" }, content: { type: "string" }, readyBy: { type: "string" } }, required: ["tenantId", "to", "content"] },
+      inputSchema: { type: "object", properties: { tenantId: { type: "string" }, to: { type: "string" }, content: { type: "string" }, attachments: { type: "array" }, readyBy: { type: "string" } }, required: ["tenantId", "to", "content"] },
     }],
     async run(call, signal) {
       const input = MailInput(call.arguments);
@@ -62,7 +64,8 @@ function mailBundle(env: MailEnv): ToolBundle {
       try {
         if (input.readyBy) await untilReady(env, input, input.readyBy, signal);
         const domain = env.address.slice(env.address.indexOf("@") + 1);
-        const sent = await env.transport.send({ to: `${input.to}@${domain}`, type: "conversation.message", content: input.content }, signal);
+        const attachments = input.attachments?.map(({ content, ...attachment }) => ({ ...attachment, data: new TextEncoder().encode(content) }));
+        const sent = await env.transport.send({ to: `${input.to}@${domain}`, type: "conversation.message", content: input.content, ...(attachments && { attachments }) }, signal);
         return { callId: call.id, content: { to: input.to, mailed: true, ...sent } };
       } catch (err) {
         return { callId: call.id, content: errorText(err), isError: true };

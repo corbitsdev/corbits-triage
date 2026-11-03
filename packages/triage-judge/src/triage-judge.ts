@@ -1,8 +1,9 @@
-import { action, defineWorkflow, map, onTrigger, SELF_RUN_RESOURCE, step, type Selector } from "@intx/workflow";
+import { action, defineWorkflow, map, SELF_RUN_RESOURCE, step, type Selector } from "@intx/workflow";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE } from "@corbits/triage-contracts";
 import { HUB_WRITE } from "@corbits/triage-manager/actions/hub";
 import { judgeAgent } from "@corbits/triage-workflows/agents";
+import { rulesMailAgent } from "./rules-mail.js";
 
 const TIMEOUT = 15 * 60_000;
 const STEP = { retry: { maxAttempts: 3, initialBackoffMs: 5_000, maxBackoffMs: 60_000 }, timeout: TIMEOUT } as const;
@@ -26,11 +27,17 @@ function hubAction(handler: string, input: Selector, after: readonly string[]) {
  * may mail it.
  */
 export function triageJudge({ id }: { id: string }) {
-  const body = defineWorkflow({
-    id: `${id}-run`,
-    trigger: { type: "manual" },
+  return defineWorkflow({
+    id,
+    trigger: { type: "mail", to: id },
+    grantRequirements: [
+      { resource: MANAGER_RESULT_RESOURCE, action: MANAGER_RESULT_ACTION, source: "creator" },
+      { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
+    ],
+    mailAccept: { invoker: true },
     steps: {
-      judgeRequest: action({ handler: "judgeRequest", input: { from: "trigger.payload" } }),
+      rules: step({ agent: rulesMailAgent, input: { from: "trigger.payload" } }),
+      judgeRequest: action({ handler: "judgeRequest", input: { from: "steps.rules.output" }, after: ["rules"] }),
       judge: map({ over: { from: "steps.judgeRequest.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["judgeRequest"] }),
       parts: action({ handler: "parts", input: { merge: [RULED, JUDGED] }, after: ["judge"] }),
       judgeParts: map({ over: { from: "steps.parts.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["parts"] }),
@@ -39,14 +46,5 @@ export function triageJudge({ id }: { id: string }) {
       report: hubAction("report", { merge: [{ from: "steps" }, { project: { from: "trigger" }, fields: ["payload"] }] }, ["evaluate"]),
       stop: hubAction("stop", { from: "trigger.payload" }, ["report"]),
     },
-  });
-  return defineWorkflow({
-    id,
-    grantRequirements: [
-      { resource: MANAGER_RESULT_RESOURCE, action: MANAGER_RESULT_ACTION, source: "creator" },
-      { resource: SELF_RUN_RESOURCE, action: "manage", source: "creator" },
-    ],
-    mailAccept: { invoker: true },
-    steps: { events: onTrigger({ on: { type: "mail", to: id }, body, onBodyFailure: "tolerate" }) },
   });
 }

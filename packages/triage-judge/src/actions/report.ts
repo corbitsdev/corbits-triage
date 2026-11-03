@@ -1,16 +1,18 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
+import { asRecord } from "@corbits/common";
 import { JudgeVerdict, REPO_SOURCES } from "@corbits/triage-contracts";
 import { answered, callHub, endRun, mailOf, tenantPath } from "@corbits/triage-manager/actions/hub";
 
-/** The manager's mail to a judge it deployed: the rules output and the pull request. */
+/** The manager's mail to a judge it deployed: the pull request. The rules output rides as an attachment, which only the judge's first step reads. */
 const JudgeMail = type({
   kind: "'judge'",
   tenantId: "string > 0",
   number: "number.integer > 0",
   checkout: { source: type.enumerated(...REPO_SOURCES), repo: "string > 0", sha: "string > 0" },
-  rules: { items: "unknown[]", batch: "boolean", chunks: "unknown[]" },
 });
+
+const Rules = type("string.json.parse").to({ items: "unknown[]", batch: "boolean", chunks: "unknown[]" });
 
 function judgeMailOf(payload: unknown) {
   const { request, runId } = mailOf(payload);
@@ -19,9 +21,11 @@ function judgeMailOf(payload: unknown) {
   return { mail, runId };
 }
 
-/** The rules output the manager mailed, which the judge's steps read as pr-triage's rules step left it. */
-export async function judgeRequest(input: unknown): Promise<{ items: unknown[]; batch: boolean; chunks: unknown[] }> {
-  return judgeMailOf(input).mail.rules;
+/** The rules output the manager attached, as the judge's first step replied it, which the judge's steps read as pr-triage's rules step left it. */
+export async function judgeRequest(input: unknown): Promise<typeof Rules.infer> {
+  const rules = Rules(asRecord(input)?.["reply"]);
+  if (rules instanceof type.errors) throw new Error(`the judge's rules: ${rules.summary}`);
+  return rules;
 }
 
 const ReportInput = type({ payload: "unknown", "evaluate?": { output: "unknown" } });

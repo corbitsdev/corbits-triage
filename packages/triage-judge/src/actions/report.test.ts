@@ -6,7 +6,7 @@ const RULES = { items: [{ facts: {} }], batch: false, chunks: [{ item: 0, state:
 const CHECKOUT = { source: "github", repo: "acme/widgets", sha: "h1" };
 const MAIL = {
   headers: { from: "run_manager@acme.test", to: ["run_judge@acme.test"] },
-  parts: [{ contentType: "text/plain", text: JSON.stringify({ kind: "judge", tenantId: "tnt_acme", number: 8, checkout: CHECKOUT, rules: RULES }) }],
+  parts: [{ contentType: "text/plain", text: JSON.stringify({ kind: "judge", tenantId: "tnt_acme", number: 8, checkout: CHECKOUT }) }],
 };
 const VERDICT = { repo: "acme/widgets", number: 8, headSha: "h1", verdict: "pass", reasons: ["Every rule passed."], checks: [], request: { repo: "acme/widgets", number: 8, comment: "Ready." }, automatic: ["labels"], actions: [] };
 
@@ -22,10 +22,10 @@ function hubContext() {
   return { ctx, calls };
 }
 
-test("a manager's judge hands over the rules, reports the verdict through the hub and stops, posting nothing", async () => {
+test("a manager's judge reads the attached rules, reports the verdict through the hub and stops, posting nothing", async () => {
   const { ctx, calls } = hubContext();
   const signal = new AbortController().signal;
-  expect(await judgeRequest(MAIL)).toEqual(RULES);
+  expect(await judgeRequest({ reply: JSON.stringify(RULES) })).toEqual(RULES);
   expect(await report({ payload: MAIL, evaluate: { output: VERDICT }, judge: { output: [] } }, ctx, signal)).toEqual({ recorded: true });
   expect(await report({ payload: MAIL }, ctx, signal)).toEqual({ recorded: true });
   expect(await stop(MAIL, ctx, signal)).toEqual({ stopped: true });
@@ -35,5 +35,6 @@ test("a manager's judge hands over the rules, reports the verdict through the hu
     { method: "POST", path: "/api/tenants/tnt_acme/manager/reviewer-result", body: { ...reported, failed: "the judge did not finish" } },
     { method: "DELETE", path: "/api/tenants/tnt_acme/workflows/runs/run_judge" },
   ]);
-  await expect(judgeRequest({ ...MAIL, parts: [{ contentType: "text/plain", text: JSON.stringify({ kind: "judge" }) }] })).rejects.toThrow("the judge mail");
+  await expect(judgeRequest({ reply: JSON.stringify({ items: [] }) })).rejects.toThrow("the judge's rules");
+  await expect(report({ payload: { ...MAIL, parts: [{ contentType: "text/plain", text: JSON.stringify({ kind: "judge" }) }] } }, ctx, signal)).rejects.toThrow("the judge mail");
 });
