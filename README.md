@@ -1,102 +1,67 @@
-# Corbits Triage
+<p align="center">
+  <img src="https://github.com/corbitsdev/corbits-triage/raw/main/apps/web/public/corbits-mark.svg" alt="Corbits Triage" width="96">
+</p>
+<h1 align="center">Corbits Triage</h1>
+<p align="center">Take control of your PRs and your dev team</p>
+<p align="center">
+  <a href="https://github.com/corbitsdev/corbits-triage/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/corbitsdev/corbits-triage/actions/workflows/ci.yml/badge.svg"></a>
+</p>
+<p align="center">
+  <a href="https://github.com/corbitsdev/corbits-triage/blob/main/docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md">User manual</a> ·
+  <a href="https://github.com/corbitsdev/corbits-triage/blob/main/docs/SELF_HOST.md">Self-hosting</a> ·
+  <a href="https://github.com/corbitsdev/corbits-triage/blob/main/CONTRIBUTING.md">Contributing</a> ·
+  <a href="https://github.com/corbitsdev/corbits-triage/blob/main/SECURITY.md">Security</a>
+</p>
 
-Pull request triage for GitHub and Bitbucket Data Center. For each pull
-request it checks the repository's rules, decides **Pass**, **Fail** or
-**Unsure** with the reasons, and suggests or runs the actions the repository's
-policy lists for that verdict. It runs as workflows on a stock
-[Interchange](https://github.com/faremeter/interchange) hub, which owns
-identity, grants, credentials, runs and audit.
+![Corbits Triage](https://github.com/corbitsdev/corbits-triage/raw/main/docs/images/triage.png)
 
-Nothing runs by default. Setup asks for a host connection (a GitHub App or
-Bitbucket Data Center) and nothing else. A decision model is not a hub
-variable, and triage does not start until one is saved in Settings.
+## How it works
 
-## Get started
+1. **Connect a source.** A GitHub App or Bitbucket Data Center.
+2. **Add a policy.** `.corbits-triage.yml` on the default branch, or **Start a policy file**.
+3. **Save a decision model.** In Settings, not as a hub variable.
+4. **Turn triage on** for the repository.
+5. **Read the queue.** Verdict, reasons, and the actions the policy names. Triage posts its verdict and runs the actions the policy names on its own; turn that off in **Settings → Triage** to hold them for a click instead.
 
-You need a GitHub account that can create a GitHub App, and one of:
+Nothing runs until `.corbits-triage.yml` is on the default branch, triage is on for the repository, and a decision model is saved.
 
-| Way to run it | Needs | Portal |
-| --- | --- | --- |
-| Docker Compose ([steps](docs/SELF_HOST.md#docker-compose)) | Docker with Compose, about 3 GB free Docker disk | http://localhost:3000 |
-| `bun run dev` ([steps](docs/DEV.md)) | Bun 1.4.4+, Postgres 15+ | http://localhost:5173 |
+## Quick start
 
-On this machine GitHub cannot reach the hub, so the GitHub App is created
-without a webhook and pull requests are picked up every five minutes. On a
-server or Railway, follow [docs/SELF_HOST.md](docs/SELF_HOST.md).
-
-In the folder where you'll set it up, add the Corbits Triage skills to your coding agent, then give it the Setup Prompt:
+**With your coding agent.** In the folder where you'll set it up, add the Corbits Triage skills, then give your agent the Setup Prompt:
 
 ```sh
 npx skills add corbitsdev/corbits-triage
 ```
 
-**Setup Prompt**
-
 ```text
 Set up Corbits Triage on this machine with the corbits-triage-install skill. Use Docker if I have it, otherwise my own Postgres. Tell me when you need me to do something.
 ```
 
-Or by hand:
+**With Docker.** Compose builds from a checkout.
 
-1. **Run the hub** with Docker Compose or `bun run dev`, following the steps
-   linked in the table, and open its portal address. Running code review on
-   this machine's Docker gives the hub control of that Docker, which on Linux
-   is root on the machine ([Where sidecars run](docs/SELF_HOST.md#where-sidecars-run)).
-2. **Connect GitHub.** Sign up; the portal shows **Set up Triage**: create the
-   GitHub App, choose repositories, then open Repositories
-   ([Set up in the portal](docs/SELF_HOST.md#set-up-in-the-portal)). Setup does
-   not ask for a decision model. Save one in Settings → Triage
-   ([decision model](docs/DECISION_MODEL.md)); triage starts once it is saved.
-3. **Add a policy file.** Commit `.corbits-triage.yml` to the repository's
-   default branch, press **Start a policy file** in the portal to open a pull
-   request with starter rules, or give your coding agent the Configure Prompt
-   inside the repository. The format is in
-   [Policy file](docs/PRODUCT.md#policy-file).
+```sh
+cp .env.example .env   # set the four secrets: openssl rand -hex 32 each
+docker compose up -d
+```
 
-   **Configure Prompt**
+Open http://localhost:3000. Ports, logs and running on a server are in [Self-hosting](docs/SELF_HOST.md).
 
-   ```text
-   Use the corbits-triage-setup skill to write a policy for this repository. Look around first, suggest rules, and ask me what should happen on Pass, Fail and Unsure.
-   ```
+**From source.** With Bun 1.4.4+ and Postgres 15+, see [Development](docs/DEV.md). The portal for that path is http://localhost:5173.
 
-4. **Turn on triage** for the repository under Repositories. Once a decision
-   model is saved, its open pull requests appear on Triage with a verdict,
-   a score and the reasons. Triage posts its comment and verdict
-   label on GitHub and takes the other actions the policy file names on its
-   own; turn that off in Settings → Triage to have them wait for a click on
-   Triage instead.
+Then create an account, follow **Set up Triage**, and save a decision model in **Settings → Triage**. To have an agent write the policy, use the [Configure Prompt](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#writing-the-file).
 
-## Other setup paths
+## Docs
 
-- **GitHub emulator.** Try it with no GitHub App or GitHub account under
-  `bun run dev` ([steps](docs/DEV.md#github-emulator-no-github-account)); it
-  still needs a decision model endpoint.
-- **Policy check Action.** [packages/policy-check-action](packages/policy-check-action/action.yml)
-  checks the policy file and runs its rules that need no model on every pull
-  request, with no hub or secrets ([workflow to copy](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#checking-the-file-in-pull-requests)).
-- **Browser extension.** [apps/extension](apps/extension/README.md) checks the
-  GitHub pull request you are viewing against its policy and shows each rule's
-  result on the page, with your own GitHub token and no hub. Build and load it
-  in Chrome or Firefox ([install](apps/extension/README.md#install)).
+- [User manual](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md): the portal, screen by screen.
+- [Self-hosting](docs/SELF_HOST.md): running it and every setting.
+- [Development](docs/DEV.md) and [Contributing](CONTRIBUTING.md): working on the code.
+- [AGENTS.md](AGENTS.md): conventions for coding agents.
+- [skills/](skills): agent skills to install Triage and write a policy.
+- [Product](docs/PRODUCT.md): rules, verdicts, actions and the policy file. [Bitbucket Data Center](docs/BITBUCKET_DATACENTER.md): connecting that host.
+- [GitHub emulator](docs/DEV.md#github-emulator-no-github-account), the [policy-check Action](packages/policy-check-action/README.md) and the [browser extension](apps/extension/README.md).
 
-## Read next
-
-- [User manual](docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md):
-  the portal, screen by screen.
-- [docs/PRODUCT.md](docs/PRODUCT.md): rules, verdicts, actions, labels, the
-  policy file and code review.
-- [docs/SELF_HOST.md](docs/SELF_HOST.md): running the hub and every setting.
-- [docs/BITBUCKET_DATACENTER.md](docs/BITBUCKET_DATACENTER.md): connecting
-  Bitbucket Data Center.
-- [docs/provisioners/README.md](docs/provisioners/README.md): where sidecars
-  run, and setting up Docker, E2B or Railway Sandboxes for code review.
-- [docs/DECISION_MODEL.md](docs/DECISION_MODEL.md): how judged rules are asked,
-  their cost and measured accuracy.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
-  [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md): how it is built.
-- [CONTRIBUTING.md](CONTRIBUTING.md), [AGENTS.md](AGENTS.md) and
-  [DESIGN.md](DESIGN.md): contributing, code rules and the portal's design.
+Triage runs as workflows on an [Interchange](https://github.com/faremeter/interchange) hub, which owns identity, grants, credentials, runs and audit.
 
 ## License
 
-GPLv2 with the [AI Exception](GPLv2-AI-Exception.md); see [LICENSE.md](LICENSE.md). Contributions require the [CLA](CLA.md); see [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues per [SECURITY.md](SECURITY.md).
+GPLv2 with the [AI Exception](GPLv2-AI-Exception.md); see [LICENSE.md](LICENSE.md). Contributions require the [CLA](CLA.md).
