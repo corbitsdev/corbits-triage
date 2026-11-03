@@ -14,6 +14,9 @@
 //   than the router's defaults: triage mail is routed, not dispatched, so only
 //   those retries keep it alive while a pack receive holds the connection. The
 //   hub's start grace for a just-deployed manager is that same mail hold.
+//   `npmRegistryUrl` overrides the `npmjs` HTTP registry URL when
+//   `NPM_REGISTRY_URL` is set so offline chain tests can serve tool packages
+//   from a local fixture server.
 // - `adapterManifest` replaces stock's `sidecarAdapterManifest` and has no
 //   SIDECAR_ADAPTER_MANIFEST fallback: the hub's adapters are fixed in
 //   sidecar-config.ts, not operator configuration.
