@@ -21,11 +21,11 @@ FROM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb472
 LABEL org.opencontainers.image.source=https://github.com/corbitsdev/corbits-triage
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=runtime /app/package.json /app/tsconfig.json ./
-COPY --from=runtime /app/node_modules node_modules
-COPY --from=runtime /app/vendor vendor
-COPY --from=runtime /app/packages packages
-COPY --from=runtime /app/apps/hub apps/hub
+COPY --from=runtime --chmod=a+rX /app/package.json /app/tsconfig.json ./
+COPY --from=runtime --chmod=a+rX /app/node_modules node_modules
+COPY --from=runtime --chmod=a+rX /app/vendor vendor
+COPY --from=runtime --chmod=a+rX /app/packages packages
+COPY --from=runtime --chmod=a+rX /app/apps/hub apps/hub
 COPY --from=base /usr/local/bin/oxlint /usr/local/bin/oxlint
 
 # One container per sidecar; the hub's Docker provisioner starts it with the sidecar's env.
@@ -38,7 +38,7 @@ CMD ["bun", "--conditions=intx-src", "apps/sidecar/src/index.ts"]
 
 # The hub runs local sidecars in this container, so it needs the code review's linter too.
 FROM app
-COPY --from=portal /app/apps/web/dist apps/web/dist
+COPY --from=portal --chmod=a+rX /app/apps/web/dist apps/web/dist
 RUN /usr/local/bin/oxlint --version
 # The published sidecar image, pinned by digest, that CI pushed just before; unset, the hub runs a locally built one.
 ARG SIDECAR_IMAGE
