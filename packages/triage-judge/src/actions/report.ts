@@ -2,6 +2,8 @@ import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { JudgeVerdict, REPO_SOURCES } from "@corbits/triage-contracts";
 import { answered, callHub, endRun, mailOf, tenantPath } from "@corbits/triage-manager/actions/hub";
+import { firstChunks, type JudgeChunk } from "@corbits/triage-workflows/actions/rules";
+import type { Item } from "@corbits/triage-workflows/logic/item";
 
 /** The manager's mail to a judge it deployed: the rules output and the pull request. */
 const JudgeMail = type({
@@ -9,7 +11,7 @@ const JudgeMail = type({
   tenantId: "string > 0",
   number: "number.integer > 0",
   checkout: { source: type.enumerated(...REPO_SOURCES), repo: "string > 0", sha: "string > 0" },
-  rules: { items: "unknown[]", batch: "boolean", chunks: "unknown[]" },
+  rules: { items: "unknown[]", batch: "boolean", "chunks?": "unknown[]" },
 });
 
 function judgeMailOf(payload: unknown) {
@@ -19,9 +21,10 @@ function judgeMailOf(payload: unknown) {
   return { mail, runId };
 }
 
-/** The rules output the manager mailed, which the judge's steps read as pr-triage's rules step left it. */
+/** The rules output the manager mailed, with the first-round chunks derived from `items` when omitted from the mail. */
 export async function judgeRequest(input: unknown): Promise<{ items: unknown[]; batch: boolean; chunks: unknown[] }> {
-  return judgeMailOf(input).mail.rules;
+  const { items, batch, chunks } = judgeMailOf(input).mail.rules;
+  return { items, batch, chunks: (chunks as JudgeChunk[] | undefined) ?? firstChunks(items as Item[]) };
 }
 
 const ReportInput = type({ payload: "unknown", "evaluate?": { output: "unknown" } });

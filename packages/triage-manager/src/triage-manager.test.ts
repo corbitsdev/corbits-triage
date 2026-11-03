@@ -9,10 +9,13 @@ import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serve";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
 import { parts } from "@corbits/triage-workflows/actions/parts";
+import { firstChunks } from "@corbits/triage-workflows/actions/rules";
+import type { Item } from "@corbits/triage-workflows/logic/item";
 import { delivered, grantsFor, type Bindings, type Fetch } from "@corbits/triage-workflows/local-credentials";
 import { recordingGithub, type Write } from "@corbits/triage-workflows/run-local";
 import * as actions from "./actions/index.js";
 import { manageMail } from "./actions/hub.js";
+import { MAX_JUDGE_MAIL_BYTES } from "./actions/judge.js";
 import * as loops from "./loops.js";
 import { workflow as bitbucket } from "./triage-manager-bitbucket-datacenter.js";
 import { workflow as github } from "./triage-manager-github.js";
@@ -1236,7 +1239,7 @@ function answerFor(id: string): string {
   return JSON.stringify({ id, type: "choice", choice: "serves_purpose", probabilities: { serves_purpose: 0.9, separate_change: 0.05, cant_tell: 0.05 }, confidence: 0.9 });
 }
 
-type MailedRules = { items: object[]; batch: boolean; chunks: { questions: { id: string }[] }[] };
+type MailedRules = { items: Item[]; batch: boolean; chunks?: { questions: { id: string }[] }[] };
 
 const JUDGE_COMMENT = "The judge's own words.";
 
@@ -1247,8 +1250,8 @@ function answered(chunks: { questions: { id: string }[] }[]) {
 /** The verdict the judge reports on `rules`, as its steps make it from decisive answers, worded so no verdict the manager makes matches it. */
 async function judgeVerdict(rules: MailedRules): Promise<Record<string, unknown>> {
   const signal = new AbortController().signal;
-  const judged = { ...rules, judge: { output: answered(rules.chunks) } };
-  const { chunks } = await parts(judged, {} as never, signal) as { chunks: MailedRules["chunks"] };
+  const judged = { ...rules, judge: { output: answered(rules.chunks ?? firstChunks(rules.items)) } };
+  const { chunks } = await parts(judged, {} as never, signal) as { chunks: { questions: { id: string }[] }[] };
   const made = await evaluate({ ...judged, judgeParts: { output: answered(chunks) } }, {} as never, signal) as { request: Record<string, unknown> };
   return { ...made, feedback: JUDGE_COMMENT, request: { ...made.request, comment: JUDGE_COMMENT } };
 }
@@ -1297,7 +1300,8 @@ describe("triage-manager with a judge", () => {
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
     const content = JSON.parse(mail.content) as { kind: string; rules: MailedRules };
     expect(content.kind).toBe("judge");
-    expect(content.rules.chunks.length).toBeGreaterThan(0);
+    expect(firstChunks(content.rules.items).length).toBeGreaterThan(0);
+    expect(content.rules).not.toHaveProperty("chunks");
     expect(content).not.toHaveProperty("reply");
     expect(doneBody(first.calls)["wait"]).toBe(true);
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
@@ -1311,6 +1315,20 @@ describe("triage-manager with a judge", () => {
     expect(second.calls[1]).toEqual({ ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...JUDGE, result: verdict }] }) });
     expect(doneBody(second.calls)["report"]).toMatchObject({ head: HEAD, verdict });
     expect(mailed).toHaveLength(1);
+  });
+
+  test("a large pull request whose rules exceed 1 MiB is mailed under the inline-text cap by omitting chunks and marking trailing patches unread", async () => {
+    const patch = `@@ -1 +1 @@\n+${"x".repeat(40_000)}`;
+    const files = Array.from({ length: 40 }, (_, index) => ({ path: `src/file-${index}.ts`, status: "modified", additions: 1, deletions: 0, patch }));
+    const item = { facts: { repo: PR.repo, number: PR.number, headSha: HEAD, rawBody: "y".repeat(50_000), commitMessages: ["z".repeat(50_000)], files } };
+    const ctx = { perform: () => Promise.resolve({ status: 201, text: JSON.stringify({ id: DEPLOYED }) }) } as unknown as EffectContext;
+    const { mail } = await actions.deployJudge({ payload: wake(), take: { output: { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD } }, rules: { output: { items: [item], batch: false, chunks: files } } }, ctx, new AbortController().signal);
+    expect(Buffer.byteLength(mail.content, "utf8")).toBeLessThanOrEqual(MAX_JUDGE_MAIL_BYTES);
+    const mailedItem = (JSON.parse(mail.content) as { rules: { items: [{ facts: { rawBody: string; commitMessages: string[]; files: { patch?: string; patchUnread?: true }[] } }] } }).rules.items[0];
+    expect(mailedItem.facts.rawBody).toBe("");
+    expect(mailedItem.facts.commitMessages).toEqual([]);
+    expect(mailedItem.facts.files[0]?.patch).toBe(patch);
+    expect(mailedItem.facts.files.at(-1)).toEqual({ path: "src/file-39.ts", status: "modified", additions: 1, deletions: 0, patchUnread: true });
   });
 
   test("a manager whose judge is still out within its deadline stays up and polls, even while CI runs", async () => {

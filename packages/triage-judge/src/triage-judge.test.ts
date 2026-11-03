@@ -68,7 +68,7 @@ function actionCredentials(hub: (url: URL, init?: RequestInit) => Promise<Respon
 }
 
 /** Runs the judge's body over the rules a manager would mail it. */
-async function runJudge(rulesOutput: { chunks: unknown[] }) {
+async function runJudge(rulesOutput: { items: unknown[]; batch: boolean; chunks?: unknown[] }) {
   const calls: { method: string; path: string; body?: unknown }[] = [];
   async function hub(url: URL, init?: RequestInit): Promise<Response> {
     calls.push({ method: init?.method ?? "GET", path: url.pathname, ...(init?.body !== undefined && { body: JSON.parse(String(init.body)) }) });
@@ -97,10 +97,10 @@ async function runJudge(rulesOutput: { chunks: unknown[] }) {
   return { terminalStatus, calls };
 }
 
-test("the judge runs the chunks the manager mailed, reports the whole verdict and stops, posting nothing", async () => {
-  const rulesOutput = await ruled();
-  expect(rulesOutput.chunks.length).toBeGreaterThan(0);
-  const { terminalStatus, calls } = await runJudge(rulesOutput);
+test("the judge derives the chunks from the items the manager mailed, reports the whole verdict and stops, posting nothing", async () => {
+  const { items, batch, chunks } = await ruled();
+  expect(chunks.length).toBeGreaterThan(0);
+  const { terminalStatus, calls } = await runJudge({ items, batch });
   expect(terminalStatus).toBe("completed");
   const posted = calls.find((call) => call.method === "POST");
   expect(posted).toMatchObject({ path: `/api/tenants/${TENANT}/manager/reviewer-result`, body: { kind: "judge", head: SHA, source: "github", repo: "acme/widgets", number: 8 } });

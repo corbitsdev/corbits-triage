@@ -31,20 +31,29 @@ const Input = type({
   batch: "boolean",
 });
 
-function ruled(it: RulesItem): { item: Item; requests: JudgeRequest[] } {
-  if ("error" in it) return { item: degradedItem(it), requests: [] };
+function ruled(it: RulesItem): Item {
+  if ("error" in it) return degradedItem(it);
   // Absent optionals stay off the object: an effect key is canonical JSON, which has no undefined.
-  const item = {
+  const item: Item = {
     facts: it.facts, det: deriveState(it.facts, undefined, it.pack), pack: it.pack, automatic: it.automatic,
     ...(it.source !== undefined && { source: it.source }), ...(it.repoSource && { repoSource: it.repoSource }), ...(it.noWait && { noWait: it.noWait }), ...(it.blocksOn && { blocksOn: it.blocksOn }), ...(it.appLogin && { appLogin: it.appLogin }),
   };
-  if (!item.det.needsJudgment) return { item, requests: [] };
-  const evaluation = prepareQualityEvaluation(item.facts, item.det.sources);
-  const { requests, judgeError } = evaluation;
-  if (judgeError !== undefined) return { item: { ...item, judgeError, judgeLimitExceeded: true }, requests: [] };
-  // With no judged rule to ask first, the verdict question needs no second round.
-  const choice = choiceFirst(evaluation) ? choiceOf(item, evaluation, []) : undefined;
-  return { item, requests: [...requests, ...(choice && "request" in choice ? [choice.request] : [])] };
+  if (!item.det.needsJudgment) return item;
+  const { judgeError } = prepareQualityEvaluation(item.facts, item.det.sources);
+  return judgeError !== undefined ? { ...item, judgeError, judgeLimitExceeded: true } : item;
+}
+
+/** The first-round judge chunks for `items`, in item order. */
+export function firstChunks(items: readonly Item[]): JudgeChunk[] {
+  return items.flatMap(function chunksOf(item, index): JudgeChunk[] {
+    if (item.error !== undefined || !item.det.needsJudgment || item.judgeLimitExceeded) return [];
+    const evaluation = prepareQualityEvaluation(item.facts, item.det.sources);
+    if (evaluation.judgeError !== undefined) return [];
+    // With no judged rule to ask first, the verdict question needs no second round.
+    const choice = choiceFirst(evaluation) ? choiceOf(item, evaluation, []) : undefined;
+    const requests = [...evaluation.requests, ...(choice && "request" in choice ? [choice.request] : [])];
+    return requests.map(({ state, questions }) => ({ item: index, state, questions }));
+  });
 }
 
 export async function rules(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<RulesOutput> {
@@ -52,6 +61,6 @@ export async function rules(input: unknown, _ctx: EffectContext, _signal: AbortS
   if (parsed instanceof type.errors) throw new Error(`rules: invalid input: ${parsed.summary}`);
   const { items, batch } = parsed as RulesInput;
   const ruledItems = items.map(ruled);
-  const chunks = ruledItems.flatMap(({ requests }, item) => requests.map(({ state, questions }) => ({ item, state, questions })));
-  return { items: ruledItems.map(({ item }) => item), batch, chunks, needsJudgment: chunks.length > 0 };
+  const chunks = firstChunks(ruledItems);
+  return { items: ruledItems, batch, chunks, needsJudgment: chunks.length > 0 };
 }

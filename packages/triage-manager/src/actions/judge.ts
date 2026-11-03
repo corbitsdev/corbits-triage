@@ -2,6 +2,7 @@ import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
 import { evaluate, verdictOnFacts, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
+import type { PrFileFacts } from "@corbits/triage-workflows/logic/checks";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { Mailed, type MailInput } from "../mail.js";
@@ -12,6 +13,9 @@ import { ClearedVerdict } from "./review-clean.js";
 
 /** How long the manager waits for a judge it deployed, from its deploy to its report. */
 export const JUDGE_DEADLINE_MS = 60 * 60_000;
+
+/** Stock's `INLINE_TEXT_MAX_BYTES`: mail parts larger than 1 MiB are stored only by ref, with no inline `text`. */
+export const MAX_JUDGE_MAIL_BYTES = 1024 * 1024;
 
 const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: type("object[]").as<Item[]>(), batch: "boolean" } } });
 
@@ -86,7 +90,46 @@ export async function judgeScope(input: unknown): Promise<{ deploy: boolean; pos
   return { deploy: true, post: false };
 }
 
-const DeployInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: "unknown" } });
+const DeployInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: type("object[]").as<Item[]>(), batch: "boolean" } } });
+
+function unreadPatch({ patch: _patch, ...file }: PrFileFacts): PrFileFacts {
+  return { ...file, patchUnread: true };
+}
+
+function slimItem(item: Item): Item {
+  if (!item.facts) return item;
+  const { fixes: _fixes, patterns: _patterns, ...facts } = item.facts;
+  return { ...item, facts: { ...facts, rawBody: "", commitMessages: [] } };
+}
+
+/**
+ * Serializes the judge mail without duplicate chunks or hard-rule-only facts, and drops trailing file patches once the
+ * payload would pass stock's 1 MiB inline-text limit so the judge always receives inline text.
+ */
+function judgeMailContent(envelope: Record<string, unknown>, { items, batch }: { items: readonly Item[]; batch: boolean }): string {
+  const slimmed = items.map(slimItem);
+  const whole = JSON.stringify({ ...envelope, rules: { items: slimmed, batch } });
+  if (Buffer.byteLength(whole, "utf8") <= MAX_JUDGE_MAIL_BYTES) return whole;
+  const stripped = slimmed.map((item) => (item.facts ? { ...item, facts: { ...item.facts, files: item.facts.files.map((file) => (file.patch === undefined ? file : unreadPatch(file))) } } : item));
+  let budget = MAX_JUDGE_MAIL_BYTES - Buffer.byteLength(JSON.stringify({ ...envelope, rules: { items: stripped, batch } }), "utf8");
+  let ceiling = false;
+  const bounded = slimmed.map(function boundItem(item, index): Item {
+    if (!item.facts) return item;
+    const files = item.facts.files.map(function boundFile(file, fileIndex): PrFileFacts {
+      if (file.patch === undefined) return file;
+      const unread = stripped[index]!.facts.files[fileIndex]!;
+      const cost = Buffer.byteLength(JSON.stringify(file), "utf8") - Buffer.byteLength(JSON.stringify(unread), "utf8");
+      if (ceiling || cost > budget) {
+        ceiling = true;
+        return unread;
+      }
+      budget -= cost;
+      return file;
+    });
+    return { ...item, facts: { ...item.facts, files } };
+  });
+  return JSON.stringify({ ...envelope, rules: { items: bounded, batch } });
+}
 
 /**
  * Deploys the judge from the host's published release. It is mailed the rules output, and reports its verdict to the
@@ -99,13 +142,13 @@ export async function deployJudge(input: unknown, ctx: EffectContext, _signal: A
   const { tenantId, runId, pullRequest } = managerMailOf(parsed.payload);
   const { head } = parsed.take.output;
   const rules = parsed.rules.output;
-  if (head === undefined || !rules) throw new Error("deployJudge: the pass names no head");
+  if (head === undefined) throw new Error("deployJudge: the pass names no head");
   const source = repoSourceOf(pullRequest.source);
   const release = publishedFor(source, "judge");
   if (!release) throw new Error("deployJudge: release.json publishes no judge for the host");
   const judgeRun = await deploy(ctx, "deployJudge", tenantId, release);
   const deadline = new Date(Date.now() + JUDGE_DEADLINE_MS).toISOString();
-  const content = JSON.stringify({ kind: "judge", tenantId, number: pullRequest.number, checkout: { source, repo: pullRequest.repo, sha: head }, rules });
+  const content = judgeMailContent({ kind: "judge", tenantId, number: pullRequest.number, checkout: { source, repo: pullRequest.repo, sha: head } }, rules);
   return { reviewer: { kind: "judge", head, runId: judgeRun, deployedBy: runId, deadline }, mail: { tenantId, to: judgeRun, content, readyBy: deadline } };
 }
 
