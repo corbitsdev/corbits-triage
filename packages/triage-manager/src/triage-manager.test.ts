@@ -1496,10 +1496,10 @@ function rulesOf(mail: unknown): MailedRules {
 }
 
 /** The mail a first pass sends the judge it deploys. */
-async function firstJudgeMail(request = hubRequest(JUDGED)): Promise<{ content: string }> {
+async function firstJudgeMail(request = hubRequest(JUDGED)): Promise<unknown> {
   const mailed: unknown[] = [];
   await runMail(github, wake(), githubHost().host, fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] }).hub, mailed);
-  return mailed[0] as { content: string };
+  return mailed[0];
 }
 
 describe("triage-manager with a judge and code review", () => {
