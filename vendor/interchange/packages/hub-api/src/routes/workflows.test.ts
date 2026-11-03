@@ -504,30 +504,32 @@ function createMockDB(opts: MockDBOpts) {
     };
     return { from };
   };
+  const query = {
+    tenant: {
+      findFirst: async () => ({
+        ...testTenant,
+        config: opts.tenantConfig ?? null,
+      }),
+      findMany: async () => [
+        { id: testTenant.id, config: opts.tenantConfig ?? null },
+      ],
+    },
+    principal: { findFirst: async () => testPrincipal },
+    asset: { findFirst: async () => opts.assetRow },
+  };
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- drizzle PgDatabase type cannot be structurally satisfied in tests
   return {
-    query: {
-      tenant: {
-        findFirst: async () => ({
-          ...testTenant,
-          config: opts.tenantConfig ?? null,
-        }),
-        findMany: async () => [
-          { id: testTenant.id, config: opts.tenantConfig ?? null },
-        ],
-      },
-      principal: { findFirst: async () => testPrincipal },
-      asset: { findFirst: async () => opts.assetRow },
-    },
+    query,
     select,
     insert,
     transaction: async (
       fn: (tx: {
+        query: typeof query;
         insert: typeof insert;
         select: typeof select;
       }) => Promise<unknown>,
     ) => {
-      return fn({ insert, select });
+      return fn({ query, insert, select });
     },
   } as unknown as Parameters<typeof createApp>[0]["db"];
 }
@@ -614,6 +616,7 @@ function createMockSidecarRouter(
     noteSenderDeploySettled: () => notImpl("noteSenderDeploySettled"),
     sendAgentUndeploy: () => notImpl("sendAgentUndeploy"),
     sendCredentialsUpdate: () => notImpl("sendCredentialsUpdate"),
+    sendRunGrants: () => notImpl("sendRunGrants"),
     sendSignalDeliver: async (opts) => {
       signalCalls.push(opts);
     },
@@ -765,6 +768,9 @@ function createStubRepoStore(
     commitPackedTip: () => {
       throw new Error("stub repoStore is not wired in workflow tests");
     },
+    forgetPackedTip: () => {
+      throw new Error("stub repoStore is not wired in workflow tests");
+    },
     resolveRef: unused,
     listRefs: unused,
     resolveHead: unused,
@@ -892,12 +898,14 @@ function createTestApp(opts: TestAppOpts = {}) {
           ? null
           : snapshotFromWorkflowJson(effectiveWorkflowJson),
   });
+  const grantStore = createInMemoryGrantStore(opts.grants ?? [makeGrant()]);
   return createApp({
     getSession: createMockGetSession(),
     authHandler: () => new Response("", { status: 404 }),
     db,
     principalKeyStore: opts.principalKeyStore ?? createMockPrincipalKeyStore(),
-    grantStore: createInMemoryGrantStore(opts.grants ?? [makeGrant()]),
+    grantStore,
+    grantStoreFor: () => grantStore,
     sidecarRouter: createMockSidecarRouter(
       opts.signalCalls ?? [],
       opts.routeMailCalls ?? [],

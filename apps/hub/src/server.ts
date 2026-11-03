@@ -402,7 +402,7 @@ function runTriggerDeliverer(senderLocalPart: string): MailDeliverer {
     db: composition.db,
     principalKeyStore: composition.principalKeyStore,
     runTokenStore: composition.runTokenStore,
-    grantStore: createGrantStore(composition.db),
+    grantStoreFor: createGrantStore,
     registry: HUB_CONDITION_REGISTRY,
   });
   return {

@@ -25,7 +25,7 @@ import { createRuntimeCapabilities } from "@intx/types/runtime-capabilities";
 import { WorkflowProjectionDefinition } from "@intx/types/sidecar";
 import { projectLiveToInert, runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type StepInvokeRequest, type WorkflowDefinition } from "@intx/workflow";
 import { collectHubConsumers } from "@intx/workflow-deploy";
-import { createCredentialsBackedAuthorize, createGrantEvaluator, createLocalCredentialsSnapshot, createSnapshotGrantsResolver, createWorkflowStepInvoker, snapshotStepGrants } from "@intx/workflow-host/local";
+import { createCredentialsBackedAuthorize, createGrantEvaluator, createLocalCredentialsSnapshot, createSnapshotGrantsResolver, createWorkflowStepInvoker } from "@intx/workflow-host/local";
 import { DEFAULT_REPO_POLICY, TRIAGE_LISTENERS, TRIAGE_MAIL_SENDER, TRIAGE_MANAGERS, type ActionKind, type CheckPack, type TriageEvent } from "@corbits/triage-contracts";
 import * as actions from "@corbits/triage-manager/actions/index";
 import { mailDirector } from "@corbits/triage-manager/directors";
@@ -453,7 +453,8 @@ export async function modelStack(repo: string, { pack, automatic, review }: { pa
     const cell = { current: deliveryOf(run) };
     const requirements = await grantStore.collectGrants(run.principalId, TENANT);
     const snapshot = { current: createLocalCredentialsSnapshot({ definition: run.definition, directors, delivery: cell.current, grants: requirements }) };
-    const workflowAuthorize = createCredentialsBackedAuthorize(createSnapshotGrantsResolver(snapshot, "local run"), createGrantEvaluator({ floorFor: noFloor }));
+    const resolveStepGrants = createSnapshotGrantsResolver(snapshot, "local run");
+    const workflowAuthorize = createCredentialsBackedAuthorize(resolveStepGrants, createGrantEvaluator({ floorFor: noFloor }));
     async function routed(input: string | URL | Request, init?: RequestInit): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
       if (url.origin === HUB_ORIGIN) return hubFetch(runId, serving, url, init);
@@ -490,7 +491,7 @@ export async function modelStack(repo: string, { pack, automatic, review }: { pa
       const toolCwd = join(workdir, "workspace");
       mkdirSync(toolCwd);
       const factories = req.agent.toolFactories.map((factory) => ({ packageName: factory.id, declaredCredentials: [], factory }));
-      const stepGrants = snapshotStepGrants(snapshot, req.authzContext.stepId!);
+      const stepGrants = resolveStepGrants(req.authzContext.stepId!);
       const [credentials] = buildCredentialCapabilities(factories, { materialCell: cell, resolveGrants: function stepGrantsOf() { return stepGrants; }, providers }).values();
       const source = { id: "unused", provider: "unused", baseURL: "http://127.0.0.1:9", credentialId: "unused", model: "unused" };
       return {
@@ -518,7 +519,7 @@ export async function modelStack(repo: string, { pack, automatic, review }: { pa
     }
 
     function actionGrants({ stepId }: { stepId: string }) {
-      return snapshotStepGrants(snapshot, stepId);
+      return resolveStepGrants(stepId);
     }
 
     const body = (run.definition.steps["events"] as OnTriggerPrimitive).body;

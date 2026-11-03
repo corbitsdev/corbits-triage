@@ -7,9 +7,15 @@ import {
   switchBranch,
 } from "./history";
 import { initAgentRepo, initRepo } from "./init";
-import { applyPack, removeStagedPacks, stagePack } from "./pack-receive";
+import {
+  applyPack,
+  removeOrphanPackIndexes,
+  removeStagedPacks,
+  stagePack,
+} from "./pack-receive";
 import { createDeployPack, createNegotiatedPack } from "./pack-send";
 import { collectReachableObjects } from "./object-walk";
+import { createObjectPresence } from "./object-presence";
 import { writeTreeToDisk } from "./write-tree";
 import { indexPackIntoGitDir } from "./index-pack";
 import {
@@ -32,6 +38,7 @@ import {
 export type { ContextStore, AuditStore, CommitSigner };
 export type { CommitVerifier, StagedPack } from "./pack-receive";
 export type { IncludeShaPredicate } from "./pack-send";
+export type { ObjectPresence } from "./object-presence";
 export type { DurableMirrorReads };
 export type { InitRepoOpts } from "./init";
 export type { RetentionPolicy, GCResult, GCPolicy } from "./gc";
@@ -84,12 +91,17 @@ export function createIsogitStorage(runtime: IsogitRuntime) {
     applyPack: bindRepoDir(storageRuntime, applyPack),
     stagePack: bindRepoDir(storageRuntime, stagePack),
     removeStagedPacks: bindRepoDir(storageRuntime, removeStagedPacks),
+    removeOrphanPackIndexes: bindRepoDir(
+      storageRuntime,
+      removeOrphanPackIndexes,
+    ),
     createDeployPack: bindRepoDir(storageRuntime, createDeployPack),
     createNegotiatedPack: bindRepoDir(storageRuntime, createNegotiatedPack),
     collectReachableObjects: bindRepoDir(
       storageRuntime,
       collectReachableObjects,
     ),
+    createObjectPresence: bindRepoDir(storageRuntime, createObjectPresence),
     repoDiskUsage: bindRepoDir(storageRuntime, repoDiskUsage),
     countLooseObjects: bindRepoDir(storageRuntime, countLooseObjects),
     countPackFiles: bindRepoDir(storageRuntime, countPackFiles),

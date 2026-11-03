@@ -63,7 +63,7 @@ test("PostgreSQL: a deployment declaring the triage accept rule takes its tenant
       deployContent: {},
     });
     const systemSender = createTenantSystemSender({ db, principalKeyStore });
-    const materialize = createMailTriggeredRunGrantsMaterializer({ db, principalKeyStore, runTokenStore: createRunTokenStore({ db, cipher }), grantStore: createGrantStore(db), registry: HUB_CONDITION_REGISTRY });
+    const materialize = createMailTriggeredRunGrantsMaterializer({ db, principalKeyStore, runTokenStore: createRunTokenStore({ db, cipher }), grantStoreFor: createGrantStore, registry: HUB_CONDITION_REGISTRY });
     async function triggerAs(tenantId: string, domain: string) {
       await systemSender.resolve({ tenantId, domain, localPart: TRIAGE_MAIL_SENDER });
       const sender = await resolveSenderPrincipal(db, principalKeyStore, `${TRIAGE_MAIL_SENDER}@${domain}`);

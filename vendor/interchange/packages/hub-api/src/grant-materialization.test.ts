@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import type { GrantRule } from "@intx/types/authz";
 import {
   resolveGrantMaterialization,
+  resolveRequirementGrant,
   INVOKER_GRANT_TTL_MS,
 } from "./grant-materialization";
 
@@ -282,5 +283,200 @@ describe("resolveGrantMaterialization", () => {
       ["wallet:w1", "creator"],
       ["wallet:w2", "invoker"],
     ]);
+  });
+});
+
+describe("resolveRequirementGrant", () => {
+  const ctx = {
+    ...base,
+    creatorGrants: [],
+    invokerGrants: [],
+    invokerExpiresAt: new Date("2026-07-21T05:00:00.000Z"),
+  };
+
+  test("a creator allow yields a creator row with no expiry", async () => {
+    const res = await resolveRequirementGrant(
+      { resource: "wallet:w1", action: "spend", source: "creator" },
+      {
+        ...ctx,
+        creatorGrants: [
+          grant({ resource: "wallet:*", action: "spend", origin: "role" }),
+        ],
+      },
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.row.origin).toBe("creator");
+    expect(res.row.expiresAt).toBeNull();
+    expect(res.row.resource).toBe("wallet:w1");
+    expect(res.row.principalId).toBe("p_target");
+  });
+
+  test("an invoker allow yields an invoker row with the passed expiry", async () => {
+    const res = await resolveRequirementGrant(
+      { resource: "wallet:w1", action: "spend", source: "invoker" },
+      {
+        ...ctx,
+        invokerGrants: [
+          grant({ resource: "wallet:w1", action: "spend", origin: "creator" }),
+        ],
+      },
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.row.origin).toBe("invoker");
+    expect(res.row.expiresAt).toBe(ctx.invokerExpiresAt);
+  });
+
+  test("a delegator deny refuses the requirement", async () => {
+    const res = await resolveRequirementGrant(
+      { resource: "wallet:w1", action: "spend", source: "creator" },
+      {
+        ...ctx,
+        creatorGrants: [
+          grant({ resource: "wallet:*", action: "spend", origin: "role" }),
+          grant({
+            resource: "wallet:w1",
+            action: "spend",
+            origin: "creator",
+            effect: "deny",
+          }),
+        ],
+      },
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.rejection.status).toBe(403);
+    expect(res.rejection.code).toBe("insufficient_grants");
+  });
+
+  test("an invoker-origin allow in the raw invoker grants does not delegate", async () => {
+    const res = await resolveRequirementGrant(
+      { resource: "wallet:w1", action: "spend", source: "invoker" },
+      {
+        ...ctx,
+        invokerGrants: [
+          grant({ resource: "wallet:w1", action: "spend", origin: "invoker" }),
+        ],
+      },
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.rejection).toEqual({
+      status: 403,
+      code: "insufficient_grants",
+      message:
+        "Invoker lacks authority for wallet:w1/spend (no_matching_grant)",
+    });
+  });
+
+  for (const effect of ["deny", "ask"] as const) {
+    test(`an invoker-origin ${effect} in the raw invoker grants blocks the requirement`, async () => {
+      const res = await resolveRequirementGrant(
+        { resource: "wallet:w1", action: "spend", source: "invoker" },
+        {
+          ...ctx,
+          invokerGrants: [
+            grant({ resource: "wallet:*", action: "spend", origin: "creator" }),
+            grant({
+              resource: "wallet:w1",
+              action: "spend",
+              origin: "invoker",
+              effect,
+            }),
+          ],
+        },
+      );
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.rejection.message).toEndWith(`(${effect})`);
+    });
+  }
+});
+
+describe("resolveRequirementGrant row expiry", () => {
+  // The delegation check skips a grant that has expired by the wall clock, so
+  // these expiries are relative to the time the tests run.
+  const start = Date.now();
+  const at = (hours: number) => new Date(start + hours * 3_600_000);
+  const invokerExpiresAt = at(5);
+  const ctx = {
+    ...base,
+    creatorGrants: [],
+    invokerGrants: [],
+    invokerExpiresAt,
+  };
+  const spend = (
+    source: "creator" | "invoker",
+    effect: "allow" | "ask" = "allow",
+  ) => ({ resource: "wallet:w1", action: "spend", source, effect });
+  const expiring = (
+    expiresAt: Date,
+    extra: Partial<GrantRule> = {},
+  ): GrantRule =>
+    grant({
+      resource: "wallet:*",
+      action: "spend",
+      origin: "system",
+      expiresAt,
+      ...extra,
+    });
+
+  test("a creator allow row ends when the creator's covering grant ends", async () => {
+    const res = await resolveRequirementGrant(spend("creator"), {
+      ...ctx,
+      creatorGrants: [expiring(at(2))],
+    });
+    if (!res.ok) throw new Error("expected a row");
+    expect(res.row.expiresAt).toEqual(at(2));
+    expect(res.allowExpiresAt).toEqual(at(2));
+  });
+
+  test("a role grant with an expiry ends the row like a direct grant", async () => {
+    const res = await resolveRequirementGrant(spend("creator"), {
+      ...ctx,
+      creatorGrants: [expiring(at(3), { origin: "role", roleId: "rol_vault" })],
+    });
+    if (!res.ok) throw new Error("expected a row");
+    expect(res.row.expiresAt).toEqual(at(3));
+  });
+
+  test("a creator ask row is a floor and does not end with the creator's grant", async () => {
+    const res = await resolveRequirementGrant(spend("creator", "ask"), {
+      ...ctx,
+      creatorGrants: [expiring(at(2))],
+    });
+    if (!res.ok) throw new Error("expected a row");
+    expect(res.row.effect).toBe("ask");
+    expect(res.row.expiresAt).toBeNull();
+    expect(res.allowExpiresAt).toEqual(at(2));
+  });
+
+  test("an invoker allow row ends at the deployer's grant expiry when it is earlier than the TTL", async () => {
+    const res = await resolveRequirementGrant(spend("invoker"), {
+      ...ctx,
+      invokerGrants: [expiring(at(1))],
+    });
+    if (!res.ok) throw new Error("expected a row");
+    expect(res.row.expiresAt).toEqual(at(1));
+  });
+
+  test("an invoker allow row ends at the TTL when the deployer's grant ends later", async () => {
+    const res = await resolveRequirementGrant(spend("invoker"), {
+      ...ctx,
+      invokerGrants: [expiring(at(9))],
+    });
+    if (!res.ok) throw new Error("expected a row");
+    expect(res.row.expiresAt).toEqual(invokerExpiresAt);
+  });
+
+  test("an invoker ask row is a floor with no expiry", async () => {
+    const res = await resolveRequirementGrant(spend("invoker", "ask"), {
+      ...ctx,
+      invokerGrants: [expiring(at(1))],
+    });
+    if (!res.ok) throw new Error("expected a row");
+    expect(res.row.expiresAt).toBeNull();
+    expect(res.allowExpiresAt).toEqual(at(1));
   });
 });

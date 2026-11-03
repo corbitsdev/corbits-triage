@@ -26,6 +26,7 @@ import {
 import type {
   DB,
   DBExecutor,
+  GrantStoreFactory,
   PrincipalKeyStore,
   RunTokenStore,
 } from "@intx/db";
@@ -34,7 +35,6 @@ import {
   resolveFrameSenderKey,
   WorkflowRunNotExecutableError,
 } from "@intx/db";
-import type { GrantStore } from "@intx/types/authz";
 import {
   assembleSignedContent,
   assembleMessage,
@@ -48,6 +48,7 @@ import {
   SendMessage,
   validateAttachments,
   type AttachmentError,
+  type GrantWalkSnapshot,
 } from "@intx/types";
 import type { RunGrantsFrame } from "@intx/types/sidecar";
 import type {
@@ -60,19 +61,17 @@ import { deriveRunAddress } from "@intx/workflow-deploy";
 
 import type { PrincipalRow, TenantRow } from "./context";
 import {
-  collectCreatorGrants,
   commitRunGrants,
   loadCommittedRunGrants,
   grantRowsWithLockedCredentialResolution,
   lockAnchorCredentialResolution,
   lockDispatchableAllocation,
   lockWorkflowRunState,
-  collectDeployerInvokerGrants,
-  loadActiveDeployerId,
   credentialUseBindings,
-  stageRunGrantsFromSnapshot,
+  loadCommittedRunGrantsFromExecutor,
+  stageFirstTriggerRunGrants,
 } from "./run-grant-materialization";
-import type { MaterializedGrantRow } from "./grant-materialization";
+import type { GrantMaterializationRejection } from "./grant-materialization";
 import { readDurableWorkflowRunLifecycle } from "./workflow-run-lifecycle";
 
 // DoS guard on the trigger route body. Sized identically to the agent
@@ -98,7 +97,7 @@ export type TriggerWorkflowRunDeps = {
   db: DB["db"];
   principalKeyStore: PrincipalKeyStore;
   runTokenStore: RunTokenStore;
-  grantStore: GrantStore;
+  grantStoreFor: GrantStoreFactory;
   sidecarRouter: SidecarRouter;
   workflowDispatchService?: WorkflowDispatchService;
   repoStore: RepoStore;
@@ -143,6 +142,13 @@ function runUnavailable(
   };
 }
 
+function grantRejectionResponse(
+  rejection: GrantMaterializationRejection,
+): TriggerWorkflowRunResult {
+  const { status, code, message } = rejection;
+  return { ok: false, status, body: { error: { code, message } } };
+}
+
 /**
  * Build the workflow-run trigger over its stable per-app dependencies. The
  * returned function fires one trigger occurrence per call: it validates the
@@ -156,7 +162,7 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
     db,
     principalKeyStore,
     runTokenStore,
-    grantStore,
+    grantStoreFor,
     sidecarRouter,
     workflowDispatchService,
     repoStore,
@@ -323,8 +329,9 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
 
     const now = new Date();
     let runPrincipalId: string;
-    let stagedGrantRows: MaterializedGrantRow[];
-    let stepGrants: RunGrantsFrame["stepGrants"];
+    // The deployment's grant snapshot, read only when no run grants are
+    // committed yet; the first commit stages the run's rows from it.
+    let firstTriggerSnapshot: GrantWalkSnapshot | null = null;
     const committedRunGrants = await loadCommittedRunGrants(
       db,
       tenant.id,
@@ -332,11 +339,9 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
     );
     if (committedRunGrants !== null) {
       // This is another trigger occurrence for the one live top-level run.
-      // Reuse its immutable authorization snapshot; recomputing from the new
-      // caller would let one run change authority between sections.
+      // Reuse its committed grants; recomputing from the new caller would let
+      // one run change authority between sections.
       runPrincipalId = committedRunGrants.runPrincipalId;
-      stagedGrantRows = [];
-      stepGrants = committedRunGrants.stepGrants;
     } else {
       // Read this deployment's immutable grant shape; a missing snapshot
       // cannot authorize an empty replacement.
@@ -374,57 +379,7 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
       }
 
       runPrincipalId = await deriveRunPrincipalId(tenant.id, runId);
-      // Invoker-sourced requirements resolve against the deployment's
-      // deployer, not this caller, so the trigger path cannot change whose
-      // authority a run delegates.
-      const declaredGrantRequirements = snapshot.grantRequirements;
-      const invoker = await collectDeployerInvokerGrants({
-        db,
-        grantStore,
-        tenantId: tenant.id,
-        anchorRunId,
-        grantRequirements: declaredGrantRequirements,
-      });
-      if (!invoker.ok) {
-        const { status, code, message } = invoker.rejection;
-        return { ok: false, status, body: { error: { code, message } } };
-      }
-      const invokerGrants = invoker.invokerGrants;
-      const creatorGrants = await collectCreatorGrants(
-        grantStore,
-        tenant.id,
-        assetRow.creatorPrincipalId,
-        declaredGrantRequirements,
-      );
-      const staged = await stageRunGrantsFromSnapshot({
-        snapshot,
-        tenantId: tenant.id,
-        runId,
-        runPrincipalId,
-        now,
-        // The deployer, not the caller, is the run's invoker; the asset behind
-        // the triggered deployment's definition is `self`. Both resolve the
-        // run's declared `mail.accept` relation markers to concrete
-        // accept-grant rows so an HTTP-launched run still carries them for
-        // later mail-transport delivery.
-        invokerPrincipalId: await loadActiveDeployerId(
-          db,
-          tenant.id,
-          anchorRunId,
-        ),
-        assetId: definitionAssetId,
-        legacyMailAccept: anchor.legacyMailAccept,
-        invokerGrants,
-        creatorGrants,
-        grantRequirements: declaredGrantRequirements,
-        credentialBindings: credentialUseBindings(anchor.credentialRefs),
-      });
-      if (!staged.ok) {
-        const { status, code, message } = staged.rejection;
-        return { ok: false, status, body: { error: { code, message } } };
-      }
-      stagedGrantRows = staged.grantRows;
-      stepGrants = staged.stepGrants;
+      firstTriggerSnapshot = snapshot;
     }
 
     // A trigger occurrence is threading-less at the mail boundary, so no
@@ -467,12 +422,19 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
     const rawMessage = assembleMessage(headers, signedContent, signature);
     const base64 = base64Encode(rawMessage);
 
-    // The pre-transaction binding read races initialization. A first commit
-    // re-reads the anchor under its row lock and stamps from that row, or
-    // inserts nothing when resolution is still unrecorded.
+    // Called with the anchor row locked. A first commit stages the run's rows
+    // under that lock: the delegators are read after a delegator change that
+    // holds the lock commits, and a change that waits on the lock finds the
+    // committed rows. The pre-transaction binding read races initialization,
+    // so the commit also re-reads the anchor's credential resolution under the
+    // lock and stamps from it, or inserts nothing while it is unrecorded.
     const commitFirstOrCanonical = async (
       tx: DBExecutor,
-    ): Promise<RunGrantsFrame["stepGrants"] | "not-ready"> => {
+    ): Promise<
+      | RunGrantsFrame["stepGrants"]
+      | "not-ready"
+      | { rejected: GrantMaterializationRejection }
+    > => {
       const grantArgs = {
         db,
         principalKeyStore,
@@ -484,12 +446,39 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
         runPrincipalId,
         now,
       };
-      if (committedRunGrants !== null) {
+      if (firstTriggerSnapshot === null) {
         return commitRunGrants(
-          { ...grantArgs, hubConsumers: [], grantRows: stagedGrantRows },
+          { ...grantArgs, hubConsumers: [], grantRows: [] },
           tx,
         );
       }
+      // A trigger that lost the first-fire race finds the winner's rows here
+      // and must not stage again: the delegators can have changed since.
+      const raced = await loadCommittedRunGrantsFromExecutor(
+        tx,
+        tenant.id,
+        runId,
+      );
+      if (raced !== null) return raced.stepGrants;
+      // Invoker-sourced requirements resolve against the deployment's
+      // deployer, not this caller, so the trigger path cannot change whose
+      // authority a run delegates. The deployer and the asset behind the
+      // definition also resolve the run's `mail.accept` relation markers, so
+      // an HTTP-launched run still carries them for later mail delivery. An
+      // asset deleted since the check above leaves no creator, so a creator
+      // requirement refuses as `insufficient_grants`.
+      const staged = await stageFirstTriggerRunGrants(tx, grantStoreFor(tx), {
+        snapshot: firstTriggerSnapshot,
+        tenantId: tenant.id,
+        anchorRunId,
+        runId,
+        runPrincipalId,
+        definitionAssetId,
+        legacyMailAccept: anchor.legacyMailAccept,
+        credentialBindings: credentialUseBindings(anchor.credentialRefs),
+        now,
+      });
+      if (!staged.ok) return { rejected: staged.rejection };
       const resolution = await lockAnchorCredentialResolution(tx, anchorRunId);
       if (resolution === null) {
         throw new Error(
@@ -497,11 +486,14 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
         );
       }
       const grantRows = grantRowsWithLockedCredentialResolution(
-        stagedGrantRows,
+        staged.grantRows,
         resolution,
         { tenantId: tenant.id, runPrincipalId, now },
       );
       if (grantRows === "not-ready") return grantRows;
+      // `now` stamps both the staged rows and the run principal's creation,
+      // so an invoker `allow` row expires `INVOKER_GRANT_TTL_MS` after the
+      // principal is created at the latest.
       return commitRunGrants(
         {
           ...grantArgs,
@@ -551,6 +543,7 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
         if (anchorState !== "running") return "run-terminal" as const;
         const canonicalStepGrants = await commitFirstOrCanonical(tx);
         if (canonicalStepGrants === "not-ready") return "not-ready" as const;
+        if (!Array.isArray(canonicalStepGrants)) return canonicalStepGrants;
         await workflowDispatchService.enqueue(
           {
             id: `dispatch:${anchorRunId}:${messageId}`,
@@ -565,6 +558,9 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
         );
         return "committed" as const;
       });
+      if (typeof committed === "object") {
+        return grantRejectionResponse(committed.rejected);
+      }
       if (committed === "not-ready") {
         return {
           ok: false,
@@ -613,6 +609,9 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
         return anchorState === "stopping" ? anchorState : "terminal";
       return commitFirstOrCanonical(tx);
     });
+    if (typeof reserved === "object" && !Array.isArray(reserved)) {
+      return grantRejectionResponse(reserved.rejected);
+    }
     if (reserved === "not-ready") {
       return {
         ok: false,
@@ -628,7 +627,7 @@ export function createWorkflowRunTrigger(deps: TriggerWorkflowRunDeps) {
     }
     if (reserved === "stopping" || reserved === "terminal")
       return runUnavailable(runId, reserved);
-    stepGrants = reserved;
+    const stepGrants = reserved;
 
     // Stamp the hub-verified principal address (fromAddr, the address the
     // message is signed and addressed under) as the authenticated sender --
