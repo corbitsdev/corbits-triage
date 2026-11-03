@@ -229,6 +229,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
       try {
         ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
       } catch (err) {
+        // Rethrow so reconcileTenant skips settledWaiting and deliverRepo while the installation is rate-limited.
+        if (err instanceof GithubRateLimited) throw err;
         deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
         continue;
       }
@@ -267,6 +269,8 @@ export function createTriageReconciler(deps: TriageReconcilerDeps) {
         try {
           ci = summarizeChecks(await deps.headChecks(pass.tenantId, repo.record, row.headSha));
         } catch (err) {
+          // Rethrow so reconcileTenant stops reading remaining waiting heads and skips deliverRepo while rate-limited.
+          if (err instanceof GithubRateLimited) throw err;
           deps.log({ level: "warn", msg: "build_status_unread", tenantId: pass.tenantId, repo: name, pr: row.number, headSha: row.headSha, error: String(err) });
           continue;
         }
