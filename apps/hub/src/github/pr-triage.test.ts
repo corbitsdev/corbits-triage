@@ -158,7 +158,8 @@ describe("createGithubPrTriage", () => {
 
   test("refuses a head whose run is still going, but not one that is stuck", async () => {
     const live: ObservedRun = { runId: "run-live", source: "github", status: "running", startedAt: new Date(NOW.getTime() - 60_000).toISOString() };
-    const stuck: ObservedRun = { runId: "run-stuck", source: "github", status: "running", startedAt: new Date(NOW.getTime() - 2 * DEFAULT_RECONCILE_POLICY.stuckAfterMs).toISOString() };
+    const stuckSince = new Date(NOW.getTime() - 2 * DEFAULT_RECONCILE_POLICY.stuckAfterMs).toISOString();
+    const stuck: ObservedRun = { runId: "run-stuck", source: "github", status: "running", startedAt: stuckSince, passAt: stuckSince };
     const s = stub();
     await refused(await handler(ENABLED, s, { managerRuns: observed([live]) })(request(), MEMBER), 409, "already_running");
     expect(s.delivered).toEqual([]);

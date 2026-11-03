@@ -7,7 +7,7 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, triageEventsOf, type AwaitedStage, type RepoSource, type ThreadRead, type TriageEvent } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, PR_TRIAGE_STUCK_RUN_MS, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, triageEventsOf, type AwaitedStage, type RepoSource, type ThreadRead, type TriageEvent } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
 import { timings } from "./timings.js";
@@ -338,6 +338,59 @@ export async function endNeverRan(
     if (onSidecarMs(run, now) < neverRanMs()) continue;
     await cancel(run.tenantId, run.runId, `${run.workflow} deployed but never ran`);
     log({ level: "warn", msg: "triage_deployment_never_ran", runId: run.runId, workflow: run.workflow });
+  }
+}
+
+/** When the claim's run took `pass`: as it opened it, or as it claimed the pull request and resumed it from a run gone. */
+function passHeldSince(claim: Claim, pass: Pass): string {
+  return Date.parse(claim.claimedAt) > Date.parse(pass.takenAt) ? claim.claimedAt : pass.takenAt;
+}
+
+type Overdue = { tenantId: string; runId: string; reason: string; msg: string };
+
+/** The claim's reviewers past their deadline with no result, and its manager when its open pass was taken before `stuckBefore`. */
+function overdueOf(tenantId: string, claim: Claim, now: Date, stuckBefore: Date): Overdue[] {
+  const late = claim.reviewers.filter((reviewer) => reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime());
+  const overdue = late.map((reviewer) => ({ tenantId, runId: reviewer.runId, reason: `${reviewer.kind} past its deadline`, msg: "triage_reviewer_overdue_ended" }));
+  if (claim.status === "live" && claim.runId !== undefined && claim.pass !== undefined && Date.parse(passHeldSince(claim, claim.pass)) < stuckBefore.getTime()) {
+    overdue.push({ tenantId, runId: claim.runId, reason: "manager pass stuck", msg: "triage_manager_stuck_ended" });
+  }
+  return overdue;
+}
+
+/**
+ * Ends every reviewer still live past its deadline and every manager whose open pass has gone on past
+ * `PR_TRIAGE_STUCK_RUN_MS`, so neither holds a sidecar slot nor reads as up forever. A reviewer stays on its claim, so a
+ * manager is still woken to post without it.
+ */
+export async function endOverdue(
+  db: DB["db"],
+  now: Date,
+  cancel: (tenantId: string, runId: string, reason: string) => Promise<unknown>,
+  log: (entry: Record<string, unknown>) => void,
+): Promise<void> {
+  const stuckBefore = new Date(now.getTime() - PR_TRIAGE_STUCK_RUN_MS);
+  const late = sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)) && @.deadline <= $now)', jsonb_build_object('now', ${now.toISOString()}::text))`;
+  const stuck = sql`${managerState.state}->>'status' = 'live' AND (${managerState.state}->'pass'->>'takenAt')::timestamptz < ${stuckBefore.toISOString()}::timestamptz`;
+  const rows = await db.select({ tenantId: managerState.tenantId, key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.kind, "claim"), or(late, stuck)));
+  const overdue = rows.flatMap((row) => overdueOf(row.tenantId, claimOf(row.key, row.state), now, stuckBefore));
+  if (overdue.length === 0) return;
+  const live = await db.select({ tenantId: schema.workflowRun.tenantId, runId: schema.workflowRun.id }).from(schema.workflowRun)
+    .where(and(
+      inArray(schema.workflowRun.id, [...new Set(overdue.map((run) => run.runId))]),
+      inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]),
+      isNull(schema.workflowRun.cancellationRequestedAt),
+    ));
+  const ending = new Set(live.map((run) => `${run.tenantId} ${run.runId}`));
+  for (const run of overdue) {
+    if (!ending.delete(`${run.tenantId} ${run.runId}`)) continue;
+    const entry = { tenantId: run.tenantId, runId: run.runId, reason: run.reason };
+    try {
+      log({ level: "warn", msg: run.msg, ...entry, outcome: await cancel(run.tenantId, run.runId, run.reason) });
+    } catch (err) {
+      log({ level: "error", msg: "triage_overdue_cancel_failed", ...entry, error: String(err) });
+    }
   }
 }
 
@@ -766,7 +819,7 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
 
 /**
  * A pull request a manager claimed: its closed passes; while its manager is up, that run, the head of the newest pull
- * request mail recorded, the pass it has open, since when it has waited for that head's CI and what its reviewers on
+ * request mail recorded, when that run took the pass it has open, since when it has waited for that head's CI and what its reviewers on
  * that head have yet to report before their deadlines; the pass a manager that went away left open; and, once no
  * manager is up, the newest head its last pass left waiting for CI, with that pass's run and since when it waited;
  * `roomless` while no manager is up and the last one deployed for it was refused a placement for capacity.
@@ -775,7 +828,7 @@ export type ManagedPull = {
   pr: PullRequestRef;
   roomless?: true;
   history: ClosedPass[];
-  live?: { runId: string; head?: string; pass?: Pass; waitingSince?: string; awaiting: AwaitedStage[] };
+  live?: { runId: string; head?: string; passAt?: string; waitingSince?: string; awaiting: AwaitedStage[] };
   gone?: { runId: string; pass: Pass };
   waiting?: { runId: string; head: string; since: string };
 };
@@ -1030,7 +1083,7 @@ export async function managedPulls(db: DB["db"], tenantId: string, pulls: readon
       } else {
         const head = await newestHead(tx, tenantId, pr);
         const since = head === undefined ? undefined : waitingSince(claim.history, head);
-        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }), ...(claim.pass && { pass: claim.pass }), ...(since !== undefined && { waitingSince: since }), awaiting: awaitedOn(claim.reviewers, head, now) } });
+        managed.push({ pr, history: claim.history, live: { runId, ...(head !== undefined && { head }), ...(claim.pass && { passAt: passHeldSince(claim, claim.pass) }), ...(since !== undefined && { waitingSince: since }), awaiting: awaitedOn(claim.reviewers, head, now) } });
       }
     }
     return managed;

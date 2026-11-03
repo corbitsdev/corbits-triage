@@ -66,13 +66,15 @@ describe("reconcile plan", () => {
     expect(status(failed, 1)).toMatchObject({ status: "queued", attempts: 2 });
   });
 
-  test("a run whose sidecar died is queued again once it is stuck", () => {
+  test("a run whose pass stays open is queued again once it is stuck, and one between passes never is", () => {
     const queued = plan([pr(1)], [], at(0)).rows;
-    const running = plan([pr(1)], queued, at(30), [[pr(1), [run("run_a", "running", 1)]]]);
+    const inPass: ObservedRun = { ...run("run_a", "running", 1), passAt: at(1).toISOString() };
+    const running = plan([pr(1)], queued, at(30), [[pr(1), [inPass]]]);
     expect(enqueued(running)).toEqual([]);
     expect(status(running, 1)).toMatchObject({ status: "running", runId: "run_a" });
+    expect(status(plan([pr(1)], running.rows, at(92), [[pr(1), [run("run_a", "running", 1)]]]), 1)).toMatchObject({ status: "running", runId: "run_a" });
 
-    const stuck = plan([pr(1)], running.rows, at(92), [[pr(1), [run("run_a", "running", 1)]]]);
+    const stuck = plan([pr(1)], running.rows, at(92), [[pr(1), [inPass]]]);
     expect(enqueued(stuck)).toEqual([1]);
     expect(status(stuck, 1)).toMatchObject({ status: "queued", attempts: 2 });
   });

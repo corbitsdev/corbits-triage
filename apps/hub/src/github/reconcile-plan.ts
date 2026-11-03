@@ -145,7 +145,7 @@ function failure(run: ObservedRun, stuck: boolean): string {
 }
 
 export function isStuck(run: ObservedRun, now: Date, policy: ReconcilePolicy): boolean {
-  return run.status === "running" && now.getTime() - ms(run.startedAt) > policy.stuckAfterMs;
+  return run.status === "running" && run.passAt !== undefined && now.getTime() - ms(run.passAt) > policy.stuckAfterMs;
 }
 
 /** The run the row already names wins; otherwise the newest. */

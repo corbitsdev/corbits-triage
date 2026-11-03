@@ -3,8 +3,9 @@ import { expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
+import { PR_TRIAGE_STUCK_RUN_MS } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
-import { deploymentUp, done, endNeverRan, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
+import { deploymentUp, done, endNeverRan, endOverdue, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
 import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -561,6 +562,60 @@ test("PostgreSQL: a manager that waited past the mail hold for a slot is timed f
     expect(cancelled).toEqual([]);
     await liveRun(db, "run_next");
     expect(await take(db, TENANT, GITHUB, "run_next")).toEqual({ outcome: "refused" });
+  });
+}, 120_000);
+
+test("PostgreSQL: the reaper ends a live reviewer past its deadline and a manager whose pass stayed open past the stuck limit, and nothing else", async () => {
+  await withDatabase(async function overdue(db) {
+    const now = new Date(Date.now() + PR_TRIAGE_STUCK_RUN_MS + MINUTE);
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await startManager(db, GITHUB, "run_stuck");
+    await take(db, TENANT, GITHUB, "run_stuck");
+    const past = new Date(now.getTime() - MINUTE).toISOString();
+    const judge = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_stuck", deadline: past };
+    const review = { ...judge, kind: "code-review", runId: "run_review" };
+    const ended = { ...judge, runId: "run_ended" };
+    const due = { ...judge, runId: "run_due", deadline: new Date(now.getTime() + MINUTE).toISOString() };
+    await liveRun(db, "run_judge");
+    await deployedRun(db, "run_review", new Date());
+    await db.insert(schema.workflowRun).values({ id: "run_ended", anchorRunId: "run_ended", definitionId: "wfd_manager", tenantId: TENANT, status: "completed" });
+    await liveRun(db, "run_due");
+    await done(db, TENANT, GITHUB, "run_stuck", [judge, review, ended, due], { wait: true });
+    await recordEvent(db, TENANT, GITHUB, "d2", webhook("h1"));
+    expect(await take(db, TENANT, GITHUB, "run_stuck")).toMatchObject({ outcome: "pass" });
+    await startManager(db, BITBUCKET, "run_idle");
+    const cancelled: string[][] = [];
+    const logs: Record<string, unknown>[] = [];
+
+    async function cancel(...args: string[]): Promise<string> {
+      cancelled.push(args);
+      return "pending";
+    }
+
+    await endOverdue(db, now, cancel, (entry) => logs.push(entry));
+
+    expect(cancelled.sort()).toEqual([
+      [TENANT, "run_judge", "judge past its deadline"],
+      [TENANT, "run_review", "code-review past its deadline"],
+      [TENANT, "run_stuck", "manager pass stuck"],
+    ]);
+    expect(logs).toContainEqual({ level: "warn", msg: "triage_manager_stuck_ended", tenantId: TENANT, runId: "run_stuck", reason: "manager pass stuck", outcome: "pending" });
+    expect(await stateOf(db, CLAIM)).toMatchObject({ reviewers: [judge, review, ended, due] });
+  });
+}, 120_000);
+
+test("PostgreSQL: a manager that resumed a stuck run's pass is timed from its takeover, not the pass", async () => {
+  await withDatabase(async function resumed(db) {
+    const old = new Date(Date.now() - PR_TRIAGE_STUCK_RUN_MS - MINUTE).toISOString();
+    await liveRun(db, "run_resumed");
+    const pass = { id: randomUUID(), head: "h1", events: [], takenAt: old, takes: 2 };
+    const claim = { status: "live", claimId: randomUUID(), claimedAt: new Date().toISOString(), runId: "run_resumed", pass, reviewers: [], history: [], starts: 2 };
+    await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${CLAIM}, 'claim', ${JSON.stringify(claim)}::jsonb)`);
+    const cancelled: string[][] = [];
+
+    await endOverdue(db, new Date(), async (...args) => cancelled.push(args), () => undefined);
+
+    expect(cancelled).toEqual([]);
   });
 }, 120_000);
 

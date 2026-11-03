@@ -102,7 +102,7 @@ test("PostgreSQL: the reconciler does not mail a head again while a live manager
   });
 }, 60_000);
 
-test("PostgreSQL: on the listener path a head is mailed once while its manager runs for hours, and not again once it reported done", async () => {
+test("PostgreSQL: on the listener path a head is mailed once while its manager runs for hours between passes, and not again once it reported done", async () => {
   await withDatabase(async function oneMail(db) {
     const start = new Date();
     let now = start;
@@ -124,6 +124,7 @@ test("PostgreSQL: on the listener path a head is mailed once while its manager r
     await managerUp(db, "run_manager");
     await mailed(db, pr, "h1");
     await take(db, TENANT, pr, "run_manager");
+    await done(db, TENANT, pr, "run_manager", [], { wait: true });
     for (const afterMs of [MINUTE, 11 * MINUTE, 2 * 60 * MINUTE, 7 * 60 * MINUTE]) {
       expect(await reconcile(afterMs)).toMatchObject({ status: "running", runId: "run_manager" });
     }
@@ -133,6 +134,28 @@ test("PostgreSQL: on the listener path a head is mailed once while its manager r
       expect(await reconcile(afterMs)).toMatchObject({ status: "triaged", runId: "run_manager" });
     }
     expect(mails).toBe(1);
+  });
+}, 60_000);
+
+test("PostgreSQL: a manager whose pass stays open past the stuck limit fails its head as stuck, so the head is retried", async () => {
+  await withDatabase(async function stuck(db) {
+    const start = new Date();
+    let now = start;
+    const managerRuns = createManagerRuns(db, createVerdictRecordStore(db), () => now);
+    await managerUp(db, "run_stuck");
+    await mailed(db, pr7, "h1");
+    await take(db, TENANT, pr7, "run_stuck");
+    const queued: PrTriageRow = { number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: start.toISOString(), queuedAt: start.toISOString(), updatedAt: start.toISOString() };
+    async function reconcile(afterMs: number) {
+      now = new Date(start.getTime() + afterMs);
+      const runs = await managerRuns(TENANT, [pr7]);
+      return planTenant({ repos: [{ name: REPO, prs: [open(7, start)], rows: [queued] }], runs: runs.byRepo, roomless: runs.roomless, now, policy: DEFAULT_RECONCILE_POLICY }).get(REPO)!;
+    }
+
+    expect((await reconcile(DEFAULT_RECONCILE_POLICY.stuckAfterMs - MINUTE)).rows).toEqual([expect.objectContaining({ status: "running", runId: "run_stuck" })]);
+    const stuckPlan = await reconcile(DEFAULT_RECONCILE_POLICY.stuckAfterMs + MINUTE);
+    expect(stuckPlan.rows).toEqual([expect.objectContaining({ status: "queued", attempts: 2 })]);
+    expect(stuckPlan.enqueue).toEqual([{ number: 7, reason: "run stuck" }]);
   });
 }, 60_000);
 
