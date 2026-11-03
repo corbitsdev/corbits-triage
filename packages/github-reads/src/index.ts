@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { minimatch } from "minimatch";
-import { asRecord, compare, errorText } from "@corbits/common";
+import { asRecord, cachedLoads, compare, errorText } from "@corbits/common";
 import { parseFindingHeadline, threadsHold, threadsUnread } from "@corbits/triage-contracts/code-review";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
@@ -627,23 +627,6 @@ function withoutPatch({ patch: _patch, ...meta }: PrFile): PrFile {
   return meta;
 }
 
-/** Runs each key's load once and shares its result; a load that fails is forgotten, so the next call tries again. */
-function cached<T>(): (key: string, run: () => Promise<T>) => Promise<T> {
-  const loads = new Map<string, Promise<T>>();
-  async function forgetOnFailure(key: string, pending: Promise<T>): Promise<T> {
-    try {
-      return await pending;
-    } catch (error) {
-      loads.delete(key);
-      throw error;
-    }
-  }
-  return function load(key, run) {
-    if (!loads.has(key)) loads.set(key, forgetOnFailure(key, run()));
-    return loads.get(key)!;
-  };
-}
-
 /** The end of the longest slice of `patch` from `from` that fits an empty page, never splitting a surrogate pair. */
 function patchEnd(meta: PrFile, patch: string, from: number): number {
   let low = from;
@@ -665,48 +648,41 @@ async function prFilesPageAt(gh: GithubFetch, repo: string, number: number, page
 
 /** Each 100-file REST page of a pull request read once per reader, however many 9 KB tool pages it is split across. */
 export function createPrFilesReader(gh: GithubFetch) {
-  const pages = cached<PrFile[]>();
-  function readPage(repo: string, number: number, page: number): Promise<PrFile[]> {
-    return pages(`${repo}#${number}:${page}`, () => prFilesPageAt(gh, repo, number, page));
-  }
-  return function listPrFiles(repo: string, number: number, options: { offset?: number; patchOffset?: number; patches?: boolean } = {}): Promise<PrFilesPage> {
-    return listPrFilesPageFrom(readPage, repo, number, options);
-  };
-}
-
-async function listPrFilesPageFrom(
-  readPage: (repo: string, number: number, page: number) => Promise<PrFile[]>,
-  repo: string,
-  number: number,
-  { offset = 0, patchOffset = 0, patches = true }: { offset?: number; patchOffset?: number; patches?: boolean } = {},
-): Promise<PrFilesPage> {
-  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid file offset ${offset}`);
-  if (!Number.isSafeInteger(patchOffset) || patchOffset < 0) throw new Error(`invalid patch offset ${patchOffset}`);
-  const first = offset - (offset % PR_FILES_PER_PAGE);
-  const rows = await readPage(repo, number, first / PR_FILES_PER_PAGE + 1);
-  const page: PrFilesPage = { files: [] };
-  let index = offset - first;
-  for (; index < rows.length; index++) {
-    const file = rows[index]!;
-    const entry = patches ? file : withoutPatch(file);
-    const from = page.files.length === 0 ? patchOffset : 0;
-    if (from > 0 && from >= (entry.patch?.length ?? 0)) throw new Error(`invalid patch offset ${patchOffset} for ${entry.path}`);
-    const rest = from > 0 ? { ...entry, patch: entry.patch!.slice(from) } : entry;
-    if (fitsPage(page, rest)) {
-      page.files.push(rest);
-      continue;
+  const pages = cachedLoads<PrFile[]>();
+  return async function listPrFiles(
+    repo: string,
+    number: number,
+    { offset = 0, patchOffset = 0, patches = true }: { offset?: number; patchOffset?: number; patches?: boolean } = {},
+  ): Promise<PrFilesPage> {
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid file offset ${offset}`);
+    if (!Number.isSafeInteger(patchOffset) || patchOffset < 0) throw new Error(`invalid patch offset ${patchOffset}`);
+    const first = offset - (offset % PR_FILES_PER_PAGE);
+    const pageNumber = first / PR_FILES_PER_PAGE + 1;
+    const rows = await pages(`${repo}#${number}:${pageNumber}`, () => prFilesPageAt(gh, repo, number, pageNumber));
+    const page: PrFilesPage = { files: [] };
+    let index = offset - first;
+    for (; index < rows.length; index++) {
+      const file = rows[index]!;
+      const entry = patches ? file : withoutPatch(file);
+      const from = page.files.length === 0 ? patchOffset : 0;
+      if (from > 0 && (entry.patch === undefined || from >= entry.patch.length)) throw new Error(`invalid patch offset ${patchOffset} for ${entry.path}`);
+      const rest = from > 0 ? { ...entry, patch: entry.patch!.slice(from) } : entry;
+      if (fitsPage(page, rest)) {
+        page.files.push(rest);
+        continue;
+      }
+      if (page.files.length > 0) break;
+      const meta = withoutPatch(entry);
+      const end = patchEnd(meta, entry.patch!, from);
+      page.files.push({ ...meta, patch: entry.patch!.slice(from, end) });
+      page.next = first + index;
+      page.patchNext = end;
+      return page;
     }
-    if (page.files.length > 0) break;
-    const meta = withoutPatch(entry);
-    const end = patchEnd(meta, entry.patch ?? "", from);
-    page.files.push({ ...meta, patch: entry.patch!.slice(from, end) });
-    page.next = first + index;
-    page.patchNext = end;
+    if (index < rows.length) page.next = first + index;
+    else if (rows.length === PR_FILES_PER_PAGE) page.next = first + PR_FILES_PER_PAGE;
     return page;
-  }
-  if (index < rows.length) page.next = first + index;
-  else if (rows.length === PR_FILES_PER_PAGE) page.next = first + PR_FILES_PER_PAGE;
-  return page;
+  };
 }
 
 /**
@@ -714,8 +690,8 @@ async function listPrFilesPageFrom(
  * does not fit starts the next page. A patch too long for a page alone is read across pages from `patchOffset`, its
  * pieces joined in order; `patches` false leaves patches out.
  */
-export function listPrFilesPage(gh: GithubFetch, repo: string, number: number, options: { offset?: number; patchOffset?: number; patches?: boolean } = {}): Promise<PrFilesPage> {
-  return listPrFilesPageFrom(prFilesPageAt.bind(null, gh), repo, number, options);
+export function listPrFilesPage(gh: GithubFetch, repo: string, number: number, options?: { offset?: number; patchOffset?: number; patches?: boolean }): Promise<PrFilesPage> {
+  return createPrFilesReader(gh)(repo, number, options);
 }
 
 export type RepoDoc = {
@@ -792,30 +768,6 @@ async function blobBytes(gh: GithubFetch, repo: string, sha: string): Promise<Ui
   return new Uint8Array(await res.arrayBuffer());
 }
 
-/**
- * Each repository's default branch, each ref's doc tree (also remembered under the tree sha the first page returns for
- * follow-up pages), and each doc blob read once per reader.
- */
-export function createDocsReader(gh: GithubFetch) {
-  const branches = cached<string>();
-  const trees = cached<DocTree>();
-  const blobs = cached<Uint8Array>();
-  function readBranch(repo: string): Promise<string> {
-    return branches(repo, () => defaultBranch(gh, repo));
-  }
-  async function readTree(repo: string, ref: string): Promise<DocTree> {
-    const tree = await trees(`${repo}\0${ref}`, () => docTree(gh, repo, ref));
-    await trees(`${repo}\0${tree.sha}`, async () => tree);
-    return tree;
-  }
-  function readBlob(repo: string, sha: string): Promise<Uint8Array> {
-    return blobs(`${repo}\0${sha}`, () => blobBytes(gh, repo, sha));
-  }
-  return function readRepoDocs(repo: string, options: { ref?: string; offset?: number } = {}): Promise<RepoDocsPage> {
-    return readRepoDocsPageFrom(readBranch, readTree, readBlob, repo, options);
-  };
-}
-
 function isContinuation(bytes: Uint8Array, at: number): boolean {
   return at > 0 && at < bytes.length && (bytes[at]! & 0xc0) === 0x80;
 }
@@ -851,37 +803,46 @@ function fittingEnd(page: RepoDocsPage, path: string, bytes: Uint8Array, from: n
   return low;
 }
 
-async function readRepoDocsPageFrom(
-  readBranch: (repo: string) => Promise<string>,
-  readTree: (repo: string, ref: string) => Promise<DocTree>,
-  readBlob: (repo: string, sha: string) => Promise<Uint8Array>,
-  repo: string,
-  { ref, offset = 0 }: { ref?: string; offset?: number } = {},
-): Promise<RepoDocsPage> {
-  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid docs offset ${offset}`);
-  ref ??= await readBranch(repo);
-  const { sha, blobs } = await readTree(repo, ref);
-  const docs = budget(blobs, REPO_DOCS_MAX_BYTES);
-  const rules = budget(blobs.filter((blob) => contributionRuleRank(blob.path) !== undefined).sort(byRuleOrder), REPO_RULES_MAX_BYTES);
-  const page: RepoDocsPage = { docs: [], rules: [...rules].map(([path, rulesBytes]) => ({ path, docsBytes: docs.get(path) ?? 0, rulesBytes })), ref: sha };
-  let start = 0;
-  for (const blob of blobs) {
-    const size = Math.max(docs.get(blob.path) ?? 0, rules.get(blob.path) ?? 0);
-    if (size === 0) continue;
-    if (offset < start + size) {
-      const all = await readBlob(repo, blob.sha);
-      const bytes = all.subarray(0, charStart(all, size));
-      const from = Math.max(offset - start, 0);
-      const end = fittingEnd(page, blob.path, bytes, from);
-      if (end > from) page.docs.push({ path: blob.path, text: utf8.decode(bytes.subarray(from, end)) });
-      if (end < bytes.length) {
-        page.next = start + end;
-        return page;
+function taken(reach: Map<string, number>, path: string): number {
+  const bytes = reach.get(path);
+  return bytes === undefined ? 0 : bytes;
+}
+
+/**
+ * Each repository's default branch, each ref's doc tree (also remembered under the tree sha the first page returns for
+ * follow-up pages), and each doc blob read once per reader.
+ */
+export function createDocsReader(gh: GithubFetch) {
+  const branches = cachedLoads<string>();
+  const trees = cachedLoads<DocTree>();
+  const blobs = cachedLoads<Uint8Array>();
+  return async function readRepoDocs(repo: string, { ref, offset = 0 }: { ref?: string; offset?: number } = {}): Promise<RepoDocsPage> {
+    if (!Number.isSafeInteger(offset) || offset < 0) throw new Error(`invalid docs offset ${offset}`);
+    const target = ref ?? await branches(repo, () => defaultBranch(gh, repo));
+    const { sha, blobs: treeBlobs } = await trees(`${repo}\0${target}`, () => docTree(gh, repo, target));
+    await trees(`${repo}\0${sha}`, async () => ({ sha, blobs: treeBlobs }));
+    const docs = budget(treeBlobs, REPO_DOCS_MAX_BYTES);
+    const rules = budget(treeBlobs.filter((blob) => contributionRuleRank(blob.path) !== undefined).sort(byRuleOrder), REPO_RULES_MAX_BYTES);
+    const page: RepoDocsPage = { docs: [], rules: [...rules].map(([path, rulesBytes]) => ({ path, docsBytes: taken(docs, path), rulesBytes })), ref: sha };
+    let start = 0;
+    for (const blob of treeBlobs) {
+      const size = Math.max(taken(docs, blob.path), taken(rules, blob.path));
+      if (size === 0) continue;
+      if (offset < start + size) {
+        const all = await blobs(`${repo}\0${blob.sha}`, () => blobBytes(gh, repo, blob.sha));
+        const bytes = all.subarray(0, charStart(all, size));
+        const from = Math.max(offset - start, 0);
+        const end = fittingEnd(page, blob.path, bytes, from);
+        if (end > from) page.docs.push({ path: blob.path, text: utf8.decode(bytes.subarray(from, end)) });
+        if (end < bytes.length) {
+          page.next = start + end;
+          return page;
+        }
       }
+      start += size;
     }
-    start += size;
-  }
-  return page;
+    return page;
+  };
 }
 
 /**
@@ -891,8 +852,8 @@ async function readRepoDocsPageFrom(
  * the docs read, so earlier docs are sized from the tree rather than fetched; a doc longer than a page continues on the
  * next one under the same path.
  */
-export function readRepoDocsPage(gh: GithubFetch, repo: string, options: { ref?: string; offset?: number } = {}): Promise<RepoDocsPage> {
-  return readRepoDocsPageFrom(defaultBranch.bind(null, gh), docTree.bind(null, gh), blobBytes.bind(null, gh), repo, options);
+export function readRepoDocsPage(gh: GithubFetch, repo: string, options?: { ref?: string; offset?: number }): Promise<RepoDocsPage> {
+  return createDocsReader(gh)(repo, options);
 }
 
 export function repoDocs(pages: readonly RepoDocsPage[]): { docs: Record<string, string>; rules: Record<string, string> } {
