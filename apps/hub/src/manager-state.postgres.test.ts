@@ -548,6 +548,25 @@ test("PostgreSQL: a manager on its sidecar past the mail hold without running gi
   });
 }, 120_000);
 
+test("PostgreSQL: a running manager whose sidecar allocation failed or outlived its lifetime does not hold the pull request and is reaped", async () => {
+  await withDatabase(async function deadRunning(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
+    await db.insert(schema.workflowRun).values({ id: "run_failed_alloc", anchorRunId: "run_failed_alloc", definitionId: "wfd_manager", tenantId: TENANT, status: "running", createdAt: new Date() });
+    await db.insert(schema.sidecarAllocation).values({ id: "alc_failed", anchorRunId: "run_failed_alloc", tenantId: TENANT, provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest", status: "failed", sidecarId: null, maxDisconnectedMs: 60_000 });
+    await claimRun(db, "run_failed_alloc");
+    expect(await liveManager(db, TENANT, GITHUB)).toBeUndefined();
+    await liveRun(db, "run_next");
+    expect(await take(db, TENANT, GITHUB, "run_next")).toMatchObject({ outcome: "pass", pass: { head: "h1" } });
+
+    const ancient = new Date(Date.now() - 4 * 60 * MINUTE);
+    await db.insert(schema.workflowRun).values({ id: "run_zombie", anchorRunId: "run_zombie", definitionId: "wfd_manager", tenantId: TENANT, status: "running", createdAt: ancient });
+    await allocate(db, "run_zombie", { status: "allocated", sidecarId: "sdc_zombie" });
+    const cancelled: string[][] = [];
+    await endNeverRan(db, new Date(), async (...args) => cancelled.push(args), () => undefined);
+    expect(cancelled).toContainEqual([TENANT, "run_zombie", "triage-manager-github exceeded lifetime"]);
+  });
+}, 120_000);
+
 test("PostgreSQL: a manager that waited past the mail hold for a slot is timed from its placement, not its deploy", async () => {
   await withDatabase(async function placedLate(db) {
     await deployedRun(db, "run_late", new Date(Date.now() - timings().mailHoldMs - 5 * MINUTE));
@@ -617,5 +636,42 @@ test("PostgreSQL: a malformed event payload or reviewer is refused", async () =>
     await expect(done(db, TENANT, GITHUB, "run_a", [later])).rejects.toThrow("are malformed");
     const nullResult = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_a", deadline: new Date().toISOString(), result: null } as unknown as typeof later;
     await expect(done(db, TENANT, GITHUB, "run_a", [nullResult])).rejects.toThrow("are malformed");
+  });
+}, 120_000);
+
+test("PostgreSQL: endNeverRan cancels running managers and reviewers that outlived their claim or deadline", async () => {
+  await withDatabase(async function orphaned(db) {
+    await db.insert(schema.workflowDefinition).values({ id: "wfd_judge", tenantId: TENANT, name: "triage-judge-github" });
+    const old = new Date(Date.now() - timings().mailHoldMs - 5 * MINUTE);
+    await db.insert(schema.workflowRun).values([
+      { id: "run_mgr_live", anchorRunId: "run_mgr_live", definitionId: "wfd_manager", tenantId: TENANT, status: "running", createdAt: old },
+      { id: "run_mgr_orphan", anchorRunId: "run_mgr_orphan", definitionId: "wfd_manager", tenantId: TENANT, status: "running", createdAt: old },
+      { id: "run_judge_due", anchorRunId: "run_judge_due", definitionId: "wfd_judge", tenantId: TENANT, status: "running", createdAt: old },
+      { id: "run_judge_overdue", anchorRunId: "run_judge_overdue", definitionId: "wfd_judge", tenantId: TENANT, status: "running", createdAt: old },
+    ]);
+    for (const runId of ["run_mgr_live", "run_mgr_orphan", "run_judge_due", "run_judge_overdue"]) {
+      await allocate(db, runId, { status: "allocated", sidecarId: "sdc_local" });
+    }
+    const claim = {
+      status: "live",
+      claimId: randomUUID(),
+      claimedAt: new Date().toISOString(),
+      runId: "run_mgr_live",
+      reviewers: [
+        { kind: "judge", head: "h1", runId: "run_judge_due", deployedBy: "run_mgr_live", deadline: new Date(Date.now() + 5 * MINUTE).toISOString() },
+        { kind: "judge", head: "h1", runId: "run_judge_overdue", deployedBy: "run_mgr_orphan", deadline: new Date(Date.now() - MINUTE).toISOString() },
+      ],
+      history: [],
+      starts: 1,
+    };
+    await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${CLAIM}, 'claim', ${JSON.stringify(claim)}::jsonb)`);
+    const cancelled: string[][] = [];
+
+    await endNeverRan(db, new Date(), async (...args) => cancelled.push(args), () => undefined);
+
+    expect(cancelled.toSorted((a, b) => a[1]!.localeCompare(b[1]!))).toEqual([
+      [TENANT, "run_judge_overdue", "triage-judge-github outlived its claim"],
+      [TENANT, "run_mgr_orphan", "triage-manager-github outlived its claim"],
+    ]);
   });
 }, 120_000);

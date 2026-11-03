@@ -2,12 +2,12 @@
 // pull request when no live run holds it, and done checks for pending events under the claim's lock, so an event is
 // either taken by the live manager or by the next one. Only the run the claim names takes events or finishes a pass.
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNotNull, isNull, like, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, lt, or, sql, type SQL } from "drizzle-orm";
 import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, triageEventsOf, type AwaitedStage, type RepoSource, type ThreadRead, type TriageEvent } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, CHAIN_PACKAGES, deployedByChain, FindingThread, PR_TRIAGE_STUCK_RUN_MS, REPO_SOURCES, TRIAGE_LISTENERS, triageEventsOf, type AwaitedStage, type RepoSource, type ThreadRead, type TriageEvent } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
 import { timings } from "./timings.js";
@@ -218,7 +218,7 @@ function neverRanMs(): number {
 }
 
 /** The workflows deployed with the mail that starts them. */
-const MAILED_WORKFLOWS = [...Object.values(TRIAGE_MANAGERS), ...Object.values(TRIAGE_JUDGES)];
+const MAILED_WORKFLOWS = CHAIN_PACKAGES.filter((pkg) => deployedByChain(pkg.name)).map((pkg) => pkg.name);
 
 type Placement = { readonly allocationId: string; readonly generation: number };
 
@@ -275,20 +275,31 @@ async function managerRun(tx: Tx | DB["db"], runId: string): Promise<ManagerRun 
 /** A just-deployed listener counts as live longer than a roll waits for it, so one a roll still waits on is never released. */
 const LISTENER_START_GRACE_MS = START_DEADLINE_MS + 60_000;
 
-/** A run that is running, or whose sidecar is up. */
+const ENDED_ALLOCATIONS = new Set(["releasing", "released", "failed", "destroy_failed"]);
+
+/** A run that is running on its sidecar, or whose sidecar is up. */
 function runIsRunning(run: ManagerRun | undefined): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
-  return run.status === "running" || (run.allocationStatus === "allocated" && run.sidecarId !== null);
+  if (run.allocationId === null) return run.status === "running";
+  return run.allocationStatus === "allocated" && run.sidecarId !== null;
 }
 
 type UpRule = { readonly graceMs: number; readonly startedByMail: boolean };
 
-/** A running run; one on its sidecar, unless it is started by its mail and sat there past `neverRanMs`; or one deployed within `graceMs`. */
+/**
+ * A running run on its sidecar; one deployed on its sidecar, unless it is started by its mail and sat there past
+ * `neverRanMs`; or one still waiting for its sidecar within `graceMs`. A run started by mail that outlived a manager's
+ * maximum lifetime or whose sidecar allocation ended is no longer up.
+ */
 function runIsUp(run: ManagerRun | undefined, now: Date, { graceMs, startedByMail }: UpRule): boolean {
   if (!run || !schema.isLiveWorkflowRunStatus(run.status)) return false;
-  if (run.status === "running") return true;
-  if (run.allocationStatus === "allocated" && run.sidecarId !== null) return !startedByMail || onSidecarMs(run, now) < neverRanMs();
-  return now.getTime() - run.createdAt.getTime() < graceMs;
+  if (startedByMail && now.getTime() - run.createdAt.getTime() >= PR_TRIAGE_STUCK_RUN_MS + graceMs) return false;
+  if (run.allocationId === null) return run.status === "running" || now.getTime() - run.createdAt.getTime() < graceMs;
+  if (run.allocationStatus !== null && ENDED_ALLOCATIONS.has(run.allocationStatus)) return false;
+  if (run.allocationStatus === "allocated" && run.sidecarId !== null) {
+    return run.status === "running" || !startedByMail || onSidecarMs(run, now) < neverRanMs();
+  }
+  return onSidecarMs(run, now) < graceMs;
 }
 
 async function runGone(tx: Tx | DB["db"], runId: string, now: Date): Promise<boolean> {
@@ -311,7 +322,36 @@ async function releaseStuck(tx: Tx | DB["db"], runId: string, now: Date, reason:
     .where(and(eq(schema.workflowRun.id, runId), inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]), isNull(schema.workflowRun.cancellationRequestedAt)));
 }
 
-/** Ends every manager and judge that sat on its sidecar past `neverRanMs` without its mail starting it. */
+/** Twice a manager's three-hour lifetime, the loop backstop past which no live claim's run is still executing. */
+const MAX_CLAIM_HOLD_MS = 6 * 60 * 60_000;
+const ActiveRunIds = type({ runId: "string" }).array();
+
+/** The manager and reviewer runs that a claim in `manager_state` still holds or awaits at `now`. */
+async function activeClaimRunIds(db: DB["db"], now: Date): Promise<Set<string>> {
+  const earliestClaim = new Date(now.getTime() - MAX_CLAIM_HOLD_MS).toISOString();
+  const rows = ActiveRunIds.assert(await db.execute(sql`
+    SELECT ${managerState.state}->>'runId' AS "runId"
+    FROM ${managerState}
+    WHERE ${managerState.kind} = 'claim'
+      AND ${managerState.state}->>'status' = 'live'
+      AND (${managerState.state}->>'claimedAt')::timestamptz > ${earliestClaim}::timestamptz
+      AND ${managerState.state}->>'runId' IS NOT NULL
+    UNION
+    SELECT reviewer->>'runId' AS "runId"
+    FROM ${managerState},
+      jsonb_array_elements(COALESCE(${managerState.state}->'reviewers', '[]'::jsonb)) AS reviewer
+    WHERE ${managerState.kind} = 'claim'
+      AND reviewer->'result' IS NULL
+      AND (reviewer->>'deadline')::timestamptz > ${now.toISOString()}::timestamptz
+      AND reviewer->>'runId' IS NOT NULL
+  `));
+  return new Set(rows.map((row) => row.runId));
+}
+
+/**
+ * Ends every chain deployment that sat on its sidecar past `neverRanMs` without its mail starting it, or that is still
+ * running past `neverRanMs` after its claim ended or its reviewer deadline expired.
+ */
 export async function endNeverRan(
   db: DB["db"],
   now: Date,
@@ -320,24 +360,47 @@ export async function endNeverRan(
 ): Promise<void> {
   const { workflowRun, workflowDefinition, workflowRunLaunchSpec, sidecarAllocation } = schema;
   const candidates = await db
-    .select({ tenantId: workflowRun.tenantId, runId: workflowRun.id, workflow: workflowName, createdAt: workflowRun.createdAt, allocationId: sidecarAllocation.id, generation: sidecarAllocation.generation })
+    .select({
+      tenantId: workflowRun.tenantId,
+      runId: workflowRun.id,
+      status: workflowRun.status,
+      workflow: workflowName,
+      createdAt: workflowRun.createdAt,
+      allocationId: sidecarAllocation.id,
+      generation: sidecarAllocation.generation,
+      allocationStatus: sidecarAllocation.status,
+      sidecarId: sidecarAllocation.sidecarId,
+    })
     .from(workflowRun)
     .innerJoin(workflowDefinition, eq(workflowRun.definitionId, workflowDefinition.id))
     .leftJoin(workflowRunLaunchSpec, eq(workflowRunLaunchSpec.anchorRunId, workflowRun.id))
-    .innerJoin(sidecarAllocation, eq(sidecarAllocation.anchorRunId, workflowRun.id))
+    .leftJoin(sidecarAllocation, eq(sidecarAllocation.anchorRunId, workflowRun.id))
     .where(and(
       eq(workflowRun.id, workflowRun.anchorRunId),
-      eq(workflowRun.status, "deployed"),
+      inArray(workflowRun.status, [...schema.liveWorkflowRunStatuses]),
       isNull(workflowRun.cancellationRequestedAt),
       lt(workflowRun.createdAt, new Date(now.getTime() - neverRanMs())),
-      eq(sidecarAllocation.status, "allocated"),
-      isNotNull(sidecarAllocation.sidecarId),
       inArray(workflowName, MAILED_WORKFLOWS),
     ));
+  let active: Set<string> | undefined;
   for (const run of candidates) {
-    if (onSidecarMs(run, now) < neverRanMs()) continue;
-    await cancel(run.tenantId, run.runId, `${run.workflow} deployed but never ran`);
-    log({ level: "warn", msg: "triage_deployment_never_ran", runId: run.runId, workflow: run.workflow });
+    if (now.getTime() - run.createdAt.getTime() >= PR_TRIAGE_STUCK_RUN_MS + neverRanMs()) {
+      await cancel(run.tenantId, run.runId, `${run.workflow} exceeded lifetime`);
+      log({ level: "warn", msg: "triage_deployment_never_ran", runId: run.runId, workflow: run.workflow });
+      continue;
+    }
+    if (run.status === "deployed") {
+      if (run.allocationStatus !== "allocated" || run.sidecarId === null || onSidecarMs(run, now) < neverRanMs()) continue;
+      await cancel(run.tenantId, run.runId, `${run.workflow} deployed but never ran`);
+      log({ level: "warn", msg: "triage_deployment_never_ran", runId: run.runId, workflow: run.workflow });
+      continue;
+    }
+    const placed = run.allocationId === null ? undefined : placements.get(run.allocationId);
+    if (placed !== undefined && placed.generation === run.generation && now.getTime() - placed.at.getTime() < neverRanMs()) continue;
+    active ??= await activeClaimRunIds(db, now);
+    if (active.has(run.runId)) continue;
+    await cancel(run.tenantId, run.runId, `${run.workflow} outlived its claim`);
+    log({ level: "warn", msg: "triage_deployment_orphaned", runId: run.runId, workflow: run.workflow });
   }
 }
 
