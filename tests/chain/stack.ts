@@ -274,8 +274,8 @@ export async function setUpWorkspace(workspace: Workspace, github: FakeGithub, m
   await offer(workspace, { name: INFERENCE_PROVIDER, plugin: INFERENCE_PROVIDER, baseURL: modelOrigin, credentialId: decisionKey }, [{ name: DECISION_MODEL_ALIAS, quirks: { model: "stub" } }]);
   const anthropicKey = await vaultKey(workspace, { name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, apiBaseUrl: modelOrigin }, ANTHROPIC_CREDENTIAL_NAME);
   await offer(workspace, { name: ANTHROPIC_PROVIDER, plugin: ANTHROPIC_PROVIDER, baseURL: modelOrigin, credentialId: anthropicKey }, [
-    { name: CODE_REVIEW_PROVIDERS.anthropic.models.smart, quirks: { model: "stub" } },
-    { name: CODE_REVIEW_PROVIDERS.anthropic.models.fast, quirks: { model: "stub" } },
+    { name: CODE_REVIEW_PROVIDERS.anthropic.models.smart },
+    { name: CODE_REVIEW_PROVIDERS.anthropic.models.fast },
   ]);
 }
 
