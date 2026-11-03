@@ -53,3 +53,20 @@ export async function settled(operation: Promise<unknown> | undefined): Promise<
     // The caller of that operation sees its failure; the queue only needs ordering.
   }
 }
+
+/** Runs each key's load once and shares its result; a load that fails is forgotten, so the next call tries again. */
+export function cachedLoads<T>(): (key: string, run: () => Promise<T>) => Promise<T> {
+  const loads = new Map<string, Promise<T>>();
+  async function forgetOnFailure(key: string, pending: Promise<T>): Promise<T> {
+    try {
+      return await pending;
+    } catch (error) {
+      loads.delete(key);
+      throw error;
+    }
+  }
+  return function load(key, run) {
+    if (!loads.has(key)) loads.set(key, forgetOnFailure(key, run()));
+    return loads.get(key)!;
+  };
+}

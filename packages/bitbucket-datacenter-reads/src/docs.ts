@@ -1,3 +1,4 @@
+import { cachedLoads } from "@corbits/common";
 import { fitsDocsPage, readRepoDocs, type RepoDocsPage, type RuleSpan } from "@corbits/github-reads";
 import { type } from "arktype";
 import { filePath, json, jsonAll, repoPath, request, type BitbucketFetch } from "./client.js";
@@ -32,17 +33,9 @@ async function docsAt(bb: BitbucketFetch, repo: string, head: string): Promise<D
 
 /** The docs of each head read once per reader; the pages of one read all come from the same listing. */
 export function createDocsReader(bb: BitbucketFetch) {
-  const read = new Map<string, Promise<Docs>>();
-  return async function docsOf(repo: string, head: string): Promise<Docs> {
-    const key = `${repo}@${head}`;
-    const pending = read.get(key) ?? docsAt(bb, repo, head);
-    read.set(key, pending);
-    try {
-      return await pending;
-    } catch (err) {
-      read.delete(key);
-      throw err;
-    }
+  const docs = cachedLoads<Docs>();
+  return function docsOf(repo: string, head: string): Promise<Docs> {
+    return docs(`${repo}@${head}`, () => docsAt(bb, repo, head));
   };
 }
 
