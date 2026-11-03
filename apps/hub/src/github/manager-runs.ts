@@ -37,7 +37,7 @@ export function createManagerRuns(db: DB["db"], verdicts: Pick<VerdictRecordStor
     for (const { pr, live, gone, waiting, roomless: refused } of pulls) {
       const { source } = pr;
       if (refused) roomless.add(pullKey(pr.repo, pr.number));
-      // The hub checked the run is up, so it is running now; only a pass held open too long makes it stuck.
+      // The hub checked the run is up, so it is running now; isStuck times it from its open pass.
       if (live?.head !== undefined) observed(pr.repo, pr.number, live.head, { runId: live.runId, source, status: "running", startedAt: now().toISOString(), ...(live.passAt !== undefined && { passAt: live.passAt }), ...(live.awaiting.length > 0 && { awaiting: live.awaiting }), ...(live.waitingSince !== undefined && { waitingSince: live.waitingSince }) });
       // No manager is up while the head waits only on CI; the reconciler wakes one once CI settles.
       if (waiting) observed(pr.repo, pr.number, waiting.head, { runId: waiting.runId, source, status: "completed", startedAt: waiting.since, waitingSince: waiting.since });

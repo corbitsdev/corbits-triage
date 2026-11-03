@@ -341,14 +341,19 @@ export async function endNeverRan(
   }
 }
 
-/** When the claim's run took `pass`: as it opened it, or as it claimed the pull request and resumed it from a run gone. */
+/** When the claim's run took `pass`: as it opened it, or as it took the claim over and resumed it. */
 function passHeldSince(claim: Claim, pass: Pass): string {
   return Date.parse(claim.claimedAt) > Date.parse(pass.takenAt) ? claim.claimedAt : pass.takenAt;
 }
 
+/** A claim holding a reviewer with no result past its deadline. */
+function lateReviewer(now: Date): SQL {
+  return sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)) && @.deadline <= $now)', jsonb_build_object('now', ${now.toISOString()}::text))`;
+}
+
 type Overdue = { tenantId: string; runId: string; reason: string; msg: string };
 
-/** The claim's reviewers past their deadline with no result, and its manager when its open pass was taken before `stuckBefore`. */
+/** The claim's reviewers past their deadline with no result, and its manager when its run has held the open pass since before `stuckBefore`. */
 function overdueOf(tenantId: string, claim: Claim, now: Date, stuckBefore: Date): Overdue[] {
   const late = claim.reviewers.filter((reviewer) => reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime());
   const overdue = late.map((reviewer) => ({ tenantId, runId: reviewer.runId, reason: `${reviewer.kind} past its deadline`, msg: "triage_reviewer_overdue_ended" }));
@@ -359,7 +364,7 @@ function overdueOf(tenantId: string, claim: Claim, now: Date, stuckBefore: Date)
 }
 
 /**
- * Ends every reviewer still live past its deadline and every manager whose open pass has gone on past
+ * Cancels every reviewer still live past its deadline and every manager that has held its open pass past
  * `PR_TRIAGE_STUCK_RUN_MS`, so neither holds a sidecar slot nor reads as up forever. A reviewer stays on its claim, so a
  * manager is still woken to post without it.
  */
@@ -370,10 +375,10 @@ export async function endOverdue(
   log: (entry: Record<string, unknown>) => void,
 ): Promise<void> {
   const stuckBefore = new Date(now.getTime() - PR_TRIAGE_STUCK_RUN_MS);
-  const late = sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)) && @.deadline <= $now)', jsonb_build_object('now', ${now.toISOString()}::text))`;
+  // Pass takenAt never postdates when the run took the pass, so this keeps every stuck manager for overdueOf to confirm.
   const stuck = sql`${managerState.state}->>'status' = 'live' AND (${managerState.state}->'pass'->>'takenAt')::timestamptz < ${stuckBefore.toISOString()}::timestamptz`;
   const rows = await db.select({ tenantId: managerState.tenantId, key: managerState.key, state: managerState.state }).from(managerState)
-    .where(and(eq(managerState.kind, "claim"), or(late, stuck)));
+    .where(and(eq(managerState.kind, "claim"), or(lateReviewer(now), stuck)));
   const overdue = rows.flatMap((row) => overdueOf(row.tenantId, claimOf(row.key, row.state), now, stuckBefore));
   if (overdue.length === 0) return;
   const live = await db.select({ tenantId: schema.workflowRun.tenantId, runId: schema.workflowRun.id }).from(schema.workflowRun)
@@ -382,9 +387,9 @@ export async function endOverdue(
       inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]),
       isNull(schema.workflowRun.cancellationRequestedAt),
     ));
-  const ending = new Set(live.map((run) => `${run.tenantId} ${run.runId}`));
+  const cancellable = new Set(live.map((run) => `${run.tenantId} ${run.runId}`));
   for (const run of overdue) {
-    if (!ending.delete(`${run.tenantId} ${run.runId}`)) continue;
+    if (!cancellable.has(`${run.tenantId} ${run.runId}`)) continue;
     const entry = { tenantId: run.tenantId, runId: run.runId, reason: run.reason };
     try {
       log({ level: "warn", msg: run.msg, ...entry, outcome: await cancel(run.tenantId, run.runId, run.reason) });
@@ -819,8 +824,8 @@ export async function passRequest(db: DB["db"], tenantId: string, pr: PullReques
 
 /**
  * A pull request a manager claimed: its closed passes; while its manager is up, that run, the head of the newest pull
- * request mail recorded, when that run took the pass it has open, since when it has waited for that head's CI and what its reviewers on
- * that head have yet to report before their deadlines; the pass a manager that went away left open; and, once no
+ * request mail recorded, when that run took the pass it has open, since when it has waited for that head's CI and what
+ * its reviewers on that head have yet to report before their deadlines; the pass a manager that went away left open; and, once no
  * manager is up, the newest head its last pass left waiting for CI, with that pass's run and since when it waited;
  * `roomless` while no manager is up and the last one deployed for it was refused a placement for capacity.
  */
@@ -1036,7 +1041,7 @@ async function unreadResults(db: DB["db"], tenantId: string): Promise<Map<string
 export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr: PullRequestRef; head: string }[]> {
   const now = new Date();
   const unread = await unreadResults(db, tenantId);
-  const late = sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)) && @.deadline <= $now)', jsonb_build_object('now', ${now.toISOString()}::text))`;
+  const late = lateReviewer(now);
   const rows = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), eq(managerState.kind, "claim"), unread.size === 0 ? late : or(late, inArray(managerState.key, [...unread.keys()]))));
   const overdue: { pr: PullRequestRef; head: string }[] = [];
