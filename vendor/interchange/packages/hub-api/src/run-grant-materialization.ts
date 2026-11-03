@@ -37,6 +37,7 @@ import {
 import type {
   DB,
   DBExecutor,
+  GrantStoreFactory,
   PrincipalKeyStore,
   RunTokenStore,
 } from "@intx/db";
@@ -89,7 +90,7 @@ import {
   type MaterializedGrantRow,
 } from "./grant-materialization";
 
-const TOOL_GRANT_PREFIX = "tool:";
+export const TOOL_GRANT_PREFIX = "tool:";
 
 /**
  * Project the frozen grant-walk snapshot into the run's runtime grant rows:
@@ -435,6 +436,22 @@ export function runGrantToWire(
   };
 }
 
+/**
+ * Bind each requirement on the literal `SELF_RUN_RESOURCE` placeholder to
+ * `workflow-run:<runId>`. The operator approved the placeholder; binding it
+ * before the authority check makes the delegator cover the concrete run id.
+ */
+export function bindSelfRunRequirements(
+  grantRequirements: readonly GrantRequirement[],
+  runId: string,
+): GrantRequirement[] {
+  return grantRequirements.map((req) =>
+    req.resource === SELF_RUN_RESOURCE
+      ? { ...req, resource: `workflow-run:${runId}` }
+      : req,
+  );
+}
+
 export type StageRunGrantsFromSnapshotArgs = {
   /**
    * The deploy-approved grant-walk snapshot frozen at approval. Its per-step
@@ -490,10 +507,7 @@ export type StageRunGrantsFromSnapshotArgs = {
 };
 
 export type StageRunGrantsResult =
-  | {
-      ok: false;
-      rejection: { status: 403 | 409; code: string; message: string };
-    }
+  | { ok: false; rejection: GrantMaterializationRejection }
   | {
       ok: true;
       grantRows: MaterializedGrantRow[];
@@ -536,17 +550,13 @@ export async function stageRunGrantsFromSnapshot(
     args.now,
   );
 
-  // The operator approved the literal placeholder; bind it to this run before
-  // the authority check, so the delegator must cover the concrete run id.
-  const grantRequirements = args.grantRequirements.map((req) =>
-    req.resource === SELF_RUN_RESOURCE
-      ? { ...req, resource: `workflow-run:${args.runId}` }
-      : req,
-  );
   const materialization = await resolveGrantMaterialization({
     tenantId: args.tenantId,
     targetPrincipalId: args.runPrincipalId,
-    grantRequirements,
+    grantRequirements: bindSelfRunRequirements(
+      args.grantRequirements,
+      args.runId,
+    ),
     invokerGrants: args.invokerGrants,
     creatorGrants: args.creatorGrants,
     now: args.now,
@@ -579,7 +589,7 @@ export async function stageRunGrantsFromSnapshot(
  * principal deletion) or the asset row is absent.
  */
 export async function loadAssetCreatorPrincipalId(
-  db: DB["db"],
+  db: DBExecutor,
   tenantId: string,
   definitionAssetId: string,
 ): Promise<string | null> {
@@ -591,10 +601,10 @@ export async function loadAssetCreatorPrincipalId(
 
 /**
  * Collect a creator's grants only when a creator-sourced requirement
- * exists and the asset records a creator. Mirrors the trigger route: when
- * a creator-sourced requirement exists but the creator is null, the grants
- * stay empty and `resolveGrantMaterialization` fails closed rather than
- * inventing a fallback principal.
+ * exists and the asset records a creator. When a creator-sourced
+ * requirement exists but the creator is null, the grants stay empty and
+ * `resolveGrantMaterialization` fails closed rather than inventing a
+ * fallback principal.
  */
 export async function collectCreatorGrants(
   grantStore: GrantStore,
@@ -680,6 +690,70 @@ export async function collectDeployerInvokerGrants(args: {
       args.tenantId,
     ),
   };
+}
+
+export type StageFirstTriggerRunGrantsArgs = {
+  snapshot: GrantWalkSnapshot;
+  tenantId: string;
+  anchorRunId: string;
+  runId: string;
+  runPrincipalId: string;
+  definitionAssetId: string;
+  legacyMailAccept: LegacyMailAcceptRule | null;
+  credentialBindings: readonly { credentialId: string; consumer: string }[];
+  now: Date;
+};
+
+/**
+ * Read a deployment's delegators and stage its run's first grant rows. The
+ * creator is the definition asset's creator and the invoker is the
+ * deployment's active deployer, both read through `executor` and
+ * `grantStore`. The deployer also resolves the run's `mail.accept:invoker`
+ * marker. Returns the staged rows, or the rejection when a delegator lacks a
+ * requirement's authority or the deployer is unavailable.
+ */
+export async function stageFirstTriggerRunGrants(
+  executor: DBExecutor,
+  grantStore: GrantStore,
+  args: StageFirstTriggerRunGrantsArgs,
+): Promise<StageRunGrantsResult> {
+  const grantRequirements = args.snapshot.grantRequirements;
+  const invoker = await collectDeployerInvokerGrants({
+    db: executor,
+    grantStore,
+    tenantId: args.tenantId,
+    anchorRunId: args.anchorRunId,
+    grantRequirements,
+  });
+  if (!invoker.ok) return invoker;
+  const creatorGrants = await collectCreatorGrants(
+    grantStore,
+    args.tenantId,
+    await loadAssetCreatorPrincipalId(
+      executor,
+      args.tenantId,
+      args.definitionAssetId,
+    ),
+    grantRequirements,
+  );
+  return stageRunGrantsFromSnapshot({
+    snapshot: args.snapshot,
+    tenantId: args.tenantId,
+    runId: args.runId,
+    runPrincipalId: args.runPrincipalId,
+    now: args.now,
+    invokerPrincipalId: await loadActiveDeployerId(
+      executor,
+      args.tenantId,
+      args.anchorRunId,
+    ),
+    assetId: args.definitionAssetId,
+    legacyMailAccept: args.legacyMailAccept,
+    invokerGrants: invoker.invokerGrants,
+    creatorGrants,
+    grantRequirements,
+    credentialBindings: args.credentialBindings,
+  });
 }
 
 export type CommitRunGrantsArgs = {
@@ -780,7 +854,7 @@ export async function lockDispatchableAllocation(
   );
 }
 
-async function loadCommittedRunGrantsFromExecutor(
+export async function loadCommittedRunGrantsFromExecutor(
   executor: DBExecutor,
   tenantId: string,
   runId: string,
@@ -873,12 +947,14 @@ export function approvalToolName(
  * Resolve a run's `ask` checkpoint on one tool into a standing effect -- the
  * durable mutation a `scope: "always"` resolution makes. An operator who
  * approves-always sets `allow` (stop asking, let it through); one who
- * rejects-always sets `deny` (stop asking, block it). The grant stays with the
- * run: every later read (the child's enforcement floor, the authorization view,
- * and the grants the sidecar router sends ahead of each signal and trigger)
- * sees the standing effect, so the tool is not asked again for the life of the
- * run. Two grant sends for one run can arrive out of order, and then the
- * sidecar holds the older grants until the next send.
+ * rejects-always sets `deny` (stop asking, block it). The caller re-derives the
+ * run in the same transaction, which gives the row the expiry of its new
+ * effect, or deletes an `allow` the run's delegator no longer holds. Every
+ * later read (the child's enforcement floor, the authorization view, and the
+ * grants the sidecar router sends ahead of each signal and trigger) sees the
+ * result, so the tool is not asked again for the life of the run. Two grant
+ * sends for one run can arrive out of order, and then the sidecar holds the
+ * older grants until the next send.
  *
  * Guarded to only change a grant currently gated `ask`: the `effect = "ask"`
  * predicate means it only ever resolves the checkpoint, never overrides an
@@ -887,7 +963,8 @@ export function approvalToolName(
  * the deploy already granted-with-a-checkpoint -- in the direction the operator
  * chose. Runs against the passed executor, so the caller mutates inside the
  * resolve transaction and a rolled-back resolve rolls back the grant change with
- * it. A run with no principal (nothing to mutate) is a no-op.
+ * it. A run with no principal (nothing to mutate) is a no-op. Returns the run
+ * principal's id when a row changed, and null otherwise.
  */
 export async function setRunToolGrantEffect(
   executor: DBExecutor,
@@ -895,7 +972,7 @@ export async function setRunToolGrantEffect(
   runId: string,
   toolName: string,
   effect: "allow" | "deny",
-): Promise<void> {
+): Promise<string | null> {
   const [runPrincipal] = await executor
     .select({ id: principalTable.id })
     .from(principalTable)
@@ -907,8 +984,8 @@ export async function setRunToolGrantEffect(
       ),
     )
     .limit(1);
-  if (runPrincipal === undefined) return;
-  await executor
+  if (runPrincipal === undefined) return null;
+  const changed = await executor
     .update(grantTable)
     .set({ effect, updatedAt: new Date() })
     .where(
@@ -917,7 +994,9 @@ export async function setRunToolGrantEffect(
         eq(grantTable.resource, `${TOOL_GRANT_PREFIX}${toolName}`),
         eq(grantTable.effect, "ask"),
       ),
-    );
+    )
+    .returning({ id: grantTable.id });
+  return changed.length > 0 ? runPrincipal.id : null;
 }
 
 /**
@@ -1007,7 +1086,7 @@ export type MailTriggeredRunGrantsDeps = {
   db: DB["db"];
   principalKeyStore: PrincipalKeyStore;
   runTokenStore: RunTokenStore;
-  grantStore: GrantStore;
+  grantStoreFor: GrantStoreFactory;
   // The hub's condition registry, passed to the admission evaluator so a
   // conditioned operator `mail.accept` deny (collected on the deliver path) is
   // honored rather than skipped. Omitted here means the evaluator throws (fails
@@ -1138,26 +1217,24 @@ export function createMailTriggeredRunGrantsMaterializer(
     // carries a globally-unique id, and the `tenant` coordinate carries the
     // sender's own tenant, so a cross-tenant sender only matches a rule that
     // explicitly names its ids.
+    const admissionDenied = (): MailTriggeredRunGrantsResult => ({
+      outcome: "rejected",
+      status: 403,
+      code: MAIL_ADMISSION_DENIED_CODE,
+      message: `Workflow run ${runId} does not admit mail from this sender`,
+    });
     const admitToCommittedRun = async (
       committed: CommittedRunGrants,
     ): Promise<MailTriggeredRunGrantsResult> => {
-      const recipientGrants = await deps.grantStore.collectGrants(
-        committed.runPrincipalId,
-        tenantId,
-      );
+      const recipientGrants = await deps
+        .grantStoreFor(deps.db)
+        .collectGrants(committed.runPrincipalId, tenantId);
       const admission = await evaluateMailAdmission({
         senderCoordinates,
         recipientGrants,
         ...(deps.registry ? { registry: deps.registry } : {}),
       });
-      if (!admission.admit) {
-        return {
-          outcome: "rejected",
-          status: 403,
-          code: MAIL_ADMISSION_DENIED_CODE,
-          message: `Workflow run ${runId} does not admit mail from this sender`,
-        };
-      }
+      if (!admission.admit) return admissionDenied();
       return {
         outcome: "materialized",
         stepGrants: committed.stepGrants,
@@ -1242,77 +1319,7 @@ export function createMailTriggeredRunGrantsMaterializer(
       recipientGrants: acceptRows.map(materializedRowToGrantRule),
       ...(deps.registry ? { registry: deps.registry } : {}),
     });
-    if (!admission.admit) {
-      return {
-        outcome: "rejected",
-        status: 403,
-        code: MAIL_ADMISSION_DENIED_CODE,
-        message: `Workflow run ${runId} does not admit mail from this sender`,
-      };
-    }
-
-    // The definition's FULL declared requirements are resolved -- both creator-
-    // and invoker-sourced -- so an invoker requirement the deployer cannot
-    // satisfy fails the run closed instead of launching under-authorized.
-    const grantRequirements = snapshot.grantRequirements;
-
-    // Creator authority is resolved LIVE per run: the definition's grant SHAPE
-    // is frozen in the snapshot, but which grants the creator currently holds
-    // is not part of that shape and can change between triggers. This reads the
-    // asset row's creator column and the creator's grants.
-    const creatorPrincipalId = await loadAssetCreatorPrincipalId(
-      deps.db,
-      tenantId,
-      definitionAssetId,
-    );
-    const creatorGrants = await collectCreatorGrants(
-      deps.grantStore,
-      tenantId,
-      creatorPrincipalId,
-      grantRequirements,
-    );
-    const invoker = await collectDeployerInvokerGrants({
-      db: deps.db,
-      grantStore: deps.grantStore,
-      tenantId,
-      anchorRunId,
-      grantRequirements,
-    });
-    if (!invoker.ok) {
-      return {
-        outcome: "rejected",
-        status: invoker.rejection.status,
-        code: invoker.rejection.code,
-        message: invoker.rejection.message,
-      };
-    }
-
-    const staged = await stageRunGrantsFromSnapshot({
-      snapshot,
-      tenantId: tenantId,
-      runId,
-      runPrincipalId,
-      now,
-      // The deployer resolves the run's `mail.accept:invoker` marker; the
-      // asset behind the receiving deployment's definition is `self`. Both
-      // resolve the run's declared `mail.accept` relation markers to concrete
-      // accept-grant rows.
-      invokerPrincipalId: deployerPrincipalId,
-      assetId: definitionAssetId,
-      legacyMailAccept: anchor.legacyMailAccept,
-      invokerGrants: invoker.invokerGrants,
-      creatorGrants,
-      grantRequirements,
-      credentialBindings: credentialUseBindings(anchor.credentialRefs),
-    });
-    if (!staged.ok) {
-      return {
-        outcome: "rejected",
-        status: staged.rejection.status,
-        code: staged.rejection.code,
-        message: staged.rejection.message,
-      };
-    }
+    if (!admission.admit) return admissionDenied();
 
     const reserved = await deps.db.transaction(async (tx) => {
       const anchorState = await lockWorkflowRunState(
@@ -1335,6 +1342,52 @@ export function createMailTriggeredRunGrantsMaterializer(
         runId,
       );
       if (raced !== null) return { committedByAnotherSender: raced };
+
+      // The definition's FULL declared requirements are resolved -- both
+      // creator- and invoker-sourced -- so an invoker requirement the deployer
+      // cannot satisfy fails the run closed instead of launching
+      // under-authorized. Creator authority is resolved LIVE per run: the
+      // definition's grant SHAPE is frozen in the snapshot, but which grants
+      // the creator currently holds is not part of that shape and can change
+      // between triggers. The delegators are read under the anchor lock, so a
+      // delegator change that holds the lock commits before these reads, and
+      // one that waits on the lock finds this run's committed rows.
+      const staged = await stageFirstTriggerRunGrants(
+        tx,
+        deps.grantStoreFor(tx),
+        {
+          snapshot,
+          tenantId,
+          anchorRunId,
+          runId,
+          runPrincipalId,
+          definitionAssetId,
+          legacyMailAccept: anchor.legacyMailAccept,
+          credentialBindings: credentialUseBindings(anchor.credentialRefs),
+          now,
+        },
+      );
+      if (!staged.ok) {
+        return {
+          rejected: {
+            outcome: "rejected",
+            status: staged.rejection.status,
+            code: staged.rejection.code,
+            message: staged.rejection.message,
+          } satisfies MailTriggeredRunGrantsResult,
+        };
+      }
+      // The provisional admission read the deployer before the lock, and the
+      // deployer can stop being active before these reads. Admit against the
+      // staged rows, so a sender is only admitted by the `mail.accept` rows
+      // the run commits.
+      const stagedAdmission = await evaluateMailAdmission({
+        senderCoordinates,
+        recipientGrants: staged.grantRows.map(materializedRowToGrantRule),
+        ...(deps.registry ? { registry: deps.registry } : {}),
+      });
+      if (!stagedAdmission.admit) return { rejected: admissionDenied() };
+
       const resolution = await lockAnchorCredentialResolution(tx, anchorRunId);
       if (resolution === null) {
         throw new Error(
@@ -1347,6 +1400,9 @@ export function createMailTriggeredRunGrantsMaterializer(
         { tenantId, runPrincipalId, now },
       );
       if (grantRows === "not-ready") return grantRows;
+      // `now` stamps both the staged rows and the run principal's creation,
+      // so an invoker `allow` row expires `INVOKER_GRANT_TTL_MS` after the
+      // principal is created at the latest.
       return commitRunGrants(
         {
           db: deps.db,
@@ -1367,8 +1423,12 @@ export function createMailTriggeredRunGrantsMaterializer(
     if (reserved === "not-ready") return { outcome: "notReady" };
     if (reserved === "stopping" || reserved === "terminal")
       return unavailableRunResult(runId, reserved);
-    if ("committedByAnotherSender" in reserved)
+    if (
+      "committedByAnotherSender" in reserved &&
+      reserved.committedByAnotherSender !== undefined
+    )
       return admitToCommittedRun(reserved.committedByAnotherSender);
+    if ("rejected" in reserved) return reserved.rejected;
     return {
       outcome: "materialized",
       stepGrants: reserved,

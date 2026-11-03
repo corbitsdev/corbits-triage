@@ -299,6 +299,9 @@ function createMockSidecarRouter(
     sendCredentialsUpdate(_addr, _delivery) {
       return notImpl("sendCredentialsUpdate");
     },
+    sendRunGrants(_addr) {
+      return notImpl("sendRunGrants");
+    },
     sendSignalDeliver(_opts) {
       notImpl("sendSignalDeliver");
     },
@@ -397,6 +400,9 @@ function createReaderRepoStore(dir: string): RepoStore {
     receivePack: unused,
     createPack: unused,
     commitPackedTip: () => {
+      throw new Error("runs route test: RepoStore method not wired");
+    },
+    forgetPackedTip: () => {
       throw new Error("runs route test: RepoStore method not wired");
     },
     resolveRef: unused,
@@ -583,6 +589,47 @@ describe("GET /workflows/runs/:runId/authorization", () => {
         { resource: "tool:mail_send", action: "invoke", effect: "allow" },
         { resource: "tool:charge_card", action: "invoke", effect: "ask" },
         { resource: "tool:read_file", action: "invoke", effect: "allow" },
+      ],
+    });
+  });
+});
+
+describe("GET /workflows/runs/:runId/authorization row expiry", () => {
+  test("leaves out a row whose expiry has passed", async () => {
+    const row = (id: string, resource: string, expiresAt: Date | null) => ({
+      id,
+      resource,
+      action: "invoke",
+      effect: "allow",
+      origin: "creator",
+      conditions: null,
+      expiresAt,
+      roleId: null,
+      principalId: "prn_run_authz",
+    });
+    const app = createTestApp({
+      db: {
+        tenant: testTenant,
+        principal: testPrincipal,
+        run: makeTestRun(),
+        committedRunGrants: {
+          runPrincipalId: "prn_run_authz",
+          grantRows: [
+            row("grant_expired", "tool:expired", new Date(Date.now() - 60_000)),
+            row("grant_live", "tool:live", new Date(Date.now() + 3_600_000)),
+            row("grant_open", "tool:open", null),
+          ],
+        },
+      },
+    });
+    const res = await app.request(`${runURL()}/authorization`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      runId: RUN_ID,
+      grants: [
+        { resource: "tool:live", action: "invoke", effect: "allow" },
+        { resource: "tool:open", action: "invoke", effect: "allow" },
       ],
     });
   });

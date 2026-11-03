@@ -66,6 +66,7 @@ import {
   createCorrespondentGrantMinter,
   createMailTriggeredRunGrantsMaterializer,
   createRunGrantsLoader,
+  sweepLapsedDeployerGrants,
   type RunTokenRoute,
 } from "@intx/hub-api";
 import {
@@ -246,7 +247,7 @@ export async function createInterchangeHub({
         db,
         principalKeyStore,
         runTokenStore,
-        grantStore: createGrantStore(db),
+        grantStoreFor: createGrantStore,
         // The registry createHubApp uses, so a conditioned operator
         // mail.accept deny is evaluated, not skipped, by the admission gate.
         registry: HUB_CONDITION_REGISTRY,
@@ -545,8 +546,25 @@ export async function createInterchangeHub({
     },
   });
 
+  // A run that deployed others is deactivated when it ends; the runs it
+  // deployed lose their invoker rows at the next pass.
+  async function reconcileLapsedDeployers(): Promise<boolean> {
+    await sweepLapsedDeployerGrants(
+      { db, grantStoreFor: createGrantStore, sidecarRouter },
+      new Date(),
+    );
+    return false;
+  }
+  const lapsedDeployerScheduler = createReconciliationScheduler({
+    name: "Lapsed deployer grants",
+    concurrency: 1,
+    intervalMs: 30_000,
+    reconcileNext: reconcileLapsedDeployers,
+  });
+
   // Initial polls run on the next timer turn, after the websocket endpoint is assembled.
   allocationScheduler.start();
+  lapsedDeployerScheduler.start();
   probeCleanupScheduler.start();
   lifecycleScheduler.start();
   dispatchProjectionScheduler.start();

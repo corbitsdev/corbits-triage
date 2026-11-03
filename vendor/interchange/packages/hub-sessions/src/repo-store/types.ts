@@ -253,7 +253,14 @@ export interface KindHandler {
    * enumerates the names directly under a tree-root-relative POSIX
    * directory path (no trailing slash, no leading slash); pass the
    * empty string to list the root. Handlers that only need path-level
-   * checks can ignore `readBlob` and `listDir`.
+   * checks can ignore `readBlob` and `listDir`. `readBlob` throws
+   * `NoBlobAtPathError` when the prospective tree holds no blob at the
+   * path.
+   *
+   * Any other error from a read is a fault of the store, not of the
+   * content. A handler that lets it propagate lets the substrate reject
+   * a missing object as `missing_objects`, which makes a workflow-run
+   * sender resend the full history; a returned rejection hides it.
    *
    * `priorReadBlob` and `priorListDir` mirror `readBlob` / `listDir`
    * against the parent commit's tree — the ref's tip at the moment
@@ -491,6 +498,14 @@ export interface RepoStore {
    * kinds whose packs are not incremental.
    */
   commitPackedTip(repoId: RepoId, ref: string, commitSha: string): void;
+  /**
+   * Drop the "last shipped tip" of an incremental (`workflow-run`) pack
+   * ref, so the next `createPack` ships the ref's full history. The
+   * caller invokes this when the receiver reports that it lacks objects
+   * the cursor says it holds. A no-op for kinds whose packs are not
+   * incremental.
+   */
+  forgetPackedTip(repoId: RepoId, ref: string): void;
   resolveRef(
     principal: Principal,
     repoId: RepoId,
@@ -639,7 +654,8 @@ export type RepoStoreSubscribeEvent = {
 
 /**
  * The outcome of a prepared receive's `commit()`. `already_applied`
- * means the ref already held the pack's tip, so nothing changed.
+ * means the ref already held the pack's tip, so the ref did not move.
+ * The pack is still published when it brings objects the store lacks.
  */
 export type PackCommitResult =
   | { readonly kind: "already_applied" }
@@ -652,7 +668,8 @@ export type PackCommitResult =
  * A pack that `prepareReceivePack` staged and validated. `commit()`
  * publishes it and moves the ref; `discard()` removes it.
  * `already_applied` means the ref already held the pack's tip when the
- * receive began, so nothing was staged.
+ * receive began, the store held every object of that tip, and the pack
+ * brought no object the store lacked, so nothing is published.
  */
 export type PreparedReceivePack =
   | { readonly kind: "already_applied" }
@@ -661,6 +678,14 @@ export type PreparedReceivePack =
       commit(): Promise<PackCommitResult>;
       discard(): Promise<void>;
     };
+
+/** A `validatePush` read found no blob at its path in the prospective tree. */
+export class NoBlobAtPathError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoBlobAtPathError";
+  }
+}
 
 /**
  * A prepared receive found that its repository was removed after the

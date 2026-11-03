@@ -106,6 +106,9 @@ function createStubStore(stub: ReceivePackStub): {
     commitPackedTip: () => {
       throw new Error("commitPackedTip: not used in this test");
     },
+    forgetPackedTip: () => {
+      throw new Error("forgetPackedTip: not used in this test");
+    },
     resolveRef: async () => {
       throw new Error("resolveRef: not used in this test");
     },
@@ -391,6 +394,35 @@ describe("handleReceivePack substrate error translations", () => {
     const expected =
       pktText("unpack ok\n") +
       pktText("ng refs/heads/main sha-mismatch\n") +
+      "0000";
+    expect(text).toBe(expected);
+  });
+
+  test("missing_objects translates to ng <ref> missing-objects", async () => {
+    const { store } = createStubStore(() => {
+      throw new Error("missing_objects: commit names a blob the store lacks");
+    });
+    const body = buildBody(
+      [
+        {
+          oldSha: ZERO_OID,
+          newSha: "a".repeat(40),
+          ref: "refs/heads/main",
+        },
+      ],
+      PACK_BYTES,
+      "report-status",
+    );
+    const response = await handleReceivePack(
+      store,
+      PRINCIPAL,
+      REPO_ID,
+      buildRequest(body),
+    );
+    const text = await readBody(response);
+    const expected =
+      pktText("unpack ok\n") +
+      pktText("ng refs/heads/main missing-objects\n") +
       "0000";
     expect(text).toBe(expected);
   });

@@ -94,10 +94,10 @@ with `runLocal` and the real step invoker, with no hub and no sidecar:
 - `createCredentialsBackedAuthorize`, `createGrantEvaluator` and
   `createSnapshotGrantsResolver` (with its `StepGrantsResolver` type) — the
   authorize closure a run child authorizes with, its grant evaluator, and
-  the per-step grants resolver over a credentials snapshot reference.
-- `createLocalCredentialsSnapshot` and `snapshotStepGrants` — the grants a
-  deployed source-ref run holds, derived from the definition, and their
-  per-step reader for Gate 2.
+  the per-step grants resolver over a credentials snapshot reference, which
+  also gives Gate 2 a step's grants.
+- `createLocalCredentialsSnapshot` — the grants a deployed source-ref run
+  holds, derived from the definition.
 
 Nothing this entry imports is a Node or Bun module, so it bundles for a
 browser; `tests/workflow/local-runtime-browser-bundle.test.ts` checks that.
@@ -335,13 +335,15 @@ without reconstructing the env. The closure looks up the
 originating step's grants by `stepId` and delegates to a
 host-supplied `GrantEvaluator`.
 
-A spawned child run reads its capped grants through an overlay of
-the top-level run's live snapshot, which it inherits with the
-credential material (`ChildInheritance`). A child `ask` grant takes
-the top-level `deny` for the same grant id, or the top-level `allow`
-when the child's cap keeps it. A standing approval decision reaches
-a live child when the top-level run's grants update arrives (ahead of
-a signal delivery or a trigger, or in `authority.set` on a restart).
+A spawned child run applies its cap to its parent's current grants,
+which it inherits with the credential material (`ChildInheritance`):
+the top-level run's live snapshot for a child of the top-level run,
+and the parent rung's capped grants for a deeper child. The child
+holds what a new spawn of the same body would hold, so a grant the
+top-level run loses, regains, or changes reaches a live child on its
+next tool call or step, once the top-level run's grants update
+arrives (ahead of a signal delivery or a trigger, or in
+`authority.set` on a restart).
 A decision on a call that matched a wildcard `tool:*` `ask` changes
 nothing, because the hub changes only an exact `tool:<name>` grant.
 Two grant sends for one run can arrive out of order, and then the run

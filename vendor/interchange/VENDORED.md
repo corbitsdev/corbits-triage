@@ -3,11 +3,13 @@
 ## Baseline
 
 - Upstream: <https://github.com/faremeter/interchange>
-- Stock ref: `343983fcb0aceea351512a09a1d6ef41a80255a7`
-- Composite pin: stock `343983fc` plus the same six local carries: the CL-10210
+- Stock ref: `ece9d9188227c3c3a0b0acd54eefb57815cee72a`
+- Composite pin: stock `ece9d918` plus seven local carries: the CL-10210
   consume-signal carry, the INTR-666 adaptive-thinking model ids, the INTR-666
   Anthropic structured outputs, the host run-token routes, the deployer's
-  manage grant, and the Railway connect deadline (CL-11829). Upstream has no
+  manage grant, the Railway connect deadline (CL-11829), and the
+  `run-grant-materialization.ts` union narrowing without
+  `exactOptionalPropertyTypes` (CL-11994). Upstream has no
   tag for this sha. `v0.5.0-103` named the previous composite in this ledger
   only; it was not an upstream tag, and this pin does not mint a new local
   sequence number. Do not treat any delta as a new stock pin.
@@ -195,6 +197,26 @@ Allowed files:
 Upstream status: to be filed.
 
 Remove when stock lets a provisioner name how long its sidecar has to connect.
+
+### Narrow `committedByAnotherSender` without `exactOptionalPropertyTypes` (CL-11994)
+
+Stock `00dedcb` (`Stage a run's first grants under the deployment's anchor
+lock`) returns `{ committedByAnotherSender: raced }` and `{ rejected: ... }`
+from the un-annotated transaction callback in
+`createMailTriggeredRunGrantsMaterializer`, which TypeScript normalizes to a
+union with `committedByAnotherSender?: undefined` on the `rejected` branch.
+Without `exactOptionalPropertyTypes: true` (omitted in root `tsconfig.json`),
+`"committedByAnotherSender" in reserved` leaves `reserved.committedByAnotherSender`
+typed as `CommittedRunGrants | undefined` (`TS2345`). The carry adds
+`&& reserved.committedByAnotherSender !== undefined`.
+
+Allowed files:
+
+- `packages/hub-api/src/run-grant-materialization.ts`
+
+Upstream status: to be filed.
+
+Remove when stock narrows or annotates the transaction return type.
 
 ## Dropped deltas
 
