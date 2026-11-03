@@ -1000,7 +1000,7 @@ function pullOf(key: string): PullRequestRef {
 }
 
 /** How long an overdue wake no manager has taken the claim since holds off the next, while its manager may still be reaching a sidecar. */
-const OVERDUE_UNSTARTED_GRACE_MS = 30 * 60_000;
+export const OVERDUE_UNSTARTED_GRACE_MS = 30 * 60_000;
 
 /** Whether the claim's last overdue wake is still within its grace: a manager took the claim since, or none has yet. */
 function recentlyWoken(claim: Claim, now: Date): boolean {
@@ -1034,13 +1034,25 @@ export async function lastTakes(db: DB["db"]): Promise<{ tenantId: string; sourc
   });
 }
 
-/** When the oldest pull request mail of the tenant's host that no manager has taken was recorded, among those recorded after `after`. */
-export async function oldestPendingMail(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<string | undefined> {
+const EVENT_KEY = /^evt:[^:]+:([^#]+)#(\d+):/;
+
+/** The oldest pull request mail of each pull request on the tenant's host that no manager has taken, among those recorded after `after`. */
+export async function pendingMails(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<{ repo: string; number: number; at: string }[]> {
   const since = after === undefined ? undefined : sql`(${managerState.state}->>'receivedAt')::timestamptz > ${after}::timestamptz`;
   const ofHost = like(managerState.key, `evt:${source}:%`);
-  const [row] = await db.select({ at: sql<string | null>`min(${managerState.state}->>'receivedAt')` }).from(managerState)
+  const rows = await db.select({ key: managerState.key, at: sql<string>`${managerState.state}->>'receivedAt'` }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since));
-  return row?.at ?? undefined;
+  const oldest = new Map<string, { repo: string; number: number; at: string }>();
+  for (const row of rows) {
+    const match = EVENT_KEY.exec(row.key);
+    const repo = match?.[1];
+    const num = match?.[2];
+    if (repo === undefined || num === undefined) continue;
+    const pr = `${repo}#${num}`;
+    const prior = oldest.get(pr);
+    if (prior === undefined || Date.parse(row.at) < Date.parse(prior.at)) oldest.set(pr, { repo, number: Number(num), at: row.at });
+  }
+  return [...oldest.values()];
 }
 
 /** The tenant's pull requests whose claim holds a reviewer with no result. */

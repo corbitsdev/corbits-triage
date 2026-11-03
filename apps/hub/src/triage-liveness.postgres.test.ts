@@ -112,7 +112,7 @@ test("a mail no manager takes raises the alarm once past the alarm age, and a ta
     await hub.check();
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github"]);
-    expect(hub.stalled()).toMatchObject([{ source: "github" }]);
+    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1 }]);
 
     await hub.took(PR);
     await hub.check();
@@ -159,6 +159,7 @@ test("a head whose mail finds no listener stays stalled while the reconciler ret
     hub.advance(STALLED_AFTER_MS + 60_000);
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github"]);
+    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1, reason: triageStopped("github") }]);
 
     for (let retry = 0; retry < 3; retry++) {
       hub.advance(60 * 60_000);
@@ -263,5 +264,24 @@ test("a hub that sends no email says so once and still raises and clears the ala
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
     expect(hub.logged.filter((entry) => entry["msg"] === "triage_stall_not_emailed").map((entry) => entry["reason"])).toEqual(["SMTP_URL is not set"]);
+  });
+}, 60_000);
+
+test("a raised alarm clears without a newer take once its pull request is no longer waiting in the store, and ignores disabled repositories", async () => {
+  await withDatabase(async (db) => {
+    const queuedAt = new Date().toISOString();
+    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 2, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
+    const hub = stack(db, store);
+    await mailOf(PR, "d1", db);
+    await mailOf({ source: "github", repo: "acme/disabled", number: 1 }, "d2", db);
+
+    hub.advance(STALLED_AFTER_MS + 60_000);
+    await hub.check();
+    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1, reason: "run never started" }]);
+
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 5, firstSeenAt: queuedAt, queuedAt, updatedAt: hub.now().toISOString() }]);
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
+    expect(hub.stalled()).toEqual([]);
   });
 }, 60_000);

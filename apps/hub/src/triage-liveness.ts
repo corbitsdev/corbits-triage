@@ -11,10 +11,12 @@ import { REPO_SOURCES, repoPolicy, type RepoSource } from "@corbits/triage-contr
 import { repoRecords, sourceOf, triageNs, triageStateKey } from "./github/tenant-config.js";
 import { undelivered } from "./github/triage-queue.js";
 import type { TriageStateStore } from "./github/triage-state-store.js";
-import { lastTakes, oldestPendingMail } from "./manager-state.js";
+import { lastTakes, OVERDUE_UNSTARTED_GRACE_MS, pendingMails } from "./manager-state.js";
 
-/** A stalled host: since when its oldest waiting pull request waits, and when one of its managers last took one. */
-export type Stalled = { source: RepoSource; since: string; lastTakeAt?: string };
+/** A stalled host: since when its oldest waiting pull request waits, which pull request it is, how many wait, why if known, and when one of its managers last took one. */
+export type Stalled = { source: RepoSource; since: string; lastTakeAt?: string; pull?: string; count?: number; reason?: string };
+
+type WaitingPull = { pull: string; at: number; reason?: string };
 
 /** What the workspace's owners and admins are emailed when a host's alarm is raised, or cleared. */
 export type StallNotice = { to: string[]; workspace: string; source: RepoSource; since: string; cleared: boolean };
@@ -104,35 +106,69 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
    * When each waiting pull request of each host began to wait: a mail or queued head since the host's last take, and
    * any head whose mail did not go out, which no take can have picked up, until a run of it is seen.
    */
-  async function waiting(tenant: LivenessTenant): Promise<Map<RepoSource, number[]>> {
-    const byHost = new Map<RepoSource, number[]>();
+  async function waiting(tenant: LivenessTenant): Promise<Map<RepoSource, WaitingPull[]>> {
+    const byHost = new Map<RepoSource, WaitingPull[]>(REPO_SOURCES.map((source) => [source, []]));
+    const mails = new Map<RepoSource, { repo: string; number: number; at: string }[]>();
     for (const source of REPO_SOURCES) {
-      const mail = await oldestPendingMail(deps.db, tenant.id, source, deps.takes.last(tenant.id, source));
-      byHost.set(source, mail === undefined ? [] : [Date.parse(mail)]);
+      mails.set(source, await pendingMails(deps.db, tenant.id, source, deps.takes.last(tenant.id, source)));
     }
+    const now = deps.now().getTime();
     for (const record of repoRecords(triageNs(tenant.config))) {
       if (!record.connected || !repoPolicy(record).enabled) continue;
       const source = sourceOf(record);
       const taken = deps.takes.last(tenant.id, source);
-      const { rows } = await deps.store.load(tenant.id, triageStateKey(record));
+      const { rows, version } = await deps.store.load(tenant.id, triageStateKey(record));
+      const queued = new Set<number>();
       for (const row of rows) {
         const since = row.undeliveredSince ?? row.queuedAt;
         if (since === undefined || (row.status !== "queued" && !undelivered(row, source))) continue;
+        queued.add(row.number);
         const unsent = row.undeliveredSince !== undefined || undelivered(row, source);
-        if (unsent || taken === undefined || Date.parse(since) > Date.parse(taken)) byHost.get(source)?.push(Date.parse(since));
+        if (unsent || taken === undefined || Date.parse(since) > Date.parse(taken)) {
+          const reason = row.error ?? (row.attempts > 1 && row.runId === undefined ? "run never started" : undefined);
+          byHost.get(source)?.push({ pull: `${record.name}#${row.number}`, at: Date.parse(since), ...(reason !== undefined && { reason }) });
+        }
+      }
+      const hostMails = mails.get(source);
+      if (hostMails === undefined) continue;
+      for (const mail of hostMails) {
+        if (mail.repo !== record.name || queued.has(mail.number)) continue;
+        const at = Date.parse(mail.at);
+        if (now - at > OVERDUE_UNSTARTED_GRACE_MS) continue;
+        const ofPull = rows.filter((each) => each.number === mail.number);
+        const unstored = ofPull.length === 0 && version === null && rows.length === 0;
+        const newer = ofPull.length > 0 && ofPull.every((each) => at > Date.parse(each.updatedAt));
+        if (unstored || newer) byHost.get(source)?.push({ pull: `${record.name}#${mail.number}`, at });
       }
     }
     return byHost;
   }
 
-  /** Raises the host's alarm once it stalls, and clears it only once one of its managers opened a pass since and none waits. */
-  async function settle(tenantId: string, source: RepoSource, times: readonly number[]): Promise<void> {
+  function stalledOf(source: RepoSource, pulls: readonly WaitingPull[], taken: string | undefined): Stalled | undefined {
+    const now = deps.now().getTime();
+    const byPull = new Map<string, WaitingPull>();
+    for (const item of pulls) {
+      if (now - item.at < deps.stalledAfterMs) continue;
+      const prior = byPull.get(item.pull);
+      if (prior === undefined || item.at < prior.at) byPull.set(item.pull, item);
+    }
+    const overdue = [...byPull.values()].sort((a, b) => a.at - b.at || a.pull.localeCompare(b.pull));
+    const oldest = overdue[0];
+    if (oldest === undefined) return undefined;
+    return {
+      source,
+      since: new Date(oldest.at).toISOString(),
+      ...(taken !== undefined && { lastTakeAt: taken }),
+      pull: oldest.pull,
+      count: overdue.length,
+      ...(oldest.reason !== undefined && { reason: oldest.reason }),
+    };
+  }
+
+  /** Raises the host's alarm once it stalls, and clears it once nothing on the host waits past the alarm age. */
+  async function settle(tenantId: string, source: RepoSource, pulls: readonly WaitingPull[]): Promise<void> {
     const key = hostKey(tenantId, source);
-    const taken = deps.takes.last(tenantId, source);
-    const oldest = times.length === 0 ? undefined : Math.min(...times);
-    const stalled: Stalled | undefined = oldest === undefined || deps.now().getTime() - oldest < deps.stalledAfterMs
-      ? undefined
-      : { source, since: new Date(oldest).toISOString(), ...(taken !== undefined && { lastTakeAt: taken }) };
+    const stalled = stalledOf(source, pulls, deps.takes.last(tenantId, source));
     const raised = alarms.get(key);
     if (raised === undefined) {
       if (stalled === undefined) return;
@@ -141,7 +177,6 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       await email(tenantId, stalled, false);
       return;
     }
-    if (taken === undefined || Date.parse(taken) <= Date.parse(raised.since)) return;
     if (stalled !== undefined) {
       alarms.set(key, stalled);
       return;
