@@ -174,24 +174,39 @@ export function createLocalProcessSidecarProvisioner({
     }
   }
 
-  async function removeStored(sidecar: LocalSidecarManifest): Promise<void> {
-    await manifests.remove(sidecar.allocationId);
-    await fs.rm(sidecar.dataDir, { recursive: true, force: true });
+  async function removeAllocationDirs(allocationId: string): Promise<void> {
+    const prefix = `${allocationId}-`;
+    let entries: string[];
+    try {
+      entries = await fs.readdir(dataRoot);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (entry.startsWith(prefix)) await fs.rm(path.join(dataRoot, entry), { recursive: true, force: true });
+    }
+  }
+
+  async function removeStored(allocationId: string): Promise<void> {
+    await manifests.remove(allocationId);
+    await removeAllocationDirs(allocationId);
   }
 
   async function stopAndRemove(sidecar: LiveSidecar): Promise<void> {
     await stopProcess(sidecar.process);
     if (live.get(sidecar.allocationId) === sidecar) live.delete(sidecar.allocationId);
-    await removeStored(sidecar);
+    await removeStored(sidecar.allocationId);
   }
 
-  // Retired at once, so its work is placed again without waiting out a reconnect window. A report that fails keeps the
-  // manifest, so the next boot retires the sidecar.
+  // Retired at once, so its work is placed again without waiting out a reconnect window. Its state directory goes now;
+  // a report that fails keeps only the manifest, so the next boot retires the sidecar.
   async function retireExited(sidecar: LiveSidecar): Promise<void> {
     if (live.get(sidecar.allocationId) !== sidecar) return;
     live.delete(sidecar.allocationId);
+    await removeAllocationDirs(sidecar.allocationId);
     await attached().sidecarStopped(sidecar.sidecarId, { endReconnectWindow: true });
-    await removeStored(sidecar);
+    await manifests.remove(sidecar.allocationId);
     log({ level: "warn", msg: "local_sidecar_retired", allocationId: sidecar.allocationId, sidecarId: sidecar.sidecarId });
   }
 
@@ -268,6 +283,7 @@ export function createLocalProcessSidecarProvisioner({
     let started: LiveSidecar | undefined;
     try {
       await fs.mkdir(dataRoot, { recursive: true });
+      await removeAllocationDirs(request.allocationId);
       dataDir = await fs.mkdtemp(path.join(dataRoot, `${request.allocationId}-`));
       const stored = { allocationId: request.allocationId, generation: request.generation, sidecarId: request.sidecarId, dataDir };
       await manifests.write(stored);
@@ -282,7 +298,7 @@ export function createLocalProcessSidecarProvisioner({
       return { kind: "accepted", externalRef: String(handle.pid) };
     } catch (error) {
       if (started !== undefined) await stopAndRemove(started);
-      else if (dataDir !== undefined) await removeStored({ allocationId: request.allocationId, generation: request.generation, sidecarId: request.sidecarId, dataDir });
+      else if (dataDir !== undefined) await removeStored(request.allocationId);
       return { kind: "rejected", code: "spawn_failed", message: errorText(error), retryable: true };
     } finally {
       reserved.delete(request.allocationId);
@@ -299,6 +315,7 @@ export function createLocalProcessSidecarProvisioner({
     // A late destroy naming a superseded identity must not stop the replacement that owns the generation now.
     if (existing !== undefined && existing.sidecarId !== request.sidecarId) return { kind: "destroyed", cleanup: "confirmed" };
     if (existing !== undefined) await stopAndRemove(existing);
+    else await removeStored(request.allocationId);
     const earlier = fence?.generation === request.generation ? fence.sidecarIds : [];
     const sidecarIds = [...new Set([...earlier, request.sidecarId, ...(existing === undefined ? [] : [existing.sidecarId])])];
     fences.set(request.allocationId, { generation: request.generation, sidecarIds });
