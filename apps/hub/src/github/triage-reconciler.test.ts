@@ -703,18 +703,20 @@ describe("triage reconciler", () => {
     expect(await reconcile()).toEqual({ retry: true });
   });
 
-  test("a build poll or waiting-CI read that hits the GitHub rate limit pauses the pass until resetAt without logging build_status_unread", async () => {
+  test("a build poll or waiting-CI read that hits the GitHub rate limit pauses the pass until resetAt without logging build_status_unread or starving other heads", async () => {
     const resetAt = at(5).getTime();
     const rateLimited = new GithubRateLimited("1", resetAt);
     const waiting = { ...current(1), repo: REPO, number: 1, state: "awaiting-review", actor: "system", humanGated: false, checks: [{ check: "ci-green", kind: "machine", result: "unconfirmed" }] };
-    const polled = harness(runsOf([1, ran("run_1", 1, waiting)]), [head(1)], { recorded: [recordedOf("run_1", waiting)], headChecksError: rateLimited });
+    const polled = harness(runsOf([1, ran("run_1", 1, waiting)]), [head(1), head(2)], { recorded: [recordedOf("run_1", waiting)], headChecksError: rateLimited });
     expect(await polled.reconcile()).toEqual({ retry: false, retryAt: resetAt });
+    expect(mailedNumbers(polled.delivered)).toEqual([2]);
     expect(polled.logged.some((entry) => entry["msg"] === "build_status_unread")).toBe(false);
     expect(polled.logged).toContainEqual(expect.objectContaining({ msg: "triage_github_rate_limited", resetAt: new Date(resetAt).toISOString() }));
 
     const since = at(-5).toISOString();
-    const waitingCi = harness(runsOf([1, { runId: "run_1", source: "github", status: "completed", startedAt: since, waitingSince: since }]), [head(1)], { headChecksError: rateLimited });
+    const waitingCi = harness(runsOf([1, { runId: "run_1", source: "github", status: "completed", startedAt: since, waitingSince: since }]), [head(1), head(2)], { headChecksError: rateLimited });
     expect(await waitingCi.reconcile()).toEqual({ retry: false, retryAt: resetAt });
+    expect(mailedNumbers(waitingCi.delivered)).toEqual([2]);
     expect(waitingCi.logged.some((entry) => entry["msg"] === "build_status_unread")).toBe(false);
     expect(waitingCi.logged).toContainEqual(expect.objectContaining({ msg: "triage_github_rate_limited", resetAt: new Date(resetAt).toISOString() }));
   });
