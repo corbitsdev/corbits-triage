@@ -37,19 +37,21 @@ export function routeOf(path: string): string {
 }
 
 /** When GitHub's limit on the response lifts, on this clock: GitHub's reset is on its own, so it is read against its `Date`. */
-async function limitedUntil(response: Response, now: number): Promise<number | undefined> {
+async function limitedUntil(response: Response, now: number): Promise<{ until: number; secondary: boolean } | undefined> {
   if (response.status !== 403 && response.status !== 429) return undefined;
   const retryAfter = response.headers.get("retry-after");
   if (retryAfter !== null) {
     const seconds = Number(retryAfter);
-    return now + (Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : UNTIMED_LIMIT_MS);
+    return { until: now + (Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : UNTIMED_LIMIT_MS), secondary: true };
   }
   if (response.headers.get("x-ratelimit-remaining") === "0") {
     const reset = Number(response.headers.get("x-ratelimit-reset")) * 1000;
     const githubNow = Date.parse(response.headers.get("date") ?? "");
-    return Number.isFinite(githubNow) ? now + reset - githubNow : reset;
+    return { until: Number.isFinite(githubNow) ? now + reset - githubNow : reset, secondary: false };
   }
-  if (response.status === 429 || /secondary rate limit/i.test(await response.clone().text())) return now + UNTIMED_LIMIT_MS;
+  if (response.status === 429 || /secondary rate limit/i.test(await response.clone().text())) {
+    return { until: now + UNTIMED_LIMIT_MS, secondary: true };
+  }
   return undefined;
 }
 
@@ -66,39 +68,48 @@ export function createGithubUsage(now: () => number = Date.now) {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  function refuseWhileLimited(installation: string): void {
-    const until = blockedUntil.get(installation);
+  function poolOf(installation: string, route: string): string {
+    return route === "/graphql" ? `${installation}/graphql` : installation;
+  }
+
+  function refuseWhileLimited(installation: string, route: string): void {
+    const pool = poolOf(installation, route);
+    const until = blockedUntil.get(pool);
     if (until === undefined) return;
     if (until <= now()) {
-      blockedUntil.delete(installation);
+      blockedUntil.delete(pool);
       return;
     }
-    bump(blocked, installation);
+    bump(blocked, pool);
     throw new GithubRateLimited(installation, until);
   }
 
-  async function observe(installation: string, response: Response): Promise<void> {
+  async function observe(installation: string, route: string, response: Response): Promise<void> {
+    const pool = poolOf(installation, route);
     const remaining = response.headers.get("x-ratelimit-remaining");
     const reset = response.headers.get("x-ratelimit-reset");
     if (remaining !== null && reset !== null) {
-      rateLimits.set(installation, { remaining: Number(remaining), resetAt: new Date(Number(reset) * 1000).toISOString() });
+      rateLimits.set(pool, { remaining: Number(remaining), resetAt: new Date(Number(reset) * 1000).toISOString() });
     }
-    const until = await limitedUntil(response, now());
-    if (until !== undefined && until > now()) {
-      blockedUntil.set(installation, until);
-      throw new GithubRateLimited(installation, until);
+    const limit = await limitedUntil(response, now());
+    if (limit !== undefined && limit.until > now()) {
+      for (const target of limit.secondary ? [installation, `${installation}/graphql`] : [pool]) {
+        blockedUntil.set(target, Math.max(blockedUntil.get(target) ?? 0, limit.until));
+      }
+      throw new GithubRateLimited(installation, limit.until);
     }
   }
 
   return {
     gate(gh: GithubFetch): GithubFetch {
       return async function gatedFetch(path, init) {
+        const route = routeOf(path);
         const installation = new Headers(init?.headers).get(INSTALLATION_SELECTOR_HEADER);
-        if (installation !== null) refuseWhileLimited(installation);
-        bump(routes, `${init?.method ?? "GET"} ${routeOf(path)}`);
+        if (installation !== null) refuseWhileLimited(installation, route);
+        bump(routes, `${init?.method ?? "GET"} ${route}`);
         bump(installations, installation ?? UNSELECTED);
         const response = await gh(path, init);
-        if (installation !== null) await observe(installation, response);
+        if (installation !== null) await observe(installation, route, response);
         return response;
       };
     },
