@@ -4,15 +4,14 @@ import { isFromTriageSender, triggerRequestOf, type UnreadLines } from "@corbits
 import { parseFindings, samePath, type Finding } from "../findings.js";
 import { Effort, ROLES, type CodeReviewProfile, type Role } from "../profile.js";
 import { promptAttribute, promptText } from "../prompt-text.js";
-import { BUDGET_EXHAUSTED, budgetTag, Checkout, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
+import { BUDGET_EXHAUSTED, budgetTag, Checkout, type CheckedOut, DEFAULT_BUDGET, DEFAULT_CHECK_BUDGET, DEFAULT_CHECK_TOTAL, repositoryTag } from "./checkout.js";
 import { splitBundle } from "../diff-parts.js";
 
 const MAX_OUTPUT_TOKENS = 16_000;
 const ReviewRequest = type({
-  kind: "'code-review'", title: "string", description: "string", diff: "string", checkout: Checkout,
+  kind: "'code-review'", number: "number.integer > 0", title: "string", description: "string", checkout: Checkout,
   "efforts?": { "diffFinder?": Effort, "check?": Effort },
   "budgets?": { "check?": "number.integer > 0", "checkTotal?": "number.integer > 0" },
-  "number?": "number.integer > 0",
 });
 type ReviewRequest = typeof ReviewRequest.infer;
 
@@ -26,6 +25,7 @@ interface Reported extends Finding {
 interface Steps {
   $prefix?: string;
   reviewInput?: { output: ReviewInput };
+  checkout?: { output: CheckedOut };
   find?: { output: unknown[] };
   candidates?: { output: Candidates };
   checks?: { output: Checks };
@@ -84,8 +84,9 @@ export function reviewInputFor({ efforts }: Pick<CodeReviewProfile, "efforts">) 
 /** Each file is assigned independently; only an oversized escaped message splits its patch. */
 export async function findersInput(steps: Steps) {
   const { request } = stepOutput(steps, "reviewInput");
+  const { diff } = stepOutput(steps, "checkout");
   const bundles: string[] = [];
-  for (const file of diffFiles(request.diff)) {
+  for (const file of diffFiles(diff)) {
     if (file.status === "deleted") continue;
     function message(text: string) {
       return `${repositoryTag(request.checkout)}${budgetTag(DEFAULT_BUDGET)}${aboutPullRequest(request)}\n\n<diff path="${promptAttribute(file.path)}">\n${promptText(text)}\n</diff>\n\nReview the diff and report the defects this change introduces.`;
@@ -133,9 +134,9 @@ export async function candidates(steps: Steps): Promise<Candidates> {
   const found = outputs.flatMap(findingsOf);
   return { found, kept: withoutDuplicates(found), budgetExhausted: outputs.some((output) => replyOf(output).startsWith(BUDGET_EXHAUSTED)), complete: true, unread: [], unreadFiles: 0 };
 }
-function checkMessage(request: ReviewRequest, finding: Reported, budget: number): string {
+function checkMessage(request: ReviewRequest, diff: string, finding: Reported, budget: number): string {
   const claim = { title: finding.title, why: finding.why, trigger: finding.trigger };
-  const hunks = hunksAt(request.diff, finding);
+  const hunks = hunksAt(diff, finding);
   return [
     `${repositoryTag(request.checkout)}${budgetTag(budget)}${aboutPullRequest(request)}`,
     `<finding path="${promptAttribute(finding.path)}" start="${finding.start}" end="${finding.end}">\n${promptText(JSON.stringify(claim, null, 2))}\n</finding>`,
@@ -145,6 +146,7 @@ function checkMessage(request: ReviewRequest, finding: Reported, budget: number)
 }
 export async function checks(steps: Steps): Promise<Checks> {
   const { request, inference } = stepOutput(steps, "reviewInput");
+  const { diff } = stepOutput(steps, "checkout");
   const { kept } = stepOutput(steps, "candidates");
   const findings = kept.map((finding) => ({ ...finding, agreement: { finders: 1, reports: finding.reports } })).sort((a, b) => a.priority - b.priority);
   const perCheck = request.budgets?.check ?? DEFAULT_CHECK_BUDGET;
@@ -154,7 +156,7 @@ export async function checks(steps: Steps): Promise<Checks> {
     const budget = Math.min(perCheck, left);
     if (budget === 0) break;
     left -= budget;
-    checked.push({ text: checkMessage(request, finding, budget), inference: inference.check });
+    checked.push({ text: checkMessage(request, diff, finding, budget), inference: inference.check });
   }
   return { findings, checks: checked };
 }

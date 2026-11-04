@@ -1060,20 +1060,28 @@ review
 (`CODE_REVIEW_PROVIDERS` in `triage-contracts`, which lists Anthropic). The
 manager deploys the code review workflow in a sandbox and posts its result. The
 hub attaches the review request to a pull request mail whose `codeReview` is on, which the policy
-file's `code-review` block or Review again sets, with the host's whole unified
-diff; on GitHub a diff too large for the diff API is built from the files'
-patches. The title and description are read as the facts step
+file's `code-review` block or Review again sets: the pull request's number,
+head, title and description, never the diff, so the mail stays small whatever
+the diff's size. The title and description are read as the facts step
 reads them (`shownBody` and `visibleText` in `@corbits/triage-contracts`), so
 hidden text never reaches the review. `…/run` (Review again) records a pull
 request mail for the current head with code review on for everyone, on any
 verdict and whatever the rules say, and names it with an `again` id. The
 manager deploys one more review of a head for each `again` it has not
 reviewed, even where an earlier review of the head settled.
-Code review only reads: a checkout action downloads the head through the host
-credential to `<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>` and
-writes the whole diff beside it in `<sha>.diff`, a folder made afresh outside
-the tree the pull request controls (a link or file in the way fails the
-action). Repository reads are confined to the checkout. Checkout still writes
+Code review only reads: a checkout action reads the pull request's whole
+unified diff through the host credential with the readers the hub uses
+(`readPrDiff` in `@corbits/github-reads` and
+`@corbits/bitbucket-datacenter-reads`; on GitHub a diff too large for the diff
+API is built from the files' patches), reading the pull request's head before
+and after. A head that is not the request's fails the action ("the head
+moved"), and the review reports that it did not finish. A host answer that is
+not a unified diff fails it the same way. It then downloads the head to
+`<SIDECAR_DATA_DIR>/checkouts/<host>/<owner>/<repo>/<sha>` and writes the diff
+beside it in `<sha>.diff`, a folder made afresh outside the tree the pull
+request controls (a link or file in the way fails the action). Its output
+holds the diff, which `lint`, `findersInput` and `checks` read, and the diff's
+hash. Repository reads are confined to the checkout. Checkout still writes
 per-file patch parts of at most 1,500,000 bytes and `/diff/index.jsonl`, but the
 finder does not page them. Code builds one finder message per nondeleted
 changed file, splitting only when needed to fit 120,000 UTF-8 bytes for the
@@ -1134,12 +1142,12 @@ patterns are applied before it runs, and the absolute file paths follow `--`. A 
 incomplete. A repository with no config is not linted. A lint that fails is
 `incomplete`, never an empty list.
 
-Each request carries `diffHash`, a SHA-256 of the full diff, `index` lines
-included, so a base change to a file the diff touches, or a binary change,
-changes it. A diff with no `index` line, as GitHub's rebuilt from the file
-list, is sent unhashed. A manager's code review reports the hash with its
-review. `GET …/code-review` with `head` answers `carriedTo` when that head's
-diff hashes the same as the newest finished review's, reading that head's diff
+A manager's code review reports `diffHash` with its review: a SHA-256 of the
+full diff its checkout read, `index` lines included, so a base change to a
+file the diff touches, or a binary change, changes it. A diff with no `index`
+line, as GitHub's rebuilt from the file list, is reported unhashed.
+`GET …/code-review` with `head` answers `carriedTo` when that head's diff
+hashes the same as the newest finished review's, reading that head's diff
 once; a failed read is not retried for five minutes.
 The review is then sent to GitHub at that head, unless it was sent on its own,
 whose comments stay on the same lines. A diff that can't be read and `…/run`

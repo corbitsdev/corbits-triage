@@ -59,6 +59,11 @@ export async function readPrDiff(bb: BitbucketFetch, repo: string, number: numbe
   return res.text();
 }
 
+/** The pull request's head commit, without the author, mergeability and diff-stat reads getPr makes. */
+export async function readPrHead(bb: BitbucketFetch, repo: string, number: number): Promise<string> {
+  return PullRequest.assert(await json(bb, `${repoPath(repo)}/pull-requests/${number}`)).fromRef.latestCommit;
+}
+
 /** A closed pull request has no merge to check, so its mergeability is null. */
 export async function getPr(bb: BitbucketFetch, repo: string, number: number) {
   const pr = PullRequest.assert(await json(bb, `${repoPath(repo)}/pull-requests/${number}`));

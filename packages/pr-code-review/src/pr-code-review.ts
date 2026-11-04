@@ -17,8 +17,8 @@ const MODEL_RETRY = { maxAttempts: MODEL_ATTEMPTS, initialBackoffMs: 5_000 };
 export const CODE_REVIEW_PLACEMENT = { capabilities: [{ capability: "isolation:workload", effect: "require" as const }] };
 
 /**
- * Checks the head out on the sidecar through the credential bound to it for each of `sources` and writes the diff into
- * it; its output names the folder.
+ * Reads the pull request's diff and checks the head out on the sidecar through the credential bound to it for each of
+ * `sources`; its output is a `CheckedOut`.
  */
 export function checkoutAction(sources: Sources, input: Selector, after: readonly string[]) {
   return action({ handler: "checkout", input, after, credentials: sources, effect: { requires: [READ_REPOSITORY] }, timeout: TIMEOUT });
@@ -48,20 +48,16 @@ export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { pr
   }
   return {
     [id("reviewInput")]: action({ handler: "reviewInput", input: request, ...(after && { after }) }),
-    [id("checkout")]: checkoutAction(sources, { merge: [outputOf("reviewInput", "request.checkout"), { project: outputOf("reviewInput", "request"), fields: ["diff"] }] }, [id("reviewInput")]),
-    [id("lint")]: action({
-      handler: "lint",
-      input: { merge: [{ project: { from: `steps.${id("checkout")}.output` }, fields: ["path"] }, { project: outputOf("reviewInput", "request"), fields: ["diff"] }] },
-      after: [id("checkout")], timeout: TIMEOUT,
-    }),
-    [id("findersInput")]: action({ handler: "findersInput", input: stepsOf("reviewInput"), after: [id("reviewInput")] }),
+    [id("checkout")]: checkoutAction(sources, { merge: [outputOf("reviewInput", "request.checkout"), { project: outputOf("reviewInput", "request"), fields: ["number"] }] }, [id("reviewInput")]),
+    [id("lint")]: action({ handler: "lint", input: { project: { from: `steps.${id("checkout")}.output` }, fields: ["path", "diff"] }, after: [id("checkout")], timeout: TIMEOUT }),
+    [id("findersInput")]: action({ handler: "findersInput", input: stepsOf("reviewInput", "checkout"), after: [id("checkout")] }),
     [id("find")]: map({
       over: outputOf("findersInput", "bundles"),
       step: step({ agent: finderAgent(), input: { from: "trigger.payload" }, inference: outputOf("reviewInput", "inference.diffFinder"), timeout: TIMEOUT, retry: MODEL_RETRY }),
-      after: [id("findersInput"), id("checkout")],
+      after: [id("findersInput")],
     }),
     [id("candidates")]: action({ handler: "candidates", input: stepsOf("reviewInput", "find"), after: [id("find")] }),
-    [id("checks")]: action({ handler: "checks", input: stepsOf("reviewInput", "candidates"), after: [id("candidates")] }),
+    [id("checks")]: action({ handler: "checks", input: stepsOf("reviewInput", "checkout", "candidates"), after: [id("candidates")] }),
     [id("check")]: map({
       over: outputOf("checks", "checks"),
       step: step({ agent: checkAgent, input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: TIMEOUT, retry: MODEL_RETRY }),

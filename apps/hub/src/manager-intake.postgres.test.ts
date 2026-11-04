@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { APPROVE_DO_KIND, emptyPack, repoPolicy } from "@corbits/triage-contracts";
-import type { PullRequestToReview } from "./pull-request-reader.js";
+import type { PullRequestHead } from "./pull-request-reader.js";
 import { mailPayload } from "./github/bridge.js";
 import { createPauseGate } from "./github/pr-workflow.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
@@ -19,7 +19,7 @@ const LISTENER = "run_listener@intake.test";
 const RECORD = { name: "acme/widgets", connected: true, enabled: true };
 const POLICY = repoPolicy(RECORD);
 const STORED = { pack: emptyPack(RECORD.name), automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } };
-const PULL: PullRequestToReview = { headSha: "h1", open: true, draft: false, title: "Add the flag", description: "Adds it.", labels: [], diff: "diff --git a/f b/f\n+x" };
+const PULL: PullRequestHead = { headSha: "h1", open: true, draft: false, title: "Add the flag", description: "Adds it.", labels: [] };
 
 type Db = ReturnType<typeof createDB>["db"];
 

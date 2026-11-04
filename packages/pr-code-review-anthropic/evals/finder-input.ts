@@ -10,6 +10,7 @@ const MAX_OUTPUT_TOKENS = 16_000;
 
 const FinderRequest = type({
   kind: "'code-review'",
+  number: "number.integer > 0",
   title: "string",
   description: "string",
   diff: "string",
@@ -24,10 +25,10 @@ function render(request: FinderRequest): string {
   return request.checkout ? `${repositoryTag(request.checkout)}${budgetTag(request.budget ?? DEFAULT_BUDGET)}${text}` : text;
 }
 
-/** The finder's user message from the trigger mail's request, the per-call options its step infers with, and the checkout it reads with the diff written into it, if any. */
+/** The finder's user message from the trigger mail's request, the per-call options its step infers with, and the checkout it reads with the pull request's diff written beside it, if any. */
 export async function finderInput(input: unknown) {
   const request = FinderRequest(triggerRequestOf(input));
   if (request instanceof type.errors) throw new Error(`finderInput: invalid request: ${request.summary}`);
   const { checkout } = request;
-  return { text: render(request), inference: { effort: request.effort, maxTokens: MAX_OUTPUT_TOKENS }, withRepo: checkout !== undefined, ...(checkout && { checkout: { ...checkout, diff: request.diff } }) };
+  return { text: render(request), inference: { effort: request.effort, maxTokens: MAX_OUTPUT_TOKENS }, withRepo: checkout !== undefined, ...(checkout && { checkout: { ...checkout, number: request.number } }) };
 }

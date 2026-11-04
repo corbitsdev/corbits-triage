@@ -320,7 +320,7 @@ export async function modelStack(repo: string, { pack, automatic, review }: { pa
     routable,
     async readPull(_tenantId, _record, number) {
       const pull = github.pull(repo, number);
-      return { title: pull.title, description: pull.body, headSha: pull.head, draft: pull.draft === true, open: true, diff: "" };
+      return { title: pull.title, description: pull.body, headSha: pull.head, draft: pull.draft === true, open: true };
     },
     openHeads: function openHeads() {
       throw new Error("no backlog in this stack");

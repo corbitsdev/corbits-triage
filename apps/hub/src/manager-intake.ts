@@ -8,7 +8,7 @@ import { schema, type DB } from "@intx/db";
 import { isRunTriggerUnroutable } from "@corbits/webhooks";
 import { asRecord } from "@corbits/common";
 import { APPROVE_DO_KIND, repoSourceOf, type RepoSource } from "@corbits/triage-contracts";
-import { reviewRequestOf, type PullRequestToReview } from "./pull-request-reader.js";
+import { reviewRequestOf, type PullRequestHead } from "./pull-request-reader.js";
 import { DeploymentNotReadyError, ListenerUnroutedError, RunUnavailableError } from "./github/deployment.js";
 import { repoRecords, sourceOf, triageNs, type RepoRecord } from "./github/tenant-config.js";
 import { askDeploy, dropReviewer, liveManager, overduePulls, recordEvent, recordOverdueWake, reviewedPulls, superseded, withdrawDeploy, type PullRequestRef } from "./manager-state.js";
@@ -19,8 +19,8 @@ export type ManagerIntakeDeps = {
   listener: (tenantId: string, source: RepoSource) => Promise<string | undefined>;
   /** Whether the hub routes mail to the listener at this address now. */
   routable: (address: string) => Promise<boolean>;
-  /** The pull request as its host shows it now, with its diff. */
-  readPull: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestToReview>;
+  /** The pull request as its host shows it now. */
+  readPull: (tenantId: string, record: RepoRecord, number: number) => Promise<PullRequestHead>;
   /** The repository's open pull requests and their heads, which a backlog mail stands for. */
   openHeads: (tenantId: string, record: RepoRecord) => Promise<{ number: number; headSha: string; draft: boolean }[]>;
   /** The mail as a GitHub workspace's runs read it, naming the App's bot account. */

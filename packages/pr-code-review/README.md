@@ -11,14 +11,17 @@ Every file under `src/` is a subpath export (`@corbits/pr-code-review/pr-code-re
 `codeReviewSteps(agents, sources, { prefix, request, after })` places the same steps in another definition, every id
 under `prefix`, as `codeReviewReviewer`, the review a pull request's manager deploys, does.
 
-The request is `{ kind: "code-review", title, description, diff, checkout }`. Optional fields are `number`,
+The request is `{ kind: "code-review", number, title, description, checkout }`, never the diff. Optional fields are
 `efforts.diffFinder`, `efforts.check`, `budgets.check` (100,000 billable tokens per check), and
 `budgets.checkTotal` (400,000 across all checks). Policy paths gate the whole review upstream; this workflow does not
 filter individual files.
 
 ### Process
 
-1. **checkout** puts the head in its own sidecar and writes the diff beside it, outside the pull request's tree.
+1. **checkout** reads the pull request's diff from the host, reading the head before and after and failing when either
+   is not `checkout.sha`, puts the head in its own sidecar and writes the diff beside it, outside the pull request's
+   tree. It returns the folder, the diff, which the later steps read, and the diff's hash when the diff has `index`
+   lines.
    On-disk patches remain split at 1,500,000 bytes. **lint** runs unchanged after checkout; its findings are not posted
    and are not finder input.
 2. **findersInput** assigns each non-deleted file independently. Its escaped user message includes the patch, title,
