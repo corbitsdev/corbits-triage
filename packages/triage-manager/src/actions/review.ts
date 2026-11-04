@@ -12,6 +12,8 @@ import { Reviewer, storedReviewer, TakeOutput } from "./manager.js";
 
 /** How long the manager waits for a code review it deployed, from its deploy to its report. */
 export const REVIEW_DEADLINE_MS = 60 * 60_000;
+/** How many code reviews of one head may fail before later passes on it deploy no other. */
+const REVIEW_ATTEMPTS = 2;
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES), "for?": "string[]", "triage?": "string[]", "paths?": "string[]", "provider?": "string", "profile?": "string", "again?": "string > 0" });
 type CodeReviewPart = typeof CodeReviewPart.infer;
@@ -87,6 +89,16 @@ function limited(part: CodeReviewPart): boolean {
 
 type Scope = { open: boolean; skipped?: string };
 
+function failed(reviewer: Reviewer): boolean {
+  return asRecord(reviewer.result)?.["failed"] !== undefined;
+}
+
+/** Whether a review of the head is still out, and whether its reviews settled it: one finished, or `REVIEW_ATTEMPTS` failed. */
+function attempts(own: readonly Reviewer[]): { out: boolean; settled: boolean } {
+  const settled = own.some((reviewer) => reviewer.result !== undefined && !failed(reviewer)) || own.filter(failed).length >= REVIEW_ATTEMPTS;
+  return { out: own.some((reviewer) => reviewer.result === undefined), settled };
+}
+
 /**
  * Whether code review runs past triage's rules and the policy's `for` and `when`, and why not when they leave it out. A
  * pull request triage could not read is not left out: its review waits while `for` or `when` could leave it out.
@@ -112,7 +124,8 @@ function ruledItem(items: readonly object[]): Ruled {
  * triage's rules let it past as its `when.rules` says, the hub read the head's review request and the release publishes
  * a code review for the host. The pass that deploys it, and every pass before its review is in, posts nothing, so the
  * verdict and the review go up together; one that reported a failure, ran past its deadline or whose run ended posts the
- * verdict alone. A later pass on a head whose review settled posts again and deploys no other. A Review again names
+ * verdict alone. A later pass on a head whose review finished, or failed `REVIEW_ATTEMPTS` times, posts again and deploys
+ * no other; one whose review failed fewer times deploys it again. A Review again names
  * itself as `again`, so its head is reviewed once more for it, whatever earlier reviews of the head said. A pull request
  * that failed rules, `for` or `when` leave out is not reviewed, and `skipped` says why. A pull request no longer open is
  * neither reviewed nor waited for: the pass posts at once, and its review is not posted.
@@ -130,11 +143,12 @@ export async function reviewScope(input: unknown): Promise<{ deploy: boolean; po
   if (scope.skipped !== undefined) return { deploy: false, post: true, reviewed, skipped: scope.skipped };
   const published = reviewerFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), part instanceof type.errors ? undefined : providerOf(part)) !== undefined;
   const own = reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.head === head && (again === undefined || reviewer.again === again));
-  const settled = own.some((reviewer) => reviewer.result !== undefined || Date.parse(reviewer.deadline) <= Date.now());
+  const { out, settled } = attempts(own);
+  const overdue = own.some((reviewer) => reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
   // A report on this pass is from an earlier review until the one deployed for this Review again is out.
   const reported = (review !== undefined || reviewFailed !== undefined) && (again === undefined || own.length > 0);
-  if (!reviewed || !published || reported || settled || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true, reviewed };
-  return { deploy: own.length === 0, post: false, reviewed };
+  if (!reviewed || !published || reported || overdue || settled || taken?.["codeReviewRequest"] === undefined) return { deploy: false, post: true, reviewed };
+  return { deploy: !out, post: false, reviewed };
 }
 
 /**
@@ -142,7 +156,7 @@ export async function reviewScope(input: unknown): Promise<{ deploy: boolean; po
  * policy turns it on, its `when` leaves out no verdict, which the judge has still to decide, and runs it whatever the
  * rules say (`rules: any`), since the judge's own rules could still shut a `rules: pass` gate; `for`
  * and `when.paths` take the pull request in, the hub read the head's review request, the release publishes a code
- * review for the host, and no review of the head is out or in. Its report is posted with the final verdict.
+ * review for the host, and no review of the head is out or settled it. Its report is posted with the final verdict.
  */
 export async function reviewEarly(input: unknown): Promise<{ deploy: boolean }> {
   const parsed = EarlyInput(input);
@@ -157,8 +171,8 @@ export async function reviewEarly(input: unknown): Promise<{ deploy: boolean }> 
   if ("error" in item || outOfScope(part, item, undefined) !== undefined) return no;
   if (reviewerFor(repoSourceOf(managerMailOf(parsed.payload).pullRequest.source), providerOf(part)) === undefined) return no;
   const reported = review !== undefined || reviewFailed !== undefined;
-  const own = reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head);
-  return { deploy: !reported && !own && taken?.["codeReviewRequest"] !== undefined };
+  const { out, settled } = attempts(reviewers.filter((reviewer) => reviewer.kind === "code-review" && reviewer.head === head));
+  return { deploy: !reported && !out && !settled && taken?.["codeReviewRequest"] !== undefined };
 }
 
 const DeployInput = type({ payload: "unknown", take: { output: TakeOutput } });
@@ -202,7 +216,7 @@ function delivered(reply: string): boolean {
 /**
  * The review becomes a reviewer to wait for once its mail went. A mail that failed, because the run ended before it
  * was ready or its deadline passed, leaves the pass to post the verdict without code review, and the review stays
- * failed on its head, so a later pass on the head deploys no other.
+ * failed on its head, an attempt that counts toward `REVIEW_ATTEMPTS`.
  */
 export async function reviewMailed(input: unknown): Promise<{ reviewer: Reviewer; post: boolean }> {
   const parsed = MailedInput(input);
