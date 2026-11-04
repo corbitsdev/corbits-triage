@@ -9,7 +9,6 @@ const ReviewMail = type({
   tenantId: "string > 0",
   number: "number.integer > 0",
   checkout: { source: type.enumerated(...REPO_SOURCES), repo: "string > 0", sha: "string > 0" },
-  "diffHash?": "string > 0",
 });
 
 function reviewMailOf(payload: unknown) {
@@ -24,7 +23,9 @@ export async function reviewRequest(input: unknown): Promise<{ request: Record<s
   return { request: reviewMailOf(input).request };
 }
 
-const ReportInput = type({ payload: "unknown", "review?": { output: "unknown" } });
+const ReportInput = type({ payload: "unknown", "checkout?": { output: "unknown" }, "review?": { output: "unknown" } });
+/** The hash of the diff the review read, which its checkout leaves out for a diff with no `index` line. */
+const Hashed = type({ diffHash: "string > 0" });
 const Recorded = type({ recorded: "boolean" });
 
 /** Stock runs a step whose dependencies failed, so a review that did not finish leaves no output, or one that is not a review. */
@@ -37,9 +38,11 @@ const NOT_FINISHED = "the review did not finish";
 export async function report(input: unknown, ctx: EffectContext, _signal: AbortSignal): Promise<{ recorded: boolean }> {
   const parsed = ReportInput(input);
   if (parsed instanceof type.errors) throw new Error(`report: ${parsed.summary}`);
-  const { tenantId, number, checkout, diffHash } = reviewMailOf(parsed.payload).mail;
+  const { tenantId, number, checkout } = reviewMailOf(parsed.payload).mail;
   const review = CodeReviewOutput(parsed.review?.output);
-  const outcome = review instanceof type.errors ? { failed: NOT_FINISHED } : { result: review, ...(diffHash && { diffHash }) };
+  const hashed = Hashed(parsed.checkout?.output);
+  const hash = hashed instanceof type.errors ? undefined : hashed.diffHash;
+  const outcome = review instanceof type.errors ? { failed: NOT_FINISHED } : { result: review, ...(hash && { diffHash: hash }) };
   const result = { source: checkout.source, repo: checkout.repo, number, kind: "code-review", head: checkout.sha, ...outcome };
   return answered(await callHub(ctx, "report", tenantPath(tenantId, "/manager/reviewer-result"), "POST", result), "report", Recorded);
 }

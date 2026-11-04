@@ -117,6 +117,23 @@ function ghGithub(): typeof fetch {
   } as typeof fetch;
 }
 
+/** The number every case's pull request is read under: the stand-in caseGithub answers it. */
+const CASE_NUMBER = 1;
+
+/**
+ * `github` with the case's pull request read as it was labelled, its head and its diff, which the review reads before it
+ * checks the head out; every other read goes to `github`.
+ */
+function caseGithub(github: typeof fetch, testCase: Case): typeof fetch {
+  const { repo, sha } = headOf(testCase.id);
+  return async function caseRead(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+    const request = input instanceof Request ? input : new Request(String(input), init);
+    if (new URL(request.url).pathname !== `/repos/${repo}/pulls/${CASE_NUMBER}`) return github(input, init);
+    if (request.headers.get("accept") === "application/vnd.github.diff") return new Response(testCase.diff);
+    return Response.json({ number: CASE_NUMBER, state: "open", head: { sha } });
+  } as typeof fetch;
+}
+
 function replyOf(output: unknown): string | undefined {
   return typeof output === "object" && output !== null && "reply" in output && typeof output.reply === "string" ? output.reply : undefined;
 }
@@ -148,7 +165,7 @@ async function runCase(testCase: Case, systemPrompt: string, effort: Effort, mod
   const head = repo && headOf(testCase.id);
   const base: CaseResult = { id: testCase.id, kind: testCase.kind, usage, wallMs: 0, ...(repo && { tools }) };
   const checkout = head && { checkout: { source: "github", ...head }, ...(repo.budget && { budget: repo.budget }) };
-  const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, effort, ...checkout };
+  const request = { kind: "code-review", number: CASE_NUMBER, title: testCase.title, description: testCase.description, diff: testCase.diff, effort, ...checkout };
   const started = performance.now();
   const run = await runLocalWorkflow({
     workflow: prCodeFinder({ systemPrompt }),
@@ -156,7 +173,7 @@ async function runCase(testCase: Case, systemPrompt: string, effort: Effort, mod
     actions: { ...actions, finderInput },
     credentialBindings: repo ? credentialBindingsFor(GITHUB) : [],
     authorize: allow,
-    github: repo?.github ?? noGithub,
+    github: repo ? caseGithub(repo.github, testCase) : noGithub,
     inference: { credentialId: "inference", origin: source.origin, apiKey: source.apiKey },
     sourceFor: () => ({ id: "finder", provider: "anthropic", baseURL: source.origin, credentialId: "inference", model }),
     triggerPayload: stockTriggerMail(request),
@@ -379,7 +396,7 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     step.ms += ms;
   }
   const head = headOf(testCase.id);
-  const request = { kind: "code-review", title: testCase.title, description: testCase.description, diff: testCase.diff, checkout: { source: "github", ...head }, efforts: config.efforts, ...(config.budget && { budgets: { check: config.budget } }) };
+  const request = { kind: "code-review", number: CASE_NUMBER, title: testCase.title, description: testCase.description, checkout: { source: "github", ...head }, efforts: config.efforts, ...(config.budget && { budgets: { check: config.budget } }) };
   const started = performance.now();
   const run = await runLocalWorkflow({
     workflow: prCodeReview({ sources: GITHUB }),
@@ -387,7 +404,7 @@ async function runE2ECase(testCase: Case, config: E2EConfig, source: Provider, g
     actions,
     credentialBindings: credentialBindingsFor(GITHUB),
     authorize: allow,
-    github,
+    github: caseGithub(github, testCase),
     inference: { credentialId: "inference", origin: source.origin, apiKey: source.apiKey },
     sourceFor,
     triggerPayload: stockTriggerMail(request),

@@ -345,7 +345,7 @@ const toListener = createManagerIntake({
   listener: listenerAddress,
   routable: listenerRoutable,
   readPull: function readPull(tenantId, record, number) {
-    return pullRequests.withDiff(tenantId, record, number);
+    return pullRequests.head(tenantId, record, number);
   },
   withAppLogin: function appLoginOf(tenantId, payload) {
     return withAppLogin(composition.db, tenantId, payload);

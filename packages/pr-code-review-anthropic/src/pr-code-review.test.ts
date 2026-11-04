@@ -12,6 +12,8 @@ import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
 import { CHECK_UNFINISHED, UNCITED } from "@corbits/pr-code-review/reader-director";
 import { codeReviewWorkflow } from "@corbits/pr-code-review/pr-code-review";
 import { stockTriggerMail } from "@corbits/triage-contracts";
+import { reviewMailContent } from "@corbits/triage-manager/actions/review";
+import { reviewRequestOf, type PullRequestToReview } from "../../../apps/hub/src/pull-request-reader.js";
 import { runLocalWorkflow } from "../../triage-workflows/src/run-local.js";
 import * as actions from "./actions/index.js";
 import { workflow as reviewerBitbucket } from "./pr-code-review-reviewer-bitbucket-datacenter.js";
@@ -35,6 +37,9 @@ test("every deployed code review requires a sidecar of its own", () => {
 
 const REPO = "acme/widgets";
 const SHA = "0123456789abcdef0123456789abcdef01234567";
+const NUMBER = 7;
+/** Stock inlines a mail part's text only up to this many bytes; workflow-host's mail-part-store.ts keeps its INLINE_TEXT_MAX_BYTES module-private. */
+const INLINE_TEXT_MAX_BYTES = 1024 * 1024;
 const FILE = "export function add(a: number, b: number) {\n  return a - b;\n}\n";
 const DIFF = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,3 +1,3 @@\n export function add(a: number, b: number) {\n-  return a + b;\n+  return a - b;\n }\n";
 let finderBudgetSpent = false;
@@ -48,6 +53,8 @@ const OUTSIDE = { path: "src/b.ts", start: 2, end: 2, priority: 1, title: "four 
 
 let dir: string;
 let tarball: Uint8Array;
+/** The pull request's diff as the host answers it. */
+let served: string;
 let model: ReturnType<typeof Bun.serve>;
 const fetched: string[] = [];
 /** How many of the diff finder's next answers are prose with no findings list. */
@@ -69,9 +76,13 @@ const allow: WorkflowAuthorizeFn = async function allow() {
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
 };
 
-async function host(input: string | URL | Request): Promise<Response> {
+async function host(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const { pathname } = new URL(input instanceof Request ? input.url : input);
   fetched.push(pathname);
+  if (pathname === `/repos/${REPO}/pulls/${NUMBER}`) {
+    if (new Headers(init?.headers).get("accept") === "application/vnd.github.diff") return new Response(served);
+    return Response.json({ number: NUMBER, state: "open", head: { sha: SHA } });
+  }
   if (pathname === `/repos/${REPO}/tarball/${SHA}`) return new Response(tarball);
   if (pathname === `/repos/${REPO}/contents/src/a.ts`) return new Response(FILE);
   if (pathname === `/repos/${REPO}/contents/src/b.ts`) return new Response(CALLER);
@@ -110,6 +121,7 @@ function answer(body: MessagesRequest) {
   }
   if (sent.includes("Verify this finding.")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
   expect(sent).toContain("Review the diff and report");
+  if (sent.includes('<diff path=\\"src/big.ts\\">')) return [{ type: "text", text: JSON.stringify({ findings: [] }) }];
   expect(sent).toContain("+  return a - b;");
   expect(sent).not.toContain("<diff index=");
   expect(JSON.stringify(body.system)).not.toContain("Read the index");
@@ -156,8 +168,25 @@ function hurried() {
   };
 }
 
-/** A review whose checkout action writes under `checkoutDir` and whose repository finder reads under `readerDir`. */
-async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { check?: number }, diff = DIFF) {
+/** The mail stock delivers with `content`: its text inlined only within stock's limit, as the mail part store does. */
+function mailOf(content: string) {
+  const mail = stockTriggerMail({});
+  const { text: _text, ...stored } = mail.parts[0]!;
+  return { ...mail, parts: [{ ...stored, ...(Buffer.byteLength(content) <= INLINE_TEXT_MAX_BYTES && { text: content }) }] };
+}
+
+interface ReviewOptions {
+  /** Where the repository finder reads; the checkout's folder when absent. */
+  readerDir?: string;
+  budgets?: { check?: number };
+  /** The diff the host answers for the pull request. */
+  diff?: string;
+  /** The mail the review is sent; a stock trigger mail of the request when absent. */
+  content?: string;
+}
+
+/** A review whose checkout action writes under `checkoutDir`, of the host's pull request. */
+async function review(checkoutDir: string, { readerDir = checkoutDir, budgets, diff = DIFF, content }: ReviewOptions = {}) {
   const origin = `http://localhost:${model.port}`;
   const results: ToolResult[] = [];
   const attempts: Record<string, number> = {};
@@ -174,7 +203,8 @@ async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { 
   function onStepDone(agentId: string) {
     attempts[agentId] = (attempts[agentId] ?? 0) + 1;
   }
-  const request = { kind: "code-review", title: "Add", description: "", diff, checkout: { source: "github", repo: REPO, sha: SHA }, ...(budgets && { budgets }) };
+  served = diff;
+  const request = { kind: "code-review", number: NUMBER, title: "Add", description: "", checkout: { source: "github", repo: REPO, sha: SHA }, ...(budgets && { budgets }) };
   const run = await runLocalWorkflow({
     workflow: codeReviewWorkflow(codeReviewAgents(ANTHROPIC, directors, readerDataDir))({ sources: ["github"] }),
     directors: Object.values(directors).map((d) => d.factory),
@@ -184,7 +214,7 @@ async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { 
     github: host,
     inference: { credentialId: "inference", origin, apiKey: "local" },
     sourceFor,
-    triggerPayload: stockTriggerMail(request),
+    triggerPayload: content === undefined ? stockTriggerMail(request) : mailOf(content),
     onEvent,
     onStepDone,
     clock: hurried(),
@@ -195,7 +225,7 @@ async function review(checkoutDir: string, readerDir = checkoutDir, budgets?: { 
 test("the finder receives the actual patch, answers without paging, and preserves its words and anchors", async () => {
   const first = await review(join(dir, "data"));
   expect(first.run.terminalStatus).toBe("completed");
-  expect(first.run.outputs["checkout"]).toEqual({ path: join(dir, "data/checkouts/github/acme/widgets", SHA) });
+  expect(first.run.outputs["checkout"]).toEqual({ path: join(dir, "data/checkouts/github/acme/widgets", SHA), diff: DIFF });
   expect(first.run.outputs["lint"]).toEqual({ status: "skipped", reason: "no lint config" });
   expect(first.run.outputs["review"]).toMatchObject({ summary: "", complete: true, comments: [{ path: FINDING.path, start: FINDING.start, end: FINDING.end, title: FINDING.title, body: `${FINDING.why}\n\n${FINDING.trigger}`, agreement: { finders: 1 } }] });
   expect(first.results.some((r) => r.callId === "index" || r.callId === "diff")).toBe(false);
@@ -204,8 +234,22 @@ test("the finder receives the actual patch, answers without paging, and preserve
   expect(fetched.filter((path) => path.includes("/tarball/"))).toHaveLength(1);
 });
 
+test("a pull request whose diff is over 1 MiB gets its review: its mail stays inlined and the review reads the diff from the host", async () => {
+  const added = Array.from({ length: 40_000 }, (_, i) => `+export const line${i} = "${"x".repeat(20)}";`);
+  const big = ["diff --git a/src/big.ts b/src/big.ts", "new file mode 100644", "--- /dev/null", "+++ b/src/big.ts", `@@ -0,0 +1,${added.length} @@`, ...added, ""].join("\n");
+  const diff = DIFF + big;
+  expect(Buffer.byteLength(diff)).toBeGreaterThan(INLINE_TEXT_MAX_BYTES);
+  const read: PullRequestToReview = { title: "Add", description: "", headSha: SHA, draft: false, open: true, diff };
+  const content = reviewMailContent(reviewRequestOf({ name: REPO }, NUMBER, read), "tnt_acme");
+  expect(Buffer.byteLength(content)).toBeLessThanOrEqual(INLINE_TEXT_MAX_BYTES);
+  const { run } = await review(join(dir, "data"), { diff, content });
+  expect(run.terminalStatus).toBe("completed");
+  expect(run.outputs["checkout"]).toMatchObject({ diff });
+  expect(run.outputs["review"]).toMatchObject({ complete: true, comments: [{ path: FINDING.path, start: FINDING.start }] });
+});
+
 test("empty assignment completes without inference", async () => {
-  const { run, attempts } = await review(join(dir, "data"), join(dir, "data"), undefined, "");
+  const { run, attempts } = await review(join(dir, "data"), { diff: "" });
   expect(run.terminalStatus).toBe("completed");
   expect(attempts).toEqual({});
   expect(run.outputs["review"]).toMatchObject({ summary: "No defects reported.", comments: [], complete: true, budgetExhausted: false });
@@ -244,7 +288,7 @@ test("a malformed finder answer retries rather than becoming a clean review", as
 });
 
 test("a missing checkout leaves the review unfinished", async () => {
-  const { run } = await review(join(dir, "here"), join(dir, "elsewhere"));
+  const { run } = await review(join(dir, "here"), { readerDir: join(dir, "elsewhere") });
   expect(run.terminalStatus).not.toBe("completed");
   expect(run.outputs["review"]).toBeUndefined();
 });
@@ -287,7 +331,7 @@ test("a check answer that is not a verdict and reason fails its step, which asks
 test("a finding one finder reports outside the diff is posted once the check reads the file that proves it", async () => {
   outside = true;
   try {
-    const { run, results } = await review(join(dir, "data"), join(dir, "data"), { check: 30 });
+    const { run, results } = await review(join(dir, "data"), { budgets: { check: 30 } });
     expect(run.terminalStatus).toBe("completed");
     expect(results.find((r) => r.callId === "verify" && JSON.stringify(r.content).includes("add(2, 2)"))).toMatchObject({ content: { path: "src/b.ts" } });
     expect(run.outputs["review"]).toMatchObject({ comments: [{ path: "src/a.ts", start: 2 }, { path: "src/b.ts", start: 2, title: "four is 0", agreement: { finders: 1 } }], dropped: [] });
@@ -318,7 +362,7 @@ for (const [mode, reason] of [["confirms", "src/b.ts:2 `export const four = add(
     outside = true;
     checkKeepsReading = mode;
     try {
-      const { run, attempts } = await review(join(dir, "data"), join(dir, "data"), { check: 30 });
+      const { run, attempts } = await review(join(dir, "data"), { budgets: { check: 30 } });
       expect(run.terminalStatus).toBe("completed");
       expect(attempts["code-review-check"]).toBe(2);
       expect(run.outputs["review"]).toMatchObject({

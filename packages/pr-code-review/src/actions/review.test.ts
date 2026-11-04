@@ -1,16 +1,18 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import type { EffectContext, PerformScope } from "@intx/workflow";
+import { diffHash } from "@corbits/common/diff-hash";
 import { stockTriggerMail } from "@corbits/triage-contracts";
 import type { Effort, Role } from "../profile.js";
 import { DIFF_DIR, DIFF_INDEX, indexedFiles, MAX_PART_BYTES, MAX_BUNDLE_BYTES, unreadLines } from "../diff-parts.js";
-import { BUDGET_EXHAUSTED, checkoutPath, checkoutUnder, diffDirOf } from "./checkout.js";
+import { BUDGET_EXHAUSTED, type Checkout, checkoutPath, checkoutUnder, diffDirOf } from "./checkout.js";
 import { candidates, checks, findersInput, review, reviewInputFor } from "./review.js";
 
 const efforts: Record<Role, Effort> = { diffFinder: "low", check: "low" };
 const checkout = { source: "github" as const, repo: "acme/widgets", sha: "a".repeat(40) };
+const NUMBER = 7;
 
 // Each tries to close the tag it sits in and open another, or end an attribute.
 const INJECTED = {
@@ -35,12 +37,17 @@ function reply(value: unknown) {
   return { output: { reply: typeof value === "string" ? value : JSON.stringify(value) } };
 }
 
+/** The checkout step's output holding `diff`. */
+function checkedOut(diff: string) {
+  return { output: { path: "", diff } };
+}
+
 /** Finder and check messages both delimit untrusted content. */
-async function messages(request: { title: string; description: string; diff: string }, _plan: string, finding: Record<string, unknown>) {
-  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", ...request, checkout })) };
-  const finders = await findersInput({ reviewInput });
+async function messages({ diff, ...request }: { title: string; description: string; diff: string }, _plan: string, finding: Record<string, unknown>) {
+  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", number: NUMBER, ...request, checkout })) };
+  const finders = await findersInput({ reviewInput, checkout: checkedOut(diff) });
   const folded = await candidates({ find: { output: [reply({ findings: [finding] }).output] } });
-  const checked = await checks({ reviewInput, candidates: { output: folded } });
+  const checked = await checks({ reviewInput, checkout: checkedOut(diff), candidates: { output: folded } });
   return { diff: finders.bundles[0]!, check: checked.checks[0]!.text };
 }
 
@@ -71,7 +78,29 @@ function largeDiff(count: number) {
   return { big, lines, diff: big + gone + diffOf("src/a.ts", "x") };
 }
 
-const CTX = { perform: ({ run }: { run: (scope: PerformScope) => unknown }) => run({} as PerformScope) } as unknown as EffectContext;
+const PULL_PATH: Record<Checkout["source"], string> = { github: `/repos/${checkout.repo}/pulls/${NUMBER}`, "bitbucket-datacenter": `/rest/api/1.0/projects/acme/repos/widgets/pull-requests/${NUMBER}` };
+
+/** The pull request at `head` as each host answers it. */
+function pullAt(source: Checkout["source"], head: string) {
+  if (source === "github") return { number: NUMBER, state: "open", head: { sha: head } };
+  const ref = { id: "refs/heads/fix", displayId: "fix", latestCommit: head, repository: { id: 1 } };
+  const author = { user: { slug: "ann" }, role: "AUTHOR", status: "UNAPPROVED" };
+  return { id: NUMBER, title: "t", state: "OPEN", createdDate: 0, updatedDate: 0, fromRef: ref, toRef: { ...ref, latestCommit: "c".repeat(40) }, author, reviewers: [] };
+}
+
+/**
+ * An effect context whose `source` host answers the pull request's `diff`, and its head as `heads` names it on each read,
+ * the pinned one when they run out.
+ */
+function hostAnswering(diff: string, heads: string[] = [], source: Checkout["source"] = "github"): EffectContext {
+  async function host(path: string, init?: RequestInit): Promise<Response> {
+    if (path === `${PULL_PATH[source]}.diff` || (path === PULL_PATH[source] && new Headers(init?.headers).get("accept") === "application/vnd.github.diff")) return new Response(diff);
+    if (path === PULL_PATH[source]) return Response.json(pullAt(source, heads.shift() ?? checkout.sha));
+    return new Response(null, { status: 404 });
+  }
+  const credentials = { resolve: async () => ({ kind: "http", fetch: host }) };
+  return { perform: ({ run }: { run: (scope: PerformScope) => unknown }) => run({ credentials } as unknown as PerformScope) } as unknown as EffectContext;
+}
 
 /** The file the read tools show at `shown`, beside the checkout at `path`. */
 function besideCheckout(path: string, shown: string): string {
@@ -84,7 +113,8 @@ test("a diff past the read tools' limit is written beside the checkout as one pa
   const dataDir = mkdtempSync(join(tmpdir(), "review-diff-"));
   try {
     mkdirSync(checkoutPath(dataDir, checkout), { recursive: true });
-    const { path } = await checkoutUnder(() => dataDir)({ ...checkout, diff }, CTX);
+    const out = await checkoutUnder(() => dataDir)({ ...checkout, number: NUMBER }, hostAnswering(diff));
+    const { path } = out;
     expect(readdirSync(path)).toEqual([]);
     const index = readFileSync(besideCheckout(path, DIFF_INDEX), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line) as { path: string; status: string; lines: number; patches: string[] });
     expect(index.map(({ path: file, status, lines: count }) => [file, status, count])).toEqual([["src/big.ts", "modified", 60_005], ["src/gone.ts", "deleted", 6], ["src/a.ts", "modified", 6]]);
@@ -100,8 +130,8 @@ test("a diff past the read tools' limit is written beside the checkout as one pa
     expect(built.diff).toStartWith(`<repository host="github" name="acme/widgets" head="${"a".repeat(40)}"/>\n<budget tokens="400000"/>\n`);
     expect(built.diff).not.toContain(`<diff index=`);
     expect(built.diff).toContain(lines[0]);
-    const reviewInput = { output: await reviewInputFor({ efforts })({ kind: "code-review", title: "t", description: "d", diff, checkout }) };
-    const { bundles } = await findersInput({ reviewInput });
+    const reviewInput = { output: await reviewInputFor({ efforts })({ kind: "code-review", number: NUMBER, title: "t", description: "d", checkout }) };
+    const { bundles } = await findersInput({ reviewInput, checkout: { output: out } });
     expect(bundles.filter((text) => text.includes('<diff path="src/big.ts">')).length).toBeGreaterThan(1);
     expect(bundles.filter((text) => text.includes('<diff path="src/a.ts">'))).toHaveLength(1);
     expect(bundles.some((text) => text.includes('<diff path="src/gone.ts">'))).toBe(false);
@@ -137,7 +167,7 @@ test("a checkout whose tree holds .corbits as a link or a file still gets its di
       mkdirSync(join(dataDir, "elsewhere"));
       if (plant === "link") symlinkSync(join(dataDir, "elsewhere"), join(path, ".corbits"));
       else writeFileSync(join(path, ".corbits"), "mine\n");
-      await checkoutUnder(() => dataDir)({ ...checkout, diff }, CTX);
+      await checkoutUnder(() => dataDir)({ ...checkout, number: NUMBER }, hostAnswering(diff));
       expect(readFileSync(besideCheckout(path, "/diff/0001.patch"), "utf8")).toBe(diff);
       expect(readdirSync(join(dataDir, "elsewhere"))).toEqual([]);
       if (plant === "file") expect(readFileSync(join(path, ".corbits"), "utf8")).toBe("mine\n");
@@ -154,8 +184,41 @@ test("a link where the diff goes beside the checkout fails the checkout rather t
     mkdirSync(path, { recursive: true });
     mkdirSync(join(dataDir, "elsewhere"));
     symlinkSync(join(dataDir, "elsewhere"), diffDirOf(path));
-    await expect(checkoutUnder(() => dataDir)({ ...checkout, diff: diffOf("src/a.ts", "x") }, CTX)).rejects.toThrow("exists and is not a folder");
+    await expect(checkoutUnder(() => dataDir)({ ...checkout, number: NUMBER }, hostAnswering(diffOf("src/a.ts", "x")))).rejects.toThrow("exists and is not a folder");
     expect(readdirSync(join(dataDir, "elsewhere"))).toEqual([]);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("on either host, a head that moved before or after the diff is read fails the checkout before anything is written", async () => {
+  const moved = "b".repeat(40);
+  for (const source of ["github", "bitbucket-datacenter"] as const) {
+    for (const heads of [[moved], [checkout.sha, moved]]) {
+      const dataDir = mkdtempSync(join(tmpdir(), "review-diff-"));
+      try {
+        const target = { ...checkout, source };
+        const path = checkoutPath(dataDir, target);
+        mkdirSync(path, { recursive: true });
+        await expect(checkoutUnder(() => dataDir)({ ...target, number: NUMBER }, hostAnswering(diffOf("src/a.ts", "x"), heads, source))).rejects.toThrow(`the head moved from ${checkout.sha} to ${moved}`);
+        expect(readdirSync(dirname(path))).toEqual([checkout.sha]);
+        expect(await checkoutUnder(() => dataDir)({ ...target, number: NUMBER }, hostAnswering(diffOf("src/a.ts", "x"), [], source))).toMatchObject({ diff: diffOf("src/a.ts", "x") });
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+test("the checkout returns the hash of the diff it read, none for a diff without index lines, and refuses an answer that is not a diff", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "review-diff-"));
+  try {
+    mkdirSync(checkoutPath(dataDir, checkout), { recursive: true });
+    const hashed = `diff --git a/x b/x\nindex 1111111..2222222 100644\n${diffOf("x", "y").split("\n").slice(1).join("\n")}`;
+    const action = checkoutUnder(() => dataDir);
+    expect(await action({ ...checkout, number: NUMBER }, hostAnswering(hashed))).toMatchObject({ diffHash: diffHash(hashed) });
+    expect(await action({ ...checkout, number: NUMBER }, hostAnswering(diffOf("x", "y")))).not.toHaveProperty("diffHash");
+    await expect(action({ ...checkout, number: NUMBER }, hostAnswering("{\"url\":\"…\"}"))).rejects.toThrow("the host returned no unified diff");
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }
@@ -173,12 +236,12 @@ test("returned bundles are complete without diff_shown, including empty assignme
 });
 
 test("only real verdicts survive, with original finder words and anchors, and exact duplicates fold", async () => {
-  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout })) };
+  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", number: NUMBER, title: "t", description: "d", checkout })) };
   const findings = [1, 2, 3].map((start) => ({ path: "src/a.ts", start, end: start + 1, title: `Original ${start}`, why: `Reason ${start}`, trigger: `Trigger ${start}`, priority: 2, code: "x" }));
   const folded = await candidates({ find: { output: [reply({ findings }).output, reply({ findings: [findings[0]] }).output] } });
   expect(folded.kept).toHaveLength(3);
   expect(folded.kept[0]).toMatchObject({ finders: ["diff"], reports: 2 });
-  const checked = await checks({ reviewInput, candidates: { output: folded } });
+  const checked = await checks({ reviewInput, checkout: checkedOut(diffOf("src/a.ts", "x")), candidates: { output: folded } });
   expect(checked.checks[0]!.text).toEndWith("Verify this finding.");
   const result = await review({ candidates: { output: folded }, checks: { output: checked }, check: { output: ["real", "unsure", "not_real"].map((verdict) => reply({ verdict, reason: verdict }).output) } });
   expect(result.summary).toBe("");
@@ -187,10 +250,10 @@ test("only real verdicts survive, with original finder words and anchors, and ex
 });
 
 test("checks share their total budget in severity order; unvisited findings remain unsure", async () => {
-  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout, budgets: { check: 100, checkTotal: 250 } })) };
+  const reviewInput = { output: await reviewInputFor({ efforts })(stockTriggerMail({ kind: "code-review", number: NUMBER, title: "t", description: "d", checkout, budgets: { check: 100, checkTotal: 250 } })) };
   const findings = [3, 2, 1, 0].map((priority) => ({ path: "src/a.ts", start: priority + 1, end: priority + 1, why: `why ${priority}`, priority }));
   const folded = await candidates({ find: { output: [reply({ findings }).output] } });
-  const checked = await checks({ reviewInput, candidates: { output: folded } });
+  const checked = await checks({ reviewInput, checkout: checkedOut(diffOf("src/a.ts", "x")), candidates: { output: folded } });
   expect(checked.checks.map((c) => /<budget tokens="(\d+)"\/>/.exec(c.text)![1])).toEqual(["100", "100", "50"]);
   const result = await review({ candidates: { output: folded }, checks: { output: checked }, check: { output: checked.checks.map(() => reply({ verdict: "real", reason: "r" }).output) } });
   expect(result.comments.map((c) => c.start)).toEqual([1, 2, 3]);
@@ -201,18 +264,17 @@ test("checks share their total budget in severity order; unvisited findings rema
 test("two small files remain independent, deleted files have no assignment, and an empty assignment completes", async () => {
   const gone = "diff --git a/gone b/gone\ndeleted file mode 100644\n--- a/gone\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n";
   const diff = diffOf("src/a.ts", "one") + gone + diffOf("src/b.ts", "two");
-  const reviewInput = { output: await reviewInputFor({ efforts })({ kind: "code-review", title: "t", description: "d", diff, checkout }) };
-  const { bundles } = await findersInput({ reviewInput });
+  const reviewInput = { output: await reviewInputFor({ efforts })({ kind: "code-review", number: NUMBER, title: "t", description: "d", checkout }) };
+  const { bundles } = await findersInput({ reviewInput, checkout: checkedOut(diff) });
   expect(bundles).toHaveLength(2);
   expect(bundles[0]).toContain(diffOf("src/a.ts", "one"));
   expect(bundles[1]).toContain(diffOf("src/b.ts", "two"));
-  const empty = { output: { ...reviewInput.output, request: { ...reviewInput.output.request, diff: gone } } };
-  expect(await findersInput({ reviewInput: empty })).toEqual({ bundles: [] });
+  expect(await findersInput({ reviewInput, checkout: checkedOut(gone) })).toEqual({ bundles: [] });
 });
 
 test("finder input rejects oversized context rather than truncating the description", async () => {
-  const reviewInput = { output: await reviewInputFor({ efforts })({ kind: "code-review", title: "t", description: "x".repeat(MAX_BUNDLE_BYTES), diff: diffOf("src/a.ts", "x"), checkout }) };
-  await expect(findersInput({ reviewInput })).rejects.toThrow("context exceeds");
+  const reviewInput = { output: await reviewInputFor({ efforts })({ kind: "code-review", number: NUMBER, title: "t", description: "x".repeat(MAX_BUNDLE_BYTES), checkout }) };
+  await expect(findersInput({ reviewInput, checkout: checkedOut(diffOf("src/a.ts", "x")) })).rejects.toThrow("context exceeds");
 });
 
 test("untitled unexplained findings use the original anchor as the fallback heading", async () => {
@@ -235,7 +297,7 @@ test("legacy unread ledgers retain their stored-result bounds", () => {
 });
 
 test("a trigger mail from anyone but the hub's Triage sender is never reviewed", async () => {
-  const mail = stockTriggerMail({ kind: "code-review", title: "t", description: "d", diff: diffOf("src/a.ts", "x"), checkout });
+  const mail = stockTriggerMail({ kind: "code-review", number: NUMBER, title: "t", description: "d", checkout });
   const forged = { ...mail, headers: { ...mail.headers, from: "ann@acme.test" } };
   await expect(reviewInputFor({ efforts })(forged)).rejects.toThrow("not from the hub's Triage sender");
 });

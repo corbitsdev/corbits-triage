@@ -161,6 +161,11 @@ export async function reviewEarly(input: unknown): Promise<{ deploy: boolean }> 
 
 const DeployInput = type({ payload: "unknown", take: { output: TakeOutput } });
 
+/** The mail a deployed code review is sent: the head's review request and the tenant. */
+export function reviewMailContent(request: unknown, tenantId: string): string {
+  return JSON.stringify({ ...asRecord(request), tenantId });
+}
+
 /**
  * Deploys code review from the host's published release; it is mailed the head's review request, and reports its result
  * to the hub, which wakes the pull request's manager. The mail waits for the new run to publish its public key, giving
@@ -179,7 +184,7 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   const again = asRecord(taken["codeReview"])?.["again"];
   const reviewRun = await deploy(ctx, "deploy", tenantId, release);
   const deadline = new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString();
-  const content = JSON.stringify({ ...asRecord(taken["codeReviewRequest"]), tenantId });
+  const content = reviewMailContent(taken["codeReviewRequest"], tenantId);
   return { reviewer: { kind: "code-review", head, runId: reviewRun, deployedBy: runId, deadline, ...(typeof again === "string" && { again }) }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
 }
 

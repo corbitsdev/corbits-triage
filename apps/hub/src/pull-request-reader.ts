@@ -1,10 +1,9 @@
 // Reads a pull request as its host shows it, alone or with its diff, and builds the code review request a manager's
-// review reads: the whole diff, hashed so a later head with the same diff can take a review over (code-review-runs.ts).
+// review reads. The review reads the diff from the host itself.
 import * as bitbucket from "@corbits/bitbucket-datacenter-reads";
 import { readPr, readPrDiff, type GithubFetch } from "@corbits/github-reads";
 import { shownBody, visibleText, type RepoSource } from "@corbits/triage-contracts";
 import type { TenantBitbucket } from "./bitbucket-datacenter/tenant-bitbucket.js";
-import { diffHash } from "@corbits/common/diff-hash";
 import { forInstallation } from "./github/open-pulls.js";
 import { sourceOf, type RepoRecord } from "./github/tenant-config.js";
 
@@ -71,23 +70,16 @@ type ReviewRequest = {
   number: number;
   title: string;
   description: string;
-  diff: string;
-  diffHash?: string;
   checkout: { source: RepoSource; repo: string; sha: string };
 };
 
-/** The review of the pull request as read, its whole diff and its hash. */
-export function reviewRequestOf(record: Pick<RepoRecord, "name" | "source">, number: number, pull: PullRequestToReview): ReviewRequest {
-  // A host that ignores the diff media type answers JSON, which would be reviewed as if it were the change.
-  if (pull.diff !== "" && !pull.diff.startsWith("diff ")) throw new Error(`${record.name}#${number}: the host returned no unified diff`);
-  const hash = diffHash(pull.diff);
+/** The review of the pull request as read. */
+export function reviewRequestOf(record: Pick<RepoRecord, "name" | "source">, number: number, pull: PullRequestHead): ReviewRequest {
   return {
     kind: "code-review",
     number,
     title: pull.title,
     description: pull.description,
-    diff: pull.diff,
-    ...(hash && { diffHash: hash }),
     checkout: { source: sourceOf(record), repo: record.name, sha: pull.headSha },
   };
 }
