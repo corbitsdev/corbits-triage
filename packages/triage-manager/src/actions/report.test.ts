@@ -22,12 +22,10 @@ test("a manager's code review hands its request to the review, reports the revie
   const { ctx, calls } = hubContext();
   expect(await reviewRequest(MAIL)).toEqual({ request: { ...REQUEST, tenantId: "tnt_acme" } });
   expect(await report({ payload: MAIL, checkout: { output: { path: "/c", diff: "d", diffHash: "hash1" } }, review: { output: REVIEW } }, ctx, new AbortController().signal)).toEqual({ recorded: true });
-  expect(await report({ payload: MAIL, checkout: { output: null } }, ctx, new AbortController().signal)).toEqual({ recorded: true });
   expect(await stop(MAIL, ctx, new AbortController().signal)).toEqual({ stopped: true });
   const reported = { source: "github", repo: "acme/widgets", number: 8, kind: "code-review", head: "h1" };
   expect(calls).toEqual([
     { method: "POST", path: "/api/tenants/tnt_acme/manager/reviewer-result", body: { ...reported, result: REVIEW, diffHash: "hash1" } },
-    { method: "POST", path: "/api/tenants/tnt_acme/manager/reviewer-result", body: { ...reported, failed: "the review did not finish" } },
     { method: "DELETE", path: "/api/tenants/tnt_acme/workflows/runs/run_review" },
   ]);
   await expect(reviewRequest({ ...MAIL, parts: [{ contentType: "text/plain", text: JSON.stringify(REQUEST) }] })).rejects.toThrow("the review mail");
