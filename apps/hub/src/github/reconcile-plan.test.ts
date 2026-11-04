@@ -268,17 +268,19 @@ describe("reconcile plan", () => {
     expect(enqueued(plan([pr(1)], [{ ...rows[0]!, cappedRetries: policy.cappedRetryCycles }], at(1_000 * hour)))).toEqual([]);
   });
 
-  test("a hub restart gives heads that never started or were not delivered before it a fresh set of attempts, not heads whose run failed", () => {
+  test("a hub restart gives heads that never started or were not delivered before it a fresh set of attempts, not heads whose run failed or that fail after it", () => {
     const preBoot = [
       row(1, { status: "failed", attempts: policy.maxAttempts, error: "run never started", queuedAt: at(-20).toISOString(), updatedAt: at(-5).toISOString() }),
       row(2, { status: "failed", attempts: policy.maxAttempts, error: "delivery failed: Error: ENOSPC", undeliveredSince: at(-20).toISOString(), queuedAt: at(-20).toISOString(), updatedAt: at(-5).toISOString() }),
       row(3, { status: "failed", attempts: policy.maxAttempts, error: "run failed", queuedAt: at(-20).toISOString(), updatedAt: at(-5).toISOString() }),
+      row(4, { status: "queued", attempts: 2, queuedAt: at(-UNSTARTED).toISOString(), updatedAt: at(-UNSTARTED).toISOString() }),
     ];
-    const booted = planTenant({ repos: [{ name: REPO, prs: [pr(1), pr(2), pr(3)], rows: preBoot }], runs: new Map(), roomless: new Set(), now: at(1), policy, bootAt: at(0) }).get(REPO)!;
-    expect(enqueued(booted)).toEqual([1, 2]);
+    const booted = planTenant({ repos: [{ name: REPO, prs: [pr(1), pr(2), pr(3), pr(4)], rows: preBoot }], runs: new Map(), roomless: new Set(), now: at(1), policy, bootAt: at(0) }).get(REPO)!;
+    expect(enqueued(booted)).toEqual([1, 2, 4]);
     expect(status(booted, 1)).toMatchObject({ status: "queued", attempts: 1 });
     expect(status(booted, 2)).toMatchObject({ status: "queued", attempts: 1 });
     expect(status(booted, 3)).toMatchObject({ status: "failed", attempts: policy.maxAttempts });
+    expect(status(booted, 4)).toMatchObject({ status: "queued", attempts: 3 });
   });
 
   test("a stuck run from before the hub queued the head again does not fail the new attempt", () => {

@@ -222,11 +222,12 @@ function observe(row: PrTriageRow, observed: readonly ObservedRun[], roomless: b
 
 const NEVER_STARTED = "run never started";
 
-function uncapped(row: PrTriageRow, priorUpdatedAt: string, now: Date, policy: ReconcilePolicy, bootAt?: Date): PrTriageRow {
+function uncapped(row: PrTriageRow, now: Date, policy: ReconcilePolicy, bootAt?: Date): PrTriageRow {
   if (row.status !== "failed") return row;
   const neverStarted = row.error === NEVER_STARTED;
-  // A start or delivery that failed before this hub booted may have been an outage that is now fixed.
-  const preBoot = bootAt !== undefined && ms(priorUpdatedAt) < bootAt.getTime();
+  // A start or delivery that failed before this hub booted may have been an outage that is now fixed. A failure observed
+  // this pass carries this pass's time, so only failures recorded before boot qualify.
+  const preBoot = bootAt !== undefined && ms(row.updatedAt) < bootAt.getTime();
   if (preBoot && row.attempts > 0 && (neverStarted || row.undeliveredSince !== undefined)) return { ...row, attempts: 0 };
   if (row.attempts < policy.maxAttempts || !neverStarted) return row;
   const cycles = row.cappedRetries ?? 0;
@@ -327,7 +328,7 @@ export function planTenant({ repos, runs, roomless, now, policy, bootAt }: Tenan
       const key = runKey(pr.number, pr.headSha);
       const current = fresh(pr, byHead.get(key), at);
       const runsOfHead = observed?.get(key) ?? [];
-      const row = uncapped(observe(current, runsOfHead, roomless.has(pullKey(name, pr.number)), now, policy), current.updatedAt, now, policy, bootAt);
+      const row = uncapped(observe(current, runsOfHead, roomless.has(pullKey(name, pr.number)), now, policy), now, policy, bootAt);
       if (inFlight(row) && !parked(runsOfHead)) busy.add(`${name} ${key}`);
       if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row });
       next.push(row);
