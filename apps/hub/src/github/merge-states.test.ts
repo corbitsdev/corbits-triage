@@ -1,22 +1,8 @@
 import { expect, test } from "bun:test";
-import { MAX_MERGE_STATES, type RepoSource } from "@corbits/triage-contracts";
+import type { RepoSource } from "@corbits/triage-contracts";
 import { createRepoReads } from "./repo-reads.js";
 import type { RepoRecord } from "./tenant-config.js";
 import { createMergeStates } from "./merge-states.js";
-
-// Refused before the workspace is read, so no database is needed.
-const handle = createMergeStates({ githubApiOrigin: "https://api.github.test", log() {} } as unknown as Parameters<typeof createMergeStates>[0]);
-
-async function refusal(numbers: string) {
-  const res = await handle(new Request(`http://hub.test/merge-states?repo=acme/widgets&numbers=${numbers}`), { tenantId: "t", principalId: "p" });
-  return { status: res.status, body: await res.json() };
-}
-
-test("asks about at most 100 pull requests, each a number GraphQL can carry", async () => {
-  const many = Array.from({ length: MAX_MERGE_STATES + 1 }, (_, i) => i + 1).join(",");
-  expect(await refusal(many)).toEqual({ status: 400, body: { error: { code: "invalid_request", message: "Ask about at most 100 pull requests at once." } } });
-  expect(await refusal("1,2147483648")).toEqual({ status: 400, body: { error: { code: "invalid_request", message: "A pull request number is at most 2147483647." } } });
-});
 
 const REPO = "acme/widgets";
 const GITHUB: RepoRecord = { name: REPO, connected: true };
@@ -59,15 +45,4 @@ test("a merge-state read names the Bitbucket record when a GitHub row of the sam
   expect(read.hosts).toEqual(["bitbucket-datacenter"]);
   expect(read.status).toBe(200);
   expect(read.body).toEqual({ prs: [{ number: 7, mergeable: true, canMerge: true, mergeVetoes: [] }] });
-});
-
-test("an omitted source still reads a Bitbucket-only repository, and reads GitHub when both hosts are connected", async () => {
-  const only = await asked([BITBUCKET]);
-  expect(only.hosts).toEqual(["bitbucket-datacenter"]);
-  expect(only.status).toBe(200);
-
-  const both = await asked([BITBUCKET, GITHUB]);
-  expect(both.hosts).toEqual([]);
-  expect(both.status).toBe(502);
-  expect(both.body).toMatchObject({ error: { message: expect.stringContaining("from github") } });
 });

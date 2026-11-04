@@ -92,7 +92,7 @@ function hostFailed(record: RepoRecord, what: string, err: unknown): Response {
  * A repository's open policy pull request, found in the shared listing so a workspace costs no host calls per repository
  * on each load. Where the listing is refused or could not list the repository, it says so rather than that none is open.
  */
-export function listedPolicyPull(listing: OpenPullsRead | Response, repo: string, source: RepoSource): Pick<PolicyUpgradeRow, "pull" | "pullUnread"> {
+function listedPolicyPull(listing: OpenPullsRead | Response, repo: string, source: RepoSource): Pick<PolicyUpgradeRow, "pull" | "pullUnread"> {
   const listed = listedRepo(listing, repo, source);
   if (!listed || listed.error !== undefined) return { pullUnread: true };
   const pr = policyPr(listed);

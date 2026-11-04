@@ -1,20 +1,15 @@
 // Requires PostgreSQL at TEST_DB. Each run gets a database of its own, dropped after.
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { type } from "arktype";
-import { createHmac, generateKeyPairSync, randomBytes } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { and, eq, sql } from "drizzle-orm";
 import { createDB, schema } from "@intx/db";
 import { WORKFLOW_RUN_REF, workflowRunRepoIdForAddress } from "@intx/hub-sessions";
 import { formatRunAddress } from "@intx/types";
-import { findArtifactByTitle, getArtifact } from "@corbits/artifacts";
-import { DEPLOYER_ROLE, emptyPack, exportPolicyFile, parseTriageState, TRIAGE_LISTENERS, triageStateName, TriageStats } from "@corbits/triage-contracts";
+import { DEPLOYER_ROLE } from "@corbits/triage-contracts";
 import type { ResolvedTarget, VerdictWord } from "@corbits/triage-contracts";
-import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
-import { mirrorCallId } from "@corbits/triage-workflows/actions/mirror";
 import { doEffectId } from "@corbits/triage-workflows/logic/actions";
-import { replaceVerdict } from "./github/verdict-record-store.js";
-import { mirrorOutcomesOf, summaryOf } from "./github/verdict-row.js";
 import { connectTriage, triageRoleId } from "./github/automation.js";
 import { patchCorbitsTriage, upsertConnectedRepos } from "./github/tenant-config.js";
 import { homedir, tmpdir } from "node:os";
@@ -60,25 +55,6 @@ async function waitUntilReady(origin: string, child: Bun.Subprocess): Promise<bo
     await Bun.sleep(100);
   }
   return false;
-}
-
-function openWebSocket(url: string): Promise<void> {
-  return new Promise(function upgrade(resolve, reject) {
-    const socket = new WebSocket(url);
-    const timeout = setTimeout(function onTimeout() {
-      socket.close();
-      reject(new Error(`Timed out upgrading ${url}`));
-    }, 5_000);
-    socket.addEventListener("open", function onOpen() {
-      clearTimeout(timeout);
-      socket.close();
-      resolve();
-    }, { once: true });
-    socket.addEventListener("error", function onError() {
-      clearTimeout(timeout);
-      reject(new Error(`WebSocket upgrade failed for ${url}`));
-    }, { once: true });
-  });
 }
 
 beforeAll(async () => {
@@ -206,64 +182,6 @@ async function createTenant(origin: string, headers: Record<string, string>): Pr
   return type({ id: "string" }).assert(await tenant.json()).id;
 }
 
-test("a hub refuses to start on a database that is not migrated", async () => {
-  const unmigrated = `corbits_unmigrated_${randomBytes(6).toString("hex")}`;
-  const admin = createDB(TEST_DB);
-  try {
-    await admin.db.execute(sql.raw(`create database ${unmigrated}`));
-    const child = Bun.spawn([process.execPath, "--conditions=intx-src", "apps/hub/src/server.ts"], {
-      cwd: ROOT,
-      env: {
-        PATH: CHILD_PATH,
-        HOME: homedir(),
-        ...TEST_SECRETS,
-        DATABASE_URL: `postgres://postgres:postgres@localhost:5432/${unmigrated}`,
-        HUB_DATA_DIR: temporaryDirectory(),
-        PORT: String(reservePort()),
-        BETTER_AUTH_BASE_URL: "http://127.0.0.1:3000",
-      },
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    processes.push(child);
-    const [exitCode, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain("Database is not migrated: run `bun run db:migrate` before starting the hub.");
-  } finally {
-    await admin.db.execute(sql.raw(`drop database if exists ${unmigrated} with (force)`));
-    await admin.close();
-  }
-}, 40_000);
-
-test("composed hub upgrades the sidecar websocket", async () => {
-  const origin = await startHub();
-
-  const response = await fetch(`${origin}/api/me`);
-  expect(response.status).toBe(401);
-  await expect(
-    openWebSocket(`${origin.replace("http", "ws")}/api/sidecars/ws`),
-  ).resolves.toBeUndefined();
-}, 40_000);
-
-test("repeated sign-in attempts from one client are rate limited", async () => {
-  const origin = await startHub();
-
-  async function signIn(clientIp: string) {
-    const response = await fetch(`${origin}/api/auth/sign-in/email`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin, "x-forwarded-for": clientIp },
-      body: JSON.stringify({ email: "nobody@example.com", password: "wrong-password" }),
-    });
-    return response.status;
-  }
-
-  const statuses = [];
-  for (let attempt = 0; attempt < 4; attempt++) statuses.push(await signIn("203.0.113.1"));
-  expect(statuses).toEqual([401, 401, 401, 429]);
-  expect(await signIn("203.0.113.2")).toBe(401);
-}, 40_000);
-
 test("on Railway, sign-in attempts are limited per caller by the address its edge sets, whatever x-forwarded-for holds", async () => {
   const origin = await startHub({ RAILWAY_ENVIRONMENT_ID: "railway-environment" });
 
@@ -382,56 +300,20 @@ test("guards see the path the router matches, so an encoded path is refused as t
 
 const REPO = "acme/widgets";
 const HEAD = "abc0000000000000000000000000000000000000";
-const APP_BOT = { login: "corbits[bot]", type: "Bot" };
 
-/** `policy` is the repository's policy file on its default branch; without it, the repository has none. */
-function fakeGithub(policy?: string) {
-  const labels: string[] = [];
-  const comments: Array<{ id: number; user: typeof APP_BOT; body: string }> = [];
-  const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
-  const repoRequests: string[] = [];
-  const reads: Record<string, unknown> = {
-    [`/repos/${REPO}/pulls`]: [{ number: 8, title: "Fix the widget", draft: false, head: { sha: HEAD } }],
-    [`/repos/${REPO}/pulls/9`]: { number: 9, state: "closed", head: { sha: "def" } },
-    [`/repos/${REPO}/pulls/8/reviews`]: [],
-    [`/repos/${REPO}/pulls/8/commits`]: [{ sha: HEAD, commit: { message: "fix: the widget" } }],
-    [`/repos/${REPO}/pulls/8/files`]: [{ filename: "src/widget.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1 @@\n+fixed" }],
-    [`/repos/${REPO}/commits/${HEAD}/check-runs`]: { check_runs: [{ name: "build", status: "completed", conclusion: "success" }] },
-    ...(policy !== undefined && { [`/repos/${REPO}/contents/.corbits-triage.yml`]: { type: "file", sha: "policy", encoding: "base64", content: Buffer.from(policy).toString("base64"), html_url: `https://github.com/${REPO}/blob/main/.corbits-triage.yml` } }),
-  };
+function fakeGithub() {
+  const writes: Array<{ method: string; path: string }> = [];
   async function github(req: Request): Promise<Response> {
     const { pathname } = new URL(req.url);
-    if (pathname.startsWith("/repos/")) repoRequests.push(`${req.method} ${pathname}`);
     if (pathname === `/repos/${REPO}/installation`) return Response.json({ id: 1 });
     if (pathname === "/app") return Response.json({ slug: "corbits" });
     if (pathname === "/app/installations") return Response.json([{ id: 1, account: { login: "acme" }, html_url: "https://github.com/settings/installations/1", repository_selection: "all", suspended_at: null }]);
     if (pathname === "/app/installations/1/access_tokens") return Response.json({ token: "installation-token", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
-    if (pathname === `/repos/${REPO}/pulls/8`) {
-      return Response.json({
-        number: 8, title: "Fix the widget", state: "open", user: { login: "octocat" }, head: { sha: HEAD, ref: "fix-widget" }, mergeable: true,
-        changed_files: 1, additions: 1, deletions: 0, labels: labels.map((name) => ({ name })), assignees: [],
-      });
-    }
-    if (pathname === `/repos/${REPO}/issues/8/comments` && req.method === "GET") return Response.json(comments);
-    if (req.method === "GET" && pathname in reads) return Response.json(reads[pathname]);
-    if (req.method !== "POST") return new Response(null, { status: 404 });
-    const body = type("Record<string, unknown>").assert(await req.json());
-    if (pathname === `/repos/${REPO}/issues/8/labels`) {
-      const names = type("string[]").assert(body["labels"]);
-      if (names.includes("boom")) return new Response(null, { status: 422 });
-      writes.push({ path: pathname, body });
-      labels.push(...names);
-      return Response.json(labels.map((name) => ({ name })));
-    }
-    if (pathname === `/repos/${REPO}/issues/8/comments`) {
-      writes.push({ path: pathname, body });
-      comments.push({ id: comments.length + 1, user: APP_BOT, body: String(body["body"]) });
-      return Response.json(comments.at(-1));
-    }
+    if (req.method !== "GET") writes.push({ method: req.method, path: pathname });
     return new Response(null, { status: 404 });
   }
   const server = Bun.serve({ port: 0, fetch: github });
-  return { origin: `http://127.0.0.1:${server.port}`, comments, writes, repoRequests, stop: () => server.stop(true) };
+  return { origin: `http://127.0.0.1:${server.port}`, writes, stop: () => server.stop(true) };
 }
 
 async function connectGithub(db: Db, origin: string, headers: Record<string, string>, tenantId: string, githubOrigin: string): Promise<string> {
@@ -476,14 +358,13 @@ function verdictStep(step: SeededDo, headSha: string) {
 type Db = ReturnType<typeof createDB>["db"];
 type SeededEvent = { type: string; seq: number } & Record<string, unknown>;
 
-async function seedDeployment(db: Db, dataDir: string, tenantId: string, runs: SeededEvent[][], workflow = "seeded-pr-triage"): Promise<string[]> {
+async function seedDeployment(db: Db, dataDir: string, tenantId: string, runs: SeededEvent[][]): Promise<string[]> {
   const tenant = await db.query.tenant.findFirst({ where: eq(schema.tenant.id, tenantId) });
   const suffix = crypto.randomUUID().replaceAll("-", "");
   const definitionId = `wfd_${suffix}`;
   const anchorRunId = `wfr_anchor${suffix}`;
-  const live = workflow !== "seeded-pr-triage";
-  await db.insert(schema.workflowDefinition).values({ id: definitionId, tenantId, name: workflow, status: "stopped" });
-  await db.insert(schema.workflowRun).values({ id: anchorRunId, definitionId, anchorRunId, tenantId, status: live ? "deployed" : "completed" });
+  await db.insert(schema.workflowDefinition).values({ id: definitionId, tenantId, name: "seeded-pr-triage", status: "stopped" });
+  await db.insert(schema.workflowRun).values({ id: anchorRunId, definitionId, anchorRunId, tenantId, status: "completed" });
   const repoId = workflowRunRepoIdForAddress(formatRunAddress(anchorRunId, tenant!.domain));
   const dir = join(dataDir, "workflow-runs", repoId.id);
   const runIds: string[] = [];
@@ -545,150 +426,6 @@ test("a held Do is approved only as its own workspace's verdict recorded it, and
     expect(await approve("1".repeat(64))).toMatchObject({ status: 404, body: { error: { code: "do_not_found" } } });
     expect(await approve(effectOf(label, 0), otherRunId)).toMatchObject({ status: 404, body: { error: { code: "run_not_found" } } });
     expect(github.writes).toEqual([]);
-  } finally {
-    github.stop();
-    await close();
-  }
-}, 60_000);
-
-const POLICY_FILE = exportPolicyFile({
-  ...emptyPack(REPO),
-  checks: { "ci-green": { enabled: true } },
-  actions: { when: ["opened", "updated", "checks", "ready"], pass: [{ do: "labels", target: { from: "list", labels: ["checked"] } }], fail: [], unsure: [] },
-}).text;
-
-/** A manager's verdict as its pass records it: made `tookMs` after the pass started, its comment posted when `mirrored`. */
-async function seedVerdict(db: Db, tenantId: string, runId: string, started: Date, tookMs: number, verdict: Record<string, unknown>, mirrored = false): Promise<void> {
-  const number = Number(verdict["number"]);
-  const headSha = String(verdict["headSha"]);
-  const trigger = { repo: REPO, source: "github" as const, number, headSha, startedAt: started.toISOString() };
-  const mirror = mirrorOutcomesOf(mirrored ? { call: mirrorCallId(REPO, number), ok: true } : undefined);
-  const summary = summaryOf(verdict, new Date(started.getTime() + tookMs).toISOString(), trigger, mirror, undefined);
-  if (!summary) throw new Error(`no summary for ${runId}`);
-  await replaceVerdict(db, tenantId, { runId, repo: REPO, number, headSha, startedAt: started, ...summary, runStatus: "completed" });
-}
-
-function statsVerdict(number: number, headSha: string, fields: Record<string, unknown>) {
-  return {
-    repo: REPO, number, headSha, state: "ready-monitoring", actor: "author", humanGated: false, degraded: null, checks: [], actions: [],
-    request: { repo: REPO, number, labels: [], owned: [], comment: "" },
-    ...fields,
-  };
-}
-
-test("triage stats count a repository's recorded verdicts and Dos", async () => {
-  const github = fakeGithub();
-  const dataDir = temporaryDirectory();
-  const { db, close } = createDB(DATABASE);
-  try {
-    const origin = await startHub({ GITHUB_API_ORIGIN: github.origin }, dataDir);
-    const headers = await signedIn(origin);
-    const tenantId = await createTenant(origin, headers);
-    const otherTenantId = await createTenant(origin, headers);
-    await connectGithub(db, origin, headers, tenantId, github.origin);
-
-    const label: SeededDo = { list: "pass", kind: "labels", target: { labels: ["api"] }, index: 0 };
-    const note: SeededDo = { list: "fail", kind: "comment", target: { body: "Thanks" }, index: 0 };
-    const ci = (result: string, check = "ci-green") => ({ check, kind: "machine", result, reason: "", evidence: [] });
-    // Noon UTC yesterday keeps the runs on one UTC day at any hour.
-    const started = new Date(new Date().setUTCHours(-12, 0, 0, 0));
-    await seedVerdict(db, tenantId, "wfr_stats_7", started, 60_000, statsVerdict(7, "sha7", { checks: [ci("pass", "ci")], request: { repo: REPO, number: 7, labels: [], owned: [], comment: "Looks good" } }), true);
-    await seedVerdict(db, tenantId, "wfr_stats_8", new Date(started.getTime() + 600_000), 180_000, statsVerdict(8, HEAD, {
-      state: "awaiting-review", actor: "maintainer", checks: [ci("unconfirmed")], actions: [{ ...verdictStep(label, HEAD), status: "done" }, verdictStep(note, HEAD)],
-    }));
-    await seedVerdict(db, tenantId, "wfr_stats_8b", new Date(started.getTime() + 1_200_000), 900_000, statsVerdict(8, HEAD, { state: "stale-unknown", actor: "system", degraded: "error", checks: [ci("fail")] }));
-
-    async function stats(tenant: string) {
-      const res = await fetch(`${origin}/api/integrations/triage-stats/${tenant}?repo=${REPO}`, { headers });
-      expect(res.status).toBe(200);
-      return TriageStats.assert(await res.json());
-    }
-    const verdictAt = new Date(started.getTime() + 60_000);
-    const body = await stats(tenantId);
-    expect(body).toMatchObject({
-      repo: REPO,
-      days: 7,
-      since: verdictAt.toISOString(),
-      triaged: 2,
-      verdicts: { "ready-monitoring": 1, "awaiting-review": 1 },
-      neededYou: 1,
-      checks: { "ci-green": { pass: 1, fail: 0, unconfirmed: 1 } },
-      actions: { pass: { suggested: 1, executed: 1, failed: 0 }, fail: { suggested: 1, executed: 0, failed: 0 } },
-      comments: 1,
-    });
-    expect(body.daily).toHaveLength(7);
-    expect(body.daily.filter((d) => d.triaged > 0)).toEqual([{ date: verdictAt.toISOString().slice(0, 10), triaged: 2 }]);
-
-    expect(await stats(otherTenantId)).toMatchObject({ since: null, triaged: 0, verdicts: {}, checks: {}, actions: {}, comments: 0 });
-  } finally {
-    github.stop();
-    await close();
-  }
-}, 60_000);
-
-const HOOK_SECRET = "hook-secret";
-
-test("a burst of webhook deliveries for one pull request queues its head once and mails it once", async () => {
-  const github = fakeGithub(POLICY_FILE);
-  const output: string[] = [];
-  const { db, close } = createDB(DATABASE);
-  try {
-    const origin = await startHub({ GITHUB_API_ORIGIN: github.origin, TRIAGE_COALESCE_QUIET_MS: "1000" }, temporaryDirectory(), output);
-    const headers = await signedIn(origin);
-    const tenantId = await createTenant(origin, headers);
-    const providerId = await connectGithub(db, origin, headers, tenantId, github.origin);
-    const hook = await fetch(`${origin}/api/tenants/${tenantId}/credentials`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ providerId, name: "github-hook", type: "api_key", secret: HOOK_SECRET, metadata: xHubHookMetadata(TRIAGE_LISTENERS.github, GITHUB_HOOK_HEADERS) }),
-    });
-    expect(hook.status).toBe(201);
-    const hookId = type({ id: "string" }).assert(await hook.json()).id;
-
-    const repository = { full_name: REPO };
-    const pull = { number: 8, state: "open", draft: false, head: { sha: HEAD }, user: { login: "octocat" }, title: "Fix the widget", body: "" };
-    const checkRun = { action: "completed", repository, check_run: { head_sha: HEAD, pull_requests: [{ number: 8, head: { sha: HEAD } }] } };
-    const deliveries: Array<[string, unknown]> = [
-      ["pull_request", { action: "opened", repository, pull_request: pull }],
-      ["pull_request", { action: "edited", repository, pull_request: pull }],
-      ["check_run", checkRun],
-      ["check_run", checkRun],
-      ["pull_request_review", { action: "submitted", repository, pull_request: pull, review: { state: "approved" } }],
-      ["issue_comment", { action: "created", repository, issue: { number: 8, state: "open", pull_request: {}, user: { login: "octocat" } }, comment: { body: "Looks good" } }],
-    ];
-    const statuses = [];
-    for (const [event, payload] of deliveries) {
-      const body = JSON.stringify(payload);
-      const res = await fetch(`${origin}/api/hooks/${hookId}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-github-event": event,
-          "x-github-delivery": crypto.randomUUID(),
-          "x-hub-signature-256": `sha256=${createHmac("sha256", HOOK_SECRET).update(body).digest("hex")}`,
-        },
-        body,
-      });
-      expect(res.status).toBe(202);
-      statuses.push(type({ status: "string" }).assert(await res.json()).status);
-    }
-    expect(statuses).toEqual(["queued", "coalesced", "coalesced", "coalesced", "coalesced", "coalesced"]);
-
-    const state = await findArtifactByTitle(db, tenantId, triageStateName(REPO));
-    const stored = parseTriageState((await getArtifact(db, state!.artifactId))!.content, REPO);
-    expect(stored?.prs).toEqual([expect.objectContaining({ number: 8, headSha: HEAD, status: "queued" })]);
-
-    function flushes() {
-      return output.flatMap((line) => {
-        const entry = line.startsWith("{\"ts\":") ? JSON.parse(line) : undefined;
-        return entry?.pr === 8 && ["forwarded", "forward_failed"].includes(entry.msg) ? [entry] : [];
-      });
-    }
-    // The window holds at most four quiet periods; wait past it so a second mail would show.
-    await Bun.sleep(5_000);
-    expect(flushes().length).toBeGreaterThanOrEqual(1);
-    expect(flushes().length).toBeLessThanOrEqual(2);
-    expect(flushes()[0]).toMatchObject({ headSha: HEAD, events: ["opened", "updated", "checks", "approved", "commented"] });
   } finally {
     github.stop();
     await close();

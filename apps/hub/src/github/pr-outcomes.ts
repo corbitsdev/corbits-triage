@@ -71,7 +71,7 @@ function percentile(values: readonly number[], p: number): number | null {
  * Opening the pull request is the author's first touch; a baseline pull request has no verdict and so no reviewer wait.
  * A review or merge before the verdict settled waited for nothing.
  */
-export function outcomeOf(pr: PrTimes, events: readonly TimelineEvent[], { author, botLogins, verdictAt }: { author: string | null; botLogins: readonly string[]; verdictAt?: Date }): Outcome {
+function outcomeOf(pr: PrTimes, events: readonly TimelineEvent[], { author, botLogins, verdictAt }: { author: string | null; botLogins: readonly string[]; verdictAt?: Date }): Outcome {
   const opened = Date.parse(pr.createdAt);
   const people = events.filter((event) => TOUCHES.has(event.kind) && !event.bot && !botLogins.includes(event.actor)).toSorted((a, b) => a.at.localeCompare(b.at));
   const others = people.filter((event) => event.actor !== author);

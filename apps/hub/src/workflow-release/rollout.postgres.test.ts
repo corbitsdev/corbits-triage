@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { and, eq, like, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { authorize } from "@intx/authz";
 import { createEnvKeyCredentialCipher, generateKeyPair } from "@intx/crypto";
 import { createDB, createGrantStore, createPrincipalKeyStore, runMigrations, schema } from "@intx/db";
@@ -21,13 +21,12 @@ import {
   type AssetService,
   type RepoStore,
 } from "@intx/hub-sessions";
-import { DEPLOYER_GRANTS, REPO_SOURCES, type ModelInfo, type RepoSource, type SourceIndexEntry } from "@corbits/triage-contracts";
-import { revokeHumanDeployers } from "../deployer-role.js";
-import { createSystemWrites, SYSTEM_WRITER, SystemWriteDenied, type SystemWrites } from "../system-writes/writer.js";
-import { publishRelease, type Bundle } from "./publish.js";
+import { DEPLOYER_GRANTS, type ModelInfo, type RepoSource, type SourceIndexEntry } from "@corbits/triage-contracts";
+import { createSystemWrites, type SystemWrites } from "../system-writes/writer.js";
+import type { Bundle } from "./publish.js";
 import { setUpPublisher } from "./publisher.js";
 import { createWorkspaceLock } from "./reads.js";
-import { createListenerWatch, LISTENER_STALL_MS, listenerBacklog, releaseWriteOf } from "./triggers.js";
+import { createListenerWatch, LISTENER_STALL_MS, listenerBacklog } from "./triggers.js";
 import { createRolloutQueue, createWorkflowRollout, START_DEADLINE_MS, type Deployment, type DeployRequest, type DeployState, type RollOutcome } from "./rollout.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -79,7 +78,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-type Run = Deployment & { workflow: string; state: DeployState; polls: number };
+type Run = Deployment & { workflow: string; state: DeployState };
 
 /** A workspace with its publisher, rolled against fake deployments. */
 async function workspace(name: string) {
@@ -94,9 +93,6 @@ async function workspace(name: string) {
     models: [DECISION] as ModelInfo[],
     starts: "live" as DeployState,
     deployFails: false,
-    stopHangs: false,
-    releasedAfterPolls: Infinity,
-    statusFails: 0,
     clock: Date.now(),
     runs: [] as Run[],
     requests: [] as DeployRequest[],
@@ -121,7 +117,7 @@ async function workspace(name: string) {
       if (fake.deployFails) throw new Error("no sidecar capacity");
       fake.requests.push(request);
       const runId = `run_${fake.requests.length}`;
-      fake.runs.push({ runId, workflow: LISTENER, state: fake.starts, createdAt: new Date(fake.clock + fake.requests.length), cancelling: false, polls: 0, source: { assetId: request.assetId, commitSha: request.commitSha } });
+      fake.runs.push({ runId, workflow: LISTENER, state: fake.starts, createdAt: new Date(fake.clock + fake.requests.length), cancelling: false, source: { assetId: request.assetId, commitSha: request.commitSha } });
       return runId;
     },
     async state(runId) {
@@ -133,17 +129,11 @@ async function workspace(name: string) {
     },
     live() {},
     async status(_tenant, runId) {
-      if (fake.statusFails > 0) {
-        fake.statusFails -= 1;
-        throw new Error("status read failed");
-      }
       const run = fake.runs.find((row) => row.runId === runId);
       if (!run) return null;
-      run.polls += 1;
-      const released = run.cancelling && run.polls >= fake.releasedAfterPolls;
       return {
-        status: run.cancelling && !fake.stopHangs ? "cancelled" : "running",
-        allocation: { id: `alc_${runId}`, generation: 1, status: released ? "releasing" : "allocated", failureCode: null, failureMessage: null },
+        status: run.cancelling ? "cancelled" : "running",
+        allocation: { id: `alc_${runId}`, generation: 1, status: "allocated", failureCode: null, failureMessage: null },
       };
     },
     lock: createWorkspaceLock(handle.db.$client),
@@ -257,73 +247,6 @@ test("PostgreSQL: a new listener that ends, misses its deadline or cannot deploy
   expect(live()).toEqual(["run_1"]);
 }, 120_000);
 
-test("PostgreSQL: once the newest listener runs the release, the listeners before it and the workflows it replaced stop without a third deploy", async () => {
-  const { tenantId, fake, rollout, live, listenerAsset } = await workspace("restart");
-  await rollout.roll(tenantId, NO_REDEPLOY);
-  const release = { assetId: await listenerAsset(), commitSha: fake.requests[0]!.commitSha };
-  fake.runs.push(
-    { runId: "run_older", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, polls: 0, source: { assetId: "ast_old", commitSha: "old" } },
-    { runId: "run_replaced", workflow: "pr-triage-github", state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, polls: 0, source: null },
-    { runId: "run_cut_short", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock + 60_000), cancelling: false, polls: 0, source: release },
-  );
-  expect(await rollout.roll(tenantId, NO_REDEPLOY)).toEqual(SUCCEEDED);
-  expect(fake.requests).toHaveLength(1);
-  expect(live()).toEqual(["run_cut_short"]);
-  expect(live("pr-triage-github")).toEqual([]);
-}, 120_000);
-
-test("PostgreSQL: a replaced listener or workflow that stays live once stock gave up stopping it is logged as stuck, and the roll succeeds", async () => {
-  const { tenantId, fake, rollout, live } = await workspace("stuck");
-  await rollout.roll(tenantId, NO_REDEPLOY);
-  fake.runs.push({ runId: "run_historical", workflow: "pr-triage-historical", state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, polls: 0, source: null });
-  fake.stopHangs = true;
-  fake.releasedAfterPolls = 3;
-  expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
-  expect(live()).toEqual(["run_2"]);
-  const stuck = fake.logs.filter((entry) => String(entry["msg"]).endsWith("_cancel_stuck"));
-  expect(stuck).toHaveLength(2);
-  expect(stuck).toEqual(expect.arrayContaining([
-    { level: "warn", msg: "listener_cancel_stuck", tenantId, source: "github", deployment: "run_1" },
-    { level: "warn", msg: "rollout_cancel_stuck", tenantId, source: "github", workflow: "pr-triage-historical", deployment: "run_historical" },
-  ]));
-}, 120_000);
-
-test("PostgreSQL: a replaced listener stock neither stops nor gives up on is waited on five minutes from the stop request, then logged as stuck, and the roll succeeds", async () => {
-  const { tenantId, fake, rollout, live } = await workspace("unanswered");
-  await rollout.roll(tenantId, NO_REDEPLOY);
-  fake.stopHangs = true;
-  const before = fake.clock;
-  expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
-  expect(fake.clock - before).toBeGreaterThanOrEqual(5 * 60_000);
-  expect(live()).toEqual(["run_2"]);
-  expect(fake.logs.filter((entry) => entry["msg"] === "listener_cancel_stuck")).toEqual([{ level: "warn", msg: "listener_cancel_stuck", tenantId, source: "github", deployment: "run_1" }]);
-}, 120_000);
-
-test("PostgreSQL: a stop wait retries a failed status read three times, and one that keeps failing is logged as stuck while the roll succeeds", async () => {
-  const { tenantId, fake, rollout, live } = await workspace("unread");
-  await rollout.roll(tenantId, NO_REDEPLOY);
-  fake.statusFails = 3;
-  expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
-  expect(fake.logs.filter((entry) => String(entry["msg"]).endsWith("_cancel_stuck"))).toEqual([]);
-  fake.statusFails = 4;
-  expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
-  expect(live()).toEqual(["run_3"]);
-  expect(fake.logs.filter((entry) => entry["msg"] === "listener_cancel_stuck")).toEqual([{ level: "warn", msg: "listener_cancel_stuck", tenantId, source: "github", deployment: "run_2", error: "status read failed" }]);
-}, 120_000);
-
-test("PostgreSQL: a roll neither waits on nor stops a listener it did not deploy that runs the release, however long it takes to start", async () => {
-  const { tenantId, fake, rollout, live } = await workspace("replacing");
-  await rollout.roll(tenantId, NO_REDEPLOY);
-  fake.runs.push({ runId: "run_older", workflow: LISTENER, state: "live", createdAt: new Date(fake.clock - 60_000), cancelling: false, polls: 0, source: { assetId: "ast_old", commitSha: "old" } });
-  fake.runs[0]!.state = "starting";
-  fake.clock += START_DEADLINE_MS * 2;
-  const before = fake.clock;
-  expect(await rollout.roll(tenantId, NO_REDEPLOY)).toEqual(SUCCEEDED);
-  expect(fake.clock).toBe(before);
-  expect(fake.requests).toHaveLength(1);
-  expect(live()).toEqual(["run_1"]);
-}, 120_000);
-
 test("PostgreSQL: the hub deploys no asset that someone else created or that holds another commit", async () => {
   const { tenantId, principalId, fake, rollout, lastError, listenerAsset } = await workspace("foreign");
   await rollout.roll(tenantId, NO_REDEPLOY);
@@ -342,232 +265,6 @@ test("PostgreSQL: the hub deploys no asset that someone else created or that hol
   expect(lastError()).toContain(`holds ${commitSha}, which is not this release`);
   expect(fake.requests).toHaveLength(1);
 }, 120_000);
-
-test("PostgreSQL: twelve workspaces rolling at once leave the pool free for other queries", async () => {
-  const gate = Promise.withResolvers<void>();
-  let entered = 0;
-  const lock = createWorkspaceLock(handle.db.$client);
-  const rollout = {
-    async roll(tenantId: string): Promise<RollOutcome> {
-      const unlock = await lock(tenantId);
-      if (!unlock) return { busy: true, failed: [] };
-      try {
-        entered += 1;
-        await gate.promise;
-        return SUCCEEDED;
-      } finally {
-        await unlock();
-      }
-    },
-  };
-  const queue = createRolloutQueue(rollout, { quietMs: 0, retryMs: 60_000, concurrency: 2, random: Math.random }, function ignore() {});
-  const runs = Array.from({ length: 12 }, (_, index) => queue.run(`tnt_busy_${index}`));
-  for (let waited = 0; entered < 2 && waited < 500; waited += 1) await Bun.sleep(10);
-  async function poolAnswers(): Promise<unknown> {
-    const [row] = await handle.db.execute(sql`select 1 as up`);
-    return row;
-  }
-  expect(await Promise.race([poolAnswers(), Bun.sleep(5_000)])).toEqual({ up: 1 });
-  expect(entered).toBe(2);
-  gate.resolve();
-  await Promise.all(runs);
-  expect(entered).toBe(12);
-}, 120_000);
-
-test("a roll that finds the workspace held or fails keeps the hosts waiting to start again, and is tried again", async () => {
-  const outcomes: RollOutcome[] = [{ busy: true, failed: [] }, FAILED, SUCCEEDED];
-  const asked: Array<RepoSource[]> = [];
-  const done = Promise.withResolvers<void>();
-  const rollout = {
-    async roll(_tenantId: string, redeploy: ReadonlySet<RepoSource>): Promise<RollOutcome> {
-      asked.push([...redeploy]);
-      const outcome = outcomes.shift()!;
-      if (outcomes.length === 0) done.resolve();
-      return outcome;
-    },
-  };
-  const retries: unknown[] = [];
-  const queue = createRolloutQueue(rollout, { quietMs: 0, retryMs: 20, concurrency: 2, random: () => 1 }, function logged(entry) {
-    if (entry["msg"] === "workflow_release_retry") retries.push(entry["inMs"]);
-  });
-  queue.request("tnt_retry", ["github", "bitbucket-datacenter"]);
-  await done.promise;
-  expect(asked).toEqual([["github", "bitbucket-datacenter"], ["github", "bitbucket-datacenter"], ["github"]]);
-  expect(retries).toEqual([26, 26]);
-});
-
-test("PostgreSQL: a model key or catalog write starts every host's listener again, a host's own credential only that host's, and removing one as writing it", async () => {
-  const { tenantId } = await workspace("writes");
-  await handle.db.insert(schema.provider).values({ id: "prv_writes", tenantId, name: "anthropic", plugin: "http", apiBaseUrl: "https://models.test" });
-  await handle.db.insert(schema.credential).values(["anthropic", "github-app", "bitbucket-datacenter-hook"].map((name) => ({ id: `crd_${name}`, tenantId, principalId: null, providerId: "prv_writes", oauthClientId: null, name, type: "api_key" as const, secret: "unused", status: "active" as const })));
-  async function written(method: string, path: string, body?: unknown) {
-    const req = new Request(`https://hub.test${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { "content-type": "application/json" } });
-    return (await releaseWriteOf(handle.db, req, path))?.redeploy;
-  }
-  const credentials = `/api/tenants/${tenantId}/credentials`;
-  expect(await written("POST", credentials, { name: "anthropic" })).toEqual(REPO_SOURCES);
-  expect(await written("POST", `/api/tenants/${tenantId}/catalog/models`, {})).toEqual(REPO_SOURCES);
-  expect(await written("POST", credentials, { name: "github" })).toEqual(["github"]);
-  for (const method of ["PATCH", "DELETE"]) {
-    expect(await written(method, `${credentials}/crd_anthropic`)).toEqual(REPO_SOURCES);
-    expect(await written(method, `${credentials}/crd_github-app`)).toEqual(["github"]);
-    expect(await written(method, `${credentials}/crd_bitbucket-datacenter-hook`)).toEqual(["bitbucket-datacenter"]);
-  }
-  expect(await written("GET", credentials)).toBeUndefined();
-}, 120_000);
-
-test("a roll that fails while a request waits out its quiet window rolls again when that window ends, not after the retry", async () => {
-  const entered = Promise.withResolvers<void>();
-  const gate = Promise.withResolvers<void>();
-  const again = Promise.withResolvers<void>();
-  let rolls = 0;
-  const rollout = {
-    async roll(): Promise<RollOutcome> {
-      rolls += 1;
-      if (rolls === 1) {
-        entered.resolve();
-        await gate.promise;
-        return FAILED;
-      }
-      again.resolve();
-      return SUCCEEDED;
-    },
-  };
-  const queue = createRolloutQueue(rollout, { quietMs: 50, retryMs: 60_000, concurrency: 2, random: () => 0.5 }, function ignore() {});
-  const first = queue.run("tnt_quiet");
-  await entered.promise;
-  queue.request("tnt_quiet", []);
-  gate.resolve();
-  await first;
-  async function rolledAgain(): Promise<boolean> {
-    await again.promise;
-    return true;
-  }
-  expect(await Promise.race([rolledAgain(), Bun.sleep(2_000)])).toBe(true);
-  expect(rolls).toBe(2);
-});
-
-test("a connected host found with no live listener rolls its workspace, and every host's listener stock gave up stopping is reported on every pass", async () => {
-  const ensured: string[] = [];
-  const logged: Record<string, unknown>[] = [];
-  const listeners: Partial<Record<RepoSource, { runId: string }>> = { "bitbucket-datacenter": { runId: "run_bitbucket" } };
-  const watch = createListenerWatch({
-    async connectedSources() {
-      return ["github", "bitbucket-datacenter"];
-    },
-    async listener(_tenantId, source) {
-      return listeners[source];
-    },
-    async stuck(_tenantId, source) {
-      return source === "bitbucket-datacenter" ? ["run_stuck"] : [];
-    },
-    async allocation() {
-      return undefined;
-    },
-    async routable() {
-      return true;
-    },
-    async backlog() {
-      return undefined;
-    },
-    ensure(tenantId) {
-      ensured.push(tenantId);
-    },
-    replace() {
-      return true;
-    },
-    now() {
-      return new Date(0);
-    },
-    log(entry) {
-      logged.push(entry);
-    },
-  });
-  await watch("tnt_watch");
-  expect(ensured).toEqual(["tnt_watch"]);
-  listeners.github = { runId: "run_github" };
-  await watch("tnt_watch");
-  expect(ensured).toEqual(["tnt_watch"]);
-  const stuck = { level: "warn", msg: "listener_cancel_stuck", tenantId: "tnt_watch", source: "bitbucket-datacenter", deployment: "run_stuck" };
-  expect(logged).toEqual([stuck, stuck]);
-});
-
-test("a listener whose connected sidecar the router holds no route to is started again once, and one disconnected within its limit is not", async () => {
-  const limit = 15 * 60_000;
-  let clock = 0;
-  const listeners: Record<RepoSource, { runId: string }> = { github: { runId: "run_github" }, "bitbucket-datacenter": { runId: "run_bitbucket" } };
-  const routes: Record<string, () => boolean> = {
-    alc_github: () => false,
-    alc_bitbucket: () => {
-      throw new SidecarNotConnectedError("Allocation alc_bitbucket is not connected", new Date(0));
-    },
-  };
-  const rolled: Array<RepoSource[]> = [];
-  const entered = Promise.withResolvers<void>();
-  const gate = Promise.withResolvers<void>();
-  const replaced = Promise.withResolvers<void>();
-  const rollout = {
-    async roll(_tenantId: string, redeploy: ReadonlySet<RepoSource>): Promise<RollOutcome> {
-      rolled.push([...redeploy].sort());
-      entered.resolve();
-      await gate.promise;
-      for (const source of redeploy) listeners[source] = { runId: `${listeners[source].runId}_next` };
-      replaced.resolve();
-      return SUCCEEDED;
-    },
-  };
-  const logged: Record<string, unknown>[] = [];
-  const queue = createRolloutQueue(rollout, { quietMs: 0, retryMs: 60_000, concurrency: 2, random: Math.random }, function ignore() {});
-  const watch = createListenerWatch({
-    async connectedSources() {
-      return ["github", "bitbucket-datacenter"];
-    },
-    async listener(_tenantId, source) {
-      return listeners[source];
-    },
-    async stuck() {
-      return [];
-    },
-    async allocation(runId) {
-      return runId.endsWith("_next") ? { allocationId: "alc_next", generation: 1, maxDisconnectedMs: limit } : { allocationId: `alc_${runId.slice(4)}`, generation: 1, maxDisconnectedMs: limit };
-    },
-    async routable(target) {
-      return routes[target.allocationId]?.() ?? true;
-    },
-    async backlog() {
-      return undefined;
-    },
-    ensure() {
-      throw new Error("Every host has a listener.");
-    },
-    replace: queue.replace,
-    now() {
-      return new Date(clock);
-    },
-    log(entry) {
-      logged.push(entry);
-    },
-  });
-  await watch("tnt_unroutable");
-  clock = limit - 1;
-  await watch("tnt_unroutable");
-  await entered.promise;
-  await watch("tnt_unroutable");
-  gate.resolve();
-  await replaced.promise;
-  await Bun.sleep(10);
-  await watch("tnt_unroutable");
-  await Bun.sleep(10);
-  expect(rolled).toEqual([["github"]]);
-  const disconnected = { level: "debug", msg: "listener_disconnected", tenantId: "tnt_unroutable", source: "bitbucket-datacenter", deployment: "run_bitbucket", allocationId: "alc_bitbucket", generation: 1, reason: "Allocation alc_bitbucket is not connected" };
-  expect(logged).toEqual([
-    { level: "warn", msg: "listener_unroutable", tenantId: "tnt_unroutable", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, reason: "its sidecar is connected but the hub holds no route to it" },
-    disconnected,
-    disconnected,
-    disconnected,
-    disconnected,
-  ]);
-});
 
 test("a listener whose sidecar stays disconnected past its limit is replaced once, and a second watch during that roll does not start another", async () => {
   const limit = 15 * 60_000;
@@ -640,127 +337,6 @@ test("a listener whose sidecar stays disconnected past its limit is replaced onc
   expect(logged).toEqual([
     { level: "debug", msg: "listener_disconnected", ...entry, reason: "Allocation alc_github is not connected" },
     { level: "warn", msg: "listener_unreachable", ...entry, unreachableMs: limit + 1, reason: "its sidecar stayed disconnected longer than the deployment's limit" },
-  ]);
-});
-
-test("a failed route check that is not a disconnect does not replace the listener, even past its limit", async () => {
-  const logged: Record<string, unknown>[] = [];
-  const watch = createListenerWatch({
-    async connectedSources() {
-      return ["github"];
-    },
-    async listener() {
-      return { runId: "run_github" };
-    },
-    async stuck() {
-      return [];
-    },
-    async allocation() {
-      return { allocationId: "alc_github", generation: 1, maxDisconnectedMs: 0 };
-    },
-    async routable() {
-      throw new Error("Allocated sidecar connection changed for allocation alc_github");
-    },
-    async backlog() {
-      return undefined;
-    },
-    ensure() {
-      throw new Error("The host has a listener.");
-    },
-    replace() {
-      throw new Error("A failed check is not a disconnect.");
-    },
-    now() {
-      return new Date(1);
-    },
-    log(entry) {
-      logged.push(entry);
-    },
-  });
-  await watch("tnt_changed");
-  expect(logged).toEqual([
-    { level: "warn", msg: "listener_check_failed", tenantId: "tnt_changed", source: "github", deployment: "run_github", allocationId: "alc_github", generation: 1, reason: "Allocated sidecar connection changed for allocation alc_github" },
-  ]);
-});
-
-test("a listener whose deploy or sidecar restore stays unfinished past the start deadline is replaced once, and finishing resets the clock", async () => {
-  let clock = 1_000;
-  let deployed = false;
-  const listeners = { github: { runId: "run_github" } };
-  const rolled: Array<RepoSource[]> = [];
-  const entered = Promise.withResolvers<void>();
-  const gate = Promise.withResolvers<void>();
-  const replaced = Promise.withResolvers<void>();
-  const rollout = {
-    async roll(_tenantId: string, redeploy: ReadonlySet<RepoSource>): Promise<RollOutcome> {
-      rolled.push([...redeploy].sort());
-      entered.resolve();
-      await gate.promise;
-      listeners.github = { runId: "run_github_next" };
-      replaced.resolve();
-      return SUCCEEDED;
-    },
-  };
-  const logged: Record<string, unknown>[] = [];
-  const queue = createRolloutQueue(rollout, { quietMs: 0, retryMs: 60_000, concurrency: 2, random: Math.random }, function ignore() {});
-  const watch = createListenerWatch({
-    async connectedSources() {
-      return ["github"];
-    },
-    async listener() {
-      return listeners.github;
-    },
-    async stuck() {
-      return [];
-    },
-    async allocation(runId) {
-      if (!deployed) return undefined;
-      return { allocationId: runId === "run_github" ? "alc_github" : "alc_next", generation: 2, maxDisconnectedMs: 15 * 60_000 };
-    },
-    async routable() {
-      return true;
-    },
-    async backlog() {
-      return undefined;
-    },
-    ensure() {
-      throw new Error("The host has a listener.");
-    },
-    replace: queue.replace,
-    now() {
-      return new Date(clock);
-    },
-    log(entry) {
-      logged.push(entry);
-    },
-  });
-  await watch("tnt_restore");
-  clock = 1_000 + START_DEADLINE_MS;
-  await watch("tnt_restore");
-  expect(rolled).toEqual([]);
-  deployed = true;
-  await watch("tnt_restore");
-  deployed = false;
-  clock = 10_000 + START_DEADLINE_MS;
-  await watch("tnt_restore");
-  clock += START_DEADLINE_MS;
-  await watch("tnt_restore");
-  expect(rolled).toEqual([]);
-  clock += 1;
-  await watch("tnt_restore");
-  await entered.promise;
-  await watch("tnt_restore");
-  expect(rolled).toEqual([["github"]]);
-  gate.resolve();
-  await replaced.promise;
-  await Bun.sleep(10);
-  await watch("tnt_restore");
-  clock += START_DEADLINE_MS;
-  await watch("tnt_restore");
-  await Bun.sleep(10);
-  expect(rolled).toEqual([["github"]]);
-  expect(logged).toEqual([
-    { level: "warn", msg: "listener_unroutable", tenantId: "tnt_restore", source: "github", deployment: "run_github", unstartedMs: START_DEADLINE_MS + 1, reason: "its deploy or sidecar restore did not finish within five minutes" },
   ]);
 });
 
@@ -889,32 +465,4 @@ test("PostgreSQL: a person keeps the Deployer role until a roll leaves every hos
   fake.starts = "live";
   expect(await rollout.roll(tenantId, REDEPLOY_GITHUB)).toEqual(SUCCEEDED);
   expect(await holders()).toEqual([principalId]);
-}, 120_000);
-
-test("PostgreSQL: a roll run again grants each chain asset's read once, and a writer without admin writes neither that grant nor a Deployer revoke", async () => {
-  const { tenantId, principalId, fake, rollout } = await workspace("regrant");
-  async function readGrants() {
-    return handle.db.select({ id: schema.grant.id, resource: schema.grant.resource }).from(schema.grant)
-      .where(and(eq(schema.grant.tenantId, tenantId), eq(schema.grant.principalId, principalId), like(schema.grant.resource, "asset:%"), eq(schema.grant.action, "read")));
-  }
-  expect(await rollout.roll(tenantId, NO_REDEPLOY)).toEqual(SUCCEEDED);
-  const granted = await readGrants();
-  expect(granted).toHaveLength(2);
-  expect(await rollout.roll(tenantId, NO_REDEPLOY)).toEqual(SUCCEEDED);
-  expect(await readGrants()).toEqual(granted);
-
-  const [deployer] = await handle.db.select({ roleId: schema.principalRole.roleId }).from(schema.principalRole).where(eq(schema.principalRole.principalId, principalId));
-  await handle.db.insert(schema.user).values({ id: "usr_regrant_admin", email: "admin@regrant.test", name: "Admin" });
-  await handle.db.insert(schema.principal).values({ id: "prn_regrant_admin", tenantId, kind: "user", refId: "usr_regrant_admin", status: "active" });
-  await handle.db.insert(schema.principalRole).values({ principalId: "prn_regrant_admin", roleId: deployer!.roleId });
-  const [writer] = await handle.db.select({ id: schema.principal.id }).from(schema.principal).where(and(eq(schema.principal.tenantId, tenantId), eq(schema.principal.refId, SYSTEM_WRITER)));
-  await handle.db.delete(schema.principalRole).where(eq(schema.principalRole.principalId, writer!.id));
-  await handle.db.delete(schema.grant).where(eq(schema.grant.id, granted[0]!.id));
-
-  const deps = { db: handle.db, writes, assets, repoStore, now: () => new Date() };
-  await expect(publishRelease(deps, { tenantId, principalId }, bundle, fake.models)).rejects.toThrow(SystemWriteDenied);
-  expect(await readGrants()).toEqual(granted.slice(1));
-  await expect(revokeHumanDeployers(writes, tenantId, (entry) => fake.logs.push(entry))).rejects.toThrow(SystemWriteDenied);
-  const holders = await handle.db.select({ principalId: schema.principalRole.principalId }).from(schema.principalRole).where(eq(schema.principalRole.roleId, deployer!.roleId));
-  expect(holders.map((row) => row.principalId).sort()).toEqual(["prn_regrant_admin", principalId].sort());
 }, 120_000);

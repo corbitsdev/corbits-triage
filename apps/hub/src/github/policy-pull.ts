@@ -133,7 +133,7 @@ function omission(commit: string): string {
 }
 
 /** Under GitHub's 65,536-character body limit, with room. */
-export const PULL_BODY_MAX = 60_000;
+const PULL_BODY_MAX = 60_000;
 
 const TRUNCATED = "\n(truncated)";
 

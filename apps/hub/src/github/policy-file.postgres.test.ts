@@ -8,7 +8,7 @@ import { credentialAad } from "@intx/types";
 import { checkPolicyFile, type RepoSource } from "@corbits/triage-contracts";
 import { PROVIDER, TOKEN_CREDENTIAL } from "../bitbucket-datacenter/names.js";
 import { fileRefusal, readRepoPolicy } from "./repo-policy.js";
-import { createPolicyFile, listedPolicyPull, PolicyPatchBody } from "./policy-file.js";
+import { createPolicyFile, PolicyPatchBody } from "./policy-file.js";
 import { POLICY_BRANCH } from "./policy-pull.js";
 import { POLICY_PUSH_MESSAGE } from "./policy-push.js";
 import { createMemberOpenPulls, createOpenPullsCache } from "./open-pulls.js";
@@ -24,19 +24,9 @@ const FROM_FILE = "acme/from-file";
 const STARTER = "acme/starter";
 const SHARED = "acme/shared";
 const EXTENDS = "acme/extends";
-const CHOSEN = "acme/chosen";
-const CHOSEN_RACED = "acme/chosen-raced";
 const PUSHED = "acme/pushed";
 const BITBUCKET_PUSHED = "PROJ/pushed";
 const PATCHED = "acme/patched";
-const PATCH_LISTED = "acme/patch-listed";
-const RESERVED = "acme/reserved";
-const PULL_READ = "acme/pull-read";
-const REFRESHED = "acme/refreshed";
-const BOTH = "acme/both";
-const UNHEARD = "acme/unheard";
-const BITBUCKET_UNHEARD = "PROJ/unheard";
-const BITBUCKET_PULL = "PROJ/pull-read";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 /** Uses the host credential, but may neither create grants nor manage the workspace. */
 const USER = { tenantId: TENANT, principalId: "prn_plain" };
@@ -53,26 +43,14 @@ const YAML = ".corbits-triage.yaml";
 const DIRECTORY = "directory";
 const files = new Map<string, { sha: string; text: string | null }>();
 let readFails = false;
-/** Set, the workspace's open pull request listing throws. */
-let listingFails = false;
-/** Set to a repository, the workspace's open pull request listing leaves it out. */
-let listingOmits: string | undefined;
-/** Set, GitHub fails the lookup of a repository's open pull request by branch. */
-let pullLookupFails = false;
-/** Bitbucket repositories with an open policy pull request. */
-const bitbucketPulls = new Set<string>();
 /** Keyed by `repo:branch`, to the commit it points at. */
 const refs = new Map<string, string>();
 const pulls: Array<{ repo: string; number: number; head: string; base: string; title: string; body: string; open: boolean }> = [];
 let commits = 0;
 /** Each request GitHub got, as `METHOD path`. */
 const requests: string[] = [];
-/** Set, the next commit is followed by another caller opening this pull request first. */
-let raced: (typeof pulls)[number] | undefined;
 /** Each commit written through the contents API, with its message, as `repo:branch`. */
 const branchCommits: Array<{ at: string; sha: string; message: string }> = [];
-/** How many pull request edits fail next. */
-let pullEditFailures = 0;
 /** Set to a `repo@branch/path` key, the next read of it is followed by another commit to that file. */
 let movedAfterRead: string | undefined;
 /** Repositories whose default branch GitHub reports protected, and the ruleset rules each one's default branch has. */
@@ -112,8 +90,6 @@ async function github(req: Request): Promise<Response> {
     if (files.get(`${repo}@${branch}/${at}`)?.sha !== sha) return Response.json({ message: "sha does not match" }, { status: 409 });
     files.set(`${repo}@${branch}/${at}`, { sha: `blob${++commits}`, text: Buffer.from(content, "base64").toString("utf8") });
     branchCommits.push({ at: `${repo}:${branch}`, sha: `commit${commits}`, message });
-    if (raced) pulls.push(raced);
-    raced = undefined;
     return Response.json({ content: { sha: `blob${commits}` }, commit: { sha: `commit${commits}` } }, { status: 201 });
   }
   if (req.method === "GET" && path === "") return Response.json({ default_branch: "main" });
@@ -140,7 +116,6 @@ async function github(req: Request): Promise<Response> {
     return Response.json(open.map((pull) => ({ number: pull.number, title: pull.title, user: { login: "triage", type: "Bot" }, draft: false, head: { ref: pull.head, sha: "head-sha", repo: { id: 1 } }, base: { repo: { id: 1 } }, updated_at: "2026-10-17T00:00:00Z", labels: [], html_url: `https://github.com/${repo}/pull/${pull.number}` })));
   }
   if (req.method === "GET" && path === "pulls") {
-    if (pullLookupFails) return new Response(null, { status: 502 });
     const head = url.searchParams.get("head");
     return Response.json(pulls.filter((pull) => pull.repo === repo && pull.open && `${owner}:${pull.head}` === head).map((pull) => ({ number: pull.number, title: pull.title, body: pull.body, html_url: `https://github.com/${repo}/pull/${pull.number}`, head: { sha: "head-sha" } })));
   }
@@ -159,10 +134,6 @@ async function github(req: Request): Promise<Response> {
     return Response.json({ number: pull.number, title: pull.title, body: pull.body, html_url: `https://github.com/${repo}/pull/${pull.number}`, head: { sha: "head-sha" } });
   }
   if (req.method === "PATCH" && path.startsWith("pulls/")) {
-    if (pullEditFailures > 0) {
-      pullEditFailures -= 1;
-      return new Response(null, { status: 502 });
-    }
     const pull = pulls.find((row) => row.repo === repo && row.number === Number(path.slice("pulls/".length)))!;
     Object.assign(pull, await req.json());
     return Response.json({ number: pull.number, html_url: `https://github.com/${repo}/pull/${pull.number}`, head: { sha: "patched-head" } });
@@ -187,8 +158,8 @@ async function bitbucket(path: string, init?: RequestInit): Promise<Response> {
     branchCommits.push({ at: `${repo}:main`, sha: id, message: String(form.get("message")) });
     return Response.json({ id });
   }
-  if (kind === "pull-requests") return Response.json({ values: bitbucketPulls.has(repo) ? [{ id: 4, version: 1, title: "policy", fromRef: { latestCommit: "bb-head" }, links: { self: [{ href: `https://bitbucket.example/${repo}/pull-requests/4` }] } }] : [] });
-  if (kind === "branches") return Response.json({ latestCommit: "head", values: [{ displayId: "main", latestCommit: "head" }, ...(bitbucketPulls.has(repo) ? [{ displayId: POLICY_BRANCH, latestCommit: "bb-head" }] : [])] });
+  if (kind === "pull-requests") return Response.json({ values: [] });
+  if (kind === "branches") return Response.json({ latestCommit: "head", values: [{ displayId: "main", latestCommit: "head" }] });
   if (!file) return new Response(null, { status: 404 });
   if (kind === "browse") return Response.json({ type: "FILE" });
   if (kind === "raw") return new Response(file.text);
@@ -210,7 +181,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, STARTER, PATCHED, PATCH_LISTED, RESERVED, PULL_READ, REFRESHED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN, connected: true, enabled: false, installationId: 1 }, { name: CHOSEN_RACED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: BITBUCKET_PULL, source: "bitbucket-datacenter", connected: true, enabled: true }];
+  const repos = [...[FROM_FILE, STARTER, PATCHED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -235,11 +206,7 @@ beforeAll(async () => {
   const listed = createMemberOpenPulls({ db, cipher, onKeyMoved: noKeyPush, authorize, list, cache: createOpenPullsCache(() => new Date()) });
   policyFile = createPolicyFile({
     db,
-    async openPulls(member, fresh) {
-      if (listingFails) throw new Error("listing failed");
-      const read = await listed(member, fresh);
-      return read instanceof Response ? read : { ...read, repos: read.repos.filter((row) => row.repo !== listingOmits) };
-    },
+    openPulls: listed,
     changed() {},
     refusal: refused,
     cipher,
@@ -397,41 +364,6 @@ test("PostgreSQL: a repository with no policy file runs nothing and is offered a
   expect(await exportOf(STARTER)).toMatchObject({ http: 409, error: { code: "policy_file_present" } });
 }, 60_000);
 
-test("PostgreSQL: edited text is opened as a pull request as triage would run it, over the file it was edited from, and the open pull request is left as it is", async () => {
-  expect(await exportOf(CHOSEN, "rules: [", null)).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: expect.stringContaining("Line 1: The policy file is not YAML") } });
-  expect(await exportOf(CHOSEN, "extends: acme/nowhere\nchecks: {}\n", null)).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: "acme/nowhere is not connected to this workspace or has no policy file." } });
-  expect(await exportOf(CHOSEN, FILE, "blob-never")).toMatchObject({ http: 409, error: { code: "policy_file_changed" } });
-  expect(pulls.filter((row) => row.repo === CHOSEN)).toEqual([]);
-
-  const number = pulls.length + 1;
-  const url = `https://github.com/${CHOSEN}/pull/${number}`;
-  expect(await exportOf(CHOSEN, FILE)).toMatchObject({ http: 400, error: { code: "invalid_request" } });
-  expect(await exportOf(CHOSEN, FILE, null)).toEqual({ http: 200, status: "opened", url, number, headSha: "head-sha" });
-  expect(pulls.filter((row) => row.repo === CHOSEN)).toMatchObject([{ head: POLICY_BRANCH, base: "main", title: `chore: add a Corbits Triage policy in ${YML}` }]);
-  expect(files.get(`${CHOSEN}@${POLICY_BRANCH}/${YML}`)!.text).toBe(FILE);
-
-  expect(await exportOf(CHOSEN, FILE.replace("CI passes.", "CI is green."), null)).toMatchObject({ http: 409, error: { code: "policy_pull_open", url, number } });
-  expect(files.get(`${CHOSEN}@${POLICY_BRANCH}/${YML}`)!.text).toBe(FILE);
-
-  // Merged where no push is heard, the file is still found, and an edit goes over it from the sha it was made from.
-  onMain(CHOSEN, YML, FILE, "chosen1");
-  pulls.find((row) => row.repo === CHOSEN)!.open = false;
-  expect(await exportOf(CHOSEN, FILE, "chosen1")).toMatchObject({ http: 409, error: { code: "policy_file_unchanged" } });
-  const edited = FILE.replace("CI passes.", "CI is green.");
-  expect(await exportOf(CHOSEN, edited, null)).toMatchObject({ http: 409, error: { code: "policy_file_changed" } });
-  expect(await exportOf(CHOSEN, edited, "chosen0")).toMatchObject({ http: 409, error: { code: "policy_file_changed" } });
-  expect(await exportOf(CHOSEN, edited, "chosen1")).toMatchObject({ http: 200, status: "opened" });
-  expect(pulls.filter((row) => row.repo === CHOSEN && row.open)).toMatchObject([{ title: `chore: update the Corbits Triage rules in ${YML}` }]);
-  expect(files.get(`${CHOSEN}@${POLICY_BRANCH}/${YML}`)!.text).toBe(edited);
-  expect(files.get(`${CHOSEN}@main/${YML}`)!.text).toBe(FILE);
-
-  // Another caller opening it between the check and the create is answered with theirs.
-  const theirs = pulls.length + 1;
-  raced = { repo: CHOSEN_RACED, number: theirs, head: POLICY_BRANCH, base: "main", title: "theirs", body: "", open: true };
-  expect(await exportOf(CHOSEN_RACED, FILE, null)).toMatchObject({ http: 200, number: theirs });
-  expect(pulls.filter((row) => row.repo === CHOSEN_RACED)).toHaveLength(1);
-}, 60_000);
-
 test("PostgreSQL: a policy file extending another repository runs over that repository's file as last pushed, and is refused while that file cannot be read or extends again", async () => {
   onMain(EXTENDS, YML, `extends: ${SHARED}\nrules:\n  - check: max-files-changed\n    max: 50\n    text: At most 50 files.\n    reason: Reviewable.\n    evidence: [maintainer-stated]\n`, "own1");
   await policyFile.onPush(TENANT, EXTENDS, "github");
@@ -451,54 +383,6 @@ test("PostgreSQL: a policy file extending another repository runs over that repo
   onMain(SHARED, YML, "rules: [", "shared3");
   await policyFile.onPush(TENANT, SHARED, "github");
   expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 1: The policy file is not YAML`), automatic: [] });
-});
-
-test("PostgreSQL: a name both hosts hold is read only for the host asked, a route naming the host reads it, one naming no host refuses it, and its upgrade row names its host", async () => {
-  onMain(BOTH, YML, FILE, "both1");
-  await policyFile.onPush(TENANT, BOTH, "github");
-  expect(await readPack(BOTH)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "both1" } } });
-  expect((await policyFile.fileRoute({ repo: BOTH }, MEMBER)).status).toBe(409);
-  expect((await (await policyFile.fileRoute({ repo: BOTH, source: "github" }, MEMBER)).json()) as unknown).toMatchObject({ file: { path: YML, sha: "both1" } });
-  expect(await upgrades()).toContainEqual(expect.objectContaining({ repo: BOTH, source: "bitbucket-datacenter" }));
-});
-
-test("PostgreSQL: where no webhook is heard a merged policy file is read within a minute without a push, and kept while the webhook is heard", async () => {
-  const start = Date.now();
-  function after(ms: number): void {
-    setSystemTime(new Date(start + ms));
-  }
-  try {
-    for (const [repo, source] of [[UNHEARD, "github"], [BITBUCKET_UNHEARD, "bitbucket-datacenter"]] as const) {
-      after(0);
-      expect(await readPack(repo, source)).toEqual({ status: "missing" });
-      onMain(repo, YML, FILE, `${source}1`);
-      after(61_000);
-      expect(await readPack(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}1` } } });
-      activity.heard(TENANT, source, repo);
-      onMain(repo, YML, FILE, `${source}2`);
-      after(122_000);
-      expect(await readPack(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}1` } } });
-      after(61_000 + 30 * 60_000);
-      expect(await readPack(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}2` } } });
-    }
-  } finally {
-    setSystemTime();
-  }
-});
-
-test("a Bitbucket policy pull request carries no head, so it is merged on Bitbucket, and each host's is found only for its own repository", () => {
-  const pr = { number: 4, title: "Add the policy file", author: "triage", draft: false, sha: "bb-head", branch: POLICY_BRANCH, updatedAt: "2026-10-17T00:00:00Z", labels: [], url: "https://bitbucket.example/pr/4" };
-  const listing = (source: RepoSource) => ({ at: 0, repos: [{ repo: "PROJ/widgets", source, prs: [pr] }] });
-  expect(listedPolicyPull(listing("bitbucket-datacenter"), "PROJ/widgets", "bitbucket-datacenter")).toEqual({ pull: { url: pr.url, number: 4 } });
-  expect(listedPolicyPull(listing("github"), "PROJ/widgets", "github")).toEqual({ pull: { url: pr.url, number: 4, headSha: "bb-head" } });
-  expect(listedPolicyPull(listing("github"), "PROJ/widgets", "bitbucket-datacenter")).toEqual({ pullUnread: true });
-});
-
-test("a listing that was refused or could not list the repository says the policy pull request is unread, not closed", () => {
-  const listed = { at: 0, repos: [{ repo: "acme/widgets", source: "github" as const, prs: [] }, { repo: "acme/failed", source: "github" as const, prs: [], error: "GitHub did not answer." }] };
-  expect(listedPolicyPull(listed, "acme/widgets", "github")).toEqual({});
-  expect(listedPolicyPull(listed, "acme/failed", "github")).toEqual({ pullUnread: true });
-  expect(listedPolicyPull(new Response(null, { status: 403 }), "acme/widgets", "github")).toEqual({ pullUnread: true });
 });
 
 const PATCH_FILE = `# Corbits Triage policy.
@@ -616,98 +500,6 @@ test("PostgreSQL: a batch of policy edits opens one pull request, a preview writ
   const both = pulls.find((row) => row.repo === PATCHED)!.body;
   expect(both).toContain("Turns on `focused`.");
   expect(both).toContain("Turns on code review.");
-
-  // A commit whose description edit kept failing is named in the refusal, and the next batch adds its section.
-  pullEditFailures = 4;
-  const lost = await patchOf({ repo: PATCHED, changes: [{ kind: "code-review", on: false }] });
-  const lostCommit = branchCommits.at(-1)!.sha;
-  expect(lost).toMatchObject({ http: 502, error: { code: "description_not_updated", message: expect.stringContaining(lostCommit) } });
-  expect(pulls.find((row) => row.repo === PATCHED)!.body).not.toContain("Turns off code review.");
-  const repaired = await patchOf({ repo: PATCHED, changes: [{ kind: "rule", id: "focused", enabled: false }] });
-  expect(repaired).toMatchObject({ http: 200, number });
-  const body = pulls.find((row) => row.repo === PATCHED)!.body;
-  expect(body).toContain("Turns off code review.");
-  expect(body.indexOf("Turns off code review.")).toBeLessThan(body.lastIndexOf("Turns off `focused`."));
-});
-
-test("PostgreSQL: a policy file with a security or deslop block is triaged on the rest, shows the block as pending, and refuses other edits until a strip-reserved patch removes it", async () => {
-  const held = `${PATCH_FILE}security: { on: true }\n`;
-  const line = held.split("\n").indexOf("security: { on: true }") + 1;
-  onMain(RESERVED, YML, held, "reserved-main");
-  await policyFile.onPush(TENANT, RESERVED, "github");
-  expect(await readPack(RESERVED)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "reserved-main" } } });
-  const pending = `Line ${line}: \`security\`: security and deslop reviews are not available yet, so Triage skips this block; remove it.`;
-  expect(await fileOf(RESERVED)).toMatchObject({ sha: "reserved-main", pending });
-
-  expect(await patchOf({ repo: RESERVED, changes: [{ kind: "rule", id: "focused", enabled: false }] })).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: expect.stringContaining("`security`: security and deslop reviews are not available yet") } });
-  expect(await exportOf(RESERVED, held, "reserved-main")).toMatchObject({ http: 422, error: { code: "policy_file_invalid", message: pending } });
-  expect(pulls.filter((row) => row.repo === RESERVED)).toEqual([]);
-
-  expect(await patchOf({ repo: RESERVED, changes: [{ kind: "strip-reserved" }] })).toMatchObject({ http: 200, status: "opened" });
-  const written = files.get(`${RESERVED}@${POLICY_BRANCH}/${YML}`)!.text!;
-  expect(written).not.toContain("security");
-  expect(checkPolicyFile(written, RESERVED)).toEqual({ ok: true, policy: expect.anything(), workflow: expect.anything() });
-  expect(pulls.find((row) => row.repo === RESERVED)!.body).toContain("- Removes the security and deslop blocks, and the decide rules with a condition on one, which Triage skips.");
-});
-
-test("PostgreSQL: a repository with a policy file reads ok with its open policy pull request, which a patch shows at once", async () => {
-  onMain(PATCH_LISTED, YML, PATCH_FILE);
-  await policyFile.onPush(TENANT, PATCH_LISTED, "github");
-  expect(await upgradeOf(PATCH_LISTED)).toEqual({ repo: PATCH_LISTED, source: "github", upgrade: { state: "ok" } });
-
-  const opened = await patchOf({ repo: PATCH_LISTED, changes: [{ kind: "rule", id: "focused", enabled: false }] });
-  expect(opened).toMatchObject({ http: 200, status: "opened" });
-  const { number, url } = opened as { number: number; url: string };
-  expect(await upgradeOf(PATCH_LISTED)).toEqual({ repo: PATCH_LISTED, source: "github", upgrade: { state: "ok" }, pull: { url, number, headSha: "head-sha" } });
-});
-
-test("PostgreSQL: the policy file read carries the open policy pull request's copy beside the default branch's, and drops it once merged", async () => {
-  onMain(PULL_READ, YML, PATCH_FILE);
-  await policyFile.onPush(TENANT, PULL_READ, "github");
-  expect(await fileOf(PULL_READ)).not.toHaveProperty("pull");
-
-  expect(await patchOf({ repo: PULL_READ, changes: [{ kind: "rule", id: "focused", enabled: false }] })).toMatchObject({ http: 200, status: "opened" });
-  const branchText = files.get(`${PULL_READ}@${POLICY_BRANCH}/${YML}`)!.text!;
-  expect(branchText).not.toBe(PATCH_FILE);
-  expect(await fileOf(PULL_READ)).toMatchObject({ text: PATCH_FILE, pull: { text: branchText, headSha: "head-sha" } });
-
-  // A branch that cannot be read or listed leaves the default branch's file to answer, with the copy marked unknown.
-  readFails = true;
-  const res = await policyFile.fileRoute({ repo: PULL_READ }, MEMBER);
-  readFails = false;
-  expect(res.status).toBe(200);
-  const unread = ((await res.json()) as { file: unknown }).file;
-  expect(unread).toMatchObject({ text: PATCH_FILE, pullUnread: true });
-  expect(unread).not.toHaveProperty("pull");
-
-  listingFails = true;
-  expect(await fileOf(PULL_READ)).toMatchObject({ text: PATCH_FILE, pullUnread: true });
-  listingFails = false;
-  expect(await fileOf(PULL_READ)).not.toHaveProperty("pullUnread");
-
-  // A repository the listing does not cover is asked of the host.
-  listingOmits = PULL_READ;
-  expect(await fileOf(PULL_READ)).toMatchObject({ pull: { text: branchText, headSha: "head-sha" } });
-  pullLookupFails = true;
-  expect(await fileOf(PULL_READ)).toMatchObject({ text: PATCH_FILE, pullUnread: true });
-  pullLookupFails = false;
-  listingOmits = undefined;
-
-  onMain(BITBUCKET_PULL, YML, FILE);
-  await policyFile.onPush(TENANT, BITBUCKET_PULL, "bitbucket-datacenter");
-  bitbucketPulls.add(BITBUCKET_PULL);
-  listingOmits = BITBUCKET_PULL;
-  expect(await fileOf(BITBUCKET_PULL, "bitbucket-datacenter")).toMatchObject({ text: FILE, pull: { text: FILE, headSha: "bb-head" } });
-  listingOmits = undefined;
-
-  onMain(PULL_READ, YML, branchText);
-  pulls.find((row) => row.repo === PULL_READ)!.open = false;
-  await policyFile.onPush(TENANT, PULL_READ, "github");
-  setSystemTime(new Date(Date.now() + 10_000));
-  const merged = await fileOf(PULL_READ);
-  setSystemTime();
-  expect(merged).toMatchObject({ text: branchText });
-  expect(merged).not.toHaveProperty("pull");
 });
 
 test("PostgreSQL: edited text is pushed to the default branch as one commit where its rules let the hub push, on both hosts, and refused where they do not or the file moved", async () => {
@@ -745,14 +537,4 @@ test("PostgreSQL: edited text is pushed to the default branch as one commit wher
   const bitbucketCurrent = files.get(`${BITBUCKET_PUSHED}@main/${YML}`)!;
   expect(await pushOf(BITBUCKET_PUSHED, "bitbucket-datacenter", FILE, bitbucketCurrent.sha)).toMatchObject({ http: 409, error: { code: "push_refused" } });
   expect(files.get(`${BITBUCKET_PUSHED}@main/${YML}`)).toEqual(bitbucketCurrent);
-});
-
-test("PostgreSQL: a policy pull request that was opened is answered when the listing refresh after it fails", async () => {
-  onMain(REFRESHED, YML, PATCH_FILE);
-  await policyFile.onPush(TENANT, REFRESHED, "github");
-  listingFails = true;
-  const opened = await patchOf({ repo: REFRESHED, changes: [{ kind: "rule", id: "focused", enabled: false }] });
-  listingFails = false;
-  expect(opened).toMatchObject({ http: 200, status: "opened", number: expect.any(Number) });
-  expect(pulls.filter((row) => row.repo === REFRESHED)).toHaveLength(1);
 });

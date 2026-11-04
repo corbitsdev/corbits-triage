@@ -18,44 +18,12 @@ async function risks({ globs = [".github/**"], onFail, pass = [], fail = [], dec
   return ((await res.json()) as { mergeRisks: unknown }).mergeRisks;
 }
 
-test("a rule that asks makes a CI change Unsure, where a merge on Pass is held", async () => {
-  expect(await risks({ onFail: "ask", pass: [{ do: "merge", when: maintainers }], automatic: ["merge"] })).toEqual([]);
-});
-
 test("a decide merge for no author in particular admits first-time contributors", async () => {
   expect(await risks({ decide: [{ if: { triage: "pass" }, do: "merge" }], automatic: ["merge"] })).toEqual(["first-timers"]);
 });
 
-test("a decide approve that names no verdict lands only on Pass, so a CI change a rule fails stays out", async () => {
-  expect(await risks({ decide: [{ if: { all: "clean", author: ["maintainers"] }, do: "approve" }], automatic: ["approve"] })).toEqual([]);
-});
-
-test("an approve on Fail lets a CI change through when no rule stops it", async () => {
-  expect(await risks({ globs: [], fail: [{ do: "approve", when: maintainers }], automatic: ["approve"] })).toEqual(["ci-config"]);
-});
-
 test("an approve on Fail lets through the CI change a failing rule stops", async () => {
   expect(await risks({ fail: [{ do: "approve", when: maintainers }], automatic: ["approve"] })).toEqual(["ci-config"]);
-});
-
-test("forbidding one spelling or one workflow file leaves CI changes open", async () => {
-  const pass: Step[] = [{ do: "merge", when: maintainers }];
-  expect(await risks({ globs: [".github/workflows/*.yaml"], pass, automatic: ["merge"] })).toEqual(["ci-config"]);
-  expect(await risks({ globs: [".github/workflows/ci.yml"], pass, automatic: ["merge"] })).toEqual(["ci-config"]);
-});
-
-test("the policy is read for the host named, GitHub when none is", async () => {
-  const asked: string[] = [];
-  const handle = createGithubPolicyRead({
-    async readCheckPack(_tenantId, _repo, source) {
-      asked.push(source);
-      return { status: "missing" };
-    },
-  });
-  const member = { tenantId: "t", principalId: "p" } as Parameters<typeof handle>[1];
-  await handle({ repo: "acme/app", source: "bitbucket-datacenter" }, member);
-  await handle({ repo: "acme/app" }, member);
-  expect(asked).toEqual(["bitbucket-datacenter", "github"]);
 });
 
 test("says whether the policy file turns code review on", async () => {

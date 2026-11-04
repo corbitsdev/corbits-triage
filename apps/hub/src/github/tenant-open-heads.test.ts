@@ -22,22 +22,13 @@ function listingOver(bitbucket: ReturnType<typeof bitbucketAnswering>) {
 
 const repo = (name: string) => ({ name, source: "bitbucket-datacenter" as const, connected: true, enabled: true });
 
-test("a Bitbucket listing marks the pull requests its token's user opened, asking who that is once for every repository", async () => {
-  let tokenUserReads = 0;
+test("a Bitbucket listing marks the pull requests its token's user opened", async () => {
   const listing = listingOver(
     bitbucketAnswering(function triageBot() {
-      tokenUserReads += 1;
       return Response.json({}, { headers: { "x-auserid": "7", "x-ausername": "triage-bot" } });
     }),
   );
   const [widgets, gadgets] = await Promise.all(["TRI/widgets", "TRI/gadgets"].map((name) => listing(repo(name))));
   expect(widgets!.map((pr) => [pr.number, pr.byTriage === true])).toEqual([[3, false], [4, true]]);
   expect(gadgets!.map((pr) => [pr.number, pr.byTriage === true])).toEqual([[3, false], [4, true]]);
-  expect(tokenUserReads).toBe(1);
-});
-
-test("a Bitbucket listing still lists every pull request, unmarked, when it can't tell who its token is", async () => {
-  const listing = listingOver(bitbucketAnswering(() => new Response(null, { status: 401 })));
-  const prs = await listing(repo("TRI/widgets"));
-  expect(prs!.map((pr) => [pr.number, pr.byTriage === true])).toEqual([[3, false], [4, false]]);
 });

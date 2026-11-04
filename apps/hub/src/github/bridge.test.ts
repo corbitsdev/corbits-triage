@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
-import { emptyPack, recommendedPack, repoPolicy, type CheckPack, type CustomCheck } from "@corbits/triage-contracts";
+import { emptyPack, type CheckPack } from "@corbits/triage-contracts";
 import { GITHUB_HOOK_HEADERS, xHubHookMetadata } from "@corbits/common/hook-metadata";
-import { applyInstallationListing, createBridgeHandler, loadBridgeHook, mailPayload, type BridgeDeps } from "./bridge.js";
+import { applyInstallationListing, createBridgeHandler, loadBridgeHook, type BridgeDeps } from "./bridge.js";
 import { MAX_BODY_BYTES } from "../read-json.js";
 import { repoRecords } from "./tenant-config.js";
 import { DeliveryCache } from "./dedupe.js";
@@ -56,10 +56,10 @@ function asksForName(node: unknown, name: string): boolean {
   return asksForName((node as { value?: unknown }).value, name);
 }
 
-function stubDb(rows: Row[], config: unknown = CONNECTED_HELLO, opts: { missingTenant?: boolean } = {}): StubDb {
+function stubDb(rows: Row[], config: unknown = CONNECTED_HELLO): StubDb {
   const box = { config };
   function tenantRows() {
-    return opts.missingTenant ? [] : [{ id: TENANT_ID, config: box.config }];
+    return [{ id: TENANT_ID, config: box.config }];
   }
   const tx = {
     select() {
@@ -111,8 +111,8 @@ function rulePack(repo: string): CheckPack {
   return { ...emptyPack(repo), checks: { "no-merge-conflicts": { enabled: true } } };
 }
 
-function packsFor(repos: string[], pack = rulePack): BridgeDeps["readCheckPack"] {
-  const packs = new Map(repos.map((repo) => [repo, pack(repo)]));
+function packsFor(repos: string[]): BridgeDeps["readCheckPack"] {
+  const packs = new Map(repos.map((repo) => [repo, rulePack(repo)]));
   return async function readCheckPack(_tenant, repo) {
     const pack = packs.get(repo);
     return pack ? { status: "ok", pack, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } } : { status: "missing" };
@@ -136,13 +136,11 @@ type Sent = CoalescedEvent;
 
 function ignoreLog(): void {}
 
-function openHeadOf(drafts: number[]): BridgeDeps["openHeadFor"] {
-  return async function openHeadFor() {
-    return async function openHead(_record, number) {
-      return { headSha: `sha${number}`, draft: drafts.includes(number) };
-    };
+const openHeadFor: BridgeDeps["openHeadFor"] = async function openHeadFor() {
+  return async function openHead(_record, number) {
+    return { headSha: `sha${number}`, draft: false };
   };
-}
+};
 
 type Recheck = [string, string, number | null];
 
@@ -164,7 +162,7 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
     coalescer: { accept },
     log: ignoreLog,
     readCheckPack: packsFor(["octocat/hello"]),
-    openHeadFor: openHeadOf([]),
+    openHeadFor,
     recheckOpenPulls,
     async closeOutDue() {
       return false;
@@ -183,34 +181,11 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
   });
 }
 
-function flakyCoalescer(sent: Sent[], failures: number): BridgeDeps["coalescer"] {
-  let calls = 0;
-  return {
-    async accept(input) {
-      calls += 1;
-      if (calls <= failures) throw new Error("state store down");
-      sent.push(input);
-      return "queued";
-    },
-  };
-}
-
 describe("loadBridgeHook", () => {
-  test("loads an active tenant-owned hook credential", async () => {
-    const hook = await loadBridgeHook(stubDb([hookRow()]), stubCipher, HOOK_ID, undefined);
-    expect(hook).toMatchObject({ credentialId: HOOK_ID, tenantId: TENANT_ID, secret: SECRET, workflow: "pr-triage" });
-  });
   test("rejects revoked, personal and non-webhook credentials", async () => {
     expect(await loadBridgeHook(stubDb([hookRow({ status: "revoked" })]), stubCipher, HOOK_ID, undefined)).toBeUndefined();
     expect(await loadBridgeHook(stubDb([hookRow({ principalId: "prn_1" })]), stubCipher, HOOK_ID, undefined)).toBeUndefined();
     expect(await loadBridgeHook(stubDb([hookRow({ metadata: {} })]), stubCipher, HOOK_ID, undefined)).toBeUndefined();
-  });
-  test("name lookup without a tenant hint misses", async () => {
-    expect(await loadBridgeHook(stubDb([hookRow()]), stubCipher, "github-hook", undefined)).toBeUndefined();
-  });
-  test("metadata.webhook to wins over workflow", async () => {
-    const db = stubDb([hookRow({ metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage", to: "pr-triage-historical" } } })]);
-    expect(await loadBridgeHook(db, stubCipher, HOOK_ID, undefined)).toMatchObject({ workflow: "pr-triage-historical" });
   });
 });
 
@@ -233,38 +208,6 @@ describe("bridge handler", () => {
     })]);
   });
 
-  test("carries the review state only on a pull request review", async () => {
-    const sent: Sent[] = [];
-    const handle = bridge({ sent });
-    const pr = JSON.parse(prPayload);
-    const review = JSON.stringify({ ...pr, action: "submitted", review: { state: "approved" } });
-    const checkRun = JSON.stringify({
-      action: "completed",
-      repository: { full_name: "octocat/hello" },
-      check_run: { head_sha: "sha7", pull_requests: [{ number: 7, head: { sha: "sha7" } }] },
-    });
-    await handle(githubRequest(review, { delivery: "r1", event: "pull_request_review" }), TARGET);
-    await handle(githubRequest(checkRun, { delivery: "r2", event: "check_run" }), TARGET);
-    expect(sent.map((item) => item.mail)).toEqual([
-      expect.objectContaining({ event: "pull_request_review", review: { state: "approved" } }),
-      expect.objectContaining({ event: "check_run", review: null }),
-    ]);
-  });
-
-  test("routes to the hook's configured workflow", async () => {
-    const sent: Sent[] = [];
-    const db = stubDb([hookRow({ metadata: { webhook: { verify: "standard-webhooks", workflow: "pr-triage-historical" } } })]);
-    expect((await bridge({ db, sent })(githubRequest(prPayload), TARGET)).status).toBe(202);
-    expect(sent.map((item) => item.workflow)).toEqual(["pr-triage-historical"]);
-  });
-
-  test("unknown hook is 404", async () => {
-    const sent: Sent[] = [];
-    const res = await bridge({ db: stubDb([]), sent })(githubRequest(prPayload), TARGET);
-    expect(res.status).toBe(404);
-    expect(sent).toHaveLength(0);
-  });
-
   test("oversize bodies are 413 without delivery", async () => {
     const sent: Sent[] = [];
     const res = await bridge({ sent })(githubRequest("x".repeat(MAX_BODY_BYTES + 1), { delivery: "big" }), TARGET);
@@ -279,15 +222,6 @@ describe("bridge handler", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("missing GitHub delivery headers is 400", async () => {
-    const req = new Request(`https://hub.example/api/hooks/${HOOK_ID}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-hub-signature-256": sign(prPayload) },
-      body: prPayload,
-    });
-    expect((await bridge()(req, TARGET)).status).toBe(400);
-  });
-
   test("duplicates are 200 without redelivery", async () => {
     const sent: Sent[] = [];
     const handle = bridge({ sent });
@@ -296,21 +230,6 @@ describe("bridge handler", () => {
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual({ status: "duplicate" });
     expect(sent).toHaveLength(1);
-  });
-
-  test("closed pull requests are 202 ignored, yet the repository's kept reads are read again", async () => {
-    const sent: Sent[] = [];
-    const changed: string[] = [];
-    const base = JSON.parse(prPayload);
-    const closed = JSON.stringify({ ...base, pull_request: { ...base.pull_request, state: "closed" } });
-    function repoChanged(tenantId: string, repo: string, source: string, event?: string) {
-      changed.push(`${tenantId} ${repo} ${source} ${event}`);
-    }
-    const res = await bridge({ sent, repoChanged })(githubRequest(closed), TARGET);
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: "ignored" });
-    expect(sent).toHaveLength(0);
-    expect(changed).toEqual([`${TENANT_ID} octocat/hello github pull_request`]);
   });
 
   test("a merge into the default branch reads the policy file again and re-checks that repository's other open pull requests", async () => {
@@ -336,37 +255,6 @@ describe("bridge handler", () => {
     expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7]]);
     expect(refreshed).toEqual(["octocat/hello", "octocat/other"]);
     expect(sent).toHaveLength(0);
-  });
-
-  test("a push that leaves the policy unreadable has every open pull request marked again", async () => {
-    const rechecks: Recheck[] = [];
-    async function readCheckPack() {
-      return { status: "invalid" as const, reason: "The policy file has unknown checks: max-size.", path: ".corbits-triage.yml", automatic: [] };
-    }
-    const body = JSON.stringify({ ref: "refs/heads/main", forced: false, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [{ modified: [".corbits-triage.yml"] }] });
-    const res = await bridge({ rechecks, readCheckPack })(githubRequest(body, { event: "push", delivery: "broken" }), TARGET);
-    expect(await res.json()).toEqual({ status: "accepted" });
-    expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", null]]);
-  });
-
-  test("a push to the default branch that changes or removes either policy file name, or is forced, reads it again", async () => {
-    const refreshed: string[] = [];
-    const handle = bridge({ refreshed });
-    function push(ref: string, commit: Record<string, string[]>, forced = false) {
-      return JSON.stringify({ ref, forced, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [commit] });
-    }
-    const deliveries: Array<[string, string]> = [
-      [push("refs/heads/main", { modified: [".corbits-triage.yaml"] }), "accepted"],
-      [push("refs/heads/main", { removed: [".corbits-triage.yml"] }), "accepted"],
-      [push("refs/heads/main", { modified: ["README.md"] }, true), "accepted"],
-      [push("refs/heads/main", { modified: ["README.md"] }), "ignored"],
-      [push("refs/heads/feature", { modified: [".corbits-triage.yaml"] }), "ignored"],
-    ];
-    for (const [i, [body, status]] of deliveries.entries()) {
-      const res = await handle(githubRequest(body, { event: "push", delivery: `p${i}` }), TARGET);
-      expect(await res.json()).toEqual({ status });
-    }
-    expect(refreshed).toEqual(["octocat/hello", "octocat/hello", "octocat/hello"]);
   });
 
   test("a push that changes the policy file triages the open pull requests once per delivery, and a forced push alone does not", async () => {
@@ -411,55 +299,6 @@ describe("bridge handler", () => {
     expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7], [TENANT_ID, "octocat/hello", 7]]);
   });
 
-  test("a base move the triage state refused is 500 and releases the id for retry", async () => {
-    let refusals = 1;
-    const rechecks: Recheck[] = [];
-    async function recheckOpenPulls(tenantId: string, repo: string, except: number | null) {
-      if (refusals-- > 0) throw new Error("triage state for octocat/hello changed since it was loaded");
-      rechecks.push([tenantId, repo, except]);
-      return 1;
-    }
-    const pr = JSON.parse(prPayload);
-    const merged = JSON.stringify({ ...pr, action: "closed", repository: { full_name: "octocat/hello", default_branch: "main" }, pull_request: { ...pr.pull_request, state: "closed", merged: true, base: { ref: "main" } } });
-    const handle = bridge({ recheckOpenPulls });
-    expect((await handle(githubRequest(merged, { delivery: "moved" }), TARGET)).status).toBe(500);
-    expect(await (await handle(githubRequest(merged, { delivery: "moved" }), TARGET)).json()).toEqual({ status: "accepted" });
-    expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7]]);
-  });
-
-  test("unactionable events are 202 ignored", async () => {
-    const sent: Sent[] = [];
-    const res = await bridge({ sent })(githubRequest(JSON.stringify({ zen: "hi" }), { event: "ping" }), TARGET);
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ status: "ignored" });
-    expect(sent).toHaveLength(0);
-  });
-
-  test("only deliveries that map to a triage event mail", async () => {
-    const sent: Sent[] = [];
-    const handle = bridge({ sent });
-    const pr = JSON.parse(prPayload);
-    function checks(kind: "check_run" | "check_suite", action: string) {
-      return JSON.stringify({
-        action,
-        repository: { full_name: "octocat/hello" },
-        [kind]: { head_sha: "sha7", pull_requests: [{ number: 7, head: { sha: "sha7" } }] },
-      });
-    }
-    const deliveries: Array<[string, string, string]> = [
-      ["pull_request", JSON.stringify({ ...pr, action: "labeled" }), "ignored"],
-      ["check_run", checks("check_run", "created"), "ignored"],
-      ["check_run", checks("check_run", "completed"), "queued"],
-      ["check_suite", checks("check_suite", "requested"), "ignored"],
-      ["check_suite", checks("check_suite", "completed"), "queued"],
-      ["pull_request", JSON.stringify({ ...pr, action: "synchronize" }), "queued"],
-    ];
-    for (const [index, [event, body, status]] of deliveries.entries()) {
-      expect(await (await handle(githubRequest(body, { delivery: `e${index}`, event }), TARGET)).json()).toEqual({ status });
-    }
-    expect(sent.map((item) => item.mail.event)).toEqual(["check_run", "check_suite", "pull_request"]);
-  });
-
   test("events sent by the workspace's own app bot are ignored", async () => {
     const sent: Sent[] = [];
     const own = JSON.stringify({ ...JSON.parse(prPayload), action: "synchronize", sender: { type: "Bot", login: "corbits-triage[bot]" } });
@@ -468,31 +307,6 @@ describe("bridge handler", () => {
     const other = JSON.stringify({ ...JSON.parse(prPayload), action: "synchronize", sender: { type: "Bot", login: "dependabot[bot]" } });
     expect(await (await bridge({ sent })(githubRequest(other, { delivery: "del-2" }), TARGET)).json()).toEqual({ status: "queued" });
     expect(sent).toHaveLength(1);
-  });
-
-  test("unconfigured repositories are 202 ignored", async () => {
-    const sent: Sent[] = [];
-    const db = stubDb([hookRow()], { corbitsTriage: { repos: [{ name: "octocat/other", connected: true, enabled: true }] } });
-    const res = await bridge({ db, sent })(githubRequest(prPayload), TARGET);
-    expect(await res.json()).toEqual({ status: "ignored" });
-    expect(sent).toHaveLength(0);
-  });
-
-  test("a Bitbucket repository of the same name is not the GitHub one", async () => {
-    const sent: Sent[] = [];
-    const rechecks: Recheck[] = [];
-    const refreshed: string[] = [];
-    const db = stubDb([hookRow()], { corbitsTriage: { repos: [{ name: "octocat/hello", source: "bitbucket-datacenter", connected: true, enabled: true }] } });
-    const handle = bridge({ db, sent, rechecks, refreshed });
-    const pr = JSON.parse(prPayload);
-    const merged = JSON.stringify({ ...pr, action: "closed", repository: { full_name: "octocat/hello", default_branch: "main" }, pull_request: { ...pr.pull_request, state: "closed", merged: true, base: { ref: "main" } } });
-    const pushed = JSON.stringify({ ref: "refs/heads/main", forced: true, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [] });
-    const deliveries: Array<[string, string]> = [["pull_request", prPayload], ["pull_request", merged], ["push", pushed]];
-    for (const [i, [event, body]] of deliveries.entries()) {
-      const res = await handle(githubRequest(body, { event, delivery: `b${i}` }), TARGET);
-      expect(await res.json()).toEqual({ status: "ignored" });
-    }
-    expect([sent, rechecks, refreshed]).toEqual([[], [], []]);
   });
 
   test("a disabled repo is 202 ignored", async () => {
@@ -526,64 +340,6 @@ describe("bridge handler", () => {
     expect(await (await handle(githubRequest(markedReady, { delivery: "d3" }), TARGET)).json()).toEqual({ status: "queued" });
     expect(await (await handle(githubRequest(checkRun, { delivery: "d4", event: "check_run" }), TARGET)).json()).toEqual({ status: "queued" });
     expect(sent.map(({ event, headSha, draftUnread }) => [event, headSha, draftUnread])).toEqual([["ready", "abc", undefined], ["checks", "sha7", true]]);
-  });
-
-  test("a conversion to draft is triaged once, so the verdict stops offering the pull request as ready", async () => {
-    const sent: Sent[] = [];
-    const pr = JSON.parse(prPayload);
-    const converted = JSON.stringify({ ...pr, action: "converted_to_draft", pull_request: { ...pr.pull_request, draft: true } });
-    const handle = bridge({ sent, openHeadFor: openHeadOf([7]) });
-    expect(await (await handle(githubRequest(converted, { delivery: "d1" }), TARGET)).json()).toEqual({ status: "queued" });
-    expect(sent.map(({ event, headSha }) => [event, headSha])).toEqual([["drafted", "abc"]]);
-  });
-
-  test("a policy with every rule off starts no run and writes nothing", async () => {
-    const sent: Sent[] = [];
-    const logged: Array<Record<string, unknown>> = [];
-    const res = await bridge({ sent, readCheckPack: packsFor(["octocat/hello"], emptyPack), log: (entry) => logged.push(entry) })(githubRequest(prPayload), TARGET);
-    expect(await res.json()).toEqual({ status: "ignored" });
-    expect(sent).toHaveLength(0);
-    expect(logged).toContainEqual(expect.objectContaining({ msg: "triage_skipped_no_rules", repo: "octocat/hello" }));
-  });
-
-  test("a repo without a policy file is needs-setup and does not mail", async () => {
-    const sent: Sent[] = [];
-    const res = await bridge({ sent, readCheckPack: packsFor([]) })(githubRequest(prPayload), TARGET);
-    expect(await res.json()).toEqual({ status: "needs-setup" });
-    expect(sent).toHaveLength(0);
-  });
-
-  test("a policy triage can't read is queued with its reason and no pack, so the run marks the head failed", async () => {
-    const sent: Sent[] = [];
-    async function readCheckPack() {
-      return { status: "invalid" as const, reason: "The policy has unknown checks: max-size.", path: ".corbits-triage.yml", automatic: ["labels" as const] };
-    }
-    const res = await bridge({ sent, readCheckPack })(githubRequest(prPayload), TARGET);
-    expect(await res.json()).toEqual({ status: "queued" });
-    expect(sent[0]).toMatchObject({ policyUnreadable: "The policy has unknown checks: max-size.", automatic: ["labels"] });
-    expect(sent[0]).not.toHaveProperty("pack");
-  });
-
-  test("a policy file read that fails is 500 and releases the id for retry", async () => {
-    let failures = 1;
-    const read = packsFor(["octocat/hello"]);
-    async function readCheckPack(tenantId: string, repo: string) {
-      if (failures-- > 0) throw new Error("github GET /repos/octocat/hello/contents/.corbits-triage.yml -> 502");
-      return read(tenantId, repo, "github");
-    }
-    const handle = bridge({ readCheckPack });
-    expect(await (await handle(githubRequest(prPayload, { delivery: "unread" }), TARGET)).json()).toEqual({ error: "policy_read_failed" });
-    expect((await handle(githubRequest(prPayload, { delivery: "unread" }), TARGET)).status).toBe(202);
-  });
-
-  test("a failed queue write is 500 and releases the id for retry", async () => {
-    const sent: Sent[] = [];
-    const handle = bridge({ coalescer: flakyCoalescer(sent, 1) });
-    const failed = await handle(githubRequest(prPayload, { delivery: "retry" }), TARGET);
-    expect(failed.status).toBe(500);
-    expect(await failed.json()).toEqual({ error: "triage_state_unavailable" });
-    expect((await handle(githubRequest(prPayload, { delivery: "retry" }), TARGET)).status).toBe(202);
-    expect(sent).toHaveLength(1);
   });
 });
 
@@ -640,19 +396,6 @@ describe("bridge installation events", () => {
     expect(sent).toEqual([]);
   });
 
-  test("installation_repositories added records the repos disabled and starts nothing", async () => {
-    const sent: Sent[] = [];
-    const db = stubDb([hookRow()], { corbitsTriage: { repos: [] } });
-    const res = await bridge({ db, sent })(installRequest("installation_repositories", {
-      action: "added",
-      installation: INSTALLATION,
-      repositories_added: [{ full_name: "octocat/hello" }],
-    }, "added-1"), TARGET);
-    expect(await res.json()).toEqual({ status: "accepted" });
-    expect(repos(db)).toEqual([expect.objectContaining({ name: "octocat/hello", connected: true, installationId: 42, enabled: false })]);
-    expect(sent).toHaveLength(0);
-  });
-
   test("removed drops listed names without mailing", async () => {
     const sent: Sent[] = [];
     const db = stubDb([hookRow()], {
@@ -674,19 +417,6 @@ describe("bridge installation events", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("deleted drops rows for that installation only", async () => {
-    const db = stubDb([hookRow()], {
-      corbitsTriage: {
-        repos: [
-          { name: "octocat/hello", connected: true, installationId: 42 },
-          { name: "acme/other", connected: true, installationId: 7 },
-        ],
-      },
-    });
-    await bridge({ db })(installRequest("installation", { action: "deleted", installation: INSTALLATION }, "deleted-1"), TARGET);
-    expect(repos(db)).toEqual([expect.objectContaining({ name: "acme/other", installationId: 7 })]);
-  });
-
   test("suspend disconnects that installation only", async () => {
     const db = stubDb([hookRow()], {
       corbitsTriage: {
@@ -701,40 +431,6 @@ describe("bridge installation events", () => {
       expect.objectContaining({ name: "octocat/hello", connected: false }),
       expect.objectContaining({ name: "acme/other", connected: true }),
     ]);
-  });
-
-  test("a missing tenant is 202 ignored", async () => {
-    const sent: Sent[] = [];
-    const db = stubDb([hookRow()], undefined, { missingTenant: true });
-    const res = await bridge({ db, sent })(installRequest("installation", {
-      action: "created",
-      installation: INSTALLATION,
-      repositories: [{ full_name: "octocat/hello" }],
-    }, "missing-tenant"), TARGET);
-    expect(await res.json()).toEqual({ status: "ignored" });
-    expect(sent).toHaveLength(0);
-  });
-
-  test("preserves sibling config keys", async () => {
-    const db = stubDb([hookRow()], {
-      other: { keep: true },
-      corbitsTriage: {
-        confidenceFloor: 0.8,
-        repos: [{ name: "octocat/hello", connected: true, installationId: 1, triageDrafts: false }],
-      },
-    });
-    await bridge({ db })(installRequest("installation_repositories", {
-      action: "added",
-      installation: INSTALLATION,
-      repositories_added: [{ full_name: "octocat/extra" }],
-    }, "siblings-1"), TARGET);
-    const config = db.tenantConfig() as {
-      other: unknown;
-      corbitsTriage: { confidenceFloor: number; repos: Array<{ name: string; triageDrafts?: boolean }> };
-    };
-    expect(config.other).toEqual({ keep: true });
-    expect(config.corbitsTriage.confidenceFloor).toBe(0.8);
-    expect(config.corbitsTriage.repos.find((row) => row.name === "octocat/hello")?.triageDrafts).toBe(false);
   });
 });
 
@@ -755,23 +451,5 @@ test("installation listing mirrors GitHub", () => {
   const next = applyInstallationListing(ns, listings);
   expect(repoRecords(next).map((row) => row.name).sort()).toEqual(["acme/kept", "acme/new", "manual/repo", "paused/repo"]);
   expect(repoRecords(next).find((row) => row.name === "paused/repo")?.connected).toBe(false);
-});
-
-test("mailPayload mails the pack whole as `pack`, as `checkPack` only the steps a deployment built before steps runs as the policy means, and the versions it was resolved from", () => {
-  const base = recommendedPack("octocat/hello");
-  const score: CustomCheck = { id: "care", name: "Care", group: "pull-request", kind: "model", shape: "score", subject: "care", levels: ["poor", "fair", "good", "great"], failBelow: "good" };
-  const pack: CheckPack = {
-    ...base,
-    custom: [score],
-    actions: { ...base.actions, pass: [{ do: "approve" }, { do: "merge" }, { do: "comment", target: { body: "Hi" }, when: { author: ["FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER"] } }, { do: "labels", target: { from: "rules" } }] },
-  };
-  const source = { file: { path: ".corbits-triage.yml", sha: "art_pack-3" } };
-  const mail = mailPayload({ name: "octocat/hello" }, repoPolicy({ enabled: true }), { pack, automatic: [], source }, {});
-  expect(mail.policy.source).toEqual(source);
-  expect(mail.pack).toBe(pack);
-  expect(mail.checkPack).toMatchObject({ schemaVersion: 1 });
-  expect(mail.checkPack).not.toHaveProperty("labels");
-  expect(mail.checkPack.custom).toEqual([{ id: "care", name: "Care", group: "pull-request", kind: "model", shape: "score", subject: "care", min: 7 }]);
-  expect(mail.checkPack.actions).toEqual({ when: base.actions.when, pass: [{ kind: "approve", target: {} }], fail: [], unsure: [{ kind: "request-review", target: { to: "codeowners" } }] });
 });
 

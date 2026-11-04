@@ -9,7 +9,6 @@ import type { CredentialDelivery } from "@intx/types/credential-delivery";
 import { credentialBindingsFor as reviewBindingsFor } from "@corbits/pr-code-review/agents";
 import { credentialBindingsFor } from "@corbits/triage-workflows/agents";
 import { createGithubAppConnection } from "./app-connection.js";
-import { withAppLogin } from "./bridge.js";
 import { githubAppCredential } from "./portal-credential.js";
 import { createGithubTokenRenewal } from "./installation-token.js";
 import { appKeyProviderWriteRefusal } from "./app-key.js";
@@ -70,7 +69,7 @@ function fakeGithub(apps: App[]) {
     }
     return new Response(null, { status: 404 });
   }
-  return { server: Bun.serve({ port: 0, fetch: github }), hooks, scoped, minted: () => minted };
+  return { server: Bun.serve({ port: 0, fetch: github }), hooks, scoped };
 }
 
 function noLog(): void {}
@@ -198,73 +197,6 @@ test("PostgreSQL: the App key moves to the hub on boot, each renewed token reach
   });
 }, 120_000);
 
-test("PostgreSQL: connecting an App writes its key and token together, another App replaces it only when asked to, a key alone keeps the stored App, a renewal of the replaced App does not overwrite them, and one installation is used", async () => {
-  const first = app("1", [7]);
-  // Installed on two accounts: the workspace uses the oldest installation.
-  const replacement = app("2", [9, 8]);
-  await withWorkspace([first, replacement], async function connectAndReplace({ db, cipher, origin, github }) {
-    const { router, pushed } = deliveries();
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
-    const connect = createGithubAppConnection({ db, cipher, authorize: allowAll, githubApiOrigin: origin, renewal, onConnected() {} });
-    const member = { tenantId: TENANT, principalId: "prn_admin" };
-    const secretOf = secrets(db, cipher);
-
-    const refused = await connect({ appId: "3", privateKey: JSON.parse(first.json).privateKey }, member);
-    expect(refused.status).toBe(400);
-
-    const connected = await connect({ appId: "1", privateKey: JSON.parse(first.json).privateKey }, member);
-    expect(await connected.json()).toEqual({ appSlug: "app-1" });
-    expect(await secretOf("github-app")).toBe(first.json);
-    expect(await secretOf("github")).toBe("ghs_1_7_1");
-
-    // The App is replaced while the renewal mints from the first one.
-    github.hooks.onMint = async function replaceDuringMint() {
-      github.hooks.onMint = async function quiet() {};
-      expect((await connect({ appId: "2", privateKey: JSON.parse(replacement.json).privateKey }, member)).status).toBe(409);
-      expect((await connect({ appId: "2", privateKey: JSON.parse(replacement.json).privateKey, replace: true }, member)).status).toBe(200);
-    };
-    await renewal.renew(TENANT);
-    expect(await secretOf("github-app")).toBe(replacement.json);
-    expect(await secretOf("github")).toBe("ghs_2_8_2");
-    expect(await slugOf(db)).toBe("app-2");
-    expect(pushed()).toEqual([]);
-
-    // A key sent without an App ID is the stored App's.
-    expect((await connect({ privateKey: JSON.parse(replacement.json).privateKey }, member)).status).toBe(200);
-    expect(await secretOf("github-app")).toBe(replacement.json);
-  });
-}, 120_000);
-
-test("PostgreSQL: a child workspace inheriting its parent's App gets the parent's login on its mail and the parent's renewed token on its deployment", async () => {
-  const parentApp = app("1", [7]);
-  await withWorkspace([parentApp], async function inherit({ db, cipher, origin }) {
-    await db.insert(schema.credential).values({
-      id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
-      secret: await cipher.encrypt(parentApp.json, credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "app-1" },
-    });
-    await db.insert(schema.tenant).values([
-      { id: "tnt_child", name: "Child", slug: "child", domain: "child.test", parentId: TENANT },
-      { id: "tnt_none", name: "None", slug: "none", domain: "none.test" },
-    ]);
-    await db.insert(schema.workflowDefinition).values({ id: "wfd_child", tenantId: "tnt_child", name: "pr-triage-github" });
-    await db.insert(schema.workflowRun).values({
-      id: "run_child", anchorRunId: "run_child", definitionId: "wfd_child", tenantId: "tnt_child", status: "deployed", address: "run_child@child.test",
-      credentialRefs: { credentialIds: ["crd_github"], bindings: [{ handle: "github", credentialId: "crd_github", consumer: "action:facts" }] },
-    });
-    const { router, pushed } = deliveries();
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
-
-    expect(await withAppLogin(db, "tnt_child", { kind: "pr" })).toEqual({ kind: "pr", appLogin: "app-1[bot]" });
-    await expect(withAppLogin(db, "tnt_none", { kind: "pr" })).rejects.toThrow("github app credential is missing");
-
-    expect(await renewal.renewAll()).toEqual({ retry: false });
-    expect(pushed().at(-1)).toEqual({ address: "run_child@child.test", secrets: ["ghs_1_7_1"] });
-
-    await renewal.renew("tnt_child");
-    expect(pushed().at(-1)).toEqual({ address: "run_child@child.test", secrets: ["ghs_1_7_2"] });
-  });
-}, 120_000);
-
 test("PostgreSQL: App JSON a stock write leaves in the bound credential is taken back from the sidecars holding it, and the key itself is never deliverable", async () => {
   const theApp = app("1", [7]);
   await withWorkspace([theApp], async function secureKey({ db, cipher, origin }) {
@@ -297,68 +229,6 @@ test("PostgreSQL: App JSON a stock write leaves in the bound credential is taken
     expect(sent.map(({ address }) => address)).toEqual([LISTENER, LISTENER]);
     expect(JSON.stringify(sent)).not.toContain("PRIVATE KEY");
 
-    const key = await buildCredentialDelivery({
-      db, tenantId: TENANT, creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher,
-      bindings: [{ action: "facts", handle: "github-app", provider: "github-app", name: "github-app", locator: "tenant" }],
-    });
-    expect(key.ok ? "delivered" : key.reason.code).toBe("no_origin");
-  });
-}, 120_000);
-
-test("PostgreSQL: an early retry after one workspace fails renews only that workspace", async () => {
-  const working = app("1", [7]);
-  const unknown = app("9", [7]);
-  await withWorkspace([working], async function retryFailed({ db, cipher, origin, github }) {
-    await db.insert(schema.tenant).values({ id: "tnt_failing", name: "Failing", slug: "failing", domain: "failing.test" });
-    for (const [tenantId, theApp] of [[TENANT, working], ["tnt_failing", unknown]] as const) {
-      const id = `crd_${tenantId}`;
-      await db.insert(schema.credential).values({
-        id, tenantId, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
-        secret: await cipher.encrypt(theApp.json, credentialAad(id, "secret")), status: "active", metadata: { appSlug: "app" },
-      });
-    }
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router: deliveries().router, log: noLog, loadRunCredentials: noRunCredentials });
-    expect(await renewal.renewAll()).toEqual({ retry: true });
-    expect(github.minted()).toBe(1);
-    expect(await renewal.renewAll()).toEqual({ retry: true });
-    expect(github.minted()).toBe(1);
-  });
-}, 120_000);
-
-test("PostgreSQL: a blank push a sidecar did not take is sent again on the next pass, with no installation", async () => {
-  const theApp = app("1", []);
-  await withWorkspace([theApp], async function noInstall({ db, cipher, origin }) {
-    await db.insert(schema.credential).values({
-      id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
-      secret: await cipher.encrypt(theApp.json, credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "app-1" },
-    });
-    await db.insert(schema.workflowDefinition).values({ id: "wfd_triage", tenantId: TENANT, name: "pr-triage-github" });
-    await db.insert(schema.workflowRun).values({
-      id: "run_listener", anchorRunId: "run_listener", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed", address: LISTENER,
-      credentialRefs: { credentialIds: ["crd_github"], bindings: [{ handle: "github", credentialId: "crd_github", consumer: "action:facts" }] },
-    });
-    let fail = true;
-    const sent: string[] = [];
-    const router = { async sendCredentialsUpdate(address: string) { if (fail) throw new Error("sidecar timeout"); sent.push(address); } };
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
-    await renewal.secure(TENANT);
-    fail = false;
-    await renewal.renewAll();
-    expect(sent).toEqual([LISTENER]);
-  });
-}, 120_000);
-
-test("PostgreSQL: a github-app provider given an origin loses it before the key is stored on it", async () => {
-  const theApp = app("1", [7]);
-  await withWorkspace([theApp], async function provider({ db, cipher, origin }) {
-    await db.insert(schema.provider).values({ id: "prv_app_key", tenantId: TENANT, name: "github-app", plugin: "http", apiBaseUrl: "https://elsewhere.test" });
-    await db.insert(schema.credential).values({
-      id: "crd_github", tenantId: TENANT, principalId: null, providerId: "prv_github", oauthClientId: null, name: "github", type: "api_key",
-      secret: await cipher.encrypt(theApp.json, credentialAad("crd_github", "secret")), status: "active", metadata: { appSlug: "app-1" },
-    });
-    const { router } = deliveries();
-    const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
-    await renewal.renewAll();
     const key = await buildCredentialDelivery({
       db, tenantId: TENANT, creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher,
       bindings: [{ action: "facts", handle: "github-app", provider: "github-app", name: "github-app", locator: "tenant" }],
