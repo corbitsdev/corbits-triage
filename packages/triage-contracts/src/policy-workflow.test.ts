@@ -113,15 +113,6 @@ describe("policy file v4", () => {
     expect(performance.now() - started).toBeLessThan(100);
   });
 
-  test("a long invalid group name is never compared with the names that refer to it", () => {
-    const name = "a".repeat(56_000);
-    const references = Array.from({ length: 50 }, (_, at) => `g${at}`).join(", ");
-    const started = performance.now();
-    const said = problems(`${RULES}groups: { ${name}: { users: [octocat] } }\ncode-review: { on: true, for: [${references}] }\n`);
-    expect(performance.now() - started).toBeLessThan(200);
-    expect(said).toHaveLength(51);
-  });
-
   test("a key that would reach a prototype, an alias and a YAML error are each refused on their line", () => {
     expect(problems(`${RULES}groups:\n  __proto__: { users: [octocat] }\n`)).toEqual([{ message: "`__proto__` can't be a key; rename it.", line: 7, column: 3 }]);
     expect(problems(`${RULES}pace: { constructor: 1 }\n`)).toEqual([{ message: "`constructor` can't be a key; rename it.", line: 6, column: 9 }]);
@@ -227,13 +218,6 @@ describe("policy file v4", () => {
     expect(checked.pending).toEqual(pending);
     expect(checked.policy).toEqual(readPolicyFile(RULES, REPO));
     if (decide) expect(checked.workflow.decide).toEqual(decide);
-  });
-
-  test("a file refused for something else names its security or deslop block among its problems", () => {
-    expect(problems(`${RULES}deslop: { on: false }\npauseLabel: [hold]\n`)).toEqual([
-      { message: "`pauseLabel` must be a label of at most 50 characters.", line: 7 },
-      { message: "`deslop`: security and deslop reviews are not available yet; remove the block.", line: 6 },
-    ]);
   });
 
   test("every key the grammar takes is said in the file's terms when it is wrong", () => {

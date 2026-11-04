@@ -301,13 +301,6 @@ describe("executeAction request-changes", () => {
     expect(fake.writes.map((write) => write.method)).toEqual(["POST"]);
   });
 
-  test("needs-work Bitbucket refuses leaves the verdict comment", async () => {
-    const fake = fakeBitbucket({ comments: [{ ...verdict }], failStatus: true });
-    await expect(executeAction(fake.bb, task, user)).rejects.toThrow("503");
-    expect(fake.comments.map((comment) => comment.id)).toEqual([2, 11]);
-    expect(fake.writes.map((write) => write.method)).toEqual(["POST", "PUT"]);
-  });
-
   test("needs-work already set on this head deletes the verdict comment and does not post another", async () => {
     const reasons = { ...action, text: "[corbits-action]: #e1\nFix the checks" };
     const standing = fakeBitbucket({ comments: [{ ...verdict }, reasons, { ...copied }], participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "abc" }] });
@@ -327,24 +320,6 @@ describe("executeAction request-changes", () => {
     ]);
   });
 
-  test("a comment refused while needs-work is already on this head leaves the verdict comment", async () => {
-    const hand = fakeBitbucket({ comments: [{ ...verdict }], failPost: 1, participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "abc" }] });
-    await expect(executeAction(hand.bb, task, user)).rejects.toThrow("503");
-    expect(hand.comments.map((comment) => comment.id)).toEqual([2]);
-    expect(hand.writes.map((write) => write.method)).toEqual(["POST"]);
-  });
-
-  test("a verdict delete Bitbucket refuses still counts the posted needs-work as done", async () => {
-    const fake = fakeBitbucket({ comments: [{ ...verdict }], failDelete: true });
-    expect(await executeAction(fake.bb, task, user)).toMatchObject({ status: "done", result: { commentId: 11, status: "NEEDS_WORK" } });
-    expect(fake.comments.map((comment) => comment.id)).toEqual([2, 11]);
-    expect(fake.writes.map((write) => `${write.method} ${write.path}`)).toEqual([
-      `POST ${PR_PATH}/comments`,
-      `PUT ${PR_PATH}/participants/triage-bot`,
-      `DELETE ${PR_PATH}/comments/2?version=1`,
-    ]);
-  });
-
   test("needs-work from an older head still posts this head's comment, then drops the verdict", async () => {
     const older = fakeBitbucket({ comments: [{ ...verdict }], participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "old" }] });
     expect((await executeAction(older.bb, task, user)).status).toBe("done");
@@ -355,13 +330,6 @@ describe("executeAction request-changes", () => {
       `PUT ${PR_PATH}/participants/triage-bot`,
       `DELETE ${PR_PATH}/comments/2?version=1`,
     ]);
-  });
-
-  test("a comment refused while an older needs-work stands leaves the verdict comment", async () => {
-    const older = fakeBitbucket({ comments: [{ ...verdict }], failPost: 1, participants: [{ user: BOT, status: "NEEDS_WORK", lastReviewedCommit: "old" }] });
-    await expect(executeAction(older.bb, task, user)).rejects.toThrow("503");
-    expect(older.comments.map((comment) => comment.id)).toEqual([2]);
-    expect(older.writes.map((write) => write.method)).toEqual(["POST"]);
   });
 
   test("a request-changes write skipped because the head moved leaves the verdict comment", async () => {

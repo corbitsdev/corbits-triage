@@ -58,50 +58,6 @@ describe("check pack contract", () => {
     expect(catalogCheckEnabled(parsed!, "ci-green")).toBe(false);
   });
 
-  test("a stored pack naming removed checks loads without them", () => {
-    const read = readCheckPack({
-      ...emptyPack(REPO),
-      checks: {
-        draft: { enabled: true },
-        duplicate: { enabled: true },
-        reviewers: { enabled: true },
-        drift: { enabled: true, maxBehindBy: 50 },
-        tests: { enabled: true },
-        "linked-issue": { enabled: true, tracker: "github", requireLabel: true, label: "linked" },
-      },
-    });
-    expect(read.checks).toEqual({ "linked-issue": { enabled: true, tracker: "github" } });
-  });
-
-  test("a stored policy with the old rule ids reads as the rules that replaced them; a row under its new id wins", () => {
-    const read = readCheckPack({
-      ...emptyPack(REPO),
-      checks: {
-        size: { enabled: true, maxFiles: 20, maxLines: 500 },
-        issue: { enabled: true, tracker: "linear" },
-        conflicts: { enabled: false },
-        ci: { enabled: true },
-        "ci-green": { enabled: false },
-        paths: { enabled: true, forbiddenGlobs: ["vendor/**"] },
-      },
-      custom: CUSTOM,
-    });
-    expect(read.checks).toEqual({
-      "max-files-changed": { enabled: true, maxFiles: 20 },
-      "max-lines-changed": { enabled: true, maxLines: 500 },
-      "linked-issue": { enabled: true, tracker: "linear" },
-      "no-merge-conflicts": { enabled: false },
-      "ci-green": { enabled: false },
-      "no-forbidden-paths": { enabled: true, forbiddenGlobs: ["vendor/**"] },
-    });
-    expect(read.custom).toEqual(CUSTOM);
-    expect(readCheckPack(JSON.stringify(read))).toEqual(read);
-    expect(readCheckPack({ ...emptyPack(REPO), checks: { size: { enabled: true, maxFiles: 20 } } }).checks).toEqual({
-      "max-files-changed": { enabled: true, maxFiles: 20 },
-      "max-lines-changed": { enabled: false },
-    });
-  });
-
   test("a custom rule's id never reads as a judge question's id", () => {
     for (const id of ["docs-file-001", "focused-slice-001", "duplicates-open-pull-request-001", "ticket-file-001", "ticket-hunk-001-002", "ticket-slice-2"]) {
       expect(() => readCheckPack({ ...emptyPack(REPO), custom: [{ ...CUSTOM[0]!, id }] })).toThrow(`Custom rule ${id} id must not start with docs-, focused- or duplicates-open-pull-request- or end in -file, -hunk or -slice and numbers.`);

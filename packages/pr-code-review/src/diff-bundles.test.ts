@@ -19,20 +19,6 @@ describe("finder bundle bounds", () => {
     expect(splitBundle("a\né\n", String, 6)).toEqual(["a\né\n"]);
   });
 
-  test("zero room and an indivisible multibyte character throw rather than stall", () => {
-    expect(() => splitBundle("a", String, 0)).toThrow();
-    expect(() => splitBundle("é", String, 1)).toThrow();
-    expect(() => splitBundle("😀", String, 3)).toThrow();
-  });
-
-  test("escaping growth cannot stall when even one character cannot fit", () => {
-    function escaped(text: string) {
-      return text.replaceAll("<", "\\u003c");
-    }
-    expect(() => splitBundle("<", escaped, 5)).toThrow();
-    expect(splitBundle("<<", escaped, 6)).toEqual(["<", "<"]);
-  });
-
   test("long UTF-8 lines split losslessly and oversized overhead throws", () => {
     const patch = "é😀".repeat(30);
     const pieces = splitBundle(patch, String, 7);

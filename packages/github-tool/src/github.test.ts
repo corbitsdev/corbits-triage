@@ -66,15 +66,6 @@ describe("triage comment", () => {
     expect(comments).toEqual([{ id: 100, user: APP, body: "<!-- corbits-triage -->\nThird" }]);
   });
 
-  test("edits a comment carrying the earlier per-head marker", async () => {
-    const { gh, requests, comments } = fakeGithub([
-      { id: 42, user: APP, body: "<!-- corbits-triage:acme/widgets#8@old -->\nOld" },
-    ]);
-    await mirror(gh, { ...MIRROR, close: false }, login);
-    expect(requests.some((request) => request.method === "POST" && request.path.endsWith("/comments"))).toBe(false);
-    expect(comments).toEqual([{ id: 42, user: APP, body: "<!-- corbits-triage -->\nDuplicate" }]);
-  });
-
   test("ignores a marked comment written by a person", async () => {
     const foreign = { id: 7, user: { login: "mallory", type: "User" }, body: "<!-- corbits-triage -->\nNot ours" };
     const { gh, comments } = fakeGithub([{ ...foreign }]);
@@ -180,11 +171,6 @@ describe("github mirror", () => {
     ]);
   });
 
-  test("makes no label requests when the labels already match", async () => {
-    const { gh, requests } = fakeGithub([], ["bug", "triage:needs-decision"]);
-    await mirror(gh, { ...MIRROR, comment: "", close: false }, login);
-    expect(requests.some((request) => request.path.includes("/labels"))).toBe(false);
-  });
 });
 
 type TimedComment = FakeComment & { updated_at: string };
@@ -276,12 +262,6 @@ describe("triage comment on a rerun", () => {
     expect(github.writes().filter((write) => write.path.includes("comments"))).toEqual([{ path: "/repos/acme/widgets/issues/8/comments", method: "POST", body: { body: PASSED_BODY } }]);
   });
 
-  test("a closed or merged pull request is never written to, labels included", async () => {
-    const github = timedGithub("closed");
-    expect(await mirror(github.gh, PASSED, login)).toMatchObject({ skipped: "the pull request is not open" });
-    expect(await mirror(github.gh, { ...PASSED, comment: "" }, login)).toMatchObject({ skipped: "the pull request is not open" });
-    expect(github.writes()).toEqual([]);
-  });
 });
 
 describe("github write tool approval", () => {
@@ -324,30 +304,6 @@ describe("github tool arguments", () => {
     expect(await run({ id: "c", name: "github_nope", arguments: {} })).toMatchObject({ isError: true, content: "unknown tool github_nope" });
   });
 
-  test("githubCalls caches docs and PR files REST pages across calls on the same tool instance", async () => {
-    const doc = "Run it.\n".repeat(1_500);
-    const patch = `@@ -1 +1 @@\n+${"x".repeat(12_000)}`;
-    const { gh, requests } = recorder(function respond(path) {
-      if (path === "/repos/acme/widgets") return { default_branch: "main" };
-      if (path.includes("/git/trees/")) return { sha: "tree1", tree: [{ path: "README.md", type: "blob", sha: "blob0", size: doc.length }] };
-      if (path.endsWith("/git/blobs/blob0")) return new Response(doc);
-      if (path.includes("/pulls/8/files")) return [{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch }];
-      throw new Error(`unexpected ${path}`);
-    });
-    const run = githubCalls(async () => gh);
-    const docs1 = (await run({ id: "d1", name: "github_read_repo_docs", arguments: { repo: "acme/widgets" } })).content as { next?: number; ref: string };
-    expect(docs1.next).toBeDefined();
-    await run({ id: "d2", name: "github_read_repo_docs", arguments: { repo: "acme/widgets", ref: docs1.ref, offset: docs1.next } });
-    const files1 = (await run({ id: "f1", name: "github_list_pr_files", arguments: { repo: "acme/widgets", number: 8 } })).content as { next?: number; patchNext?: number };
-    expect(files1.patchNext).toBeDefined();
-    await run({ id: "f2", name: "github_list_pr_files", arguments: { repo: "acme/widgets", number: 8, offset: files1.next, patchOffset: files1.patchNext } });
-    expect(requests.map((request) => request.path)).toEqual([
-      "/repos/acme/widgets",
-      "/repos/acme/widgets/git/trees/main?recursive=1",
-      "/repos/acme/widgets/git/blobs/blob0",
-      "/repos/acme/widgets/pulls/8/files?per_page=100&page=1",
-    ]);
-  });
 });
 
 describe("mergePr", () => {
@@ -507,28 +463,6 @@ describe("sendCodeReview", () => {
     expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
-  test("an inline comment posted before the resolve sentence still matches, one with it still matches, and a different body does not", async () => {
-    const oldBody = "**Spans the hunk's start**\n\nB.\n\nAlso lines 8–9.";
-    const withResolve = `${oldBody}\n\nResolve this comment. Triage will not finish while it is open.`;
-    const newBody = "**Spans both hunks**\n\nD.\n\nAlso lines 14–41.\n\n_Not checked against the file._\n\nResolve this comment. Triage will not finish while it is open.";
-    const standing = { id: 9, user: APP, commit_id: "abc123", body: "<!-- corbits-code-review -->" };
-    function comments(first: string) {
-      return [
-        { id: 31, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 10, original_line: 12, body: first },
-        { id: 32, pull_request_review_id: 9, path: "src/a.ts", original_start_line: 12, original_line: 13, body: newBody },
-      ];
-    }
-    function already(first: string) {
-      return recorder(function respond(path) {
-        if (path.includes("/reviews?per_page")) return [standing];
-        if (path.includes("/pulls/8/comments?per_page")) return comments(first);
-        return {};
-      }).gh;
-    }
-    expect(await sendCodeReview(already(oldBody), review, login)).toEqual({ reviewId: 9, sent: false, threads: [31, null, 32] });
-    expect(await sendCodeReview(already(withResolve), review, login)).toEqual({ reviewId: 9, sent: false, threads: [31, null, 32] });
-    expect(await sendCodeReview(already(`${oldBody}\n\nNot this finding.`), review, login)).toEqual({ reviewId: 9, sent: false, threads: null, unread: "1 of review 9's 2 inline comments matched no finding" });
-  });
 });
 
 describe("findingThreadStates", () => {

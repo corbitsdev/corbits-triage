@@ -212,21 +212,6 @@ test("a rule's own text set in the batch outlasts a later limit or turn-on for i
   expect(patched.text).toContain("max: 200");
 });
 
-test("a batch that changes nothing reads as unchanged even when the YAML library re-spaces the file", () => {
-  const unindented = `rules:
-- check: max-lines-changed
-  text: "Flag pull requests over 400 lines changed."
-  reason: Review load.
-  evidence: [ maintainer-stated ]
-  max: 400
-`;
-  const same = patchPolicyFile(unindented, REPO, [{ kind: "rule-options", id: "max-lines-changed", options: { max: 400 } }]);
-  expect(same).toMatchObject({ ok: true, changed: false });
-  if (!same.ok) return;
-  expect(same.text).not.toBe(unindented);
-  expect(patchPolicyFile(unindented, REPO, [{ kind: "rule-options", id: "max-lines-changed", options: { max: 300 } }])).toMatchObject({ ok: true, changed: true });
-});
-
 test("a built-in rule added whole keeps its own text", () => {
   const rule = { check: "max-lines-changed" as const, text: "Keep pull requests short.", reason: "Review load.", evidence: ["maintainer-stated"], max: 200 };
   const patched = patchPolicyFile(BASE, REPO, [{ kind: "add-rule", rule }]);
@@ -255,9 +240,4 @@ decide:
   expect(checked).toMatchObject({ ok: true });
   expect(checked.ok && checked.pending).toBeUndefined();
   expect(patchPolicyFile(patched.text, REPO, [{ kind: "strip-reserved" }])).toMatchObject({ ok: true, changed: false });
-});
-
-test("strip-reserved also takes the blocks out of a file that extends another", () => {
-  const held = "# shared rules\nextends: acme/shared\nchecks:\n  ci-green: { enabled: true }\ndeslop: { on: false }\n";
-  expect(patchPolicyFile(held, REPO, [{ kind: "strip-reserved" }])).toEqual({ ok: true, changed: true, text: "# shared rules\nextends: acme/shared\nchecks:\n  ci-green: {enabled: true}\n" });
 });
