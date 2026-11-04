@@ -1,7 +1,6 @@
 name: Image
 
-# Builds one image natively on each platform's runner, scans it, and on a push to main joins the platforms under its
-# tags.
+# Builds one image natively on each platform's runner and scans it; on a push to main, tags both platforms as one.
 on:
   workflow_call:
     inputs:
@@ -77,7 +76,6 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ env.PUSH }}
           cache-from: type=gha,scope=${{ inputs.name }}-${{ matrix.arch }}
           cache-to: type=gha,scope=${{ inputs.name }}-${{ matrix.arch }},mode=max
-          no-cache-filters: app
       - if: env.PUSH == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/digests"
@@ -90,6 +88,7 @@ jobs:
           name: digest-${{ inputs.name }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
+          overwrite: true
 
   manifest:
     needs: build
