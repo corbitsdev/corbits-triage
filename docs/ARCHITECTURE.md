@@ -754,7 +754,8 @@ any other tenant or an unknown sender.
   seen. Once that one waited past `TRIAGE_STALLED_AFTER_MS` (five minutes by
   default) the host is stalled: the hub logs `triage_stalled`, the workflow
   versions route lists the host under `stalled` with the oldest waiting pull
-  request, how many wait and why if known, which the portal shows on every
+  request, how many waited past the alarm age and why if known, which the
+  portal shows on every
   page and in Settings → Triage, and with SMTP set up the workspace's owners
   and admins with a verified address get one email naming the host. The
   alarm clears once nothing waits past the alarm age any more and either

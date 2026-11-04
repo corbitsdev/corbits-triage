@@ -307,6 +307,22 @@ test("a raised alarm clears without a newer take once its head's run failed, wha
   });
 }, 60_000);
 
+test("a pull request waiting by an older mail and a newer queued head keeps the head's reason", async () => {
+  await withDatabase(async (db) => {
+    const store = memoryStore([]);
+    const hub = stack(db, store);
+    await mailOf(PR, "d1", db);
+    await new Promise((done) => setTimeout(done, 5));
+    const queuedAt = new Date().toISOString();
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "queued", error: "waiting for capacity", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
+
+    hub.advance(STALLED_AFTER_MS + 60_000);
+    await hub.check();
+    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1, reason: "waiting for capacity" }]);
+    expect(Date.parse(String(hub.stalled()[0]?.since))).toBeLessThan(Date.parse(queuedAt));
+  });
+}, 60_000);
+
 test("an untaken mail of a triaged pull request waits from its oldest mail, whatever later writes touch its row", async () => {
   await withDatabase(async (db) => {
     const triagedAt = new Date().toISOString();

@@ -15,7 +15,7 @@ import { undelivered } from "./github/triage-queue.js";
 import type { TriageStateStore } from "./github/triage-state-store.js";
 import { lastTakes, pendingMails } from "./manager-state.js";
 
-/** A stalled host: since when its oldest waiting pull request waits, which pull request it is, how many wait, why if known, and when one of its managers last took one. */
+/** A stalled host: since when its oldest waiting pull request waits, which pull request it is, how many have waited past the alarm age, why if known, and when one of its managers last took one. */
 export type Stalled = { source: RepoSource; since: string; lastTakeAt?: string; pull?: string; count?: number; reason?: string };
 
 /** `failed` marks a head that failed to start: it keeps a raised alarm up but never raises one. */
@@ -156,7 +156,12 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
     for (const item of pulls) {
       if (item.failed || now - item.at < deps.stalledAfterMs) continue;
       const prior = byPull.get(item.pull);
-      if (prior === undefined || item.at < prior.at) byPull.set(item.pull, item);
+      if (prior === undefined) {
+        byPull.set(item.pull, item);
+        continue;
+      }
+      const reason = prior.reason ?? item.reason;
+      byPull.set(item.pull, { pull: item.pull, at: Math.min(prior.at, item.at), ...(reason !== undefined && { reason }) });
     }
     const overdue = [...byPull.values()].sort((a, b) => a.at - b.at || a.pull.localeCompare(b.pull));
     const oldest = overdue[0];
