@@ -95,6 +95,8 @@ export type TenantPlanInput = {
   roomless: ReadonlySet<string>;
   now: Date;
   policy: ReconcilePolicy;
+  /** When this hub process started, so heads that failed to start or deliver before boot get a fresh attempt ladder. */
+  bootAt?: Date;
 };
 
 /** A head to queue, why, and whether it is decided while the host's checks are pending. */
@@ -220,8 +222,14 @@ function observe(row: PrTriageRow, observed: readonly ObservedRun[], roomless: b
 
 const NEVER_STARTED = "run never started";
 
-function uncapped(row: PrTriageRow, now: Date, policy: ReconcilePolicy): PrTriageRow {
-  if (row.status !== "failed" || row.attempts < policy.maxAttempts || row.error !== NEVER_STARTED) return row;
+function uncapped(row: PrTriageRow, now: Date, policy: ReconcilePolicy, bootAt?: Date): PrTriageRow {
+  if (row.status !== "failed") return row;
+  const neverStarted = row.error === NEVER_STARTED;
+  // A start or delivery that failed before this hub booted may have been an outage that is now fixed. A failure observed
+  // this pass carries this pass's time, so only failures recorded before boot qualify.
+  const preBoot = bootAt !== undefined && ms(row.updatedAt) < bootAt.getTime();
+  if (preBoot && row.attempts > 0 && (neverStarted || row.undeliveredSince !== undefined)) return { ...row, attempts: 0 };
+  if (row.attempts < policy.maxAttempts || !neverStarted) return row;
   const cycles = row.cappedRetries ?? 0;
   if (cycles >= policy.cappedRetryCycles || now.getTime() - ms(row.updatedAt) < policy.cappedRetryAfterMs) return row;
   return { ...row, attempts: 0, cappedRetries: cycles + 1 };
@@ -307,7 +315,7 @@ export function requeue(plan: RepoPlan, row: PrTriageRow, reason: string, now: D
 }
 
 /** Queues due heads across the tenant's repositories, never-triaged ones first, while fewer than `maxInFlight` heads are queued or running, a manager waiting for CI aside. */
-export function planTenant({ repos, runs, roomless, now, policy }: TenantPlanInput): Map<string, RepoPlan> {
+export function planTenant({ repos, runs, roomless, now, policy, bootAt }: TenantPlanInput): Map<string, RepoPlan> {
   const at = now.toISOString();
   const plans = new Map<string, RepoPlan>();
   const due: Due[] = [];
@@ -320,7 +328,7 @@ export function planTenant({ repos, runs, roomless, now, policy }: TenantPlanInp
       const key = runKey(pr.number, pr.headSha);
       const current = fresh(pr, byHead.get(key), at);
       const runsOfHead = observed?.get(key) ?? [];
-      const row = uncapped(observe(current, runsOfHead, roomless.has(pullKey(name, pr.number)), now, policy), now, policy);
+      const row = uncapped(observe(current, runsOfHead, roomless.has(pullKey(name, pr.number)), now, policy), now, policy, bootAt);
       if (inFlight(row) && !parked(runsOfHead)) busy.add(`${name} ${key}`);
       if (isDue(row, pr, runsOfHead, now, policy)) due.push({ repo: name, index: next.length, row });
       next.push(row);
