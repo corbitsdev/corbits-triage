@@ -214,6 +214,21 @@ test("a head whose mail did not go out raises the alarm by its age alone, whatev
   });
 }, 60_000);
 
+test("a mail after another pull request's take counts though its head was queued before that take", async () => {
+  await withDatabase(async (db) => {
+    const queuedAt = new Date().toISOString();
+    const hub = stack(db, memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]));
+    await new Promise((done) => setTimeout(done, 5));
+    await mailOf({ ...PR, number: 8 }, "d8", db);
+    await hub.took({ ...PR, number: 8 });
+    await mailOf(PR, "d1", db);
+
+    hub.advance(STALLED_AFTER_MS + 60_000);
+    await hub.check();
+    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1 }]);
+  });
+}, 60_000);
+
 test("an idle take does not clear a raised alarm", async () => {
   await withDatabase(async (db) => {
     const hub = stack(db);

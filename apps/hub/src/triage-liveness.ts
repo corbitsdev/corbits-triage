@@ -120,11 +120,9 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       const source = sourceOf(record);
       const taken = deps.takes.last(tenant.id, source);
       const { rows, version } = await deps.store.load(tenant.id, triageStateKey(record));
-      const queued = new Set<number>();
       for (const row of rows) {
         const since = row.undeliveredSince ?? row.queuedAt;
         if (since === undefined || (row.status !== "queued" && !undelivered(row, source))) continue;
-        queued.add(row.number);
         const unsent = row.undeliveredSince !== undefined || undelivered(row, source);
         if (unsent || taken === undefined || Date.parse(since) > Date.parse(taken)) {
           const reason = row.error ?? (row.attempts > 1 && row.runId === undefined ? NEVER_STARTED : undefined);
@@ -134,7 +132,7 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       const hostMails = mails.get(source);
       if (hostMails === undefined) continue;
       for (const mail of hostMails) {
-        if (mail.repo !== record.name || queued.has(mail.number)) continue;
+        if (mail.repo !== record.name) continue;
         const at = Date.parse(mail.at);
         const ofPull = rows.filter((each) => each.number === mail.number);
         const unstored = ofPull.length === 0 && version === null && rows.length === 0;
