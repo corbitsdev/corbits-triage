@@ -1,6 +1,6 @@
 // A policy whose rules need the judge.
 import { expect, test } from "bun:test";
-import { VERDICT_LABELS } from "@corbits/triage-contracts";
+import { VERDICT_LABELS, WAITING_LABELS } from "@corbits/triage-contracts";
 import { chainStack, JUDGED, once } from "./chain.ts";
 import { sha, pullOf, comments, labelled } from "./github.ts";
 
@@ -20,7 +20,7 @@ test("a policy that needs the judge deploys it and posts the judge's verdict onc
   expect(asked).toContain("focused");
   expect(comments(writes)).toEqual([expect.stringContaining("**Triage: In progress**\n\nTriage is waiting for the decision model's answer")]);
   expect(pull.comments.map((comment) => comment.body)).toEqual([expect.stringContaining("**Triage: Pass**")]);
-  expect(labelled(writes)).toEqual([VERDICT_LABELS.pass]);
+  expect(labelled(writes)).toEqual([WAITING_LABELS.judge, VERDICT_LABELS.pass]);
   // The pass that deployed the judge reported no verdict, so only the judge's is recorded.
   expect(await verdictsOf(JUDGED, 1)).toEqual([expect.objectContaining({ head_sha: head, state: "ready-monitoring" })]);
 });
