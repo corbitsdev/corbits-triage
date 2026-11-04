@@ -149,16 +149,11 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       for (const mail of hostMails) {
         if (mail.repo !== record.name) continue;
         const ofPull = byNumber.get(mail.number);
-        const oldest = Date.parse(mail.oldest);
-        const newest = Date.parse(mail.newest);
-        const pull = `${record.name}#${mail.number}`;
-        if (ofPull === undefined) {
-          if (version === null && rows.length === 0) byHost.get(source)?.push({ pull, at: oldest });
-        } else if (newerThanStore(ofPull, oldest)) {
-          byHost.get(source)?.push({ pull, at: oldest });
-        } else if (newerThanStore(ofPull, newest)) {
-          byHost.get(source)?.push({ pull, at: newest });
-        }
+        const times = mail.at.map((at) => Date.parse(at));
+        let first: number | undefined;
+        if (ofPull !== undefined) first = times.find((at) => newerThanStore(ofPull, at));
+        else if (version === null && rows.length === 0) first = times[0];
+        if (first !== undefined) byHost.get(source)?.push({ pull: `${record.name}#${mail.number}`, at: first });
       }
     }
     return byHost;

@@ -307,7 +307,7 @@ test("a raised alarm clears without a newer take once its head's run failed, wha
   });
 }, 60_000);
 
-test("a mail newer than its pull request's triaged head counts though an older untaken mail does not", async () => {
+test("a pull request's mail waits from its first mail newer than its triaged head, not its oldest or newest", async () => {
   await withDatabase(async (db) => {
     const store = memoryStore([]);
     const hub = stack(db, store);
@@ -317,10 +317,17 @@ test("a mail newer than its pull request's triaged head counts though an older u
     await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, updatedAt: triagedAt }]);
     await new Promise((done) => setTimeout(done, 5));
     await mailOf(PR, "d2", db);
+    await new Promise((done) => setTimeout(done, 5));
+    const beforeLast = Date.now();
+    await mailOf(PR, "d3", db);
 
     hub.advance(STALLED_AFTER_MS + 60_000);
     await hub.check();
-    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1 }]);
+    const [stalled] = hub.stalled();
+    expect(stalled).toMatchObject({ source: "github", pull: "acme/widgets#7", count: 1 });
+    const since = Date.parse(String(stalled?.since));
+    expect(since).toBeGreaterThan(Date.parse(triagedAt));
+    expect(since).toBeLessThan(beforeLast);
   });
 }, 60_000);
 

@@ -1036,19 +1036,19 @@ export async function lastTakes(db: DB["db"]): Promise<{ tenantId: string; sourc
 
 const MAIL_PULL = /^(.+)#(\d+)$/;
 
-/** Each pull request on the tenant's host with mail no manager has taken, among mail recorded after `after`: when its oldest and newest such mail were recorded. */
-export async function pendingMails(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<{ repo: string; number: number; oldest: string; newest: string }[]> {
+/** Each pull request on the tenant's host with mail no manager has taken, among mail recorded after `after`: when each such mail was recorded, oldest first. */
+export async function pendingMails(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<{ repo: string; number: number; at: string[] }[]> {
   const since = after === undefined ? undefined : sql`(${managerState.state}->>'receivedAt')::timestamptz > ${after}::timestamptz`;
   const ofHost = like(managerState.key, `evt:${source}:%`);
   const pull = sql<string>`substring(${managerState.key} from '^evt:[^:]+:(.+#[0-9]+):')`;
   const receivedAt = sql`${managerState.state}->>'receivedAt'`;
-  const rows = await db.select({ pull, oldest: sql<string>`min(${receivedAt})`, newest: sql<string>`max(${receivedAt})` }).from(managerState)
+  const rows = await db.select({ pull, at: sql<string[]>`array_agg(${receivedAt} ORDER BY ${receivedAt})` }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since))
     .groupBy(pull);
   return rows.map(function pullMails(row) {
     const match = MAIL_PULL.exec(row.pull);
     if (match?.[1] === undefined || match[2] === undefined) throw new Error(`manager_state mail of ${row.pull} names no pull request`);
-    return { repo: match[1], number: Number(match[2]), oldest: row.oldest, newest: row.newest };
+    return { repo: match[1], number: Number(match[2]), at: row.at };
   });
 }
 
