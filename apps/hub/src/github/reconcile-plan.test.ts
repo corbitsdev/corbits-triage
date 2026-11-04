@@ -268,7 +268,7 @@ describe("reconcile plan", () => {
     expect(enqueued(plan([pr(1)], [{ ...rows[0]!, cappedRetries: policy.cappedRetryCycles }], at(1_000 * hour)))).toEqual([]);
   });
 
-  test("a hub restart resets pre-boot unstarted and undelivered attempt caps immediately without resetting deterministic run failures", () => {
+  test("a hub restart gives heads that never started or were not delivered before it a fresh set of attempts, not heads whose run failed", () => {
     const preBoot = [
       row(1, { status: "failed", attempts: policy.maxAttempts, error: "run never started", queuedAt: at(-20).toISOString(), updatedAt: at(-5).toISOString() }),
       row(2, { status: "failed", attempts: policy.maxAttempts, error: "delivery failed: Error: ENOSPC", undeliveredSince: at(-20).toISOString(), queuedAt: at(-20).toISOString(), updatedAt: at(-5).toISOString() }),

@@ -222,14 +222,13 @@ function observe(row: PrTriageRow, observed: readonly ObservedRun[], roomless: b
 
 const NEVER_STARTED = "run never started";
 
-function unstartedOrUndelivered(row: PrTriageRow): boolean {
-  return row.status === "failed" && (row.error === NEVER_STARTED || row.undeliveredSince !== undefined);
-}
-
 function uncapped(row: PrTriageRow, priorUpdatedAt: string, now: Date, policy: ReconcilePolicy, bootAt?: Date): PrTriageRow {
-  if (!unstartedOrUndelivered(row)) return row;
-  if (bootAt !== undefined && ms(priorUpdatedAt) < bootAt.getTime() && row.attempts > 0) return { ...row, attempts: 0 };
-  if (row.attempts < policy.maxAttempts) return row;
+  if (row.status !== "failed") return row;
+  const neverStarted = row.error === NEVER_STARTED;
+  // A start or delivery that failed before this hub booted may have been an outage that is now fixed.
+  const preBoot = bootAt !== undefined && ms(priorUpdatedAt) < bootAt.getTime();
+  if (preBoot && row.attempts > 0 && (neverStarted || row.undeliveredSince !== undefined)) return { ...row, attempts: 0 };
+  if (row.attempts < policy.maxAttempts || !neverStarted) return row;
   const cycles = row.cappedRetries ?? 0;
   if (cycles >= policy.cappedRetryCycles || now.getTime() - ms(row.updatedAt) < policy.cappedRetryAfterMs) return row;
   return { ...row, attempts: 0, cappedRetries: cycles + 1 };

@@ -730,6 +730,10 @@ any other tenant or an unknown sender.
   a manager that is up runs the head of the newest pull request mail recorded
   for it, so its head is not mailed again; one that went away with a pass open
   failed on that pass's head, which is retried with backoff; a recorded verdict settles its head.
+  A head whose run never started, or whose mail did not go out, before the
+  hub booted gets a fresh set of attempts on the first pass, since the
+  outage behind it may be fixed (`bootAt`, `apps/hub/src/github/reconcile-plan.ts`).
+  A head whose run failed keeps its count.
   Triage again can queue a head again as soon as its
   manager has reported done, or went away, since it was queued.
   The hub also checks, every `TRIAGE_LIVENESS_INTERVAL_MS` (a minute by
