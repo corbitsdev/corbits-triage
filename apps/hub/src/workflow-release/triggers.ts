@@ -1,11 +1,30 @@
 // What starts a roll besides the hub's own start: a write through a stock route, a host found with no listener, and one whose
-// listener the hub cannot route mail to, including one whose deploy or sidecar restore misses the start deadline or whose sidecar stays disconnected past the deployment's limit.
+// listener the hub cannot route mail to or whose dispatch loop stalls, including one whose deploy or sidecar restore misses the
+// start deadline, whose sidecar stays disconnected past the deployment's limit, or whose oldest unconsumed mail waits past ten minutes.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { SidecarIdentityValidationError, SidecarNotConnectedError, type AllocatedSidecarTarget } from "@intx/hub-sessions";
+import {
+  SidecarIdentityValidationError,
+  SidecarNotConnectedError,
+  WORKFLOW_RUN_ADDRESSES_PREFIX,
+  WORKFLOW_RUN_INBOX_DIR,
+  WORKFLOW_RUN_PROCESSING_DIR,
+  workflowRunRepoIdForAddress,
+  type AllocatedSidecarTarget,
+  type RepoStore,
+} from "@intx/hub-sessions";
 import { asRecord, decodedSegment, errorText } from "@corbits/common";
 import { REPO_SOURCES, type RepoSource } from "@corbits/triage-contracts";
 import { START_DEADLINE_MS } from "./rollout.js";
+
+/** Two five-minute supervisor backstops: a listener whose oldest unconsumed mail has waited longer than this is replaced. */
+export const LISTENER_STALL_MS = 10 * 60_000;
+
+/** The ref where stock's supervisor commits a workflow deployment's claim-check inbox, processing and consumed trees. */
+const CLAIM_CHECK_REF = "refs/heads/events";
+
+/** Stock's `<receivedAt>-<messageId>.json` filename in `inbox/` and `processing/`. */
+const QUEUE_FILENAME = /^(0|[1-9][0-9]*)-.+\.json$/;
 
 /** A write that can change a workspace's release: its catalog decides which workflows publish and the offerings they run on. */
 const RELEASE_WRITE = /^\/api\/tenants\/([^/]+)\/(credentials|catalog\/(?:providers|models|offerings))(?:\/([^/]+))?$/;
@@ -57,6 +76,8 @@ export type ListenerWatchDeps = {
   allocation: (runId: string) => Promise<(AllocatedSidecarTarget & { readonly maxDisconnectedMs: number }) | undefined>;
   /** Stock's router: whether it routes the generation's mail. */
   routable: (target: AllocatedSidecarTarget) => Promise<boolean>;
+  /** When the oldest mail still in the listener's inbox or processing was received; undefined when none waits. */
+  backlog: (runId: string) => Promise<Date | undefined>;
   ensure: (tenantId: string) => void;
   replace: (tenantId: string, source: RepoSource) => boolean;
   now: () => Date;
@@ -64,15 +85,46 @@ export type ListenerWatchDeps = {
 };
 
 /**
+ * When the oldest unconsumed mail in the listener's claim-check queue was received, read from the hub's copy of its
+ * workflow-run repository; undefined before the listener has received mail or once its inbox and processing are empty.
+ */
+export async function listenerBacklog(
+  db: DB["db"],
+  repoStore: Pick<RepoStore, "openCommittedReads">,
+  runId: string,
+): Promise<Date | undefined> {
+  const [row] = await db
+    .select({ address: schema.workflowRun.address })
+    .from(schema.workflowRun)
+    .where(eq(schema.workflowRun.id, runId));
+  if (!row?.address) return undefined;
+  const reads = await repoStore.openCommittedReads({ kind: "hub" }, workflowRunRepoIdForAddress(row.address), CLAIM_CHECK_REF);
+  if (!reads) return undefined;
+  const prefix = `${WORKFLOW_RUN_ADDRESSES_PREFIX}/${encodeURIComponent(row.address)}`;
+  let oldest: number | undefined;
+  for (const dir of [WORKFLOW_RUN_INBOX_DIR, WORKFLOW_RUN_PROCESSING_DIR]) {
+    for (const entry of await reads.listDir(`${prefix}/${dir}`)) {
+      if (entry.type !== "blob") continue;
+      const match = QUEUE_FILENAME.exec(entry.name);
+      if (!match) continue;
+      const receivedAt = Number(match[1]);
+      if (oldest === undefined || receivedAt < oldest) oldest = receivedAt;
+    }
+  }
+  return oldest === undefined ? undefined : new Date(oldest);
+}
+
+/**
  * Rolls a workspace once a connected host has no live listener, as after one stopped on its own, and starts a host's
  * listener again once its deploy or sidecar restore has not finished within the five-minute start deadline, once its
- * sidecar is connected but the hub holds no route to it, or once the router reports that sidecar not connected for
- * longer than the deployment's max disconnected limit. Stock clears a deployment's public key while replacing its
- * sidecar and acts on a lost route only when a sidecar connects or reports a stop, and its disconnect clock never
- * starts while the allocation stays allocated, so a listener whose restore stalls or whose sidecar is gone would
- * otherwise stay live and unreachable. The router measures a disconnect from when this hub last lost the
- * generation's binding, or from its own start. One whose stop stock gave up on is reported on every pass. Any other
- * failed check leaves whether the sidecar is connected unknown, so it is logged and not counted.
+ * sidecar is connected but the hub holds no route to it, once the router reports that sidecar not connected for
+ * longer than the deployment's max disconnected limit, or once its oldest unconsumed mail has waited longer than ten
+ * minutes. Stock clears a deployment's public key while replacing its sidecar and acts on a lost route only when a
+ * sidecar connects or reports a stop, its disconnect clock never starts while the allocation stays allocated, and a
+ * supervisor whose dispatch loop wedges on a half-dispatched run stays connected and routable while its inbox stops
+ * draining. The router measures a disconnect from when this hub last lost the generation's binding, or from its own
+ * start. One whose stop stock gave up on is reported on every pass. Any other failed check leaves the listener's state
+ * unknown, so it is logged and not counted.
  */
 export function createListenerWatch(deps: ListenerWatchDeps) {
   const starting = new Map<string, { runId: string; since: Date }>();
@@ -120,8 +172,22 @@ export function createListenerWatch(deps: ListenerWatchDeps) {
         deps.log({ level: "warn", msg: "listener_unreachable", ...entry, unreachableMs, reason: "its sidecar stayed disconnected longer than the deployment's limit" });
         continue;
       }
-      if (routed || !deps.replace(tenantId, source)) continue;
-      deps.log({ level: "warn", msg: "listener_unroutable", ...entry, reason: "its sidecar is connected but the hub holds no route to it" });
+      if (!routed) {
+        if (!deps.replace(tenantId, source)) continue;
+        deps.log({ level: "warn", msg: "listener_unroutable", ...entry, reason: "its sidecar is connected but the hub holds no route to it" });
+        continue;
+      }
+      let oldest: Date | undefined;
+      try {
+        oldest = await deps.backlog(listener.runId);
+      } catch (error) {
+        deps.log({ level: "warn", msg: "listener_check_failed", ...entry, reason: errorText(error) });
+        continue;
+      }
+      if (!oldest) continue;
+      const backlogMs = deps.now().getTime() - oldest.getTime();
+      if (backlogMs <= LISTENER_STALL_MS || !deps.replace(tenantId, source)) continue;
+      deps.log({ level: "warn", msg: "listener_dispatch_stalled", ...entry, backlogMs });
     }
   };
 }

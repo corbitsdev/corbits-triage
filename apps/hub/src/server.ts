@@ -72,7 +72,7 @@ import { createCodeReviewRuns } from "./code-review-runs.js";
 import { createWorkflowVersions } from "./workflow-versions.js";
 import { triageTenants } from "./deployer-role.js";
 import { bundleAt, bundled, type Publisher } from "./workflow-release/publish.js";
-import { createListenerWatch, releaseWriteOf } from "./workflow-release/triggers.js";
+import { createListenerWatch, listenerBacklog, releaseWriteOf } from "./workflow-release/triggers.js";
 import { setUpPublisher, TRIAGE_PUBLISHER } from "./workflow-release/publisher.js";
 import { createSystemWrites } from "./system-writes/writer.js";
 import { catalogModels, createWorkspaceLock, deployedAllocation, deploymentState, liveDeployments } from "./workflow-release/reads.js";
@@ -641,6 +641,9 @@ const watchListeners = createListenerWatch({
   },
   routable: function routableOf(target) {
     return composition.sidecarRouter.isAllocatedWorkflowActive(target);
+  },
+  backlog: function backlogOf(runId) {
+    return listenerBacklog(composition.db, composition.repoStore, runId);
   },
   ensure: function rollWorkspace(tenantId) {
     if (workflowsBundled) workflowReleases.ensure(tenantId);

@@ -9,14 +9,25 @@ import { authorize } from "@intx/authz";
 import { createEnvKeyCredentialCipher, generateKeyPair } from "@intx/crypto";
 import { createDB, createGrantStore, createPrincipalKeyStore, runMigrations, schema } from "@intx/db";
 import { HUB_CONDITION_REGISTRY } from "@intx/hub-api";
-import { createAgentRepoStore, createAssetService, DEFAULT_ASSET_REF, SidecarNotConnectedError, type AssetService, type RepoStore } from "@intx/hub-sessions";
+import {
+  createAgentRepoStore,
+  createAssetService,
+  DEFAULT_ASSET_REF,
+  dequeueToProcessing,
+  enqueueInbox,
+  markConsumed,
+  SidecarNotConnectedError,
+  workflowRunRepoIdForAddress,
+  type AssetService,
+  type RepoStore,
+} from "@intx/hub-sessions";
 import { DEPLOYER_GRANTS, REPO_SOURCES, type ModelInfo, type RepoSource, type SourceIndexEntry } from "@corbits/triage-contracts";
 import { revokeHumanDeployers } from "../deployer-role.js";
 import { createSystemWrites, SYSTEM_WRITER, SystemWriteDenied, type SystemWrites } from "../system-writes/writer.js";
 import { publishRelease, type Bundle } from "./publish.js";
 import { setUpPublisher } from "./publisher.js";
 import { createWorkspaceLock } from "./reads.js";
-import { createListenerWatch, releaseWriteOf } from "./triggers.js";
+import { createListenerWatch, LISTENER_STALL_MS, listenerBacklog, releaseWriteOf } from "./triggers.js";
 import { createRolloutQueue, createWorkflowRollout, START_DEADLINE_MS, type Deployment, type DeployRequest, type DeployState, type RollOutcome } from "./rollout.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -456,6 +467,9 @@ test("a connected host found with no live listener rolls its workspace, and ever
     async routable() {
       return true;
     },
+    async backlog() {
+      return undefined;
+    },
     ensure(tenantId) {
       ensured.push(tenantId);
     },
@@ -519,6 +533,9 @@ test("a listener whose connected sidecar the router holds no route to is started
     },
     async routable(target) {
       return routes[target.allocationId]?.() ?? true;
+    },
+    async backlog() {
+      return undefined;
     },
     ensure() {
       throw new Error("Every host has a listener.");
@@ -591,6 +608,9 @@ test("a listener whose sidecar stays disconnected past its limit is replaced onc
       if (away) throw new SidecarNotConnectedError("Allocation alc_github is not connected", new Date(0));
       return true;
     },
+    async backlog() {
+      return undefined;
+    },
     ensure() {
       throw new Error("The host has a listener.");
     },
@@ -640,6 +660,9 @@ test("a failed route check that is not a disconnect does not replace the listene
     },
     async routable() {
       throw new Error("Allocated sidecar connection changed for allocation alc_github");
+    },
+    async backlog() {
+      return undefined;
     },
     ensure() {
       throw new Error("The host has a listener.");
@@ -697,6 +720,9 @@ test("a listener whose deploy or sidecar restore stays unfinished past the start
     async routable() {
       return true;
     },
+    async backlog() {
+      return undefined;
+    },
     ensure() {
       throw new Error("The host has a listener.");
     },
@@ -737,6 +763,108 @@ test("a listener whose deploy or sidecar restore stays unfinished past the start
     { level: "warn", msg: "listener_unroutable", tenantId: "tnt_restore", source: "github", deployment: "run_github", unstartedMs: START_DEADLINE_MS + 1, reason: "its deploy or sidecar restore did not finish within five minutes" },
   ]);
 });
+
+test("PostgreSQL: a routable listener whose oldest inbox or processing mail waited past the stall limit is replaced once, and a failed backlog read is only logged", async () => {
+  const { tenantId } = await workspace("stalled");
+  const runId = "run_stalled_github";
+  const address = `${runId}@stalled.test`;
+  const repoId = workflowRunRepoIdForAddress(address);
+  const supervisor = { kind: "supervisor" as const, anchorRunId: repoId.id };
+  await handle.db.insert(schema.workflowDefinition).values({ id: "wdf_stalled", tenantId, name: LISTENER });
+  await handle.db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wdf_stalled", tenantId, address, status: "running" });
+
+  expect(await listenerBacklog(handle.db, repoStore, runId)).toBeUndefined();
+  await enqueueInbox(repoStore, supervisor, repoId, { address, messageId: "msg_1", receivedAt: 2_000, mailAuditRef: { store: "s", path: "1" } });
+  await enqueueInbox(repoStore, supervisor, repoId, { address, messageId: "msg_2", receivedAt: 5_000, mailAuditRef: { store: "s", path: "2" } });
+  expect(await listenerBacklog(handle.db, repoStore, runId)).toEqual(new Date(2_000));
+  await dequeueToProcessing(repoStore, supervisor, repoId, address);
+  expect(await listenerBacklog(handle.db, repoStore, runId)).toEqual(new Date(2_000));
+
+  let clock = 2_000 + LISTENER_STALL_MS - 1;
+  let readFails = false;
+  const listeners = { github: { runId } };
+  const rolled: Array<RepoSource[]> = [];
+  const entered = Promise.withResolvers<void>();
+  const gate = Promise.withResolvers<void>();
+  const replaced = Promise.withResolvers<void>();
+  const rollout = {
+    async roll(_tenantId: string, redeploy: ReadonlySet<RepoSource>): Promise<RollOutcome> {
+      rolled.push([...redeploy].sort());
+      entered.resolve();
+      await gate.promise;
+      listeners.github = { runId: "run_stalled_next" };
+      replaced.resolve();
+      return SUCCEEDED;
+    },
+  };
+  const logged: Record<string, unknown>[] = [];
+  const queue = createRolloutQueue(rollout, { quietMs: 0, retryMs: 60_000, concurrency: 2, random: Math.random }, function ignore() {});
+  const watch = createListenerWatch({
+    async connectedSources() {
+      return ["github"];
+    },
+    async listener() {
+      return listeners.github;
+    },
+    async stuck() {
+      return [];
+    },
+    async allocation(id) {
+      return { allocationId: id === runId ? "alc_github" : "alc_next", generation: 1, maxDisconnectedMs: 15 * 60_000 };
+    },
+    async routable() {
+      return true;
+    },
+    async backlog(id) {
+      if (readFails) throw new Error("repo read failed");
+      return listenerBacklog(handle.db, repoStore, id);
+    },
+    ensure() {
+      throw new Error("The host has a listener.");
+    },
+    replace: queue.replace,
+    now() {
+      return new Date(clock);
+    },
+    log(entry) {
+      logged.push(entry);
+    },
+  });
+
+  await watch(tenantId);
+  clock = 2_000 + LISTENER_STALL_MS;
+  await watch(tenantId);
+  expect(rolled).toEqual([]);
+
+  clock = 2_000 + LISTENER_STALL_MS + 1;
+  readFails = true;
+  await watch(tenantId);
+  expect(rolled).toEqual([]);
+
+  readFails = false;
+  await watch(tenantId);
+  await entered.promise;
+  await watch(tenantId);
+  expect(rolled).toEqual([["github"]]);
+
+  await markConsumed(repoStore, supervisor, repoId, { address, messageId: "msg_1", runId, consumedAt: clock, retentionHorizonMs: 60_000 });
+  expect(await listenerBacklog(handle.db, repoStore, runId)).toEqual(new Date(5_000));
+  await dequeueToProcessing(repoStore, supervisor, repoId, address);
+  await markConsumed(repoStore, supervisor, repoId, { address, messageId: "msg_2", runId, consumedAt: clock, retentionHorizonMs: 60_000 });
+  expect(await listenerBacklog(handle.db, repoStore, runId)).toBeUndefined();
+
+  gate.resolve();
+  await replaced.promise;
+  await Bun.sleep(10);
+  await watch(tenantId);
+  await Bun.sleep(10);
+  expect(rolled).toEqual([["github"]]);
+  const entry = { tenantId, source: "github", deployment: runId, allocationId: "alc_github", generation: 1 };
+  expect(logged).toEqual([
+    { level: "warn", msg: "listener_check_failed", ...entry, reason: "repo read failed" },
+    { level: "warn", msg: "listener_dispatch_stalled", ...entry, backlogMs: LISTENER_STALL_MS + 1 },
+  ]);
+}, 120_000);
 
 test("PostgreSQL: a person keeps the Deployer role until a roll leaves every host's listener running", async () => {
   const { tenantId, principalId, fake, rollout } = await workspace("revoke");

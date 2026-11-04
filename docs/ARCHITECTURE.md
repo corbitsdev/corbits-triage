@@ -466,10 +466,17 @@ any other tenant or an unknown sender.
   `listener_unreachable` at warn with the workspace, host, run, allocation,
   generation, how long it was unreachable (`unreachableMs`) and the reason.
   One whose roll is already running or due is left to that roll, so it is
-  replaced once. `listener_identity_unknown` is logged when the router could
-  not validate the sidecar's identity, and `listener_check_failed` when the
-  check failed any other way, such as a generation that is no longer current;
-  neither pass is a disconnect.
+  replaced once. When the router routes the generation, the pass reads the
+  listener's `inbox/` and `processing/` directories on `refs/heads/events` in
+  the hub's copy of its workflow-run repository: once the oldest unconsumed
+  mail has waited longer than ten minutes (two five-minute supervisor
+  backstops), the hub starts that host's listener again the same way and logs
+  `listener_dispatch_stalled` at warn with the workspace, host, run,
+  allocation, generation and `backlogMs`, covering both GitHub and Bitbucket
+  Data Center listeners. `listener_identity_unknown` is logged when the router
+  could not validate the sidecar's identity, and `listener_check_failed` when
+  the route or backlog check failed any other way, such as a generation that
+  is no longer current; neither replaces the listener.
   After asking stock to stop the listeners and
   workflows a roll replaces, the roll polls stock's lifecycle status until
   each ends. One that stays live once stock gave up stopping it, which
