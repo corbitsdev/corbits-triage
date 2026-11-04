@@ -6,7 +6,7 @@ import { hasEnabledRules, repoPolicy, triageEventOf, type RepoSource } from "@co
 import { errorText, isRecord } from "@corbits/common";
 import type { HookHeaders } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
-import { loadBridgeHook, logJson, tenantConfigOf, triagePolicy, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
+import { closeOutWanted, loadBridgeHook, logJson, tenantConfigOf, triagePolicy, type BridgeDeps, type BridgeHook } from "../github/bridge.js";
 import type { Accepted } from "../github/coalescer.js";
 import type { BaseMove, PolicyPush, PrMail } from "../github/normalize.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type CorbitsTriageNs, type RepoRecord } from "../github/tenant-config.js";
@@ -14,7 +14,8 @@ import { readCappedBody } from "../read-json.js";
 
 export type HookIntake =
   | { kind: "pr"; mail: PrMail }
-  | { kind: "base-move"; move: BaseMove }
+  /** `mail` is the merged pull request's own close, which goes on to its manager. */
+  | { kind: "base-move"; move: BaseMove; mail?: PrMail }
   /** `branches` names the branches the push updated when the payload does not say which is the default one. */
   | { kind: "policy-push"; push: PolicyPush; branches?: string[] };
 
@@ -28,7 +29,7 @@ export type ProviderHook = {
   ownUser?: (ns: CorbitsTriageNs) => string | undefined;
 };
 
-export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "log" | "readCheckPack" | "recheckOpenPulls" | "refreshPolicyFile" | "heard">;
+export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "log" | "readCheckPack" | "recheckOpenPulls" | "closeOutDue" | "refreshPolicyFile" | "heard">;
 
 type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord; ns: CorbitsTriageNs };
 
@@ -77,13 +78,21 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
     return Response.json({ status: "accepted" }, { status: 202 });
   }
 
-  async function pullRequest(at: Delivery, mail: PrMail, provider: ProviderHook): Promise<Response> {
+  /** `based` answers a merge whose close is not mailed: the other pull requests' recheck. */
+  async function pullRequest(at: Delivery, mail: PrMail, provider: ProviderHook, based?: Response): Promise<Response> {
     const triageEvent = triageEventOf(mail);
     if (mail.prNumber === null || triageEvent === null) return ignored(at, "no_triage_event", { action: mail.action });
     if (mail.actor && provider.ownUser?.(at.ns) === mail.actor) return ignored(at, "own_actor", { actor: mail.actor });
     // Its conversion to draft is triaged once, so the verdict stops offering it as ready.
     if (mail.draft === true && mail.action !== "converted_to_draft") return ignored(at, "draft", { pr: mail.prNumber });
     if (mail.headSha === null) return ignored(at, "not_open", { pr: mail.prNumber });
+    let due: boolean;
+    try {
+      due = await closeOutWanted(d, at.hook.tenantId, { source: provider.source, repo: mail.repo, number: mail.prNumber }, triageEvent, mail.headSha);
+    } catch (err) {
+      return failed(at, 500, "triage_state_unavailable", err);
+    }
+    if (!due) return based ?? ignored(at, "nothing_to_close_out", { pr: mail.prNumber });
     let stored: Awaited<ReturnType<typeof triagePolicy>>;
     try {
       stored = await triagePolicy(d.readCheckPack, at.hook.tenantId, at.record.name, sourceOf(at.record));
@@ -180,7 +189,10 @@ export function createProviderHookHandler(d: ProviderHookDeps) {
       return policyPush(at, intake.push);
     }
     if (!repoPolicy(record).enabled) return ignored(at, "repo_not_enabled");
-    if (intake.kind === "base-move") return baseMove(at, intake.move);
+    if (intake.kind === "base-move") {
+      const moved = await baseMove(at, intake.move);
+      return intake.mail && moved.status === 202 ? pullRequest(at, intake.mail, provider, moved) : moved;
+    }
     return pullRequest(at, intake.mail, provider);
   };
 }

@@ -15,7 +15,7 @@ import { logJson } from "../observability.js";
 // traffic then flows through the stock deliverer and this file goes away.
 import { and, eq } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATHS, repoPolicy, triageEventOf, type ActionKind, type RepoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { checkPackName, hasEnabledRules, legacyCheckPack, POLICY_FILE_PATHS, repoPolicy, triageEventOf, type ActionKind, type RepoPolicy, type RepoSource, type TriageEvent } from "@corbits/triage-contracts";
 import { asRecord, errorText, isRecord } from "@corbits/common";
 import { GITHUB_HOOK_HEADERS } from "@corbits/common/hook-metadata";
 import { verifyXHubSignature } from "@corbits/common/x-hub-signature";
@@ -28,6 +28,7 @@ import type { BacklogStart } from "./backlog-triage.js";
 import type { PolicyFileState } from "./policy-file.js";
 import { workflowPart } from "./pr-workflow.js";
 import { readCappedBody } from "../read-json.js";
+import type { PullRequestRef } from "../manager-state.js";
 import {
   dropReposByInstallation,
   dropGithubReposByName,
@@ -73,6 +74,8 @@ export interface BridgeDeps {
   openHeadFor: (tenantId: string) => Promise<OpenHeadReader | undefined>;
   /** Has the repository's open pull requests but `except` triaged again, by its triage state key; resolves to how many were due. */
   recheckOpenPulls: (tenantId: string, key: string, except: number | null) => Promise<number>;
+  /** Whether a pull request that merged or closed on `head` has a comment its manager should close out. */
+  closeOutDue: (tenantId: string, pr: PullRequestRef, head: string) => Promise<boolean>;
   /** Reads the repository's policy file again; undefined when the repository is not connected. */
   refreshPolicyFile: (tenantId: string, repo: string, source: RepoSource) => Promise<PolicyFileState | undefined>;
   startBacklog: BacklogStart;
@@ -195,6 +198,11 @@ export async function triagePolicy(readCheckPack: PolicyReader, tenantId: string
   if (read.status !== "ok") return { policyUnreadable: read.reason, automatic: read.automatic };
   const { status: _status, ...stored } = read;
   return stored;
+}
+
+/** Whether the event goes on to the pull request's manager: any but a close, which goes only where it has a comment to close out. */
+export async function closeOutWanted(d: Pick<BridgeDeps, "closeOutDue">, tenantId: string, pr: PullRequestRef, event: TriageEvent, head: string): Promise<boolean> {
+  return (event !== "closed" && event !== "merged") || d.closeOutDue(tenantId, pr, head);
 }
 
 /** A push that leaves the policy unreadable has every open head marked again, since none of them would be otherwise. */
@@ -515,7 +523,9 @@ export function createBridgeHandler(d: BridgeDeps) {
     const pushed = policyPushOf(event, payload as Record<string, unknown>, POLICY_FILE_PATHS);
     if (pushed) return handlePolicyPush(d, log, loaded, delivery, event, pushed);
     const moved = baseMoveOf(event, payload as Record<string, unknown>);
-    if (moved) return handleBaseMove(d, log, loaded, delivery, event, moved);
+    // The merged pull request's own close goes on to its manager once the others are queued.
+    const based = moved && await handleBaseMove(d, log, loaded, delivery, event, moved);
+    if (based && based.status !== 202) return based;
     const mail = normalize(event, delivery, payload as Record<string, unknown>);
     if (!mail || mail.prNumber === null) {
       log({ level: "info", msg: "ignored", delivery, event, hook: loaded.credentialId });
@@ -569,6 +579,18 @@ export function createBridgeHandler(d: BridgeDeps) {
     if (headSha === undefined) {
       log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "not_open" });
       return Response.json({ status: "ignored" }, { status: 202 });
+    }
+    let due: boolean;
+    try {
+      due = await closeOutWanted(d, loaded.tenantId, { source: "github", repo: mail.repo, number: mail.prNumber }, triageEvent, headSha);
+    } catch (err) {
+      d.cache.forget(`${loaded.credentialId}:${delivery}`);
+      log({ level: "error", msg: "triage_state_unavailable", delivery, event, repo: mail.repo, pr: mail.prNumber, error: String(err) });
+      return Response.json({ error: "triage_state_unavailable" }, { status: 500 });
+    }
+    if (!due) {
+      log({ level: "info", msg: "ignored", delivery, event, repo: mail.repo, pr: mail.prNumber, hook: loaded.credentialId, reason: "nothing_to_close_out" });
+      return based ?? Response.json({ status: "ignored" }, { status: 202 });
     }
     let stored: Awaited<ReturnType<typeof triagePolicy>>;
     try {

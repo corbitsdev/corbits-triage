@@ -114,11 +114,13 @@ function ruledItem(items: readonly object[]): Ruled {
  * verdict and the review go up together; one that reported a failure, ran past its deadline or whose run ended posts the
  * verdict alone. A later pass on a head whose review settled posts again and deploys no other. A Review again names
  * itself as `again`, so its head is reviewed once more for it, whatever earlier reviews of the head said. A pull request
- * that failed rules, `for` or `when` leave out is not reviewed, and `skipped` says why.
+ * that failed rules, `for` or `when` leave out is not reviewed, and `skipped` says why. A pull request no longer open is
+ * neither reviewed nor waited for: the pass posts at once, and its review is not posted.
  */
-export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean; reviewed: boolean; skipped?: string }> {
+export async function reviewScope(input: unknown): Promise<{ deploy: boolean; post: boolean; reviewed: boolean; skipped?: string; closed?: true }> {
   const parsed = ScopeInput(input);
   if (parsed instanceof type.errors) throw new Error(`reviewScope: ${parsed.summary}`);
+  if (asRecord(parsed.evaluateRules.output)?.["closed"] === true) return { deploy: false, post: true, reviewed: false, closed: true };
   const { taken, head, review, reviewFailed, reviewers } = parsed.take.output;
   const part = CodeReviewPart(taken?.["codeReview"]);
   const again = part instanceof type.errors ? undefined : part.again;
@@ -219,7 +221,7 @@ export async function earlyReviewMailed(input: unknown): Promise<{ reviewer?: Re
   return delivered(parsed.mailEarlyReview.output.reply) ? { reviewer: parsed.deployEarlyReview.output.reviewer, post: false } : { post: true };
 }
 
-const PostInput = type({ payload: "unknown", take: { output: TakeOutput }, reviewScope: { output: { reviewed: "boolean" } } });
+const PostInput = type({ payload: "unknown", take: { output: TakeOutput }, reviewScope: { output: { reviewed: "boolean", "closed?": "true" } } });
 const Sent = type({ skipped: "string" }).or({ threads: "(number | null)[] | null", "unread?": "string" });
 
 /** This pass's report and the run that made it, or else the review an earlier pass stored. */
@@ -238,7 +240,7 @@ export async function postReview(input: unknown, ctx: EffectContext, _signal: Ab
   const parsed = PostInput(input);
   if (parsed instanceof type.errors) throw new Error(`postReview: ${parsed.summary}`);
   const { head, taken, reviewers, review, reviewRun } = parsed.take.output;
-  if (head === undefined || !taken) return { posted: false };
+  if (head === undefined || !taken || parsed.reviewScope.output.closed) return { posted: false };
   const found = toPost(review, reviewRun, parsed.reviewScope.output.reviewed ? storedReviewer(reviewers, head) : undefined);
   if (!found) return { posted: false };
   const summary = codeReviewSummary(found.review);

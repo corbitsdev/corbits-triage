@@ -23,7 +23,9 @@ const PULL_REQUEST: Record<string, Mapped> = {
   "pr:deleted": { event: "pull_request", action: "closed", review: null },
 };
 
-const CLOSING = new Set(["pr:declined", "pr:deleted"]);
+const MERGED: Mapped = { event: "pull_request", action: "closed", review: null };
+
+const CLOSING = new Set(["pr:declined", "pr:deleted", "pr:merged"]);
 
 const ACTION_COMMENT = actionMarker("").slice(0, -1);
 
@@ -66,13 +68,17 @@ function prMail(eventKey: string, deliveryId: string, p: Json, { event, action, 
     // Instances older than draft pull requests send no flag; none of theirs can be a draft.
     draft: pr.draft === true,
     review,
+    ...(eventKey === "pr:merged" && { merged: true as const }),
   };
 }
 
-function mergedOf(p: Json): HookIntake | null {
+/** A merge moves the base for the other open pull requests, and closes the merged one, whose manager is mailed. */
+function mergedOf(deliveryId: string, p: Json): HookIntake | null {
   const repo = repoNameOf(p.pullRequest?.toRef?.repository);
   const merged = p.pullRequest?.id;
-  return repo !== null && typeof merged === "number" ? { kind: "base-move", move: { repo, merged } } : null;
+  if (repo === null || typeof merged !== "number") return null;
+  const mail = prMail("pr:merged", deliveryId, p, MERGED);
+  return { kind: "base-move", move: { repo, merged }, ...(mail && { mail }) };
 }
 
 function refsChangedOf(p: Json): HookIntake | null {
@@ -92,7 +98,7 @@ function threadMapped(p: Json): Mapped | undefined {
 }
 
 export function normalizeBitbucket(eventKey: string, deliveryId: string, p: Json): HookIntake | null {
-  if (eventKey === "pr:merged") return mergedOf(p);
+  if (eventKey === "pr:merged") return mergedOf(deliveryId, p);
   if (eventKey === "repo:refs_changed") return refsChangedOf(p);
   const mapped = eventKey === "pr:comment:edited" ? threadMapped(p) : PULL_REQUEST[eventKey];
   if (!mapped) return null;

@@ -1,7 +1,7 @@
 // The rules in docs/INVARIANTS.md that a settled pull request is checked against: what GitHub ends up holding, the
 // writes it received, and what is left of its runs and mail.
 import { isTriageComment } from "@corbits/github-reads";
-import { HTML_MARKERS, WAITING_LABEL } from "@corbits/triage-contracts";
+import { closedText, HTML_MARKERS, TRIAGE_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
 import type { Write } from "../chain/github.ts";
 import type { Played } from "./events.ts";
 import type { modelStack } from "./stack.ts";
@@ -14,18 +14,28 @@ const TAKES_PER_HEAD = 4;
 /** The title a verdict comment opens with under its marker, by the verdict its header names. */
 const VERDICT_TITLES: Record<string, string> = { pass: "**Triage: Pass**", fail: "**Triage: Fail**", unsure: "**Triage: Unsure**" };
 
-/** R1: exactly one current Triage comment, a verdict on the head, and no waiting label left. */
+/**
+ * R1: exactly one current Triage comment, a verdict on the head, and no waiting label left. A pull request that closed
+ * keeps a verdict it had on its last head, or else says it closed before Triage finished, with none of Triage's labels;
+ * one closed before any comment went up has none.
+ */
 function oneVerdict(stack: Stack, pull: Played): string[] {
   const { comments, labels } = stack.github.pull(stack.repo, pull.number);
   const head = pull.heads.at(-1)!;
   const current = comments.filter((comment) => isTriageComment(comment.body) && !HTML_MARKERS.isSuperseded(comment.body));
   const breaks: string[] = [];
-  if (current.length !== 1) breaks.push(`R1: ${current.length} current Triage comments`);
+  if (current.length !== 1 && !(pull.closed && current.length === 0)) breaks.push(`R1: ${current.length} current Triage comments`);
   for (const { body } of current) {
     const header = HTML_MARKERS.headerOf(body);
+    const line = body.split("\n")[1];
+    if (pull.closed && line === closedText(pull.closed === "merged", head)) {
+      const left = labels.filter((label) => TRIAGE_LABELS.includes(label));
+      if (left.length > 0) breaks.push(`R1: the pull request closed before Triage finished still has ${left.join(", ")}`);
+      continue;
+    }
     if (header?.head !== head) breaks.push(`R1: the Triage comment names ${header?.head}, not the head ${head}`);
     const title = header && VERDICT_TITLES[header.verdict];
-    if (!title || body.split("\n")[1] !== title) breaks.push(`R1: the Triage comment is no verdict: ${body.split("\n")[1]}`);
+    if (!title || line !== title) breaks.push(`R1: the Triage comment is no verdict: ${line}`);
   }
   if (labels.includes(WAITING_LABEL)) breaks.push(`R1: the pull request still has ${WAITING_LABEL}`);
   return breaks;

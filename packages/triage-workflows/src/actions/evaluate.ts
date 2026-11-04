@@ -9,7 +9,7 @@ import type { Item } from "../logic/item.js";
 import { askedQuestionIds, focusedPartRequests, INSTRUCTED_QUESTION, prepareQualityEvaluation, verdictRequest, VERDICT_CHOICES, VERDICT_QUESTION, type FocusedParts, type JudgeRequest, type PolicyRule, type QualityEvaluation } from "../logic/quality.js";
 import { choiceOver, decidesByModel, hostAwaited, degradedVerdict, evaluateModel, parseAnswers, separateSlices, renderVerdict, splitLabelled, summarize, toMirrorRequest, type BacklogSummary, type ParsedAnswers, type RenderOutput, type Verdict, type WaitingMark } from "../logic/render.js";
 import { stepJson } from "../logic/step-json.js";
-import { waitingMark } from "./waiting.js";
+import { closedMark, waitingMark } from "./waiting.js";
 
 export interface EvaluateInput {
   items: Item[];
@@ -207,11 +207,14 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
   const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
   const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
   const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
-  const mark = rendered.waiting && waitingMark(repoSourceOf(it.repoSource), it.facts, automatic, it.pack?.labels ?? VERDICT_LABELS, it.facts.checks !== "none", it.appLogin);
+  const source = repoSourceOf(it.repoSource);
+  const labelNames = it.pack?.labels ?? VERDICT_LABELS;
+  const closed = it.facts.state === "closed";
+  const mark = closed ? closedMark(source, it.facts, automatic, labelNames, it.appLogin) : rendered.waiting && waitingMark(source, it.facts, automatic, labelNames, it.facts.checks !== "none", it.appLogin);
   const verdict = {
     ...stamp(it, it.facts.headSha), ...rendered, labels, reasons, feedback: shown, automatic, actions,
     ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),
-    ...(mark && { mark }), ...(it.facts.state === "closed" && { closed: true as const }),
+    ...(mark && { mark }), ...(closed && { closed: true as const }),
   };
   const request = toMirrorRequest(verdict, owned, it.source);
   // The review already on this head is the only comment while it stands, held or skipped alike. Feedback keeps the findings, so the comment can return once that review is gone.

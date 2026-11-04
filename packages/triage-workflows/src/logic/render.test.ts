@@ -348,12 +348,6 @@ describe("verdict", () => {
     expect(verdict).toMatchObject({ verdict: "unsure", state: "awaiting-review", mirror: true, degraded: "inference-outage", reasons: ["documentation is not updated: src/a.ts"] });
     expect(verdict.feedback).toBe(`${UNSURE}@octocat, please address the following:\n- documentation is not updated for \`src/a.ts\`\n\n${OUTAGE_NOTE}`);
   });
-
-  test("a closed pull request is not decided and gets no comment", () => {
-    const findings = [{ check: "state", state: "ready-monitoring" as const, reason: "pull request is closed" }];
-    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: { ...MODEL_DET, findings, checks: [], needsJudgment: false } });
-    expect(verdict).toMatchObject({ verdict: "unsure", mirror: true, feedback: "" });
-  });
 });
 
 describe("score and choose rules", () => {

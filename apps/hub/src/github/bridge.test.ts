@@ -166,6 +166,9 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
     readCheckPack: packsFor(["octocat/hello"]),
     openHeadFor: openHeadOf([]),
     recheckOpenPulls,
+    async closeOutDue() {
+      return false;
+    },
     async refreshPolicyFile(_tenantId, repo) {
       refreshed.push(repo);
       return { status: "absent" };
@@ -384,6 +387,28 @@ describe("bridge handler", () => {
     ];
     for (const [body, delivery, status] of deliveries) expect((await handle(githubRequest(body, { event: "push", delivery }), TARGET)).status).toBe(status);
     expect(started).toEqual(["octocat/hello"]);
+  });
+
+  test("a pull request that closes or merges goes on to its manager only where it has a comment to close out", async () => {
+    const sent: Sent[] = [];
+    const rechecks: Recheck[] = [];
+    const asked: string[] = [];
+    async function closeOutDue(_tenantId: string, pr: { source: string; repo: string; number: number }, head: string) {
+      asked.push(`${pr.source} ${pr.repo}#${pr.number}@${head}`);
+      return asked.length > 1;
+    }
+    const handle = bridge({ sent, rechecks, closeOutDue });
+    const pr = JSON.parse(prPayload);
+    function closed(merged: boolean) {
+      return JSON.stringify({ ...pr, action: "closed", repository: { full_name: "octocat/hello", default_branch: "main" }, pull_request: { ...pr.pull_request, state: "closed", merged, base: { ref: "main" } } });
+    }
+    expect(await (await handle(githubRequest(closed(true), { delivery: "decided" }), TARGET)).json()).toEqual({ status: "accepted" });
+    expect(sent).toHaveLength(0);
+    expect((await handle(githubRequest(closed(true), { delivery: "merged" }), TARGET)).status).toBe(202);
+    expect((await handle(githubRequest(closed(false), { delivery: "closed" }), TARGET)).status).toBe(202);
+    expect(asked).toEqual(["github octocat/hello#7@abc", "github octocat/hello#7@abc", "github octocat/hello#7@abc"]);
+    expect(sent.map((input) => [input.event, input.mail.merged])).toEqual([["merged", true], ["closed", undefined]]);
+    expect(rechecks).toEqual([[TENANT_ID, "octocat/hello", 7], [TENANT_ID, "octocat/hello", 7]]);
   });
 
   test("a base move the triage state refused is 500 and releases the id for retry", async () => {

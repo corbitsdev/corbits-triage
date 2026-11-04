@@ -5,11 +5,14 @@ import type { modelStack } from "./stack.ts";
 
 type Stack = Awaited<ReturnType<typeof modelStack>>;
 
-export const LETTERS = ["push", "ci-pending", "ci-success", "ci-failure", "ci-cancelled", "ci-stale", "edit", "draft", "ready", "duplicate", "run-first", "run-second"] as const;
+export const LETTERS = ["push", "ci-pending", "ci-success", "ci-failure", "ci-cancelled", "ci-stale", "edit", "draft", "ready", "duplicate", "run-first", "run-second", "merge", "close"] as const;
 export type Letter = (typeof LETTERS)[number];
 
-/** One pull request a sequence plays on: its number, every head it had, newest last, and whether it is a draft. */
-export type Played = { number: number; heads: string[]; draft: boolean };
+/** One pull request a sequence plays on: its number, every head it had, newest last, whether it is a draft, and how it closed. */
+export type Played = { number: number; heads: string[]; draft: boolean; closed?: "merged" | "closed" };
+
+/** Once closed, only mail already queued runs; GitHub sends nothing more of a pull request no one reopens. */
+const AFTER_CLOSE: readonly Letter[] = ["duplicate", "run-first", "run-second"];
 
 const BUILD = "build";
 
@@ -34,6 +37,7 @@ async function checks(stack: Stack, pull: Played, run: CheckRun, head = current(
 
 /** Plays `letter`; false when it changes nothing in this state, so the sequence equals a shorter one. */
 export async function play(stack: Stack, pull: Played, letter: Letter): Promise<boolean> {
+  if (pull.closed && !AFTER_CLOSE.includes(letter)) return false;
   switch (letter) {
     case "push": {
       const head = sha(`${pull.number}-${pull.heads.length}`);
@@ -88,6 +92,15 @@ export async function play(stack: Stack, pull: Played, letter: Letter): Promise<
       if (stack.queue.length < 2) return false;
       await stack.run(1);
       return true;
+    case "merge":
+    case "close": {
+      // A draft is not merged, and closing one sends nothing the bridge takes in.
+      if (pull.draft) return false;
+      pull.closed = letter === "merge" ? "merged" : "closed";
+      stack.github.pull(stack.repo, pull.number).closed = pull.closed;
+      await webhook(stack, pull, pull.closed);
+      return true;
+    }
   }
 }
 
@@ -100,9 +113,10 @@ export async function open(stack: Stack, number: number): Promise<Played> {
 
 /**
  * Lets the pull request settle as it does once people stop acting on it: a draft is marked ready, CI on its head
- * finishes, and every mail is run.
+ * finishes, and every mail is run. A closed one only has its mail run.
  */
 export async function settle(stack: Stack, pull: Played): Promise<void> {
+  if (pull.closed) return stack.drain();
   if (pull.draft) await play(stack, pull, "ready");
   await stack.drain();
   const [run] = stack.github.checksOf(stack.repo, current(pull));

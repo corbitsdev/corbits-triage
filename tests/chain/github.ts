@@ -31,6 +31,8 @@ export type Pull = {
   /** Inline review comments posted via review submissions. */
   reviewComments: { id: number; pull_request_review_id: number; path: string; body: string; original_line: number | null; original_start_line: number | null }[];
   draft?: boolean;
+  /** Absent while the pull request is open. */
+  closed?: "merged" | "closed";
 };
 export type Write = { method: string; path: string; body: unknown };
 
@@ -88,7 +90,7 @@ export function fakeGithub() {
 
   function pullJson(repo: Repo, pull: Pull) {
     return {
-      number: pull.number, title: pull.title, body: pull.body, body_html: `<p>${pull.body}</p>`, state: "open", draft: pull.draft ?? false, merged: false, mergeable: true, mergeable_state: "clean",
+      number: pull.number, title: pull.title, body: pull.body, body_html: `<p>${pull.body}</p>`, state: pull.closed ? "closed" : "open", draft: pull.draft ?? false, merged: pull.closed === "merged", mergeable: true, mergeable_state: "clean",
       user: { login: pull.author, type: "User" }, author_association: "CONTRIBUTOR", head: { sha: pull.head, ref: `pr-${pull.number}`, repo: { id: 1, full_name: repo.name } }, base: { ref: "main", sha: "0".repeat(40), repo: { id: 1, full_name: repo.name } },
       additions: pull.files.reduce((sum, file) => sum + file.additions, 0), deletions: pull.files.reduce((sum, file) => sum + file.deletions, 0),
       changed_files: pull.files.length, labels: pull.labels.map((name) => ({ name })), requested_reviewers: [], requested_teams: [], assignees: [],
@@ -100,7 +102,7 @@ export function fakeGithub() {
     if (rest === "/installation") return Response.json({ id: INSTALLATION });
     if (rest === `/contents/${POLICY_FILE_PATH}` && repo.policy !== null) return Response.json({ type: "file", sha: "policy", encoding: "base64", content: Buffer.from(repo.policy).toString("base64"), html_url: `https://github.com/${repo.name}/blob/main/${POLICY_FILE_PATH}` });
     if (rest.startsWith("/contents")) return new Response(null, { status: 404 });
-    if (rest === "/pulls") return Response.json([...repo.pulls.values()].map((pull) => pullJson(repo, pull)));
+    if (rest === "/pulls") return Response.json([...repo.pulls.values()].filter((pull) => !pull.closed).map((pull) => pullJson(repo, pull)));
     const pulled = /^\/(pulls|issues)\/(\d+)(\/.*)?$/.exec(rest);
     if (pulled) {
       const pull = repo.pulls.get(Number(pulled[2]));

@@ -26,6 +26,7 @@ import {
 } from "@corbits/github-reads";
 import {
   addAssignees,
+  closeOut,
   createIssueComment,
   createReview,
   dismissDoApprovals,
@@ -177,6 +178,7 @@ const MIRROR_FIELDS = {
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
   keepVerdict: { ...obj({ verdict: str, policy: POLICY_REF }), description: "The pass's verdict and policy: a comment that already shows them for onHead is kept rather than written over" },
+  closedOut: { ...obj({ merged: { type: "boolean" }, comment: { type: "boolean" } }), description: "Only on a merged or closed pull request, with onHead: with comment, the triage comment says it merged or closed before Triage finished, and owned labels come off, unless the comment shows a verdict on onHead" },
 };
 const MIRROR_REQUIRED = ["repo", "number", "labels"];
 const MIRROR_INPUT = obj({ ...MIRROR_FIELDS, appLogin: APP_LOGIN }, [...MIRROR_REQUIRED, "appLogin"]);
@@ -185,13 +187,13 @@ const WRITE_DEFINITIONS: ToolDefinition[] = [
   {
     name: "github_mirror",
     description:
-      "Post (or update) the triage comment on a pull request when comment is given, add labels and remove any owned label not in labels, unless it carries a keep label. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request. Never merges.",
+      "Post (or update) the triage comment on a pull request when comment is given, add labels and remove any owned label not in labels, unless it carries a keep label. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request but what closedOut asks. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
     name: "github_mirror_auto",
     description:
-      "Post (or update) the triage comment on a pull request when comment is given, without waiting for a human approval, add labels and remove any owned label not in labels, unless it carries a keep label. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request. Never merges.",
+      "Post (or update) the triage comment on a pull request when comment is given, without waiting for a human approval, add labels and remove any owned label not in labels, unless it carries a keep label. While notReadyHead is the head, which may not be approved, dismisses the approve Do's standing approvals; while fixedHead is the head, which leaves the author nothing to fix, dismisses the request-changes Do's standing requests. Writes nothing to a closed pull request but what closedOut asks. Never merges.",
     inputSchema: MIRROR_INPUT,
   },
   {
@@ -336,6 +338,7 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, reads: Reads): Pro
     case "github_mirror":
     case "github_mirror_auto": {
       const login = appLoginOf(call);
+      if (a.closedOut) return closeOut(gh, { repo: a.repo, number: a.number, onHead: a.onHead, owned: a.owned ?? [], ...a.closedOut }, login);
       const mirrored = await mirror(gh, {
         repo: a.repo,
         number: a.number,

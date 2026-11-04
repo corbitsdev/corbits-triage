@@ -17,6 +17,8 @@ export interface PrMail {
   /** Null when the payload does not say, as on check_run and check_suite. */
   draft: boolean | null;
   review: { state: string } | null;
+  /** On a pull request's close: it was merged. */
+  merged?: true;
   /** Who caused the event, on hosts whose own user's events must not wake triage; GitHub's App events are told apart by sender. */
   actor?: string | null;
   policy?: RepoPolicy;
@@ -67,7 +69,9 @@ export function normalize(event: string, deliveryId: string, p: Json): PrMail | 
   } else if (event === "check_suite") {
     pr = p.check_suite?.pull_requests?.[0];
   }
-  if (pr?.state === "closed") return null;
+  // A pull request's own close is mailed, so its manager can say Triage did not finish; nothing else on a closed one is.
+  const closing = event === "pull_request" && p.action === "closed";
+  if (pr?.state === "closed" && !closing) return null;
   return {
     kind: "pr",
     repo,
@@ -81,5 +85,6 @@ export function normalize(event: string, deliveryId: string, p: Json): PrMail | 
     body: pr?.body ?? null,
     draft: typeof pr?.draft === "boolean" ? pr.draft : null,
     review: typeof p.review?.state === "string" ? { state: p.review.state } : null,
+    ...(closing && pr?.merged === true && { merged: true as const }),
   };
 }

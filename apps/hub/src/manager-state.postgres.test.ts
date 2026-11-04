@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { MANAGER_POLL_LIMIT_MS, PR_TRIAGE_STUCK_RUN_MS } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
-import { deploymentUp, done, endNeverRan, endOverdue, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
+import { closeOutDue, deploymentUp, done, endNeverRan, endOverdue, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
 import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -205,6 +205,23 @@ test.each([["after"], ["before"]])("PostgreSQL: an approval for an older head re
     expect(taken.pass.head).toBe("h2");
     expect(taken.events.map((row) => row.key).toSorted()).toEqual(["evt:github:acme/widgets#7:a1", "evt:github:acme/widgets#7:d1"]);
     expect(taken.request).toEqual({ kind: "pr", headSha: "h2", events: ["catch-up"] });
+  });
+}, 120_000);
+
+test("PostgreSQL: a close is due only while a manager is on the pull request or the last pass on its head posted no verdict", async () => {
+  await withDatabase(async function closing(db) {
+    expect(await closeOutDue(db, TENANT, GITHUB, "h1")).toBe(false);
+    await startManager(db, GITHUB, "run_a");
+    expect(await closeOutDue(db, TENANT, GITHUB, "h1")).toBe(true);
+    await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
+    await take(db, TENANT, GITHUB, "run_a");
+    expect(await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", waiting: true } })).toEqual({ outcome: "ended" });
+    expect(await closeOutDue(db, TENANT, GITHUB, "h1")).toBe(true);
+    await recordEvent(db, TENANT, GITHUB, "d2", prMail("h1", ["checks"]));
+    await take(db, TENANT, GITHUB, "run_a");
+    expect(await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", request: { comment: "Triage: Pass" } } })).toEqual({ outcome: "ended" });
+    expect(await closeOutDue(db, TENANT, GITHUB, "h1")).toBe(false);
+    expect(await closeOutDue(db, TENANT, GITHUB, "h2")).toBe(true);
   });
 }, 120_000);
 
