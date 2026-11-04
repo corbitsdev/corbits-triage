@@ -201,12 +201,13 @@ export function createLocalProcessSidecarProvisioner({
     await removeStored(sidecar.allocationId);
   }
 
-  // Logged rather than thrown, so a cleanup failure never hides the retirement's own outcome.
-  async function removeExitedDirs(sidecar: LiveSidecar): Promise<void> {
+  // For a sidecar no longer running, leftover directories are best effort: a failure is logged, never thrown, so it
+  // cannot hide a retirement's outcome or fail a destroy. The allocation's next ensure removes them.
+  async function removeLeftoverDirs(allocationId: string): Promise<void> {
     try {
-      await removeAllocationDirs(sidecar.allocationId);
+      await removeAllocationDirs(allocationId);
     } catch (error) {
-      log({ level: "error", msg: "local_sidecar_dirs_remove_failed", allocationId: sidecar.allocationId, sidecarId: sidecar.sidecarId, error: errorText(error) });
+      log({ level: "error", msg: "local_sidecar_dirs_remove_failed", allocationId, error: errorText(error) });
     }
   }
 
@@ -219,7 +220,7 @@ export function createLocalProcessSidecarProvisioner({
       await attached().sidecarStopped(sidecar.sidecarId, { endReconnectWindow: true });
       await manifests.remove(sidecar.allocationId);
     } finally {
-      await removeExitedDirs(sidecar);
+      await removeLeftoverDirs(sidecar.allocationId);
     }
     log({ level: "warn", msg: "local_sidecar_retired", allocationId: sidecar.allocationId, sidecarId: sidecar.sidecarId });
   }
@@ -330,7 +331,7 @@ export function createLocalProcessSidecarProvisioner({
     if (existing !== undefined && existing.sidecarId !== request.sidecarId) return { kind: "destroyed", cleanup: "confirmed" };
     if (existing !== undefined) await stopAndRemove(existing);
     // Directories only: a manifest left by a failed retirement report is the next boot's to retire.
-    else await removeAllocationDirs(request.allocationId);
+    else await removeLeftoverDirs(request.allocationId);
     const earlier = fence?.generation === request.generation ? fence.sidecarIds : [];
     const sidecarIds = [...new Set([...earlier, request.sidecarId, ...(existing === undefined ? [] : [existing.sidecarId])])];
     fences.set(request.allocationId, { generation: request.generation, sidecarIds });
