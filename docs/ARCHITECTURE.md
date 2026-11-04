@@ -1577,7 +1577,11 @@ read it, and passes the rest of the request to stock.
   newest `pr` mail. Done
   closes the pass and, under the claim's lock, ends the claim when no event
   is pending and the pass did not ask to `wait`, so an event committed before
-  it is taken by this manager and one after it by the next. A manager run reaches take and done, and a reviewer run records its
+  it is taken by this manager and one after it by the next. A merge or close
+  with no comment to close out retires the pull request's state under the
+  claim's lock, unless a manager is up on it: its webhooks recorded by then
+  are deleted, its reviewer results kept for its code reviews, and a claim
+  its gone run left live is ended. A manager run reaches take and done, and a reviewer run records its
   result (under its own run id), and a listener names the manager it deployed,
   through `POST /api/tenants/:tenantId/manager/{take,done,reviewer-result,deployed}`
   (`apps/hub/src/manager-routes.ts`). They admit a run token only, as the

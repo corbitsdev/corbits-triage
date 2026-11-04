@@ -167,6 +167,7 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
     async closeOutDue() {
       return false;
     },
+    async retireClosed() {},
     async refreshPolicyFile(_tenantId, repo) {
       refreshed.push(repo);
       return { status: "absent" };

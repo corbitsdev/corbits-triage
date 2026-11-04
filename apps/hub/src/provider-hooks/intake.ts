@@ -29,7 +29,7 @@ export type ProviderHook = {
   ownUser?: (ns: CorbitsTriageNs) => string | undefined;
 };
 
-export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "log" | "readCheckPack" | "recheckOpenPulls" | "closeOutDue" | "refreshPolicyFile" | "heard">;
+export type ProviderHookDeps = Pick<BridgeDeps, "db" | "cipher" | "cache" | "coalescer" | "log" | "readCheckPack" | "recheckOpenPulls" | "closeOutDue" | "retireClosed" | "refreshPolicyFile" | "heard">;
 
 type Delivery = { hook: BridgeHook; delivery: string; event: string; record: RepoRecord; ns: CorbitsTriageNs };
 

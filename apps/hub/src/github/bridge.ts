@@ -76,6 +76,8 @@ export interface BridgeDeps {
   recheckOpenPulls: (tenantId: string, key: string, except: number | null) => Promise<number>;
   /** Whether a pull request that merged or closed on `head` has a comment its manager should close out. */
   closeOutDue: (tenantId: string, pr: PullRequestRef, head: string) => Promise<boolean>;
+  /** Deletes what the triage state keeps of a pull request no longer open, recorded by `closedAfter`. */
+  retireClosed: (tenantId: string, pr: PullRequestRef, closedAfter: Date) => Promise<void>;
   /** Reads the repository's policy file again; undefined when the repository is not connected. */
   refreshPolicyFile: (tenantId: string, repo: string, source: RepoSource) => Promise<PolicyFileState | undefined>;
   startBacklog: BacklogStart;
@@ -200,9 +202,16 @@ export async function triagePolicy(readCheckPack: PolicyReader, tenantId: string
   return stored;
 }
 
-/** Whether the event goes on to the pull request's manager: any but a close, which goes only where it has a comment to close out. */
-export async function closeOutWanted(d: Pick<BridgeDeps, "closeOutDue">, tenantId: string, pr: PullRequestRef, event: TriageEvent, head: string): Promise<boolean> {
-  return (event !== "closed" && event !== "merged") || d.closeOutDue(tenantId, pr, head);
+/**
+ * Whether the event goes on to the pull request's manager: any but a close, which goes only where it has a comment to
+ * close out. A close that does not has what the triage state keeps of the pull request retired.
+ */
+export async function closeOutWanted(d: Pick<BridgeDeps, "closeOutDue" | "retireClosed">, tenantId: string, pr: PullRequestRef, event: TriageEvent, head: string): Promise<boolean> {
+  if (event !== "closed" && event !== "merged") return true;
+  const closedAfter = new Date();
+  if (await d.closeOutDue(tenantId, pr, head)) return true;
+  await d.retireClosed(tenantId, pr, closedAfter);
+  return false;
 }
 
 /** A push that leaves the policy unreadable has every open head marked again, since none of them would be otherwise. */

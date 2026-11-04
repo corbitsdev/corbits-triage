@@ -474,6 +474,30 @@ export async function closeOutDue(db: DB["db"], tenantId: string, pr: PullReques
 }
 
 /**
+ * Retires what a pull request the host says is no longer open keeps, once no manager is up on it: its webhooks recorded
+ * by `closedAfter` are deleted, reviewer results kept for its code reviews, and a claim its gone run left live is ended
+ * with its open pass closed into the history. Mail recorded after `closedAfter`, as on a reopen, stays.
+ */
+export async function retireClosed(db: DB["db"], tenantId: string, pr: PullRequestRef, closedAfter: Date): Promise<void> {
+  await db.transaction(async function retire(tx) {
+    const now = new Date();
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (claim?.status === "live" && claim.runId !== undefined && !(await runGone(tx, claim.runId, now))) return;
+    await tx.delete(managerState).where(and(
+      eq(managerState.tenantId, tenantId),
+      sql`${managerState.kind} = 'event'`,
+      sql`${managerState.state}->>'type' = 'webhook'`,
+      sql`(${managerState.state}->>'receivedAt')::timestamptz <= ${closedAfter.toISOString()}::timestamptz`,
+      like(managerState.key, `${eventPrefix(pr)}%`),
+    ));
+    if (claim?.status !== "live") return;
+    const closed = claim.runId === undefined ? undefined : closing(claim, claim.runId, now, undefined);
+    const history = closed ? closedInto(claim.history, closed) : claim.history;
+    await writeClaim(tx, tenantId, pr, { claimId: claim.claimId, claimedAt: claim.claimedAt, reviewers: claim.reviewers, history, starts: claim.starts, status: "ended" });
+  });
+}
+
+/**
  * The claim `runId` holds, taken for it when no up run holds it: it is missing or ended, or the run it names has gone,
  * whose open pass the caller resumes. Undefined while another up run holds it, a run being cancelled included until it
  * ends, or once stock no longer lets `runId` execute. Concurrent callers queue on the claim's row lock, so exactly one
