@@ -3,7 +3,7 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
-import { ACTION_KINDS, defaultActions, emptyPack, readPolicyFile, recommendedPack, WAITING_LABEL, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
+import { ACTION_KINDS, defaultActions, emptyPack, readPolicyFile, recommendedPack, WAITING_LABELS, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
 import { localActionCredentials } from "./local-credentials.js";
 import * as actions from "./actions/index.js";
 import type { ExecuteOutput } from "./actions/execute.js";
@@ -558,7 +558,7 @@ describe("pr-triage body", () => {
     github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.ci = "pending";
     await triage(pack, { github });
-    expect(github.labels).toEqual(["bug", WAITING_LABEL]);
+    expect(github.labels).toEqual(["bug", WAITING_LABELS.ci]);
     github.pr.ci = "success";
     await triage(pack, { github });
     expect(github.labels).toEqual(["bug", "Triage: Ready"]);
@@ -569,7 +569,7 @@ describe("pr-triage body", () => {
     github.pr.ci = "pending";
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO };
     const held = await triage(pack, { github });
-    expect(held.verdict).toMatchObject({ waiting: true, labels: [WAITING_LABEL], feedback: "", actions: [] });
+    expect(held.verdict).toMatchObject({ waiting: true, labels: [WAITING_LABELS.ci], feedback: "", actions: [] });
     expect(held.dos).toEqual([]);
     expect(github.comments.map((comment) => comment.body.split("\n")[1])).toEqual(["**Triage: In progress**"]);
     expect(github.comments[0]!.body).toContain("waiting for CI to finish");

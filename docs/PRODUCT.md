@@ -271,7 +271,8 @@ the verdict waits for CI, the decision model or code review, that comment
 reads **Triage: In progress** and names what it waits for, such as "Triage is
 waiting for the decision model's answer and code review before it decides".
 It is rewritten when what it waits for changes, and the verdict replaces it in
-place. If the decision model or code review keep Triage waiting three hours
+place. On GitHub, where Triage labels, the waiting labels name the same
+things. If the decision model or code review keep Triage waiting three hours
 after it started on the pull request, it gives the verdict anyway, says what it
 stopped waiting for, and runs no action on its own.
 
@@ -304,6 +305,8 @@ Their names are stable:
 | `Triage: Not Ready` | The head fails. |
 | `Triage: Needs Human Review` | The head is unsure. |
 | `Triage: Waiting for CI` | Triage is waiting for the head's CI before it decides, unless the pull request is Not Ready or Needs Human Review or the head has no checks. |
+| `Triage: Waiting for the decision model` | Triage is waiting for the decision model's answer before it decides, unless the pull request is Not Ready or Needs Human Review. |
+| `Triage: Waiting for code review` | Triage is waiting for code review before it decides, unless the pull request is Not Ready or Needs Human Review. |
 | `Triage: Failed to Run` | Triage could not read the pull request; the next verdict replaces it. |
 | `rule: <rule id>` | A rule that failed on the head, such as `rule: docs`, from a `{ do: labels, target: { from: rules } }` step. |
 

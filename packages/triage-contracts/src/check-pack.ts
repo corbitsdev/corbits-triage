@@ -405,8 +405,11 @@ export type VerdictWord = (typeof VERDICTS)[number];
 
 export const VERDICT_LABELS: Record<VerdictWord, string> = { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" };
 
-/** On a head held for its CI until the verdict replaces it. */
-export const WAITING_LABEL = "Triage: Waiting for CI";
+/** What a head's verdict still waits for. */
+export type Awaits = "ci" | "judge" | "code-review";
+
+/** On a head while its verdict waits for each, until the verdict replaces it. */
+export const WAITING_LABELS: Record<Awaits, string> = { ci: "Triage: Waiting for CI", judge: "Triage: Waiting for the decision model", "code-review": "Triage: Waiting for code review" };
 
 /** On a pull request Triage could not read, until its next verdict replaces it. */
 export const FAILED_LABEL = "Triage: Failed to Run";

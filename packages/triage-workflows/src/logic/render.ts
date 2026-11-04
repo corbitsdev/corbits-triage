@@ -1,4 +1,4 @@
-import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, INCOMPLETE_NOTE, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type KeptVerdict, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictStatus, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, INCOMPLETE_NOTE, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABELS, type ActionKind, type Awaits, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type KeptVerdict, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictStatus, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
@@ -807,7 +807,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
     return withChecks({ ...render("awaiting-review"), verdict: "unsure", degraded, reason }, checks, score, reasons, ctx);
   }
   function waitingOf(reason: string, score: number | null): RenderOutput {
-    return { ...unsureOf(reason, null, score), waiting: true, labels: [WAITING_LABEL], feedback: "" };
+    return { ...unsureOf(reason, null, score), waiting: true, labels: [WAITING_LABELS.ci], feedback: "" };
   }
   if (judgeSkipped === true) return unsureOf(NEEDS_JUDGE_REASON);
   if (judgeLimitExceeded === true) return unsureOf(judgeError!);
@@ -844,9 +844,6 @@ export function degradedVerdict(reason: string): RenderOutput {
 
 /** The mirror tool's arguments for a marker: the label on GitHub, the build status on Bitbucket Data Center. */
 export type MarkArgs = { repo: string; number: number; onHead: string; labels: string[]; owned: readonly string[]; keep?: readonly string[]; status?: VerdictStatus; statusHead?: string; comment?: string; keepVerdict?: Omit<KeptVerdict, "head">; closedOut?: { merged: boolean; comment: boolean }; appLogin?: string };
-
-/** What a head's verdict still waits for. */
-export type Awaits = "ci" | "judge" | "code-review";
 
 const AWAITS_NAMES: Record<Awaits, string> = { ci: "CI to finish", judge: "the decision model's answer", "code-review": "code review" };
 
