@@ -1,11 +1,10 @@
 import { action, awaitSignal, defineWorkflow, gate, loop, onTrigger, SELF_RUN_RESOURCE, sleep, step, type Primitive, type Selector } from "@intx/workflow";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import { MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
+import { MANAGER_POLL_LIMIT_MS, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE } from "@corbits/triage-contracts";
 import { credentialBindingsFor, judgeAgent, type Sources } from "@corbits/triage-workflows/agents";
 import { READ_PULL_REQUEST, WRITE_PULL_REQUEST } from "@corbits/triage-workflows/logic/host";
 import { hostAction, triageSteps } from "@corbits/triage-workflows/triage-steps";
 import { HUB_WRITE } from "./actions/hub.js";
-import { LIFETIME_MS } from "./actions/manager.js";
 import { mailDirector } from "./directors.js";
 import { mailAgentOf } from "./mail.js";
 import { deployGrants, type Release } from "./release.js";
@@ -13,11 +12,8 @@ import { deployGrants, type Release } from "./release.js";
 /** How long a manager whose head awaits CI or a reviewer waits between passes for what it awaits. */
 const POLL_MS = 30_000;
 
-/**
- * A backstop on passes, twice a lifetime of polls for the passes events bring between them; the lifetime clock, which
- * take reads from the claim, ends a manager first.
- */
-export const PASSES = Math.ceil((2 * LIFETIME_MS) / POLL_MS);
+/** A backstop on passes: a poll limit's worth of polls. */
+export const PASSES = Math.ceil(MANAGER_POLL_LIMIT_MS / POLL_MS);
 
 const PAYLOAD = { project: { from: "trigger" }, fields: ["payload"] } as const;
 

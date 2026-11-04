@@ -707,7 +707,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
     await wakeOverdue(tenant.id);
   }
   await endNeverRan(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
-  await endOverdue(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
+  await endOverdue(composition.db, new Date(), { stuckAfterMs: reconcilePolicy.stuckAfterMs, reviewerGraceMs: triageTimings.reconcileIntervalMs }, composition.workflowLifecycleService.requestCancellation, logJson);
   const outcomes: ReconcileOutcome[] = [];
   for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);

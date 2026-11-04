@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { PR_TRIAGE_STUCK_RUN_MS } from "@corbits/triage-contracts";
+import { MANAGER_POLL_LIMIT_MS, PR_TRIAGE_STUCK_RUN_MS } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { deploymentUp, done, endNeverRan, endOverdue, liveListener, liveManager, notePlaced, recordEvent, recordResult, take, type PullRequestRef } from "./manager-state.js";
 import { timings } from "./timings.js";
@@ -565,22 +565,30 @@ test("PostgreSQL: a manager that waited past the mail hold for a slot is timed f
   });
 }, 120_000);
 
-test("PostgreSQL: the reaper ends a live reviewer past its deadline and a manager whose pass stayed open past the stuck limit, and nothing else", async () => {
+const LIMITS = { stuckAfterMs: PR_TRIAGE_STUCK_RUN_MS, reviewerGraceMs: MINUTE };
+
+async function claimed(db: Db, pr: PullRequestRef, claim: Record<string, unknown>): Promise<void> {
+  await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${`mgr:${pr.source}:${pr.repo}#${pr.number}`}, 'claim', ${JSON.stringify({ claimId: randomUUID(), reviewers: [], history: [], ...claim })}::jsonb)`);
+}
+
+test("PostgreSQL: the reaper ends a live reviewer past its deadline and grace and a manager whose pass stayed open past the stuck limit, and nothing else", async () => {
   await withDatabase(async function overdue(db) {
     const now = new Date(Date.now() + PR_TRIAGE_STUCK_RUN_MS + MINUTE);
     await recordEvent(db, TENANT, GITHUB, "d1", webhook("h1"));
     await startManager(db, GITHUB, "run_stuck");
     await take(db, TENANT, GITHUB, "run_stuck");
-    const past = new Date(now.getTime() - MINUTE).toISOString();
+    const past = new Date(now.getTime() - 2 * MINUTE).toISOString();
     const judge = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_stuck", deadline: past };
     const review = { ...judge, kind: "code-review", runId: "run_review" };
     const ended = { ...judge, runId: "run_ended" };
+    const inGrace = { ...judge, runId: "run_in_grace", deadline: new Date(now.getTime() - MINUTE / 2).toISOString() };
     const due = { ...judge, runId: "run_due", deadline: new Date(now.getTime() + MINUTE).toISOString() };
     await liveRun(db, "run_judge");
     await deployedRun(db, "run_review", new Date());
     await db.insert(schema.workflowRun).values({ id: "run_ended", anchorRunId: "run_ended", definitionId: "wfd_manager", tenantId: TENANT, status: "completed" });
+    await liveRun(db, "run_in_grace");
     await liveRun(db, "run_due");
-    await done(db, TENANT, GITHUB, "run_stuck", [judge, review, ended, due], { wait: true });
+    await done(db, TENANT, GITHUB, "run_stuck", [judge, review, ended, inGrace, due], { wait: true });
     await recordEvent(db, TENANT, GITHUB, "d2", webhook("h1"));
     expect(await take(db, TENANT, GITHUB, "run_stuck")).toMatchObject({ outcome: "pass" });
     await startManager(db, BITBUCKET, "run_idle");
@@ -592,7 +600,7 @@ test("PostgreSQL: the reaper ends a live reviewer past its deadline and a manage
       return "pending";
     }
 
-    await endOverdue(db, now, cancel, (entry) => logs.push(entry));
+    await endOverdue(db, now, LIMITS, cancel, (entry) => logs.push(entry));
 
     expect(cancelled.sort()).toEqual([
       [TENANT, "run_judge", "judge past its deadline"],
@@ -600,22 +608,28 @@ test("PostgreSQL: the reaper ends a live reviewer past its deadline and a manage
       [TENANT, "run_stuck", "manager pass stuck"],
     ]);
     expect(logs).toContainEqual({ level: "warn", msg: "triage_manager_stuck_ended", tenantId: TENANT, runId: "run_stuck", reason: "manager pass stuck", outcome: "pending" });
-    expect(await stateOf(db, CLAIM)).toMatchObject({ reviewers: [judge, review, ended, due] });
+    expect(await stateOf(db, CLAIM)).toMatchObject({ reviewers: [judge, review, ended, inGrace, due] });
   });
 }, 120_000);
 
-test("PostgreSQL: a manager that resumed a stuck run's pass is timed from its takeover, not the pass", async () => {
-  await withDatabase(async function resumed(db) {
-    const old = new Date(Date.now() - PR_TRIAGE_STUCK_RUN_MS - MINUTE).toISOString();
-    await liveRun(db, "run_resumed");
-    const pass = { id: randomUUID(), head: "h1", events: [], takenAt: old, takes: 2 };
-    const claim = { status: "live", claimId: randomUUID(), claimedAt: new Date().toISOString(), runId: "run_resumed", pass, reviewers: [], history: [], starts: 2 };
-    await db.execute(sql`INSERT INTO corbits_triage.manager_state (tenant_id, key, kind, state) VALUES (${TENANT}, ${CLAIM}, 'claim', ${JSON.stringify(claim)}::jsonb)`);
+test("PostgreSQL: a manager is timed from when its run took the pass over, and between passes from its last closed pass, idle past its poll limit", async () => {
+  await withDatabase(async function timed(db) {
+    const now = new Date();
+    function ago(ms: number): string {
+      return new Date(now.getTime() - ms).toISOString();
+    }
+    const pass = { id: randomUUID(), head: "h1", events: [], takenAt: ago(PR_TRIAGE_STUCK_RUN_MS + MINUTE), takes: 2 };
+    const closed = { ...pass, runId: "run_active", takes: 1, doneAt: ago(MINUTE) };
+    const pulls = [9, 10, 11].map((number): PullRequestRef => ({ ...GITHUB, number }));
+    for (const runId of ["run_resumed", "run_idle", "run_active"]) await liveRun(db, runId);
+    await claimed(db, pulls[0]!, { status: "live", claimedAt: ago(MINUTE), runId: "run_resumed", pass, starts: 2 });
+    await claimed(db, pulls[1]!, { status: "live", claimedAt: ago(MANAGER_POLL_LIMIT_MS + MINUTE), runId: "run_idle", starts: 1 });
+    await claimed(db, pulls[2]!, { status: "live", claimedAt: ago(MANAGER_POLL_LIMIT_MS + MINUTE), runId: "run_active", history: [closed], starts: 1 });
     const cancelled: string[][] = [];
 
-    await endOverdue(db, new Date(), async (...args) => cancelled.push(args), () => undefined);
+    await endOverdue(db, now, LIMITS, async (...args) => cancelled.push(args), () => undefined);
 
-    expect(cancelled).toEqual([]);
+    expect(cancelled).toEqual([[TENANT, "run_idle", "manager idle past its poll limit"]]);
   });
 }, 120_000);
 

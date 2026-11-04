@@ -12,6 +12,19 @@ export const CI_WAIT_MS = 60 * 60_000;
 /** How long a head with no checks yet waits for its CI to start before it is taken as having none. */
 export const CI_START_MS = 2 * 60_000;
 
+/**
+ * How long a manager lives from claiming its pull request, time for the judge and code review to each take their hour
+ * with CI in between; a new head does not extend it. A manager ends while it waits only on CI, so this bounds one its
+ * reviewers keep alive.
+ */
+export const MANAGER_LIFETIME_MS = 3 * 60 * 60_000;
+
+/**
+ * How long a manager polls in all before its run ends: twice a lifetime, for the passes events bring between polls. The
+ * lifetime clock, which take reads from the claim, ends a manager first.
+ */
+export const MANAGER_POLL_LIMIT_MS = 2 * MANAGER_LIFETIME_MS;
+
 /** `stale`: the base branch moved after the head's verdict, so it is due again. */
 export const PR_TRIAGE_STATUSES = ["new", "queued", "running", "triaged", "failed", "stale"] as const;
 export type PrTriageStatus = (typeof PR_TRIAGE_STATUSES)[number];

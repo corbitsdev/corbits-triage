@@ -7,7 +7,7 @@ import { jsonb, primaryKey, text } from "drizzle-orm/pg-core";
 import { type } from "arktype";
 import { canExecuteWorkflowRun, schema, type DB } from "@intx/db";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, PR_TRIAGE_STUCK_RUN_MS, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, triageEventsOf, type AwaitedStage, type RepoSource, type ThreadRead, type TriageEvent } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, AWAITED_STAGES, FindingThread, MANAGER_POLL_LIMIT_MS, REPO_SOURCES, TRIAGE_JUDGES, TRIAGE_LISTENERS, TRIAGE_MANAGERS, triageEventsOf, type AwaitedStage, type RepoSource, type ThreadRead, type TriageEvent } from "@corbits/triage-contracts";
 import type { Tx } from "./github/admin-github-grant.js";
 import { resolveLiveDeployments, workflowName, type LiveDeployment } from "./github/deployment.js";
 import { timings } from "./timings.js";
@@ -346,50 +346,77 @@ function passHeldSince(claim: Claim, pass: Pass): string {
   return Date.parse(claim.claimedAt) > Date.parse(pass.takenAt) ? claim.claimedAt : pass.takenAt;
 }
 
-/** A claim holding a reviewer with no result past its deadline. */
-function lateReviewer(now: Date): SQL {
-  return sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)) && @.deadline <= $now)', jsonb_build_object('now', ${now.toISOString()}::text))`;
+/** When the claim's run last did anything the claim records: claimed it, or closed a pass. */
+function lastActiveAt(claim: Claim): string {
+  const closed = claim.history.findLast((pass) => pass.runId === claim.runId)?.doneAt;
+  return closed !== undefined && Date.parse(closed) > Date.parse(claim.claimedAt) ? closed : claim.claimedAt;
 }
 
 type Overdue = { tenantId: string; runId: string; reason: string; msg: string };
 
-/** The claim's reviewers past their deadline with no result, and its manager when its run has held the open pass since before `stuckBefore`. */
-function overdueOf(tenantId: string, claim: Claim, now: Date, stuckBefore: Date): Overdue[] {
-  const late = claim.reviewers.filter((reviewer) => reviewer.result === undefined && Date.parse(reviewer.deadline) <= now.getTime());
-  const overdue = late.map((reviewer) => ({ tenantId, runId: reviewer.runId, reason: `${reviewer.kind} past its deadline`, msg: "triage_reviewer_overdue_ended" }));
-  if (claim.status === "live" && claim.runId !== undefined && claim.pass !== undefined && Date.parse(passHeldSince(claim, claim.pass)) < stuckBefore.getTime()) {
-    overdue.push({ tenantId, runId: claim.runId, reason: "manager pass stuck", msg: "triage_manager_stuck_ended" });
-  }
-  return overdue;
+/** Runs neither ended nor asked to stop, so a cancellation still changes something. */
+function cancellableRun(): SQL {
+  return sql`${inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses])} AND ${isNull(schema.workflowRun.cancellationRequestedAt)}`;
+}
+
+const LateReviewers = type({ tenantId: "string", runId: "string", kind: "string" }).array();
+
+/**
+ * Reviewer runs still cancellable whose deadline passed before `before`. Joined to the runs in the query, so a
+ * reviewer that ended, which stays on its claim, costs nothing here.
+ */
+async function lateReviewers(db: DB["db"], before: Date): Promise<Overdue[]> {
+  const { workflowRun } = schema;
+  const rows = LateReviewers.assert(await db.execute(sql`
+    SELECT DISTINCT ${managerState.tenantId} AS "tenantId", reviewer->>'runId' AS "runId", reviewer->>'kind' AS kind
+    FROM ${managerState}, jsonb_array_elements(${managerState.state}->'reviewers') AS reviewer, ${workflowRun}
+    WHERE ${managerState.kind} = 'claim' AND reviewer->'result' IS NULL AND (reviewer->>'deadline')::timestamptz < ${before.toISOString()}::timestamptz
+      AND ${workflowRun.id} = reviewer->>'runId' AND ${workflowRun.tenantId} = ${managerState.tenantId} AND ${cancellableRun()}`));
+  return rows.map((row) => ({ tenantId: row.tenantId, runId: row.runId, reason: `${row.kind} past its deadline`, msg: "triage_reviewer_overdue_ended" }));
 }
 
 /**
- * Cancels every reviewer still live past its deadline and every manager that has held its open pass past
- * `PR_TRIAGE_STUCK_RUN_MS`, so neither holds a sidecar slot nor reads as up forever. A reviewer stays on its claim, so a
- * manager is still woken to post without it.
+ * The claim's manager when its run has held the open pass past `stuckAfterMs`, or, between passes, has done nothing past
+ * `MANAGER_POLL_LIMIT_MS`, by which its own loop would have ended it.
+ */
+function managerOverdue(tenantId: string, claim: Claim, now: Date, stuckAfterMs: number): Overdue | undefined {
+  if (claim.status !== "live" || claim.runId === undefined) return undefined;
+  if (claim.pass !== undefined) {
+    const stuck = now.getTime() - Date.parse(passHeldSince(claim, claim.pass)) > stuckAfterMs;
+    return stuck ? { tenantId, runId: claim.runId, reason: "manager pass stuck", msg: "triage_manager_stuck_ended" } : undefined;
+  }
+  const idle = now.getTime() - Date.parse(lastActiveAt(claim)) > MANAGER_POLL_LIMIT_MS;
+  return idle ? { tenantId, runId: claim.runId, reason: "manager idle past its poll limit", msg: "triage_manager_idle_ended" } : undefined;
+}
+
+async function overdueManagers(db: DB["db"], now: Date, stuckAfterMs: number): Promise<Overdue[]> {
+  const rows = await db.select({ tenantId: managerState.tenantId, key: managerState.key, state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.kind, "claim"), sql`${managerState.state}->>'status' = 'live'`));
+  const overdue = rows.flatMap((row) => managerOverdue(row.tenantId, claimOf(row.key, row.state), now, stuckAfterMs) ?? []);
+  if (overdue.length === 0) return [];
+  const live = await db.select({ tenantId: schema.workflowRun.tenantId, runId: schema.workflowRun.id }).from(schema.workflowRun)
+    .where(and(inArray(schema.workflowRun.id, overdue.map((run) => run.runId)), cancellableRun()));
+  const cancellable = new Set(live.map((run) => `${run.tenantId} ${run.runId}`));
+  return overdue.filter((run) => cancellable.has(`${run.tenantId} ${run.runId}`));
+}
+
+/** `stuckAfterMs` is the reconciler's; `reviewerGraceMs` is how long past its deadline a reviewer's result may still land. */
+export type OverdueLimits = { stuckAfterMs: number; reviewerGraceMs: number };
+
+/**
+ * Cancels every reviewer still live past its deadline and grace, and every manager stuck in a pass or idle past its poll
+ * limit, so none holds a sidecar slot or reads as up forever. A reviewer stays on its claim, so a manager is still woken
+ * to post without it.
  */
 export async function endOverdue(
   db: DB["db"],
   now: Date,
+  { stuckAfterMs, reviewerGraceMs }: OverdueLimits,
   cancel: (tenantId: string, runId: string, reason: string) => Promise<unknown>,
   log: (entry: Record<string, unknown>) => void,
 ): Promise<void> {
-  const stuckBefore = new Date(now.getTime() - PR_TRIAGE_STUCK_RUN_MS);
-  // Pass takenAt never postdates when the run took the pass, so this keeps every stuck manager for overdueOf to confirm.
-  const stuck = sql`${managerState.state}->>'status' = 'live' AND (${managerState.state}->'pass'->>'takenAt')::timestamptz < ${stuckBefore.toISOString()}::timestamptz`;
-  const rows = await db.select({ tenantId: managerState.tenantId, key: managerState.key, state: managerState.state }).from(managerState)
-    .where(and(eq(managerState.kind, "claim"), or(lateReviewer(now), stuck)));
-  const overdue = rows.flatMap((row) => overdueOf(row.tenantId, claimOf(row.key, row.state), now, stuckBefore));
-  if (overdue.length === 0) return;
-  const live = await db.select({ tenantId: schema.workflowRun.tenantId, runId: schema.workflowRun.id }).from(schema.workflowRun)
-    .where(and(
-      inArray(schema.workflowRun.id, [...new Set(overdue.map((run) => run.runId))]),
-      inArray(schema.workflowRun.status, [...schema.liveWorkflowRunStatuses]),
-      isNull(schema.workflowRun.cancellationRequestedAt),
-    ));
-  const cancellable = new Set(live.map((run) => `${run.tenantId} ${run.runId}`));
+  const overdue = [...await lateReviewers(db, new Date(now.getTime() - reviewerGraceMs)), ...await overdueManagers(db, now, stuckAfterMs)];
   for (const run of overdue) {
-    if (!cancellable.has(`${run.tenantId} ${run.runId}`)) continue;
     const entry = { tenantId: run.tenantId, runId: run.runId, reason: run.reason };
     try {
       log({ level: "warn", msg: run.msg, ...entry, outcome: await cancel(run.tenantId, run.runId, run.reason) });
@@ -1041,7 +1068,7 @@ async function unreadResults(db: DB["db"], tenantId: string): Promise<Map<string
 export async function overduePulls(db: DB["db"], tenantId: string): Promise<{ pr: PullRequestRef; head: string }[]> {
   const now = new Date();
   const unread = await unreadResults(db, tenantId);
-  const late = lateReviewer(now);
+  const late = sql`jsonb_path_exists(${managerState.state}, '$.reviewers[*] ? (!(exists(@.result)) && @.deadline <= $now)', jsonb_build_object('now', ${now.toISOString()}::text))`;
   const rows = await db.select({ key: managerState.key, state: managerState.state }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), eq(managerState.kind, "claim"), unread.size === 0 ? late : or(late, inArray(managerState.key, [...unread.keys()]))));
   const overdue: { pr: PullRequestRef; head: string }[] = [];

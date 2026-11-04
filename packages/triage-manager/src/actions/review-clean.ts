@@ -1,10 +1,10 @@
 import { type } from "arktype";
 import { counted } from "@corbits/common";
-import { CodeReviewOutput, PRIORITIES, RULE_GATES, rulesGate, ThreadRead, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
+import { CodeReviewOutput, MANAGER_LIFETIME_MS, PRIORITIES, RULE_GATES, rulesGate, ThreadRead, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
 import { DO_NAMES, postsRequestChanges } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
-import { LIFETIME_MS, storedReviewer, TakeOutput } from "./manager.js";
+import { storedReviewer, TakeOutput } from "./manager.js";
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES) });
 const TakenPart = type({ codeReview: CodeReviewPart });
@@ -197,7 +197,7 @@ function heldByReview(parsed: typeof ClearedInput.infer): Verdict {
  * a person, since it was decided without them.
  */
 function stoppedWaiting(verdict: Verdict, stopped: NonNullable<TakeOutput["stopped"]>): Verdict {
-  const note = `Triage stopped waiting for ${awaitsText(stopped)} after ${LIFETIME_MS / (60 * 60_000)} hours, so no action ran on its own.`;
+  const note = `Triage stopped waiting for ${awaitsText(stopped)} after ${MANAGER_LIFETIME_MS / (60 * 60_000)} hours, so no action ran on its own.`;
   const actions = verdict.actions.map(function heldForAPerson(action) {
     if (!("effectId" in action)) return action;
     // Held for a person, so no CI state alone holds it any longer.
