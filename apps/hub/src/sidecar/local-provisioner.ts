@@ -18,6 +18,7 @@ import { CAPACITY_UNAVAILABLE, shortfall, type HostCapacity } from "./host-capac
 import type { LocalSidecarManifest, LocalSidecarManifestStore } from "./manifest-store.js";
 
 const DEFAULT_STOP_TIMEOUT_MS = 25_000;
+const MKDTEMP_SUFFIX = /^[A-Za-z0-9]{6}$/;
 
 /** How the process ended: its exit code, or the signal that killed it. */
 export type LocalSidecarExit = { readonly code: number | null; readonly signal: string | null };
@@ -174,6 +175,7 @@ export function createLocalProcessSidecarProvisioner({
     }
   }
 
+  // Matches only mkdtemp's six-character suffix, so allocation "a" never takes the directories of allocation "a-b".
   async function removeAllocationDirs(allocationId: string): Promise<void> {
     const prefix = `${allocationId}-`;
     let entries: string[];
@@ -184,7 +186,7 @@ export function createLocalProcessSidecarProvisioner({
       throw error;
     }
     for (const entry of entries) {
-      if (entry.startsWith(prefix)) await fs.rm(path.join(dataRoot, entry), { recursive: true, force: true });
+      if (entry.startsWith(prefix) && MKDTEMP_SUFFIX.test(entry.slice(prefix.length))) await fs.rm(path.join(dataRoot, entry), { recursive: true, force: true });
     }
   }
 
@@ -199,14 +201,17 @@ export function createLocalProcessSidecarProvisioner({
     await removeStored(sidecar.allocationId);
   }
 
-  // Retired at once, so its work is placed again without waiting out a reconnect window. Its state directory goes now;
-  // a report that fails keeps only the manifest, so the next boot retires the sidecar.
+  // Retired at once, so its work is placed again without waiting out a reconnect window. Its state directory goes
+  // either way; a report that fails keeps the manifest, so the next boot retires the sidecar.
   async function retireExited(sidecar: LiveSidecar): Promise<void> {
     if (live.get(sidecar.allocationId) !== sidecar) return;
     live.delete(sidecar.allocationId);
-    await removeAllocationDirs(sidecar.allocationId);
-    await attached().sidecarStopped(sidecar.sidecarId, { endReconnectWindow: true });
-    await manifests.remove(sidecar.allocationId);
+    try {
+      await attached().sidecarStopped(sidecar.sidecarId, { endReconnectWindow: true });
+      await manifests.remove(sidecar.allocationId);
+    } finally {
+      await removeAllocationDirs(sidecar.allocationId);
+    }
     log({ level: "warn", msg: "local_sidecar_retired", allocationId: sidecar.allocationId, sidecarId: sidecar.sidecarId });
   }
 
@@ -315,7 +320,8 @@ export function createLocalProcessSidecarProvisioner({
     // A late destroy naming a superseded identity must not stop the replacement that owns the generation now.
     if (existing !== undefined && existing.sidecarId !== request.sidecarId) return { kind: "destroyed", cleanup: "confirmed" };
     if (existing !== undefined) await stopAndRemove(existing);
-    else await removeStored(request.allocationId);
+    // Directories only: a manifest left by a failed retirement report is the next boot's to retire.
+    else await removeAllocationDirs(request.allocationId);
     const earlier = fence?.generation === request.generation ? fence.sidecarIds : [];
     const sidecarIds = [...new Set([...earlier, request.sidecarId, ...(existing === undefined ? [] : [existing.sidecarId])])];
     fences.set(request.allocationId, { generation: request.generation, sidecarIds });
