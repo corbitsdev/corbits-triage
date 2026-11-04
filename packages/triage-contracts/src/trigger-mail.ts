@@ -66,6 +66,9 @@ export function trustedRequestOf(input: unknown): { request: Record<string, unkn
 
 export const APPROVE_DO_KIND = "approve-do";
 
+/** The attachment a judge's mail carries its rules output in: stock inlines a mail part's text only up to 1 MiB, and a judge's first step reads attachments whatever their size. */
+export const JUDGE_RULES_ATTACHMENT = "rules.json";
+
 /** Whether triage marks a head waiting on its CI: where it writes the verdict, as labels on GitHub where it holds labels, and as the build status, always written, on Bitbucket Data Center. */
 export function marksWaiting(source: RepoSource, automatic: readonly ActionKind[]): boolean {
   return source === "bitbucket-datacenter" || automatic.includes("labels");

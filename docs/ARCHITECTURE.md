@@ -759,8 +759,13 @@ any other tenant or an unknown sender.
   manager route.
 - `triage-judge-github` and `triage-judge-bitbucket-datacenter` (`triageJudge`
   in `@corbits/triage-judge`): the judge a manager deploys. It takes mail only
-  from that manager. It runs the model checks the machine rules produced, then
-  focused's follow-up questions, then evaluate. Stock runs a step whose
+  from that manager: the pull request as the body and the rules output as a
+  `rules.json` attachment, since stock inlines a part's text only up to 1 MiB.
+  Stock reads attachments only for a run's top-level agent steps, so the
+  judge's mail triggers its run directly, and its first step, whose director
+  makes no model call, replies with the attachment for the steps after it. It
+  runs the model checks the machine rules produced, then focused's follow-up
+  questions, then evaluate. Stock runs a step whose
   dependencies failed, so however the judge ended it records a `StageResult`
   of kind `judge` through the reviewer-result route: the whole verdict
   evaluate made, its comment, labels, Dos and rule results, or a failure as

@@ -3,14 +3,15 @@ import { actionConsumer } from "@intx/authz";
 import { createActionCredentialsFactory, createCredentialProviderRegistry, createHttpCredentialProvider } from "@intx/harness";
 import type { GrantRule } from "@intx/types/authz";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import type { ToolCall, ToolResult } from "@intx/types/runtime";
-import { runLocal, type ActionHandler, type OnTriggerPrimitive, type WorkflowAuthorizeFn } from "@intx/workflow";
-import { emptyPack } from "@corbits/triage-contracts";
+import type { MessageAttachment, ToolCall, ToolResult } from "@intx/types/runtime";
+import { runLocal, type ActionHandler, type WorkflowAuthorizeFn } from "@intx/workflow";
+import { emptyPack, JUDGE_RULES_ATTACHMENT } from "@corbits/triage-contracts";
 import { readFacts } from "@corbits/triage-workflows/actions/facts";
 import { rules } from "@corbits/triage-workflows/actions/rules";
 import type { HostCall } from "@corbits/triage-workflows/logic/host";
 import { delivered, type Bindings } from "@corbits/triage-workflows/local-credentials";
 import * as actions from "./actions/index.js";
+import { rulesMailDirector } from "./rules-mail.js";
 import { workflow } from "./triage-judge-github.js";
 
 const TENANT = "tnt_acme";
@@ -67,40 +68,54 @@ function actionCredentials(hub: (url: URL, init?: RequestInit) => Promise<Respon
   return createActionCredentialsFactory({ materialCell: cell, resolveStepGrants: () => grants, providers });
 }
 
-/** Runs the judge's body over the rules a manager would mail it. */
-async function runJudge(rulesOutput: { chunks: unknown[] }) {
+/** The trigger a manager's judge mail becomes once stock stored it: the rules attachment is over 1 MiB, so its part carries only a ref. */
+const MAIL = {
+  headers: { from: "run_manager@triage.test", to: [`${RUN}@triage.test`] },
+  parts: [
+    { contentType: "text/plain", ref: "mail-part:///run_judge/m1/0-part.plain", text: JSON.stringify({ kind: "judge", tenantId: TENANT, number: 8, checkout: { source: "github", repo: "acme/widgets", sha: SHA } }) },
+    { contentType: "application/json", filename: JUDGE_RULES_ATTACHMENT, disposition: "attachment", ref: `mail-part:///run_judge/m1/1-${JUDGE_RULES_ATTACHMENT}` },
+  ],
+};
+
+/** The rules step as stock runs it: the attachment's bytes, read through the ref, reach the rules director. */
+async function readRules(attachments: MessageAttachment[]): Promise<unknown> {
+  const director = rulesMailDirector.factory({}, {} as never, {} as never);
+  const caps = { reply: (content: string) => ({ type: "reply", content }) };
+  const decided = await director.decide({ type: "message.received", message: { attachments } } as never, {} as never, caps as never) as { content: string };
+  return { reply: decided.content };
+}
+
+/** Runs the judge over its trigger mail, `attachments` standing for the parts stock resolves. */
+async function runJudge(attachments: MessageAttachment[]) {
   const calls: { method: string; path: string; body?: unknown }[] = [];
   async function hub(url: URL, init?: RequestInit): Promise<Response> {
     calls.push({ method: init?.method ?? "GET", path: url.pathname, ...(init?.body !== undefined && { body: JSON.parse(String(init.body)) }) });
     return init?.method === "DELETE" ? new Response(null, { status: 202 }) : Response.json({ recorded: true }, { status: 201 });
   }
-  const body = (workflow.steps.events as OnTriggerPrimitive).body;
-  if (!("inline" in body)) throw new Error("the body is not inline");
-  const mail = {
-    headers: { from: "run_manager@triage.test", to: [`${RUN}@triage.test`] },
-    parts: [{ contentType: "text/plain", text: JSON.stringify({
-      kind: "judge", tenantId: TENANT, number: 8, checkout: { source: "github", repo: "acme/widgets", sha: SHA }, rules: rulesOutput,
-    }) }],
-  };
-  const { terminalStatus } = await runLocal(body.inline, {
+  const { terminalStatus } = await runLocal(workflow, {
     authorize: allow,
     invokeStep: async function invoke({ agent, input }) {
-      if (agent.id !== "triage-judge") throw new Error(`no agent but the judge runs, not ${agent.id}`);
+      if (agent.id === "triage-judge-rules") return { output: await readRules(attachments) };
+      if (agent.id !== "triage-judge") throw new Error(`no agent but the rules reader and the judge runs, not ${agent.id}`);
       if (!input || typeof input !== "object" || !("questions" in input) || !Array.isArray(input.questions)) throw new Error("the judge step was not given a chunk");
       const text = input.questions.filter(isQuestion).map((question) => answerText(question.id)).join("");
       return { output: { reply: JSON.stringify({ judge: text }) } };
     },
     actionResolver: (ref) => (actions as Record<string, ActionHandler>)[ref]!,
     actionCredentials: actionCredentials(hub),
-    triggerPayload: mail,
+    triggerPayload: MAIL,
   }).complete;
   return { terminalStatus, calls };
 }
 
-test("the judge runs the chunks the manager mailed, reports the whole verdict and stops, posting nothing", async () => {
+function attached(rulesOutput: unknown): MessageAttachment[] {
+  return [{ name: JUDGE_RULES_ATTACHMENT, contentType: "application/json", data: new TextEncoder().encode(JSON.stringify(rulesOutput)) }];
+}
+
+test("the judge runs the chunks the manager attached, reports the whole verdict and stops, posting nothing", async () => {
   const rulesOutput = await ruled();
   expect(rulesOutput.chunks.length).toBeGreaterThan(0);
-  const { terminalStatus, calls } = await runJudge(rulesOutput);
+  const { terminalStatus, calls } = await runJudge(attached(rulesOutput));
   expect(terminalStatus).toBe("completed");
   const posted = calls.find((call) => call.method === "POST");
   expect(posted).toMatchObject({ path: `/api/tenants/${TENANT}/manager/reviewer-result`, body: { kind: "judge", head: SHA, source: "github", repo: "acme/widgets", number: 8 } });
@@ -110,3 +125,10 @@ test("the judge runs the chunks the manager mailed, reports the whole verdict an
   expect(calls.at(-1)).toEqual({ method: "DELETE", path: `/api/tenants/${TENANT}/workflows/runs/${RUN}` });
 });
 
+test("a judge whose mail carries no rules reports that it did not finish and stops", async () => {
+  const { calls } = await runJudge([]);
+  expect(calls).toEqual([
+    { method: "POST", path: `/api/tenants/${TENANT}/manager/reviewer-result`, body: { source: "github", repo: "acme/widgets", number: 8, kind: "judge", head: SHA, failed: "the judge did not finish" } },
+    { method: "DELETE", path: `/api/tenants/${TENANT}/workflows/runs/${RUN}` },
+  ]);
+});

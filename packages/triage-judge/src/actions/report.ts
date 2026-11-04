@@ -3,14 +3,16 @@ import { type } from "arktype";
 import { JudgeVerdict, REPO_SOURCES } from "@corbits/triage-contracts";
 import { answered, callHub, endRun, mailOf, tenantPath } from "@corbits/triage-manager/actions/hub";
 
-/** The manager's mail to a judge it deployed: the rules output and the pull request. */
+/** The manager's mail to a judge it deployed: the pull request. The rules output rides as an attachment, which only the judge's first step reads. */
 const JudgeMail = type({
   kind: "'judge'",
   tenantId: "string > 0",
   number: "number.integer > 0",
   checkout: { source: type.enumerated(...REPO_SOURCES), repo: "string > 0", sha: "string > 0" },
-  rules: { items: "unknown[]", batch: "boolean", chunks: "unknown[]" },
 });
+
+/** The rules step's reply: the attached rules output. */
+const RulesReply = type({ reply: type("string.json.parse").to({ items: "unknown[]", batch: "boolean", chunks: "unknown[]" }) });
 
 function judgeMailOf(payload: unknown) {
   const { request, runId } = mailOf(payload);
@@ -19,9 +21,11 @@ function judgeMailOf(payload: unknown) {
   return { mail, runId };
 }
 
-/** The rules output the manager mailed, which the judge's steps read as pr-triage's rules step left it. */
-export async function judgeRequest(input: unknown): Promise<{ items: unknown[]; batch: boolean; chunks: unknown[] }> {
-  return judgeMailOf(input).mail.rules;
+/** The rules output the manager attached, in the shape pr-triage's rules step leaves it. */
+export async function judgeRequest(input: unknown): Promise<typeof RulesReply.infer.reply> {
+  const parsed = RulesReply(input);
+  if (parsed instanceof type.errors) throw new Error(`the judge's rules: ${parsed.summary}`);
+  return parsed.reply;
 }
 
 const ReportInput = type({ payload: "unknown", "evaluate?": { output: "unknown" } });

@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
+import { JUDGE_RULES_ATTACHMENT, JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
 import { evaluate, verdictOnFacts, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { decided } from "@corbits/triage-workflows/logic/settled";
@@ -105,8 +105,9 @@ export async function deployJudge(input: unknown, ctx: EffectContext, _signal: A
   if (!release) throw new Error("deployJudge: release.json publishes no judge for the host");
   const judgeRun = await deploy(ctx, "deployJudge", tenantId, release);
   const deadline = new Date(Date.now() + JUDGE_DEADLINE_MS).toISOString();
-  const content = JSON.stringify({ kind: "judge", tenantId, number: pullRequest.number, checkout: { source, repo: pullRequest.repo, sha: head }, rules });
-  return { reviewer: { kind: "judge", head, runId: judgeRun, deployedBy: runId, deadline }, mail: { tenantId, to: judgeRun, content, readyBy: deadline } };
+  const content = JSON.stringify({ kind: "judge", tenantId, number: pullRequest.number, checkout: { source, repo: pullRequest.repo, sha: head } });
+  const attachments = [{ name: JUDGE_RULES_ATTACHMENT, contentType: "application/json", content: JSON.stringify(rules) }];
+  return { reviewer: { kind: "judge", head, runId: judgeRun, deployedBy: runId, deadline }, mail: { tenantId, to: judgeRun, content, attachments, readyBy: deadline } };
 }
 
 const MailedInput = type({ deployJudge: { output: { reviewer: Reviewer } }, mailJudge: { output: { reply: "string" } } });
