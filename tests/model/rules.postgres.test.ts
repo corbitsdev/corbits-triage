@@ -94,14 +94,14 @@ test.each([
 test.each([
   ["failing before it is ready", neverReady],
   ["dying after it takes its mail", diesAfterMail],
-])("with code review on and its run %s, a mail on the head after its verdict keeps the verdict and deploys no other review", async (_fault, model) => {
+])("with code review on and its run %s, a mail on the head after its verdict keeps the verdict and deploys the review once more", async (_fault, model) => {
   const missed = model.github.misses.length;
   const pull = await open(model, ++pulls);
   await settle(model, pull);
   expect(await play(model, pull, "edit")).toBe(true);
   await settle(model, pull);
   expect([...(await broken(model, pull, missed)), ...verdictKept(model, pull)]).toEqual([]);
-  expect(model.reviewRuns(pull.number)).toHaveLength(1);
+  expect(model.reviewRuns(pull.number)).toHaveLength(2);
 });
 
 test(`${WALKS} seeded walks of ${WALK_LENGTH} events keep the rules`, async () => {

@@ -699,8 +699,9 @@ any other tenant or an unknown sender.
   review past posts it with the verdict and deploys no other; a review that
   could not be mailed, reported a failure or ran past its deadline leaves the
   verdict to go up alone and stays on its reviewer as failed, so a later pass
-  on that head keeps the verdict and deploys no other until the head changes
-  or a Review again asks for one. Each reviewer keeps its head and deadline on
+  on that head keeps the verdict and deploys it again, until two reviews of
+  the head failed; then it deploys no other until the head changes or a
+  Review again asks for one. Each reviewer keeps its head and deadline on
   the claim, so whichever manager
   takes the next pass on that head sees a deadline that passed with no
   report. A pass after one that left reviewers out first reads each one's
