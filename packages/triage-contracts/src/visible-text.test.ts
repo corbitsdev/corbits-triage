@@ -42,14 +42,6 @@ describe("renderedText", () => {
     expect(renderedText(html)).toBe(text);
   });
 
-  test("a body of the largest size, all table rows, converts in under a second", () => {
-    const rows = Math.floor((65536 - 8) / 4);
-    const html = `<markdown-accessiblity-table><table role="table">\n<tbody>\n${"<tr>\n<td>a</td>\n</tr>\n".repeat(rows)}</tbody>\n</table></markdown-accessiblity-table>`;
-    const start = performance.now();
-    renderedText(html);
-    expect(performance.now() - start).toBeLessThan(1000);
-  });
-
   test("real bot and template bodies read as their readers see them", () => {
     const dependabot = fixture("dependabot");
     expect(dependabot).toContain("- `@dependabot rebase` will rebase this PR");

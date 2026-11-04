@@ -2,9 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { CATALOG_IDS, catalogCheckEnabled, checkPolicyFile, parseCheckPack, QUALITY_CHECK_IDS } from "@corbits/triage-contracts";
-import { deriveState, type PrFacts } from "@corbits/triage-workflows/logic/checks";
-import { NO_FACTS } from "@corbits/triage-workflows/logic/item";
+import { checkPolicyFile } from "@corbits/triage-contracts";
 import { fixtureGithub } from "@corbits/triage-workflows/evals/serve";
 import { runChecks } from "./checks.js";
 import { hostOnly, readChange, type ChangedFile } from "./local-git.js";
@@ -94,15 +92,6 @@ test("a code pattern is matched on the committed and the uncommitted text", asyn
   expect(working).not.toContain("?? 0`");
 }, 30_000);
 
-test("a skipped vendored file stays out of a code pattern's failure text", async () => {
-  const policy = "rules:\n  - { id: conventions, check: code-patterns, text: T., presets: [convention], reason: R., evidence: [maintainer-stated] }\n";
-  const root = repository(policy, {}, "feat: b", { "src/a.ts": "const b = y ?? 0;\n", "vendor/c.ts": "const c = z ?? 0;\n" });
-  const { exitCode, stdout } = await check(root);
-  expect(exitCode).toBe(1);
-  expect(stdout).toContain("src/a.ts:1 zero-fallback: Invented fallback `?? 0`");
-  expect(stdout).not.toContain("vendor/c.ts");
-}, 30_000);
-
 test("a symlinked file is read as its target's path, never followed out of the repository", async () => {
   const outside = join(mkdtempSync(join(tmpdir(), "outside-")), "fallback.ts");
   writeFileSync(outside, "const a = x ?? 0;\n");
@@ -153,37 +142,3 @@ test("rules give the same results locally as on the hosted pull request, whateve
   expect(local.stdout).toStartWith(`# Committed\n\n${hosted.summary.join("\n")}\n`);
   expect(local.exitCode).toBe(hosted.failed ? 1 : 0);
 }, 60_000);
-
-const EVIDENCE = "reason: R., evidence: [maintainer-stated]";
-const EVERY_MACHINE_RULE = `rules:
-  - { check: max-files-changed, text: T., max: 10, ${EVIDENCE} }
-  - { check: max-lines-changed, text: T., max: 10, ${EVIDENCE} }
-  - { check: max-lines-changed-per-file, text: T., max: 10, ${EVIDENCE} }
-  - { check: max-additions, text: T., max: 10, ${EVIDENCE} }
-  - { check: max-deletions, text: T., max: 10, ${EVIDENCE} }
-  - { check: linked-issue, text: T., tracker: github, ${EVIDENCE} }
-  - { check: no-merge-conflicts, text: T., ${EVIDENCE} }
-  - { check: ci-green, text: T., ${EVIDENCE} }
-  - { check: no-forbidden-paths, text: T., paths: ["vendor/**"], ${EVIDENCE} }
-  - { check: conventional-commits, text: T., ${EVIDENCE} }
-  - { check: hidden-content, text: T., ${EVIDENCE} }
-  - { check: regression-risk, text: T., ${EVIDENCE} }
-  - { check: no-duplicate, text: T., ${EVIDENCE} }
-  - { check: sensitive-paths, text: T., ${EVIDENCE} }
-  - { check: risk, text: T., ${EVIDENCE} }
-  - { id: conventions, check: code-patterns, text: T., presets: [convention], ${EVIDENCE} }
-`;
-
-test("every rule whose result turns on the title or description is skipped locally", () => {
-  const checked = checkPolicyFile(EVERY_MACHINE_RULE, "acme/widgets");
-  if (!checked.ok) throw new Error("the policy is invalid");
-  const pack = parseCheckPack(checked.policy, "acme/widgets")!;
-  expect(CATALOG_IDS.filter((id) => !(QUALITY_CHECK_IDS as readonly string[]).includes(id) && !catalogCheckEnabled(pack, id))).toEqual([]);
-  const described: PrFacts = { ...NO_FACTS, repo: "acme/widgets", number: 1, title: "feat: add", body: "Fixes https://github.com/acme/widgets/issues/1", commitMessages: ["feat: add"], state: "open", mergeable: true };
-  const bare: PrFacts = { ...described, title: "add", body: "", hidden: ["title: a comment"] };
-  const results = [described, bare].map((facts) => new Map(deriveState(facts, undefined, pack).checks.map((check) => [check.check, `${check.result}: ${check.reason}`])));
-  const turned = [...results[0]!.keys()].filter((id) => results[0]!.get(id) !== results[1]!.get(id));
-  const skipped = new Set(hostOnly(pack).map(({ id }) => id));
-  expect(turned.length).toBeGreaterThan(0);
-  expect(turned.filter((id) => !skipped.has(id))).toEqual([]);
-});

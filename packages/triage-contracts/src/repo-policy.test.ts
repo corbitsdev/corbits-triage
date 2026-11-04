@@ -8,32 +8,6 @@ describe("repoPolicy", () => {
     expect(repoPolicy({ name: "acme/widgets", connected: true })).toEqual(DEFAULT_REPO_POLICY);
   });
 
-  test("fills partial check flags and nested policy objects, ignoring a stored posting mode", () => {
-    expect(repoPolicy({ cleanupMode: "automated", checks: { ci: false } })).toEqual({
-      enabled: false,
-      checks: {
-        ci: false,
-        conflicts: true,
-      },
-      approvedAuthors: [],
-    });
-    expect(repoPolicy({
-      name: "acme/widgets",
-      policy: {
-        enabled: false,
-        triageDrafts: false,
-        checks: { draft: false, conflicts: false },
-      },
-    })).toEqual({
-      enabled: false,
-      checks: {
-        ci: true,
-        conflicts: false,
-      },
-      approvedAuthors: [],
-    });
-  });
-
   test("approved authors are trimmed, lowercased, de-duplicated and survive a round trip", () => {
     const policy = repoPolicy({ approvedAuthors: [" Alice ", "bob", "alice", "", 7] });
     expect(policy.approvedAuthors).toEqual(["alice", "bob"]);

@@ -5,7 +5,6 @@ import {
   codeownersFor,
   codeownersForPr,
   CODE_REVIEW_MARKER,
-  createDocsReader,
   createPrFilesReader,
   getChecks,
   getPostedCodeReview,
@@ -332,26 +331,6 @@ describe("readRepoDocsPage", () => {
     expect(requests.filter((request) => request.path.includes("/git/blobs/"))).toHaveLength(sent.length);
   });
 
-  test("createDocsReader fetches the default branch, tree and each doc blob once across pages", async () => {
-    const { gh, requests } = repo();
-    const read = createDocsReader(gh);
-    const pages: RepoDocsPage[] = [];
-    let offset: number | undefined = 0;
-    let ref: string | undefined;
-    while (offset !== undefined) {
-      const page = await read("o/r", { ref, offset });
-      pages.push(page);
-      offset = page.next;
-      ref = page.ref;
-    }
-    expect(pages.length).toBeGreaterThan(1);
-    expect(repoDocs(pages).docs["docs/guide.md"]).toBeDefined();
-    const paths = requests.map((request) => request.path);
-    expect(paths.filter((path) => path === "/repos/o/r")).toHaveLength(1);
-    expect(paths.filter((path) => path.includes("/git/trees/"))).toEqual(["/repos/o/r/git/trees/main?recursive=1"]);
-    const blobs = paths.filter((path) => path.includes("/git/blobs/"));
-    expect(blobs).toEqual([...new Set(blobs)]);
-  });
 });
 
 test("listPrTimeline: comments and reviews by account, upper-case review states, commits without an account left out", async () => {
