@@ -204,7 +204,7 @@ const DoneInput = type({
   "approvals?": { output: { results: "Record<string, unknown>[]" } },
   "rules?": { output: { items: type({ facts: "Record<string, unknown>", "det?": "unknown" }).array() } },
   "cleared?": Output,
-  "reviewScope?": { output: { "skipped?": "string" } },
+  "reviewScope?": { output: { "skipped?": "string", "closed?": "true" } },
   "mirrorRules?": Output,
   "executeRules?": Output,
   "reviewMailed?": { output: { reviewer: Reviewer } },
@@ -272,23 +272,25 @@ function lasting(reviewer: Reviewer, head: string): boolean {
  * The reviewers to wait for. A result stays on its reviewer while another of this head is still out, so a judge that
  * reported before code review is not lost. Once nothing is waiting, only the lasting results of the pass's head stay, so
  * a later pass on it posts them and deploys no other; a judge's degraded, undecided, failed or late one is dropped, so
- * the next event deploys the judge again. A result too large to store is dropped. Plus one mailed now.
+ * the next event deploys the judge again. A closed pull request waits for none, so any still out is dropped too. A
+ * result too large to store is dropped. Plus one mailed now.
  */
-function reviewersAfter(take: TakeOutput, mailed: readonly Reviewer[]): Reviewer[] {
+function reviewersAfter(take: TakeOutput, mailed: readonly Reviewer[], closed: boolean): Reviewer[] {
   const { head } = take;
   let current = remembered(take).filter(storable);
+  if (closed) current = current.filter((reviewer) => reviewer.result !== undefined);
   const waiting = current.some((reviewer) => reviewer.result === undefined) || mailed.some((reviewer) => reviewer.result === undefined);
   if (!waiting) current = current.filter((reviewer) => reviewer.result === undefined || (head !== undefined && lasting(reviewer, head)));
   return [...current, ...mailed];
 }
 
 /**
- * The reviewers of the pass's head this run deployed that ran past their deadline, or whose run ended, with no report.
- * The hub stops one on an older head when it records the newer one; one an earlier manager deployed runs out on its own,
- * since only its deployer may stop it.
+ * The reviewers of the pass's head this run deployed that ran past their deadline, or whose run ended, with no report,
+ * and every one still out once the pull request is closed. The hub stops one on an older head when it records the newer
+ * one; one an earlier manager deployed runs out on its own, since only its deployer may stop it.
  */
-function abandoned({ head, reviewers }: TakeOutput, runId: string): Reviewer[] {
-  return reviewers.filter((reviewer) => reviewer.deployedBy === runId && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) <= Date.now());
+function abandoned({ head, reviewers }: TakeOutput, runId: string, closed: boolean): Reviewer[] {
+  return reviewers.filter((reviewer) => reviewer.deployedBy === runId && reviewer.head === head && reviewer.result === undefined && (closed || Date.parse(reviewer.deadline) <= Date.now()));
 }
 
 /**
@@ -347,7 +349,8 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const mail = managerMailOf(parsed.payload);
   const mailed = [parsed.judgeMailed, parsed.earlyReviewMailed, parsed.reviewMailed].flatMap((step) => (step?.output.reviewer ? [step.output.reviewer] : []));
   const report = doneReport(parsed);
-  const reviewers = clearUnheard(reviewersAfter(parsed.take.output, mailed), parsed.take.output.threads, parsed.findingThreads);
+  const closed = parsed.reviewScope?.output.closed === true;
+  const reviewers = clearUnheard(reviewersAfter(parsed.take.output, mailed, closed), parsed.take.output.threads, parsed.findingThreads);
   const out = awaiting(parsed.take.output, reviewers).map((reviewer) => reviewer.runId);
   const wait = out.length > 0;
   const posted = parsed.postReview?.output.threads;
@@ -356,7 +359,7 @@ export async function done(input: unknown, ctx: EffectContext, _signal: AbortSig
   const body = { ...mail.pullRequest, reviewers, wait, ...(report && { report }), ...(parsed.approvals && { approvals: parsed.approvals.output }), ...(posted && { threadIds: posted }), ...(reads !== undefined && reads.length > 0 && { threads: reads }), ...(unreads.length > 0 && { threadsUnread: unreads.join("; ") }) };
   const answer = await asManager(ctx, mail, "done", body, Done);
   if (answer === undefined) return { outcome: "refused" };
-  for (const reviewer of abandoned(parsed.take.output, mail.runId)) await endRun(ctx, mail.tenantId, reviewer.runId);
+  for (const reviewer of abandoned(parsed.take.output, mail.runId, closed)) await endRun(ctx, mail.tenantId, reviewer.runId);
   return answer.outcome === "more" ? { ...answer, out } : answer;
 }
 

@@ -25,7 +25,7 @@ import { errorText } from "@corbits/common";
 import { diffHash } from "@corbits/common/diff-hash";
 
 import { ActionNotRunnableError, executeAction, parseActionInput } from "./action";
-import { BitbucketRefusal, findingThreadStates, mirror, sendCodeReview, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
+import { BitbucketRefusal, closeOut, findingThreadStates, mirror, sendCodeReview, tokenUser, type BitbucketFetch, type BitbucketUser, type TokenUser } from "./bitbucket";
 
 export const CREDENTIAL_HANDLE = "bitbucket-datacenter";
 
@@ -104,10 +104,11 @@ const MIRROR_INPUT = obj({
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
   keepVerdict: { ...obj({ verdict: str, policy: POLICY_REF }), description: "The pass's verdict and policy: a comment that already shows them for onHead is kept rather than written over" },
+  closedOut: { ...obj({ merged: { type: "boolean" } }), description: "Only on a merged or declined pull request, with onHead: the triage comment says it merged or closed before Triage finished, unless it shows a verdict on onHead; nothing else is written" },
 }, ["repo", "number", "labels"]);
 
 const MIRROR_DESCRIPTION =
-  "Post (or update) the triage comment on a Bitbucket Data Center pull request when comment is given, and set the Corbits Triage build status on statusHead, the verdict's own head, when status is given. While notReadyHead is the head, which may not be approved, takes back the token user's approval; while fixedHead is the head, which leaves the author nothing to fix, takes back its needs-work. Each write runs on its own: one that fails is named in failed and the others still run. Writes nothing to a closed pull request. Never merges.";
+  "Post (or update) the triage comment on a Bitbucket Data Center pull request when comment is given, and set the Corbits Triage build status on statusHead, the verdict's own head, when status is given. While notReadyHead is the head, which may not be approved, takes back the token user's approval; while fixedHead is the head, which leaves the author nothing to fix, takes back its needs-work. Each write runs on its own: one that fails is named in failed and the others still run. Writes nothing to a closed pull request but what closedOut asks. Never merges.";
 
 const WRITE_DEFINITIONS: ToolDefinition[] = [
   { name: "bitbucket_datacenter_mirror", description: MIRROR_DESCRIPTION, inputSchema: MIRROR_INPUT },
@@ -190,6 +191,7 @@ async function dispatch(bb: BitbucketFetch, call: ToolCallInput, user: Bitbucket
       return readWindow(bb, reads, a);
     case "bitbucket_datacenter_mirror":
     case "bitbucket_datacenter_mirror_auto":
+      if (a.closedOut) return closeOut(bb, { repo: a.repo, number: a.number, onHead: a.onHead, merged: a.closedOut.merged }, user);
       return mirror(bb, { repo: a.repo, number: a.number, labels: a.labels, owned: a.owned, comment: a.comment, header: a.header, status: a.status, statusHead: a.statusHead, onHead: a.onHead, keepVerdict: a.keepVerdict, notReadyHead: a.notReadyHead, fixedHead: a.fixedHead }, user);
     case "bitbucket_datacenter_execute_action_auto":
       return runAction(bb, a, user);

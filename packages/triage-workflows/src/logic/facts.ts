@@ -20,6 +20,7 @@ export interface PrData {
   /** The branch it merges into. */
   base?: string;
   state?: string;
+  merged?: boolean;
   draft?: boolean;
   mergeable?: boolean | null;
   reviewers?: string[];
@@ -73,6 +74,7 @@ export function buildFacts(
     tier: tierOf(association, author, policy.approvedAuthors),
     headSha: pr.sha ?? "",
     state: pr.state === "closed" ? "closed" : "open",
+    merged: pr.merged === true,
     draft: pr.draft === true,
     mergeable: pr.mergeable ?? null,
     checks: summarizeChecks(checks),

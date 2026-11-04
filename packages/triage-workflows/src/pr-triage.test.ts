@@ -772,13 +772,12 @@ describe("pr-triage body", () => {
     expect(github.comments[0]!.body).toContain("Waiting on:\n- checks are still running");
   });
 
-  test("a closed pull request gets no verdict: nothing is suggested or written", async () => {
+  test("a closed pull request gets no verdict and nothing is suggested", async () => {
     const github = fakeGithub();
     github.pr.state = "closed";
     const { verdict, dos } = await triage({ ...emptyPack(REPO), actions: HELLO }, { github });
     expect(verdict).toMatchObject({ closed: true, actions: [] });
     expect(dos).toEqual([]);
-    expect(github.requests.filter((r) => r.method !== "GET")).toEqual([]);
   });
 
   test("an approval mail from anyone but the hub's sender writes nothing", async () => {

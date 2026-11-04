@@ -81,6 +81,9 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
       rechecked.push([repo, except]);
       return 2;
     },
+    async closeOutDue() {
+      return false;
+    },
     async refreshPolicyFile(_tenant, repo) {
       synced.push(repo);
       return { status: "absent" };
@@ -151,5 +154,20 @@ describe("POST /api/hooks/bitbucket-datacenter/:tenantId", () => {
     const other = JSON.stringify({ eventKey: "repo:refs_changed", repository, changes: [{ ref: { id: "refs/heads/feature", displayId: "feature", type: "BRANCH" }, type: "UPDATE" }] });
     expect(await (await h.send(hookRequest(other, "repo:refs_changed", { delivery: "req-4" }))).json()).toEqual({ status: "ignored" });
     expect(h.synced).toEqual(["TRI/widgets"]);
+  });
+
+  test("a merge goes on to the pull request's manager only where it has a comment to close out", async () => {
+    let due = false;
+    const h = harness({
+      async closeOutDue() {
+        return due;
+      },
+    });
+    expect(await (await h.send(hookRequest(prEvent("pr:merged"), "pr:merged"))).json()).toEqual({ status: "accepted" });
+    expect(h.accepted).toHaveLength(0);
+    due = true;
+    expect((await h.send(hookRequest(prEvent("pr:merged"), "pr:merged", { delivery: "req-2" }))).status).toBe(202);
+    expect(h.accepted.map((input) => [input.event, input.mail.merged])).toEqual([["merged", true]]);
+    expect(h.rechecked).toEqual([["bitbucket-datacenter:TRI/widgets", 1], ["bitbucket-datacenter:TRI/widgets", 1]]);
   });
 });

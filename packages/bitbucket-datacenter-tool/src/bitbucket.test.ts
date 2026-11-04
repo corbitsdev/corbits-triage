@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { executeAction, type ActionStep } from "./action";
-import { findingThreadStates, mirror, sendCodeReview, type BitbucketFetch, type Comment } from "./bitbucket";
+import { closeOut, findingThreadStates, mirror, sendCodeReview, type BitbucketFetch, type Comment } from "./bitbucket";
 import { runAction } from "./sidecar-bundle";
+import { closedText, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS } from "@corbits/triage-contracts";
 
 const BOT = { id: 7, slug: "triage-bot" };
 const AUTHOR = { id: 3, slug: "admin" };
@@ -9,8 +10,8 @@ const REPO_PATH = "/rest/api/1.0/projects/TRI/repos/widgets";
 const PR_PATH = `${REPO_PATH}/pull-requests/1`;
 
 // Shapes recorded from Bitbucket Data Center 10.5, trimmed to the fields read.
-function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number; failBuild?: boolean; failStatus?: boolean; failDelete?: boolean; participants?: unknown[]; openReads?: number; threads?: unknown[] | "refused" } = {}) {
-  const pr = { id: 1, version: 4, state: "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: seed.participants ?? [] };
+function fakeBitbucket(seed: { comments?: Comment[]; builds?: string[]; merge?: unknown; failPost?: number; failBuild?: boolean; failStatus?: boolean; failDelete?: boolean; participants?: unknown[]; openReads?: number; threads?: unknown[] | "refused"; state?: string } = {}) {
+  const pr = { id: 1, version: 4, state: seed.state ?? "OPEN", fromRef: { id: "refs/heads/fix", latestCommit: "abc", repository: { id: 1 } }, toRef: { repository: { id: 1 } }, links: { self: [{ href: "https://bitbucket.example/projects/TRI/repos/widgets/pull-requests/1" }] }, author: { user: AUTHOR }, reviewers: [] as unknown[], participants: seed.participants ?? [] };
   const comments: Comment[] = seed.comments ?? [];
   let nextCommentId = comments.length + 10;
   const builds: Array<Record<string, unknown>> = [];
@@ -153,6 +154,28 @@ describe("mirror", () => {
     await mirror(fake.bb, failed, user);
     expect(fake.comments).toHaveLength(1);
     expect(fake.comments[0]!.text).toEndWith("\nFail\n\nChanged since the last verdict (Pass at `abc`): 2 new commits, merging #1521 into this branch.");
+  });
+});
+
+describe("closeOut", () => {
+  const CLOSE_OUT = { repo: "TRI/widgets", number: 1, onHead: "abc", merged: true };
+  const HELD = { head: "old", policy: null, verdict: "fail" };
+
+  test("a merge before the verdict says so under the header it held, writes it once, and leaves the build status", async () => {
+    const fake = fakeBitbucket({ state: "MERGED", comments: [{ id: 2, version: 0, text: `${LINK_REFERENCE_MARKERS.current({ ...HELD, shows: "progress" })}\n**Triage: In progress**`, author: BOT }] });
+    expect(await closeOut(fake.bb, CLOSE_OUT, user)).toMatchObject({ commentId: 2, updated: true });
+    expect(await closeOut(fake.bb, CLOSE_OUT, user)).toMatchObject({ commentId: 2, updated: false });
+    expect(fake.comments[0]!.text).toBe(`${LINK_REFERENCE_MARKERS.current({ ...HELD, shows: "closed" })}\n${closedText(true, "abc")}`);
+    expect(fake.writes.map((w) => `${w.method} ${w.path}`)).toEqual([`PUT ${PR_PATH}/comments/2`]);
+  });
+
+  test("a decline before any verdict says it closed, and a verdict on the head stays", async () => {
+    const declined = fakeBitbucket({ state: "DECLINED", comments: [{ id: 2, version: 0, text: `${LINK_REFERENCE_MARKER}\n**Triage: In progress**`, author: BOT }] });
+    await closeOut(declined.bb, { ...CLOSE_OUT, merged: false }, user);
+    expect(declined.comments[0]!.text).toBe(`${LINK_REFERENCE_MARKER}\n${closedText(false, "abc")}`);
+    const decided = fakeBitbucket({ state: "MERGED", comments: [{ id: 2, version: 0, text: `${LINK_REFERENCE_MARKERS.current({ ...HEADER, shows: "verdict" })}\nPass`, author: BOT }] });
+    expect(await closeOut(decided.bb, CLOSE_OUT, user)).toMatchObject({ commentId: 2, updated: false, kept: "verdict" });
+    expect(decided.writes).toEqual([]);
   });
 });
 

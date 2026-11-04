@@ -1,7 +1,7 @@
 import { errorText } from "@corbits/common";
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
 import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, listReviewThreads, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch, type ReviewThread } from "@corbits/github-reads";
-import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment, writeClosedComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
   return {
@@ -46,6 +46,7 @@ export async function syncLabels(gh: GithubFetch, input: { repo: string; number:
 }
 
 export const NOT_OPEN = "the pull request is not open";
+const STILL_OPEN = "the pull request is open";
 const HEAD_MOVED = "the pull request has moved past the head";
 
 /** `login` names the App's bot account, whose comments alone are read back. */
@@ -64,6 +65,22 @@ export async function mirror(gh: GithubFetch, i: MirrorInput, login: string) {
   if (!current.some((name) => kept.has(lowercase(name)))) await syncLabels(gh, { repo, number, current, add: i.labels, remove: i.owned ?? [] });
   if (i.close) await json(gh, `/repos/${repo}/pulls/${number}`, send("PATCH", { state: "closed" }));
   return { commentId: posted?.commentId ?? null, updated: posted?.updated ?? false, closed: i.close, sha: pr.head.sha, ...(posted?.unchanged && { unchanged: posted.unchanged }), ...(posted?.kept && { kept: posted.kept }) };
+}
+
+export type CloseOutInput = { repo: string; number: number; onHead: string; owned: readonly string[]; merged: boolean; comment: boolean };
+
+/**
+ * A pull request that merged or closed before its head's verdict: where `comment` is set, its comment says so in place
+ * of progress, and the `owned` labels come off with it. A verdict already shown on the head stays, as do its labels.
+ */
+export async function closeOut(gh: GithubFetch, i: CloseOutInput, login: string) {
+  const { repo, number } = i;
+  const pr = await json(gh, `/repos/${repo}/pulls/${number}`);
+  if (pr.state === "open") return { commentId: null, updated: false, sha: pr.head.sha, skipped: STILL_OPEN };
+  if (i.onHead !== pr.head.sha) return { commentId: null, updated: false, sha: pr.head.sha, skipped: HEAD_MOVED };
+  const written = i.comment ? await writeClosedComment(issueCommentHost(gh, repo, number), HTML_MARKERS, TRIAGE_COMMENT_MARKER, await currentComments(gh, repo, number, login), { merged: i.merged, head: i.onHead }) : undefined;
+  if (written?.kept !== "verdict") await syncLabels(gh, { repo, number, current: pr.labels.map((label: { name: string }) => label.name), add: [], remove: i.owned });
+  return { commentId: written?.commentId ?? null, updated: written?.updated ?? false, sha: pr.head.sha, ...(written?.unchanged && { unchanged: written.unchanged }), ...(written?.kept && { kept: written.kept }) };
 }
 
 export type TriageCommentInput = {
@@ -116,9 +133,13 @@ function issueCommentHost(gh: GithubFetch, repo: string, number: number): Commen
   };
 }
 
+async function currentComments(gh: GithubFetch, repo: string, number: number, login: string): Promise<MarkedComment[]> {
+  return marked(await issueComments(gh, repo, number), login).filter((c) => !HTML_MARKERS.isSuperseded(c.body)).map(markedComment);
+}
+
 /** `login` names the App's bot account, whose comments alone are edited. */
 export async function upsertTriageComment(gh: GithubFetch, input: TriageCommentInput, login: string): Promise<WrittenComment> {
-  const current = marked(await issueComments(gh, input.repo, input.number), login).filter((c) => !HTML_MARKERS.isSuperseded(c.body)).map(markedComment);
+  const current = await currentComments(gh, input.repo, input.number, login);
   return writeUnheadedComment(issueCommentHost(gh, input.repo, input.number), HTML_MARKERS, TRIAGE_COMMENT_MARKER, current, input.body, input.keepVerdictOn);
 }
 

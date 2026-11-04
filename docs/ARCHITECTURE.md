@@ -28,7 +28,11 @@ GitHub, Bitbucket DC ──webhook──► Hub ◄──── portal (/api)
     coalescer. A check event does not say whether its pull request is a
     draft or still open, so a window of check events alone reads that once
     at its flush rather than once per delivery. A pull request merged into
-    the default branch marks the repository's other triaged heads `stale`; a push to the default branch
+    the default branch marks the repository's other triaged heads `stale`. A
+    pull request's own close or merge is handed on only while its manager has
+    a comment to close out (`closeOutDue`: a manager is up, or the last pass
+    on its head posted no verdict); every other event on a closed pull
+    request is dropped. A push to the default branch
     that touches the policy file reads it again. Bitbucket Data Center has a
     provider hook of its own (`apps/hub/src/provider-hooks`). Both verify with
     `@corbits/common/x-hub-signature`, the scheme `@corbits/webhooks` 0.4 adds
@@ -299,7 +303,17 @@ are the detail of each step.
 8. **End.** The manager ends after step 7, or while its head waits only on
    CI. A new head while it is alive restarts its pass on that head. A pull
    request with nothing outstanding has no manager; its next event starts
-   again at step 1.
+   again at step 1. A pull request that merges or closes before its head's
+   verdict is mailed once more; that pass reads it closed, and whether it
+   merged, from the host (`state`, `merged`), deploys no judge or code
+   review, stops the reviewers it deployed, and its final post edits the
+   comment to **Merged before Triage finished** or **Closed before Triage
+   finished** under the header it held (`shows: "closed"`) and takes
+   Triage's labels off (GitHub); where Triage labels but does not comment,
+   only the waiting label, since a verdict on the head cannot be told from a
+   stale one. A comment that shows a verdict on the closing head stays, with
+   its labels. A pull request with no Triage comment gets none, and a
+   Bitbucket build status is left as it is.
 9. **Where it runs.** Each deployment, the listener, a manager or a judge,
    runs in a local sidecar of its own, up to `TRIAGE_MAX_LOCAL_SIDECARS`
    (default 8) at once; past that a deployment goes to a sandbox. Code
@@ -933,7 +947,9 @@ still takes the pass label off.
    mirror (`mark`). Rule results never decide it, so a rule Triage could not
    check for its own reasons, as code patterns in a patch it could not read
    in full, neither waits nor stops the wait. The hub records no verdict for a waiting
-   one, nor for one on a closed pull request (`closed`); a head that waits
+   one, nor for one on a closed pull request (`closed`), whose mirror is the
+   close-out marker (`closedMark`, effect id `closed:<repo>:<number>:<head>`)
+   that the host tool writes only on a pull request no longer open; a head that waits
    only on CI ends its manager, and the reconciler queues it again once CI
    settles. A mail with `noWait` (a manager past its
    60-minute CI wait, a head's last attempt, or Triage again) is decided

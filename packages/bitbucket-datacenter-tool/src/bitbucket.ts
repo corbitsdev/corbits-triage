@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { errorText } from "@corbits/common";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, CODE_REVIEW_MARKER, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type VerdictStatus, type WrittenComment } from "@corbits/triage-contracts";
+import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type VerdictStatus, type WrittenComment, writeClosedComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
 
@@ -14,6 +14,7 @@ export type BitbucketUser = () => Promise<TokenUser>;
 export class BitbucketRefusal extends Error {}
 
 export const NOT_OPEN = "the pull request is not open";
+const STILL_OPEN = "the pull request is open";
 const HEAD_MOVED = "the pull request has moved past the head";
 
 const TRIAGE_BUILD_NAME = "Corbits Triage";
@@ -242,6 +243,23 @@ async function takeBack(bb: BitbucketFetch, i: MirrorInput, pr: PullRequest, me:
   if (!stale) return [];
   await setStatus(bb, { repo: i.repo, number: i.number, slug: me.slug, status: "UNAPPROVED" });
   return [status];
+}
+
+export type CloseOutInput = { repo: string; number: number; onHead: string; merged: boolean };
+
+/**
+ * A pull request that merged or was declined before its head's verdict: its comment says so in place of progress,
+ * unless it shows a verdict on the head. Nothing else is written.
+ */
+export async function closeOut(bb: BitbucketFetch, i: CloseOutInput, user: BitbucketUser) {
+  const pr = await readPr(bb, i.repo, i.number);
+  if (pr.state === "OPEN") return { commentId: null, updated: false, sha: pr.sha, skipped: STILL_OPEN };
+  if (i.onHead !== pr.sha) return { commentId: null, updated: false, sha: pr.sha, skipped: HEAD_MOVED };
+  const own = marked(await listComments(bb, i.repo, i.number), await user());
+  const host = commentHost(bb, i.repo, i.number, new Map(own.map((c) => [c.id, c.version])));
+  const current = own.map(markedComment).filter((c) => !LINK_REFERENCE_MARKERS.isSuperseded(c.body));
+  const written = await writeClosedComment(host, LINK_REFERENCE_MARKERS, LINK_REFERENCE_MARKER, current, { merged: i.merged, head: i.onHead });
+  return { commentId: written?.commentId ?? null, updated: written?.updated ?? false, sha: pr.sha, ...(written?.unchanged && { unchanged: written.unchanged }), ...(written?.kept && { kept: written.kept }) };
 }
 
 /**

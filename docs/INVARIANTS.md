@@ -5,7 +5,7 @@ request that changes how Triage keeps a rule names the rule.
 
 ## Rules
 
-- **R1** One final verdict per pull request head, for the current head. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles it has exactly one current Triage comment, which is a verdict naming the head, and no waiting label.
+- **R1** One final verdict per pull request head, for the current head. A pull request that merges or closes before its verdict never stays in progress. Checked by `tests/model/rules.postgres.test.ts`: once the pull request settles it has exactly one current Triage comment, which is a verdict naming the head, and no waiting label. One that merged or closed keeps a verdict it had on its last head, or else says it merged or closed before Triage finished and has none of Triage's labels, or has no Triage comment when it closed before any went up.
 - **R2** Triage approves or merges only on Pass with a complete code review that meets the policy's findings condition, all for the current head, and merges only while no person's review thread is unresolved or unread. No automated check yet; the merge write refuses while a thread is.
 - **R3** Every host write happens once under its effect id. Checked by `tests/model/rules.postgres.test.ts` over every write the pull request received, whichever pass made it: no Triage comment is created while one is current, unless that one was superseded, and no label is added while it is on.
 - **R4** Unreadable input never passes or approves. No automated check yet.
@@ -28,10 +28,11 @@ against the grants a deployed run holds: those its definition's walk yields, its
 recorded for it at deploy.
 
 Events played: open, push, CI pending, success, failure or cancelled on the head, CI finishing on an older head, an
-edit, conversion to draft and back to ready, a mail delivered twice, and which queued mail is delivered next. Every
-sequence of none to two of them after the open is played and checked, 121 in all, as no sequence with an event that
-changes nothing is extended; then 300 seeded random walks of ten. A pull request settles once it is ready for
-review, CI on its head has finished and every mail has been delivered. A failure names its
+edit, conversion to draft and back to ready, a merge or a close, a mail delivered twice, and which queued mail is
+delivered next. After a merge or a close only mail already queued is delivered. Every sequence of none to two of them
+after the open is played and checked, 169 in all, as no sequence with an event that changes nothing is extended; then
+300 seeded random walks of ten. A pull request settles once it is ready for review, CI on its head has finished and
+every mail has been delivered; one that merged or closed, once every mail has been delivered. A failure names its
 sequence, and a walk's seed, so it replays; a run that ends other than completed, or a sequence that throws, fails too.
 Every sequence of none or one event is played again with code review on, once with its run failing before it is ready
 and once with it dying after it takes its mail. With each, a pull request is opened and settled, so its verdict goes up
@@ -50,6 +51,8 @@ Stand-ins, and what they leave out:
   mail to a run that has ended is dropped or refused, as stock does.
 - Webhooks enter at the hub's intake as the coalescer flushes them. The bridge and coalescer do not run; the bridge's
   rule that a draft's webhooks are dropped is played by the test.
+- A merge or close is mailed whatever the pull request's comment shows, so the bridge's `closeOutDue` gate is not
+  played; the host tool's own check keeps a verdict on the head.
 - The intake's hooks are fixed: the listener is always routable, no pull request is paused, the App's login is fixed,
   code review's read of the pull request is the fake GitHub's head, and backlog reads are not served.
 - Code review's deploy records the run and grants its deployer `manage` on it. The run either fails at once, or is

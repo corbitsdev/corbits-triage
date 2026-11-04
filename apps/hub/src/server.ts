@@ -39,7 +39,7 @@ import { asRecord, decodedSegment, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { deploymentUp, endNeverRan, endOverdue, liveListener, notePlaced, passRequest, recordRefused } from "./manager-state.js";
+import { closeOutDue, deploymentUp, endNeverRan, endOverdue, liveListener, notePlaced, passRequest, recordRefused, type PullRequestRef } from "./manager-state.js";
 import { createTakeLedger, createTriageLiveness } from "./triage-liveness.js";
 import { setTimings } from "./timings.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
@@ -806,6 +806,9 @@ async function recheckOpenPulls(tenantId: string, repo: string, except: number |
   if (due > 0) kickTriage();
   return due;
 }
+async function closeOutDueFor(tenantId: string, pr: PullRequestRef, head: string): Promise<boolean> {
+  return closeOutDue(credentialDeps.db, tenantId, pr, head);
+}
 async function openHeadsOf(tenantId: string, record: RepoRecord) {
   const read = await tenantOpenHeads(tenantId);
   if (!read) throw new Error("no active source credential");
@@ -824,6 +827,7 @@ const bridge = createBridgeHandler({
   readCheckPack,
   openHeadFor: tenantOpenHead,
   recheckOpenPulls,
+  closeOutDue: closeOutDueFor,
   refreshPolicyFile: policyFile.onPush,
   heard: repoActivity.heard,
   startBacklog: createBacklogStart(backlogStartDeps),
@@ -839,6 +843,7 @@ const providerHooks = createProviderHookApp(createProviderHookHandler({
   coalescer,
   readCheckPack,
   recheckOpenPulls,
+  closeOutDue: closeOutDueFor,
   refreshPolicyFile: policyFile.onPush,
   heard: repoActivity.heard,
 }));

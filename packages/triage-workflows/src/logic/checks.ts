@@ -68,6 +68,7 @@ export interface PrFacts {
   tier: TrustTier;
   headSha: string;
   state: "open" | "closed";
+  merged: boolean;
   draft: boolean;
   mergeable: boolean | null;
   checks: "success" | "failure" | "pending" | "cancelled" | "none";

@@ -455,6 +455,21 @@ export async function liveManager(db: DB["db"], tenantId: string, pr: PullReques
 }
 
 /**
+ * Whether a pull request that merged or closed on `head` has a comment its manager should close out: a manager claimed
+ * it and is still on it, or the last pass on `head` posted no verdict, or none ran on it. A pull request no manager
+ * claimed, or whose verdict on `head` is posted, needs nothing.
+ */
+export async function closeOutDue(db: DB["db"], tenantId: string, pr: PullRequestRef, head: string): Promise<boolean> {
+  const [row] = await db.select({ state: managerState.state }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), eq(managerState.key, claimKey(pr)), eq(managerState.kind, "claim")));
+  if (!row) return false;
+  const claim = claimOf(claimKey(pr), row.state);
+  if (claim.status === "live") return true;
+  const last = claim.history.findLast((pass) => pass.head === head);
+  return last?.request === undefined || last.waiting === true;
+}
+
+/**
  * The claim `runId` holds, taken for it when no up run holds it: it is missing or ended, or the run it names has gone,
  * whose open pass the caller resumes. Undefined while another up run holds it, a run being cancelled included until it
  * ends, or once stock no longer lets `runId` execute. Concurrent callers queue on the claim's row lock, so exactly one

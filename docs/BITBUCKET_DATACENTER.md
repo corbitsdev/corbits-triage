@@ -212,6 +212,13 @@ status reads `INPROGRESS` "Triage: Waiting for CI". A verdict left unsure or fai
 unconfirmed retry interval (5 minutes, doubling) and queued again once its
 builds changed (`triage_requeued` with `reason: build_status_changed`).
 
+`pr:merged` both moves the base for the repository's other pull requests and,
+like `pr:declined`, goes on to the pull request's own manager while it still
+has a comment to close out. That pass edits the comment to "Merged before
+Triage finished" or "Closed before Triage finished" on its head, unless it
+shows a verdict on that head; the `Corbits Triage` build status is left as it
+is.
+
 A webhook triage created is removed when the repository is disabled or the
 instance disconnected; one set up by hand is not, and stays until a repository
 admin deletes it.

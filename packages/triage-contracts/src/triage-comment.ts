@@ -10,10 +10,10 @@ type ArtifactRef = { id: string; version: number };
  * What a Triage comment was written for, kept in its marker so a later run can tell what changed. `repo` is the stored
  * policy a comment written before the policy file was the only policy names, so the comment that replaces it says so.
  * `changed` is the note on what reached the head since the verdict before, so a rerun on the same head says it again.
- * `shows` says what the comment shows: its verdict, or progress under the header of the verdict it held. A comment
- * written before the field shows its verdict.
+ * `shows` says what the comment shows: its verdict, progress under the header of the verdict it held, or that the pull
+ * request closed before Triage finished, under that same header. A comment written before the field shows its verdict.
  */
-export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string; changed?: string; shows?: "verdict" | "progress" };
+export type TriageHeader = { head: string; policy: (PolicySource & { repo?: ArtifactRef }) | null; verdict: string; changed?: string; shows?: "verdict" | "progress" | "closed" };
 
 /** One of Triage's marked comments as a host lists it, oldest first. */
 export type MarkedComment = { id: number; body: string; updatedAt?: string };
@@ -41,7 +41,7 @@ const TriageHeaderShape = type({
   policy: type({ "repo?": ArtifactRefShape, "file?": FileRefShape, "sharedFile?": FileRefShape.and({ repo: "string" }) }).or("null"),
   verdict: "string",
   "changed?": "string",
-  "shows?": "'verdict' | 'progress'",
+  "shows?": "'verdict' | 'progress' | 'closed'",
 });
 
 /** How a host writes the header on a Triage comment's first line, so a later run can read it back. */
@@ -165,6 +165,10 @@ export async function upsertMarked(host: CommentHost, body: string, current: Mar
   return { commentId: await host.post(body), updated: false };
 }
 
+function showsVerdictOn(header: TriageHeader, head: string): boolean {
+  return (header.shows ?? "verdict") === "verdict" && header.head === head;
+}
+
 /**
  * Edits the current comment to `text` without a verdict of its own, as while a verdict is in progress, and writes nothing
  * when it already says that. The comment keeps the header of the verdict it held, showing progress, so the verdict
@@ -174,9 +178,29 @@ export async function upsertMarked(host: CommentHost, body: string, current: Mar
 export async function writeUnheadedComment(host: CommentHost, markers: MarkerFormat, plainMarker: string, current: MarkedComment[], text: string, keepVerdictOn?: KeptVerdict): Promise<WrittenComment> {
   const latest = current[0];
   const kept = latest && markers.headerOf(latest.body);
-  if (kept && kept.shows !== "progress" && kept.head === keepVerdictOn?.head && kept.verdict === keepVerdictOn.verdict && samePolicy(kept.policy, keepVerdictOn.policy)) return { commentId: latest.id, updated: false, kept: "verdict" };
+  if (kept && keepVerdictOn && showsVerdictOn(kept, keepVerdictOn.head) && kept.verdict === keepVerdictOn.verdict && samePolicy(kept.policy, keepVerdictOn.policy)) return { commentId: latest.id, updated: false, kept: "verdict" };
   const body = `${kept ? markers.current({ ...kept, shows: "progress" }) : plainMarker}\n${text}`;
   if (latest?.body === body) return { commentId: latest.id, updated: false, ...(latest.updatedAt && { unchanged: `unchanged since ${latest.updatedAt}` }) };
+  return upsertMarked(host, body, current);
+}
+
+/** The line a pull request that merged or closed before its head's verdict shows in place of progress. */
+export function closedText(merged: boolean, head: string): string {
+  return `${merged ? "Merged" : "Closed"} before Triage finished on \`${head.slice(0, 7)}\`.`;
+}
+
+/**
+ * Edits the current comment of a pull request that merged or closed on `head` to say Triage did not finish, keeping the
+ * header it held. A comment that shows a verdict on `head` is kept (`kept: "verdict"`), and none is posted where there
+ * is no comment to edit.
+ */
+export async function writeClosedComment(host: CommentHost, markers: MarkerFormat, plainMarker: string, current: MarkedComment[], closed: { merged: boolean; head: string }): Promise<WrittenComment | undefined> {
+  const latest = current[0];
+  if (!latest) return undefined;
+  const header = markers.headerOf(latest.body);
+  if (header && showsVerdictOn(header, closed.head)) return { commentId: latest.id, updated: false, kept: "verdict" };
+  const body = `${header ? markers.current({ ...header, shows: "closed" }) : plainMarker}\n${closedText(closed.merged, closed.head)}`;
+  if (latest.body === body) return { commentId: latest.id, updated: false, ...(latest.updatedAt && { unchanged: `unchanged since ${latest.updatedAt}` }) };
   return upsertMarked(host, body, current);
 }
 

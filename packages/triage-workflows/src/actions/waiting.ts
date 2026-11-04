@@ -58,6 +58,20 @@ export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Aw
 }
 
 /**
+ * What a pull request that merged or closed on `headSha` before its verdict shows: its comment says Triage did not
+ * finish where triage comments, and Triage's labels come off where it labels; none where triage writes neither. Without
+ * its comment a verdict on the head cannot be told from a stale one, so only the waiting label comes off.
+ */
+export function closedMark(source: RepoSource, { repo, number, headSha, merged }: { repo: string; number: number; headSha: string; merged: boolean }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, appLogin: string | undefined): WaitingMark | undefined {
+  const comment = automatic.includes("comment");
+  let owned: readonly string[] = [];
+  if (source === "github" && automatic.includes("labels")) owned = comment ? ownedLabels(labels) : [WAITING_LABEL];
+  if (!comment && owned.length === 0) return undefined;
+  const args = { repo, number, onHead: headSha, labels: [], owned, closedOut: { merged, comment }, ...(appLogin && { appLogin }) };
+  return { effectId: `closed:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
+}
+
+/**
  * A GitHub pull-request mail from the hub takes Ready off its head before facts, except when every triage event on the
  * request is `"approved"`, which leaves labels as they are. A push, open, synchronize, check, comment, catch-up, or any
  * mix still takes Ready off. Bitbucket writes nothing here. Any other mail goes on as it is.
