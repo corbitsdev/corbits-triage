@@ -3,7 +3,7 @@ import { counted } from "@corbits/common";
 import { CodeReviewOutput, MANAGER_LIFETIME_MS, PRIORITIES, RULE_GATES, rulesGate, ThreadRead, VERDICTS, type ActionKind, type CheckPack, type FindingsCondition, type VerdictWord } from "@corbits/triage-contracts";
 import { DO_NAMES, postsRequestChanges } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
-import { awaitsText, type Verdict } from "@corbits/triage-workflows/logic/render";
+import { awaitsText, CODE_REVIEW_RUNNING, type Verdict } from "@corbits/triage-workflows/logic/render";
 import { storedReviewer, TakeOutput } from "./manager.js";
 
 const CodeReviewPart = type({ on: "boolean", rules: type.enumerated(...RULE_GATES) });
@@ -18,13 +18,16 @@ type Scope = typeof Scope.infer;
 
 type Finding = CodeReviewOutput["comments"][number];
 
-/** What code review says of the verdict's head: nothing, while the policy leaves it out; why it is incomplete; or its findings. */
-type Reviewed = { incomplete: string } | { findings: Finding[] };
+/** What code review says of the verdict's head, while the policy turns it on: still running, failed and why, or done with its findings. */
+type Reviewed = { state: "running" } | { state: "failed"; cause: string } | { state: "done"; findings: Finding[] };
+
+const RUNNING_REASON = "Code review is running on this head.";
 
 /**
  * The review of the verdict's head while the policy turns code review on. One the policy's `for` or `when` left out
  * counts as off, and one held back by failed or unsettled rules did not run. A review that failed or ran past its
- * deadline reported nothing, and one of another head says nothing of this one. A comment id kept only on the code-review
+ * deadline reported nothing, and one of another head says nothing of this one. One deployed on the head that has not
+ * reported and is within its deadline is running. A comment id kept only on the code-review
  * event is joined onto the finding it belongs to, so this pass can match the read by that id.
  */
 function reviewOf({ taken, review, reviewRun, reviewers, head, commentThreads }: TakeOutput, verdict: Verdict, scope: Scope): Reviewed | undefined {
@@ -33,13 +36,17 @@ function reviewOf({ taken, review, reviewRun, reviewers, head, commentThreads }:
   const { codeReview } = part;
   const leftOut = scope.skipped !== undefined && rulesGate(codeReview.rules, verdict.checks).open;
   if (!codeReview.on || leftOut) return undefined;
-  if (!scope.reviewed) return { incomplete: "Code review did not run on this head." };
+  if (!scope.reviewed) return { state: "failed", cause: "Code review did not run on this head." };
   const stored = head === undefined ? undefined : storedReviewer(reviewers, head);
   const reported = head === undefined || (verdict.headSha !== null && verdict.headSha !== head) ? undefined : (review ?? stored?.review);
-  if (!reported) return { incomplete: "Code review did not report on this head." };
-  if (reported.budgetExhausted || reported.complete !== true) return { incomplete: "Code review did not read the whole change on this head." };
+  if (!reported) return running(reviewers, head) ? { state: "running" } : { state: "failed", cause: "Code review did not report on this head." };
+  if (reported.budgetExhausted || reported.complete !== true) return { state: "failed", cause: "Code review did not read the whole change on this head." };
   const runId = review !== undefined ? reviewRun : stored?.runId;
-  return { findings: withEventThreads(reported.comments, runId, commentThreads) };
+  return { state: "done", findings: withEventThreads(reported.comments, runId, commentThreads) };
+}
+
+function running(reviewers: TakeOutput["reviewers"], head: string | undefined): boolean {
+  return reviewers.some((reviewer) => reviewer.kind === "code-review" && reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > Date.now());
 }
 
 /**
@@ -91,7 +98,8 @@ function findingsText(condition: FindingsCondition, count: number): string {
 
 /** Why the review does not meet `condition`, if it does not. Findings a resolved thread released are not counted. */
 function unmet(condition: FindingsCondition, reviewed: Reviewed, asked: readonly number[] | undefined, reads: readonly ThreadRead[]): string | undefined {
-  if ("incomplete" in reviewed) return reviewed.incomplete;
+  if (reviewed.state === "running") return RUNNING_REASON;
+  if (reviewed.state === "failed") return reviewed.cause;
   const currentIds = new Set(reviewed.findings.flatMap((item) => (item.thread === undefined ? [] : [item.thread.id])));
   const holding = reviewed.findings.filter((finding) => !released(finding, asked, reads, currentIds));
   const open = openUnder(condition, holding).length;
@@ -177,7 +185,7 @@ function heldByReview(parsed: typeof ClearedInput.infer): Verdict {
   const pack = parsed.rules.output.items.find((item) => item.pack !== undefined)?.pack;
   const asked = parsed.take.output.threads;
   const reads = parsed.findingThreads?.output.reads ?? [];
-  const notes: string[] = [];
+  const notes: string[] = reviewed.state === "running" ? [CODE_REVIEW_RUNNING] : [];
   const actions = verdict.actions.map(function held(action): Action {
     if (!("effectId" in action) || "held" in action) return action;
     const condition = conditionOf(pack, action.list, action.index, action.kind);
