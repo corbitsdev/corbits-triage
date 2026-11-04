@@ -190,7 +190,7 @@ export function validManifestMutationRequest(req: Request, trustedOrigins: Reado
   return fetchSite !== "cross-site";
 }
 
-async function authorizeCanonicalCredentialWrite(
+export async function authorizeCanonicalCredentialWrite(
   authorizeCredential: AuthorizeCredential,
   principalId: string,
   tenantId: string,

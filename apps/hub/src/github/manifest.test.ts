@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { CredentialCipher } from "@intx/types";
 import {
+  authorizeCanonicalCredentialWrite,
   createGithubManifestIntegration,
   manifestStateKey,
   prepareCanonicalManifestWrite,
@@ -96,6 +97,19 @@ function mutationRequest(headers: Bun.HeadersInit): Request {
 }
 
 describe("GitHub manifest authorization", () => {
+  test("requires create for fresh setup and manage over both canonical credentials for replacement", async () => {
+    const calls: string[] = [];
+    async function authorize(_principal: string, _tenant: string, resource: string, action: "create" | "manage") {
+      calls.push(`${resource}:${action}`);
+      return resource !== "credential:crd_hook";
+    }
+    expect(await authorizeCanonicalCredentialWrite(authorize, "prn_one", "tnt_one", [])).toBeTrue();
+    expect(await authorizeCanonicalCredentialWrite(authorize, "prn_one", "tnt_one", [
+      { id: "crd_app", name: "github" }, { id: "crd_hook", name: "github-hook" },
+    ])).toBeFalse();
+    expect(calls).toEqual(["credential:*:create", "credential:crd_app:manage", "credential:crd_hook:manage"]);
+  });
+
   for (const [label, credentials] of [
     ["fresh setup", []],
     ["replacement", [{ id: "crd_app", name: "github" }, { id: "crd_hook", name: "github-hook" }]],
