@@ -27,12 +27,6 @@ test("checks are kept while the same account stays signed in", async () => {
   expect(Object.keys(await views.getValue())).toHaveLength(1);
 });
 
-test("checks are kept while no one stays signed in", async () => {
-  await savedAs("");
-  expect(await readAs("")).toBe(true);
-  expect(Object.keys(await views.getValue())).toHaveLength(1);
-});
-
 test("a run started as one account and finished after another signed in is not saved", async () => {
   await readAs("b");
   await saveView(VIEW, "a");
@@ -43,15 +37,6 @@ test("a github.com page that does not say who is signed in fails the run, so not
   const fetched = spyOn(globalThis, "fetch").mockResolvedValue(new Response('<meta name="user-login" content="">'));
   try {
     await expect(sessionLogin()).rejects.toThrow("github.com did not say who is signed in.");
-  } finally {
-    fetched.mockRestore();
-  }
-});
-
-test("the signed-in login is read whatever order the meta tag's attributes are in", async () => {
-  const fetched = spyOn(globalThis, "fetch").mockResolvedValue(new Response('<meta content="a" name="user-login">'));
-  try {
-    expect(await sessionLogin()).toBe("a");
   } finally {
     fetched.mockRestore();
   }

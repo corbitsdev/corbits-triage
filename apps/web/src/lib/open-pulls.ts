@@ -67,7 +67,7 @@ export function useMarkReplySent(): (item: PrItem) => void {
  */
 type HandledEntry = { kind: HandledKind; activityAt: string | null; headSha: string | null };
 
-export type Handled = Record<string, HandledEntry | string | null>;
+type Handled = Record<string, HandledEntry | string | null>;
 
 const HANDLED_PULLS_QUERY_KEY = "handled-pulls";
 /** Held actions can still be undone, so they stay in memory; a pull request moves to the persisted handled map once its send starts. */
@@ -102,7 +102,7 @@ function useHandledQuery(queryKey: Array<string | undefined>): Handled {
   return data ?? {};
 }
 
-export function withPull(handled: Handled | undefined, item: PrItem, kind: HandledKind): Handled {
+function withPull(handled: Handled | undefined, item: PrItem, kind: HandledKind): Handled {
   return { ...handled, [item.key]: { kind, activityAt: item.activityAt, headSha: item.headSha } };
 }
 
@@ -202,7 +202,7 @@ function usePullRequestItems(pulls: PullTriage[] = NO_PULLS): PrItem[] {
 }
 
 /** Whether the open pull request listing carries the pull request, in a repository enabled on that listing's host. */
-export function openOnEnabledRepo(openPulls: OpenPulls | undefined, repos: RepoRecord[], repo: string, number: number): boolean {
+function openOnEnabledRepo(openPulls: OpenPulls | undefined, repos: RepoRecord[], repo: string, number: number): boolean {
   const row = openPulls?.repos.find((listed) => listed.repo === repo && listed.prs.some((pr) => pr.number === number));
   return row !== undefined && triageEnabledRepos(repos).has(repoKey({ name: row.repo, source: row.source }));
 }
@@ -222,7 +222,7 @@ export function usePullPageItems(repo: string | null, number: number | null): Pr
  * Until GitHub first answers, every pull request with a verdict looks open, closed ones included.
  * A list restored from the cache counts as an answer and is refetched; a failed read counts too, so the inbox falls back to the verdicts it has.
  */
-export function isOpenPullsAnswered(openPulls: Pick<UseQueryResult, "data" | "isError">): boolean {
+function isOpenPullsAnswered(openPulls: Pick<UseQueryResult, "data" | "isError">): boolean {
   return openPulls.data !== undefined || openPulls.isError;
 }
 
@@ -247,12 +247,12 @@ export function useQueueLoadingPulse(): boolean {
   return pending || approvalsLoading || openPullsUnanswered;
 }
 
-export function openItems(items: PrItem[], handled: Handled, held: Handled): OpenItem[] {
+function openItems(items: PrItem[], handled: Handled, held: Handled): OpenItem[] {
   return knownItems(items, handled, held).filter((open) => !LEAVING.has(open.handled?.kind ?? null));
 }
 
 /** Every open pull request in the queue, with the ones merged or closed here still in it until the next refresh. */
-export function knownItems(items: PrItem[], handled: Handled, held: Handled): OpenItem[] {
+function knownItems(items: PrItem[], handled: Handled, held: Handled): OpenItem[] {
   return items
     .filter((item) => !item.closed)
     .map((item) => ({ item, handled: handledMark(held, item) ?? handledMark(handled, item) }));

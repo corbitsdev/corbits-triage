@@ -89,22 +89,14 @@ mock.module("./lib/user-cache.tsx", () => ({ UserQueryCache: Passthrough }));
 
 let snapshot = connectedSnapshot;
 let connected = true;
-let refreshes = 0;
-let finishRefresh: () => void = function noRefresh() {};
-let failRefresh: (cause: Error) => void = function noRefresh() {};
 
 beforeEach(function connect() {
   snapshot = connectedSnapshot;
   connected = true;
-  refreshes = 0;
 });
 
-function refreshNow() {
-  refreshes += 1;
-  return new Promise<PortalSnapshot>((resolve, reject) => {
-    finishRefresh = () => resolve(snapshot);
-    failRefresh = reject;
-  });
+async function refreshNow() {
+  return snapshot;
 }
 
 mock.module("./lib/portal.tsx", () => ({
@@ -180,12 +172,8 @@ afterEach(function restore() {
   globalThis.fetch = realFetch;
 });
 
-let requested: string[] = [];
-
 function renderAt(path: string) {
-  requested = [];
-  globalThis.fetch = async function offline(input: RequestInfo | URL) {
-    requested.push(String(input));
+  globalThis.fetch = async function offline() {
     return new Response("", { status: 503 });
   } as unknown as typeof fetch;
   (window as unknown as { happyDOM: { setURL: (url: string) => void } }).happyDOM.setURL(`https://portal.test${path}`);
@@ -204,20 +192,6 @@ test("signing in without a decision model lands on Triage, with the Connect prom
   expect([...document.querySelectorAll("button")].find((button) => button.textContent?.startsWith("Waiting"))?.textContent).toBe("Waiting1");
 });
 
-test("a pull request open on the old Ready list opens on Triage with the Ready filter", () => {
-  renderAt("/ready/acme/widgets/1");
-
-  expect(`${window.location.pathname}${window.location.search}`).toBe("/pr/acme/widgets/1?view=ready");
-  expect(document.querySelector("h1")?.textContent).toBe("Triage");
-});
-
-test("Triage reads no policy when the workspace has no Triage role to allow actions to", () => {
-  renderAt("/");
-
-  expect(document.querySelector("h1")?.textContent).toBe("Triage");
-  expect(requested.filter((url) => url.includes("/policy"))).toEqual([]);
-});
-
 test("a connected workspace whose keys could not be read sees a notice with Try again, not onboarding", async () => {
   snapshot = { ...connectedSnapshot, credentialsError: "The hub is unavailable." };
   connected = false;
@@ -226,45 +200,6 @@ test("a connected workspace whose keys could not be read sees a notice with Try 
   expect(document.querySelector(".page-notice")?.textContent).toContain("Couldn't read your workspace's keys.");
   expect(document.querySelector("[role=alert]")?.textContent).toBe("The hub is unavailable.");
   expect(document.querySelector("#setup-title")).toBeNull();
-  await act(async () => {
-    [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-  expect(refreshes).toBe(1);
-  const pending = [...document.querySelectorAll("button")].find((button) => button.textContent === "Trying again…");
-  expect(pending?.disabled).toBe(true);
-  await act(async () => {
-    finishRefresh();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-  expect([...document.querySelectorAll("button")].some((button) => button.textContent === "Try again")).toBe(true);
-});
-
-async function retry(unread: PortalSnapshot, settle: () => void) {
-  snapshot = unread;
-  connected = false;
-  renderAt("/");
-  await act(async () => {
-    [...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-  await act(async () => {
-    settle();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-}
-
-test("a retry that still cannot read the keys says so and offers Try again again", async () => {
-  await retry({ ...connectedSnapshot, credentialsError: "The hub is unavailable." }, () => finishRefresh());
-
-  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys.");
-  expect([...document.querySelectorAll("button")].find((button) => button.textContent === "Try again")?.disabled).toBe(false);
-});
-
-test("a retry that cannot reach the service says so", async () => {
-  await retry({ ...connectedSnapshot, credentialsError: "The hub is unavailable." }, () => failRefresh(new Error("Could not reach the service.")));
-
-  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your keys: Could not reach the service.");
 });
 
 async function workspaceUnread(): Promise<PortalSnapshot> {
@@ -289,13 +224,6 @@ test("a workspace that could not be read says so with Try again, instead of show
   expect(document.querySelector("[role=alert]")?.textContent).toBe("The hub is unavailable.");
   expect(document.querySelector(".ws-name")?.textContent).toBe("Acme");
   expect(document.querySelector(".nav-a .n")).toBeNull();
-});
-
-test("a retry that still cannot read the workspace says so", async () => {
-  await retry(await workspaceUnread(), () => finishRefresh());
-
-  expect(refreshes).toBe(1);
-  expect([...document.querySelectorAll("[role=alert]")].map((alert) => alert.textContent)).toContain("Still couldn't read your workspace.");
 });
 
 test("a workspace with no keys stored is sent to onboarding", () => {

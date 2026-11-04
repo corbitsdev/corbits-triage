@@ -112,7 +112,7 @@ function loadNotice(host: string, pending: boolean, error: unknown): ReactNode {
 }
 
 /** Commits, then conversation, under the verdict and the evidence. */
-export function PullHistory({ host, pending, error, commits, comments }: {
+function PullHistory({ host, pending, error, commits, comments }: {
   host: string;
   pending: boolean;
   error: unknown;

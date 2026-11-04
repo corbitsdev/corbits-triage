@@ -5,7 +5,7 @@ const WEEK = 604_800_000;
 const MONTH = 2_592_000_000;
 const YEAR = 31_104_000_000;
 
-export function formatDuration(ms: number): string {
+function formatDuration(ms: number): string {
   if (ms < MINUTE) return `${Math.floor(ms / 1000)}s`;
   if (ms < HOUR) return `${Math.floor(ms / MINUTE)}m`;
   if (ms <= DAY) return `${Math.floor(ms / HOUR)}h`;

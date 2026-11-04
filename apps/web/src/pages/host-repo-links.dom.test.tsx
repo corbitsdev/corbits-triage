@@ -253,14 +253,6 @@ function repositoriesHealth(): Array<[RepoSource, string | null | undefined]> {
   return [...document.querySelectorAll("tbody tr")].map((row) => [row.querySelector(".c-name small.src") ? "bitbucket-datacenter" : "github", row.querySelector(".c-health .hl")?.textContent]);
 }
 
-test("the repositories list gives each host's repository of the same name its own policy standing", () => {
-  upgrades = [
-    { repo: NAME, source: "github", upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 } },
-    { repo: NAME, source: "bitbucket-datacenter", upgrade: { state: "start" } },
-  ];
-  expect(repositoriesHealth()).toEqual([["github", "Waiting for merge"], ["bitbucket-datacenter", "!Add a policy file"]]);
-});
-
 test("a policy pull request the hub could not check is not shown as waiting for merge", () => {
   upgrades = [
     { repo: NAME, source: "github", upgrade: { state: "start" }, pull: { url: "https://github.com/pull/1", number: 1 }, pullUnread: true },

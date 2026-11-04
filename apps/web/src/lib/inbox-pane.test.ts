@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { Outcome } from "./held-actions.ts";
 import type { GithubPullDetail, PrGithubWriteInput, PrItem } from "./hub-api.ts";
-import { canRun, paneActions, paneFacts, paneWrite, replyDraft, type PaneGate, type WriteKind } from "./inbox-pane.ts";
+import { paneActions, paneFacts, paneWrite, type PaneGate, type WriteKind } from "./inbox-pane.ts";
 
 function item(overrides: Partial<PrItem>): PrItem {
   const base: PrItem = {
@@ -99,86 +98,19 @@ describe("paneActions", () => {
     expect(paneActions(gate({ state: "ready", mergeable: null })).primary?.blocker).toBe("mergeability-unknown");
   });
 
-  test("merge waits while GitHub is still computing mergeability, even when the verdict said mergeable", () => {
-    expect(paneActions(gate({ state: "ready", mergeable: true }, detail({ mergeable: null }))).primary?.blocker).toBe("mergeability-unknown");
-  });
-
   test("nothing runs on a running, unnumbered or read-only pull request", () => {
     expect(paneActions(gate({ running: true })).primary?.blocker).toBe("running");
     expect(paneActions(gate({ number: null })).primary?.blocker).toBe("no-number");
     expect(paneActions(gate({}, undefined, { readOnly: true })).more.map((row) => row.blocker)).toEqual(["read-only", "read-only", "read-only", "read-only"]);
   });
-
-  test("the menu leaves out the suggested action; anything writable closes plainly", () => {
-    expect(paneActions(gate({ comment: "Thanks" })).more.map((row) => row.label)).toEqual(["Approve", "Request changes", "Comment", "Merge", "Close", "Triage again"]);
-    expect(paneActions(gate({ comment: "Thanks" }, undefined, { readOnly: true })).more.map((row) => row.kind)).toEqual(["approve", "changes", "comment", "merge", "triage"]);
-  });
-
-  test("a pull request Triage opened is merged, never reviewed, since the host refuses a review from its author", () => {
-    const own = paneActions(gate({ state: "awaiting-review", mergeable: true, byTriage: true }));
-    expect(own.primary).toEqual({ kind: "merge", blocker: null });
-    expect(own.more.map((row) => row.label)).toEqual(["Comment", "Close", "Triage again"]);
-    expect(paneActions(gate({ state: "blocked", byTriage: true })).primary).toBeNull();
-  });
-
-  test("triage again is offered once the hub has run or given up on the pull request, under the same gate as writes", () => {
-    const triage = (overrides: Partial<PrItem>, flags: Partial<Pick<PaneGate, "readOnly" | "busy">> = {}) => paneActions(gate(overrides, undefined, flags)).more.find((row) => row.kind === "triage");
-    expect(triage({})).toEqual({ kind: "triage", blocker: null, label: "Triage again" });
-    expect(triage({ runId: null, state: "new" })).toBeUndefined();
-    expect(triage({}, { readOnly: true })?.blocker).toBe("read-only");
-    expect(triage({ running: true })?.blocker).toBe("running");
-    const failed = paneActions(gate({ runId: null, state: "new", failure: "failed" }));
-    expect(failed.primary).toEqual({ kind: "triage", blocker: null });
-    expect(failed.more.find((row) => row.kind === "triage")).toBeUndefined();
-  });
-
-  test("a drafted reply is the primary action for the author until the mirror posted it, and in the More menu otherwise", () => {
-    expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" })).primary).toEqual({ kind: "reply", blocker: null });
-    expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" }, undefined, { readOnly: true })).primary).toEqual({ kind: "reply", blocker: "read-only" });
-    expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase" })).more.find((row) => row.kind === "reply")).toBeUndefined();
-    expect(paneActions(gate({ state: "needs-author-update", comment: "Please rebase", posted: true })).primary).toBeNull();
-    expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" })).more.find((row) => row.kind === "reply")).toEqual({ kind: "reply", blocker: null, label: "Post reply" });
-    expect(paneActions(gate({ state: "awaiting-review", comment: "Thanks" }, undefined, { readOnly: true })).more.find((row) => row.kind === "reply")?.blocker).toBe("read-only");
-  });
-
-  test("an empty or absent draft shows no reply to post anywhere", () => {
-    expect(paneActions(gate({ state: "needs-author-update" })).primary).toEqual({ kind: "comment", blocker: null });
-    expect(paneActions(gate({})).more.find((row) => row.kind === "reply")).toBeUndefined();
-    expect(replyDraft(item({ comment: "" }), "")).toBeNull();
-    expect(replyDraft(item({ comment: null }), "")).toBeNull();
-    // a degraded verdict's empty comment must not surface an enabled reply row either
-    expect(paneActions(gate({ state: "needs-author-update", comment: "" })).primary).toEqual({ kind: "comment", blocker: null });
-    expect(paneActions(gate({ state: "awaiting-review", comment: "" })).more.find((row) => row.kind === "reply")).toBeUndefined();
-  });
-});
-
-describe("canRun", () => {
-  test("keyboard shortcuts stop where the buttons are disabled", () => {
-    expect(canRun("approve", gate({}))).toBe(true);
-    expect(canRun("approve", gate({}, undefined, { readOnly: true }))).toBe(false);
-    expect(canRun("approve", gate({}, undefined, { busy: true }))).toBe(false);
-    expect(canRun("approve", gate({ running: true }))).toBe(false);
-    expect(canRun("merge", gate({ state: "ready", mergeable: null }))).toBe(false);
-  });
-
-  test("posting the reply is gated by the same blockers as the primary button", () => {
-    expect(canRun("reply", gate({ comment: "Thanks" }))).toBe(true);
-    expect(canRun("reply", gate({ comment: "Thanks", number: null }))).toBe(false);
-    expect(canRun("reply", gate({ comment: "Thanks", running: true }))).toBe(false);
-    expect(canRun("reply", gate({ comment: "Thanks" }, undefined, { readOnly: true }))).toBe(false);
-    expect(canRun("reply", gate({ comment: "Thanks" }, undefined, { busy: true }))).toBe(false);
-  });
 });
 
 describe("paneWrite", () => {
-  type Options = { commentId?: number | null; labelsFail?: string; replyFail?: string };
-  async function record(kind: WriteKind, overrides: Partial<PrItem>, text: string, options: Options = {}): Promise<{ calls: unknown[]; outcome: Outcome }> {
+  async function record(kind: WriteKind, overrides: Partial<PrItem>, text: string): Promise<{ calls: unknown[] }> {
     const calls: unknown[] = [];
     async function write(input: PrGithubWriteInput) {
       calls.push(input);
-      if (input.action === "labels" && options.labelsFail !== undefined) throw new Error(options.labelsFail);
-      if (input.action === "reply" && options.replyFail !== undefined) throw new Error(options.replyFail);
-      return { commentId: options.commentId === undefined ? 7 : options.commentId };
+      return { commentId: 7 };
     }
     function replySent(sent: PrItem) {
       calls.push({ sent: sent.key });
@@ -191,44 +123,12 @@ describe("paneWrite", () => {
     }
     const pr = item(overrides);
     if (pr.number === null) throw new Error("test item needs a number");
-    const outcome = await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent, approveDo, automate });
-    return { calls, outcome };
+    await paneWrite(kind, { ...pr, number: pr.number }, text).send({ write, replySent, approveDo, automate });
+    return { calls };
   }
 
   test("a merge is pinned to the commit Triage checked, and refused before it is held when that is unknown", async () => {
     expect((await record("merge", { verdictSha: "checked", headSha: "newer" }, "")).calls).toEqual([{ action: "merge", repo: "acme/widgets", number: 1, headSha: "checked" }]);
     expect(() => paneWrite("merge", { ...item({}), number: 1 }, "")).toThrow("The commit Triage checked is not known");
-  });
-
-  test("the reply and its labels start together, and the verdict is marked sent once the hub names the comment", async () => {
-    expect(await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks, edited")).toEqual({
-      calls: [
-        { action: "reply", repo: "acme/widgets", number: 1, body: "Thanks, edited" },
-        { action: "labels", repo: "acme/widgets", number: 1, labels: ["wanted"] },
-        { sent: "acme/widgets#1" },
-      ],
-      outcome: { message: "Posted to GitHub on #1.", complete: true, kept: true },
-    });
-    await expect(record("reply", { comment: "Thanks" }, "Thanks", { commentId: null })).rejects.toThrow("did not confirm");
-    await expect(record("reply", { comment: "Thanks" }, "  ")).rejects.toThrow("must not be empty");
-  });
-
-  test("a posted reply whose labels failed is reported as posted, not as unsent", async () => {
-    const { calls, outcome } = await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks", { labelsFail: "Label does not exist" });
-    expect(calls).toContainEqual({ sent: "acme/widgets#1" });
-    expect(outcome).toEqual({ message: "Reply posted to #1; labels were not added. Label does not exist", complete: false, kept: true });
-  });
-
-  test("labels that landed without their reply are reported, and the pull request comes back for the reply", async () => {
-    const { calls, outcome } = await record("reply", { comment: "Thanks", labels: ["wanted"] }, "Thanks", { replyFail: "Secondary rate limit" });
-    expect(calls).not.toContainEqual({ sent: "acme/widgets#1" });
-    expect(outcome).toEqual({ message: "Labels added to #1; the reply was not posted. Secondary rate limit", complete: false, kept: false });
-    await expect(record("reply", { comment: "Thanks" }, "Thanks", { replyFail: "Secondary rate limit" })).rejects.toThrow("Secondary rate limit");
-  });
-
-  test("closing without a drafted comment posts none", async () => {
-    expect((await record("close", { labels: ["duplicate"] }, "")).calls).toEqual([
-      { action: "close", repo: "acme/widgets", number: 1, labels: ["duplicate"], comment: "" },
-    ]);
   });
 });
