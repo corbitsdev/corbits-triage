@@ -1000,7 +1000,7 @@ function pullOf(key: string): PullRequestRef {
 }
 
 /** How long an overdue wake no manager has taken the claim since holds off the next, while its manager may still be reaching a sidecar. */
-export const OVERDUE_UNSTARTED_GRACE_MS = 30 * 60_000;
+const OVERDUE_UNSTARTED_GRACE_MS = 30 * 60_000;
 
 /** Whether the claim's last overdue wake is still within its grace: a manager took the claim since, or none has yet. */
 function recentlyWoken(claim: Claim, now: Date): boolean {

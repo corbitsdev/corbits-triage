@@ -743,20 +743,22 @@ any other tenant or an unknown sender.
   each workspace and host last opened a pass on a pull request; a take that
   finds nothing to do does not count. As the hub starts it reads that back
   from the claims' newest pass `takenAt`. A check finds the oldest of the
-  host's pull requests that still waits: a pull request mail recorded after
-  that pass that no pass has taken, a triage state row `queued` after it, or
-  any head whose mail found no listener or did not go out, which no pass can
-  have taken. Such a head keeps when its mail first did not go out
-  (`undeliveredSince` on its row) while the reconciler queues it again, and
-  counts until a run of it is seen. Once that one waited past
-  `TRIAGE_STALLED_AFTER_MS` (five minutes by default) the host is stalled:
-  the hub logs `triage_stalled`, the workflow versions route lists the host
-  under `stalled`, which the portal shows on every page and in Settings →
-  Triage, and with SMTP set up the workspace's owners and admins with a
-  verified address get one email naming the host. The alarm clears only once
-  a manager of that host opened a pass after the alarm's `since` and nothing
-  waits past the alarm age any more: the
-  hub logs `triage_stall_cleared` and emails them once more. Without SMTP the
+  host's pull requests that still waits, in its enabled, connected
+  repositories: a pull request mail recorded after that pass that no pass
+  has taken, a triage state row `queued` after it, or any head whose mail
+  found no listener or did not go out, which no pass can have taken. A mail
+  stops counting once its pull request has no row in a repository the store
+  has saved (it closed), or its rows are failed or newer than it. Such a head
+  keeps when its mail first did not go out (`undeliveredSince` on its row)
+  while the reconciler queues it again, and counts until a run of it is
+  seen. Once that one waited past `TRIAGE_STALLED_AFTER_MS` (five minutes by
+  default) the host is stalled: the hub logs `triage_stalled`, the workflow
+  versions route lists the host under `stalled` with the oldest waiting pull
+  request, how many wait and why if known, which the portal shows on every
+  page and in Settings → Triage, and with SMTP set up the workspace's owners
+  and admins with a verified address get one email naming the host. The
+  alarm clears once nothing waits past the alarm age any more: the hub logs
+  `triage_stall_cleared` and emails them once more. Without SMTP the
   hub logs `triage_stall_not_emailed` once. A workspace whose check fails is
   logged as `triage_liveness_failed` and the rest are still checked. Alarms
   and takes live in process, so a restart on a stalled host raises its alarm

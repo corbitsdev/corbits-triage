@@ -13,6 +13,7 @@ import { migrateTriageTables } from "./triage-db.js";
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_liveness";
 const RECORD = { name: "acme/widgets", connected: true, enabled: true };
+const DISABLED = { name: "acme/disabled", connected: true, enabled: false };
 const PR: PullRequestRef = { source: "github", repo: RECORD.name, number: 7 };
 const BITBUCKET: PullRequestRef = { source: "bitbucket-datacenter", repo: "PROJ/widgets", number: 3 };
 const STALLED_AFTER_MS = 5 * 60_000;
@@ -29,7 +30,7 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
     await runMigrations(config, { schema: "public" });
     handle = createDB(config);
     await migrateTriageTables(handle.db, "public");
-    await handle.db.insert(schema.tenant).values({ id: TENANT, name: "Liveness", slug: "liveness", domain: "liveness.test", config: { corbitsTriage: { repos: [RECORD] } } });
+    await handle.db.insert(schema.tenant).values({ id: TENANT, name: "Liveness", slug: "liveness", domain: "liveness.test", config: { corbitsTriage: { repos: [RECORD, DISABLED] } } });
     await people(handle.db);
     await run(handle.db);
   } finally {
@@ -49,7 +50,7 @@ async function people(db: Db): Promise<void> {
   await db.insert(schema.principalRole).values(holders.map(([who, role]) => ({ principalId: `prn_${who}`, roleId: `rol_${role}` })));
 }
 
-const TENANT_ROW = { id: TENANT, config: { corbitsTriage: { repos: [RECORD] } } };
+const TENANT_ROW = { id: TENANT, config: { corbitsTriage: { repos: [RECORD, DISABLED] } } };
 
 /** The repository's triage state in memory, as the reconciler and the coalescer read and write it. */
 function memoryStore(initial: PrTriageRow[]) {
@@ -99,7 +100,7 @@ function mailOf(pr: PullRequestRef, id: string, db: Db) {
   return recordEvent(db, TENANT, pr, id, { type: "webhook", head: "h1", payload: { kind: "pr" } });
 }
 
-test("a mail no manager takes raises the alarm once past the alarm age, and a take clears it", async () => {
+test("a mail no manager takes raises the alarm once past the alarm age, keeps it however long it waits, and a take clears it", async () => {
   await withDatabase(async (db) => {
     const hub = stack(db);
     await mailOf(PR, "d1", db);
@@ -113,6 +114,10 @@ test("a mail no manager takes raises the alarm once past the alarm age, and a ta
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github"]);
     expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1 }]);
+
+    hub.advance(60 * 60_000);
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github"]);
 
     await hub.took(PR);
     await hub.check();
@@ -267,7 +272,7 @@ test("a hub that sends no email says so once and still raises and clears the ala
   });
 }, 60_000);
 
-test("a raised alarm clears without a newer take once its pull request is no longer waiting in the store, and ignores disabled repositories", async () => {
+test("a raised alarm clears without a newer take once its head failed, whatever mail of it is untaken, and ignores disabled repositories", async () => {
   await withDatabase(async (db) => {
     const queuedAt = new Date().toISOString();
     const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 2, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
@@ -279,7 +284,7 @@ test("a raised alarm clears without a newer take once its pull request is no lon
     await hub.check();
     expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1, reason: "run never started" }]);
 
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 5, firstSeenAt: queuedAt, queuedAt, updatedAt: hub.now().toISOString() }]);
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 5, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
     expect(hub.stalled()).toEqual([]);
