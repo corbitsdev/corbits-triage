@@ -30,20 +30,33 @@ jobs:
       - run: bun run lint
 
   typecheck:
+    needs: changes
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      RUN: ${{ github.event_name != 'pull_request' || needs.changes.outputs.code == 'true' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup
-      - run: bun run check
+      - if: env.RUN == 'true'
+        uses: ./.github/actions/setup
+      - if: env.RUN == 'true'
+        run: bun run check
 
+  # Each suite runs on a pull request only when it touches what the suite covers.
   test:
+    needs: changes
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      RUN: >-
+        ${{ github.event_name != 'pull_request' || needs.changes.outputs.shared == 'true'
+        || (matrix.suite == 'unit' && (needs.changes.outputs.hub == 'true' || needs.changes.outputs.web == 'true'))
+        || (matrix.suite == 'postgres' && needs.changes.outputs.hub == 'true')
+        || (matrix.suite == 'dom' && needs.changes.outputs.web == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -56,11 +69,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - if: matrix.suite == 'postgres'
+      - if: env.RUN == 'true' && matrix.suite == 'postgres'
         uses: ./.github/actions/postgres
-      - uses: ./.github/actions/setup
+      - if: env.RUN == 'true'
+        uses: ./.github/actions/setup
       # Not --parallel: run side by side on the runner's four cores, tests that time a subprocess or a parse fail.
-      - run: bun run test:${{ matrix.suite }} --shard=${{ matrix.shard }}
+      - if: env.RUN == 'true'
+        run: bun run test:${{ matrix.suite }} --shard=${{ matrix.shard }}
 
   changes:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -70,12 +85,31 @@ jobs:
       pull-requests: read
     outputs:
       platform: ${{ steps.filter.outputs.platform }}
+      shared: ${{ steps.filter.outputs.shared }}
+      hub: ${{ steps.filter.outputs.hub }}
+      web: ${{ steps.filter.outputs.web }}
+      code: ${{ steps.code.outputs.code }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
+            shared:
+              - 'packages/**'
+              - 'vendor/**'
+              - 'tooling/**'
+              - 'tests/**'
+              - 'bun.lock'
+              - 'package.json'
+              - 'tsconfig*.json'
+              - '.github/**'
+            hub:
+              - 'apps/hub/**'
+              - 'apps/sidecar/**'
+            web:
+              - 'apps/web/**'
+              - 'apps/extension/**'
             platform:
               - 'apps/hub/**'
               - 'apps/sidecar/**'
@@ -89,6 +123,16 @@ jobs:
               - 'package.json'
               - '.github/workflows/ci.yml'
               - '.github/actions/**'
+      # Set when any changed file is more than Markdown.
+      - id: code
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
 
   # Every shard job reports so its required check is satisfied; the steps run only when platform code changed.
   # Each shard lists its files: the slow scenarios are spread by measured time, which --shard cannot do.
