@@ -2,17 +2,19 @@
 // listener. The row is marked queued before the mail goes out so repeated clicks and reconcile
 // passes see it; a failed mail puts it back.
 // Attempts are left alone: a head the hub gave up on is only ever retried here.
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { type } from "arktype";
 import { schema } from "@intx/db";
 import { hasEnabledRules, repoPolicy, triageStopped, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
-import { errorText } from "@corbits/common";
+import { asRecord, errorText } from "@corbits/common";
 import { mailPayload } from "./bridge.js";
 import type { TriageJob } from "./triage-queue.js";
 import type { PolicyReader } from "./repo-policy.js";
 import { githubLimited } from "./github-refusal.js";
 import { failure, sourceCredentialGrant, type PortalCredentialDeps } from "./portal-credential.js";
 import type { Member } from "../integrations/app.js";
+import type { CodeReviewRecord, PullRequestRef } from "../manager-state.js";
 import type { ManagerRuns } from "./manager-runs.js";
 import { isStuck, runKey, type ObservedRun, type ReconcilePolicy } from "./reconcile-plan.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey, type RepoRecord } from "./tenant-config.js";
@@ -32,6 +34,7 @@ export type GithubPrTriageDeps = PortalCredentialDeps & {
   /** The workspace's live listener for the host, if it has one; its managers run the pull requests. */
   listener: (tenantId: string, source: RepoSource) => Promise<LiveDeployment | undefined>;
   managerRuns: ManagerRuns;
+  codeReviews: (tenantId: string, pr: PullRequestRef) => Promise<CodeReviewRecord[]>;
   store: TriageStateStore;
   send: (job: TriageJob) => Promise<void>;
   /** Asks the reconciler for a pass soon. */
@@ -86,6 +89,16 @@ function doneSince(row: PrTriageRow | undefined, runs: readonly ObservedRun[], p
   return runs.some((run) => run.status !== "running" && new Date(run.startedAt).getTime() >= since);
 }
 
+function failedReview(record: CodeReviewRecord): boolean {
+  return record.state === "failed" || (record.state === "reported" && "failed" in record.payload);
+}
+
+/** Whether every code review of the head failed, so none finished and none is still out. */
+function reviewFailedOn(records: readonly CodeReviewRecord[], headSha: string): boolean {
+  const own = records.filter((record) => record.head === headSha);
+  return own.length > 0 && own.every(failedReview);
+}
+
 export function createGithubPrTriage(deps: GithubPrTriageDeps) {
   return async function handle({ repo, number }: typeof TriageBody.infer, member: Member): Promise<Response> {
     const { tenantId, principalId } = member;
@@ -110,6 +123,11 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     if (managed.some((run) => run.status === "running" && !isStuck(run, now, deps.policy))) {
       return failure(409, "already_running", `${repo}#${number} is already being triaged.`);
     }
+    const mail = mailPayload(record, policy, pack, { prNumber: number, headSha, noWait: true });
+    // A head whose code review failed is reviewed once more, as Review again does, past the manager's own retries.
+    const part = "codeReview" in mail ? asRecord(mail.codeReview) : undefined;
+    const again = part !== undefined && reviewFailedOn(await deps.codeReviews(tenantId, { source: sourceOf(record), repo, number }), headSha);
+    const payload = again ? { ...mail, codeReview: { ...part, again: randomUUID() } } : mail;
     const head = { tenantId, repo: triageStateKey(record), number, headSha };
     const queued = await queueHead(deps.store, head, now, function busy(prior) {
       return (isQueuedSince(prior, now, deps.policy) || isRunningSince(prior, now, deps.policy)) && !doneSince(prior, managed, deps.policy);
@@ -120,7 +138,7 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     }
     if (queued.status === "conflict") return failure(409, "conflict", `${repo}#${number} was just updated by the hub. Try again.`);
     try {
-      await deps.send({ ...head, record, payload: mailPayload(record, policy, pack, { prNumber: number, headSha, noWait: true }) });
+      await deps.send({ ...head, record, payload });
     } catch (err) {
       if (reachedNoListener(err)) {
         // The head stays queued for the reconciler, which mails it once a listener is up.

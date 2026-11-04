@@ -39,7 +39,7 @@ import { asRecord, decodedSegment, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { closeOutDue, deploymentUp, endNeverRan, endOverdue, liveListener, notePlaced, passRequest, recordRefused, type PullRequestRef } from "./manager-state.js";
+import { closeOutDue, codeReviews, deploymentUp, endNeverRan, endOverdue, liveListener, notePlaced, passRequest, recordRefused, type PullRequestRef } from "./manager-state.js";
 import { createTakeLedger, createTriageLiveness } from "./triage-liveness.js";
 import { setTimings } from "./timings.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
@@ -734,6 +734,9 @@ const githubPrTriage = createGithubPrTriage({
   readCheckPack,
   listener: liveListenerOf,
   managerRuns,
+  codeReviews: function headCodeReviews(tenantId, pr) {
+    return codeReviews(composition.db, tenantId, pr);
+  },
   store: triageStateStore,
   send: sendTriageMail,
   retry: kickTriage,
