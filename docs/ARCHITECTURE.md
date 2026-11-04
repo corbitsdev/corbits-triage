@@ -757,8 +757,12 @@ any other tenant or an unknown sender.
   request, how many wait and why if known, which the portal shows on every
   page and in Settings → Triage, and with SMTP set up the workspace's owners
   and admins with a verified address get one email naming the host. The
-  alarm clears once nothing waits past the alarm age any more: the hub logs
-  `triage_stall_cleared` and emails them once more. Without SMTP the
+  alarm clears once nothing waits past the alarm age any more and either
+  nothing waits at all or a manager of the host opened a pass since it was
+  raised; a head failed with `run never started` counts as waiting here, so
+  heads the reconciler cycles through queued and failed while managers stay
+  down hold the alarm rather than clearing and raising it again. Then the
+  hub logs `triage_stall_cleared` and emails them once more. Without SMTP the
   hub logs `triage_stall_not_emailed` once. A workspace whose check fails is
   logged as `triage_liveness_failed` and the rest are still checked. Alarms
   and takes live in process, so a restart on a stalled host raises its alarm

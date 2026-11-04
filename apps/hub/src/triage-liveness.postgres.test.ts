@@ -287,21 +287,68 @@ test("a hub that sends no email says so once and still raises and clears the ala
   });
 }, 60_000);
 
-test("a raised alarm clears without a newer take once its head failed, whatever mail of it is untaken, and ignores disabled repositories", async () => {
+test("a raised alarm clears without a newer take once its head's run failed, whatever mail of it is untaken, and ignores disabled repositories", async () => {
   await withDatabase(async (db) => {
     const queuedAt = new Date().toISOString();
-    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 2, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
+    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
     const hub = stack(db, store);
     await mailOf(PR, "d1", db);
     await mailOf({ source: "github", repo: "acme/disabled", number: 1 }, "d2", db);
 
     hub.advance(STALLED_AFTER_MS + 60_000);
     await hub.check();
-    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1, reason: "run never started" }]);
+    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1 }]);
 
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 5, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", runId: "run_7", error: "run failed", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
     expect(hub.stalled()).toEqual([]);
+  });
+}, 60_000);
+
+test("a mail newer than its pull request's triaged head counts though an older untaken mail does not", async () => {
+  await withDatabase(async (db) => {
+    const store = memoryStore([]);
+    const hub = stack(db, store);
+    await mailOf(PR, "d1", db);
+    await new Promise((done) => setTimeout(done, 5));
+    const triagedAt = new Date().toISOString();
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, updatedAt: triagedAt }]);
+    await new Promise((done) => setTimeout(done, 5));
+    await mailOf(PR, "d2", db);
+
+    hub.advance(STALLED_AFTER_MS + 60_000);
+    await hub.check();
+    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1 }]);
+  });
+}, 60_000);
+
+test("a head cycling through failing to start and queued again holds the alarm with one email, until a manager of the host takes a pull request", async () => {
+  await withDatabase(async (db) => {
+    const queuedAt = new Date().toISOString();
+    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
+    const hub = stack(db, store);
+    hub.advance(STALLED_AFTER_MS + 60_000);
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github"]);
+
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const at = hub.now().toISOString();
+      await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: at }]);
+      await hub.check();
+      hub.advance(60_000);
+      const requeuedAt = hub.now().toISOString();
+      await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "queued", attempts: 2, firstSeenAt: queuedAt, queuedAt: requeuedAt, updatedAt: requeuedAt }]);
+      await hub.check();
+      hub.advance(STALLED_AFTER_MS);
+    }
+    expect(hub.alarms()).toEqual(["triage_stalled github"]);
+    expect(hub.mailed.length).toBe(1);
+
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 5, firstSeenAt: queuedAt, queuedAt, updatedAt: hub.now().toISOString() }]);
+    await mailOf({ ...PR, number: 8 }, "d8", db);
+    await hub.took({ ...PR, number: 8 });
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
   });
 }, 60_000);

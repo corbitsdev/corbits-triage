@@ -1036,23 +1036,17 @@ export async function lastTakes(db: DB["db"]): Promise<{ tenantId: string; sourc
 
 const EVENT_KEY = /^evt:[^:]+:([^#]+)#(\d+):/;
 
-/** The oldest pull request mail of each pull request on the tenant's host that no manager has taken, among those recorded after `after`. */
+/** Each pull request mail on the tenant's host that no manager has taken, among those recorded after `after`. */
 export async function pendingMails(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<{ repo: string; number: number; at: string }[]> {
   const since = after === undefined ? undefined : sql`(${managerState.state}->>'receivedAt')::timestamptz > ${after}::timestamptz`;
   const ofHost = like(managerState.key, `evt:${source}:%`);
   const rows = await db.select({ key: managerState.key, at: sql<string>`${managerState.state}->>'receivedAt'` }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since));
-  const oldest = new Map<string, { repo: string; number: number; at: string }>();
-  for (const row of rows) {
-    const match = EVENT_KEY.exec(row.key);
-    const repo = match?.[1];
-    const num = match?.[2];
-    if (repo === undefined || num === undefined) continue;
-    const pr = `${repo}#${num}`;
-    const prior = oldest.get(pr);
-    if (prior === undefined || Date.parse(row.at) < Date.parse(prior.at)) oldest.set(pr, { repo, number: Number(num), at: row.at });
-  }
-  return [...oldest.values()];
+  return rows.map(function pullMail(row) {
+    const [, repo, number] = EVENT_KEY.exec(row.key) ?? [];
+    if (repo === undefined || number === undefined) throw new Error(`manager_state ${row.key} is not an event key`);
+    return { repo, number: Number(number), at: row.at };
+  });
 }
 
 /** The tenant's pull requests whose claim holds a reviewer with no result. */

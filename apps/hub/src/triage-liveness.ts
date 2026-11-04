@@ -2,8 +2,9 @@
 // manager of the host last opened a pass, then the oldest of its pull requests that still waits: a mail recorded since
 // that no manager has taken, a head queued since, or a head whose mail did not go out, from when it first did not,
 // which no pass can have taken. Once that one waited past the alarm age, the host is stalled until nothing waits that
-// long. Alarms and takes live in process: the hub runs as one replica, its takes are read back as it starts, and one
-// restarted on a stalled host raises the alarm again on its first check.
+// long and either nothing waits at all or one of its managers opened a pass since. Alarms and takes live in process:
+// the hub runs as one replica, its takes are read back as it starts, and one restarted on a stalled host raises the
+// alarm again on its first check.
 // Raising and clearing each email the workspace's owners and admins once, when the hub sends email.
 import { and, eq, inArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
@@ -17,7 +18,8 @@ import { lastTakes, pendingMails } from "./manager-state.js";
 /** A stalled host: since when its oldest waiting pull request waits, which pull request it is, how many wait, why if known, and when one of its managers last took one. */
 export type Stalled = { source: RepoSource; since: string; lastTakeAt?: string; pull?: string; count?: number; reason?: string };
 
-type WaitingPull = { pull: string; at: number; reason?: string };
+/** `failed` marks a head that failed to start: it keeps a raised alarm up but never raises one. */
+type WaitingPull = { pull: string; at: number; reason?: string; failed?: true };
 
 /** What the workspace's owners and admins are emailed when a host's alarm is raised, or cleared. */
 export type StallNotice = { to: string[]; workspace: string; source: RepoSource; since: string; cleared: boolean };
@@ -107,7 +109,8 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
    * When each waiting pull request of each host began to wait: a mail or queued head since the host's last take, and
    * any head whose mail did not go out, which no take can have picked up, until a run of it is seen. Only enabled,
    * connected repositories count. A mail counts while the store holds nothing newer of its pull request: one without rows
-   * in a repository the store has saved has closed, and a failed head waits on a new head rather than a manager.
+   * in a repository the store has saved has closed, and a failed head waits on a new head rather than a manager. A head
+   * that failed to start is listed too, as it is queued again while managers stay down.
    */
   async function waiting(tenant: LivenessTenant): Promise<Map<RepoSource, WaitingPull[]>> {
     const byHost = new Map<RepoSource, WaitingPull[]>(REPO_SOURCES.map((source) => [source, []]));
@@ -121,12 +124,16 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       const taken = deps.takes.last(tenant.id, source);
       const { rows, version } = await deps.store.load(tenant.id, triageStateKey(record));
       for (const row of rows) {
+        const pull = `${record.name}#${row.number}`;
+        if (row.status === "failed" && row.error === NEVER_STARTED) {
+          byHost.get(source)?.push({ pull, at: Date.parse(row.updatedAt), reason: NEVER_STARTED, failed: true });
+          continue;
+        }
         const since = row.undeliveredSince ?? row.queuedAt;
         if (since === undefined || (row.status !== "queued" && !undelivered(row, source))) continue;
         const unsent = row.undeliveredSince !== undefined || undelivered(row, source);
         if (unsent || taken === undefined || Date.parse(since) > Date.parse(taken)) {
-          const reason = row.error ?? (row.attempts > 1 && row.runId === undefined ? NEVER_STARTED : undefined);
-          byHost.get(source)?.push({ pull: `${record.name}#${row.number}`, at: Date.parse(since), ...(reason !== undefined && { reason }) });
+          byHost.get(source)?.push({ pull, at: Date.parse(since), ...(row.error !== undefined && { reason: row.error }) });
         }
       }
       const hostMails = mails.get(source);
@@ -147,7 +154,7 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
     const now = deps.now().getTime();
     const byPull = new Map<string, WaitingPull>();
     for (const item of pulls) {
-      if (now - item.at < deps.stalledAfterMs) continue;
+      if (item.failed || now - item.at < deps.stalledAfterMs) continue;
       const prior = byPull.get(item.pull);
       if (prior === undefined || item.at < prior.at) byPull.set(item.pull, item);
     }
@@ -164,10 +171,15 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
     };
   }
 
-  /** Raises the host's alarm once it stalls, and clears it once nothing on the host waits past the alarm age. */
+  /**
+   * Raises the host's alarm once it stalls. It clears once nothing on the host waits past the alarm age and either nothing
+   * waits at all or a manager of the host opened a pass since it was raised, so heads cycling through queued and failed
+   * to start while managers stay down hold it up.
+   */
   async function settle(tenantId: string, source: RepoSource, pulls: readonly WaitingPull[]): Promise<void> {
     const key = hostKey(tenantId, source);
-    const stalled = stalledOf(source, pulls, deps.takes.last(tenantId, source));
+    const taken = deps.takes.last(tenantId, source);
+    const stalled = stalledOf(source, pulls, taken);
     const raised = alarms.get(key);
     if (raised === undefined) {
       if (stalled === undefined) return;
@@ -180,6 +192,8 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       alarms.set(key, stalled);
       return;
     }
+    const takenSince = taken !== undefined && Date.parse(taken) > Date.parse(raised.since);
+    if (pulls.length > 0 && !takenSince) return;
     alarms.delete(key);
     deps.log({ level: "info", msg: "triage_stall_cleared", tenantId, source, since: raised.since });
     await email(tenantId, raised, true);
