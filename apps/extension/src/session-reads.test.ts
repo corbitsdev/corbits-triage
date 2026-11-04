@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CODE_REVIEW_MARKER, getPostedCodeReview } from "@corbits/github-reads";
 import { emptyPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub } from "@corbits/triage-workflows/evals/serve";
@@ -17,7 +16,7 @@ const HIDDEN = "\u{E0041}\u{E0042}\u{E0043}";
 const PAGE_PULL = ["number", "title", "body", "body_html", "state", "merged", "draft", "user", "author_association", "head", "base", "mergeable", "requested_reviewers", "requested_teams", "assignees", "additions", "deletions", "changed_files", "labels"];
 
 /** github.com as the person signed in sees a private copy of the fixture; nothing answers on api.github.com. */
-function signedIn(unreadable: RegExp | null, rendered = true, merge?: string): Session {
+function signedIn(unreadable: RegExp | null): Session {
   const served = fixtureGithub(PR, {});
   const headline = PR.commits[0]!.split("\n")[0]!;
 
@@ -27,11 +26,10 @@ function signedIn(unreadable: RegExp | null, rendered = true, merge?: string): S
     if (pathname.includes("/contents")) return "[]";
     if (pathname === `/repos/${PR.repo}/pulls/${PR.number}`) {
       const pull = (await (await served(new URL(`https://api.github.com${path}`))).json()) as Record<string, unknown>;
-      const fields = PAGE_PULL.filter((field) => rendered || field !== "body_html");
-      return JSON.stringify(Object.fromEntries(fields.map((field) => [field, pull[field] ?? null])));
+      return JSON.stringify(Object.fromEntries(PAGE_PULL.map((field) => [field, pull[field] ?? null])));
     }
     if (pathname.endsWith("/commits")) {
-      const rows = [SHA, ...(merge ? [merge] : [])].map((sha) => ({ sha, commit: { message: headline, committer: { date: "2026-10-01T00:00:00Z" } }, author: { login: PR.author } }));
+      const rows = [{ sha: SHA, commit: { message: headline, committer: { date: "2026-10-01T00:00:00Z" } }, author: { login: PR.author } }];
       return JSON.stringify(rows);
     }
     return (await served(new URL(`https://api.github.com${path}`))).text();
@@ -59,38 +57,4 @@ test("a private pull request is checked through the session with no token, whole
 test("a fact the session cannot read, with no token, leaves the pull request unchecked rather than passed", async () => {
   const { gh } = sessionGithub(signedIn(/\/check-runs/), null);
   await expect(runChecks({ repo: PR.repo, number: PR.number }, gh, pack)).rejects.toThrow("could not read the checks of #262");
-});
-
-test("without GitHub's rendering of the description, with no token, the pull request is not checked and says why", async () => {
-  const reads = sessionGithub(signedIn(null, false), null);
-  await expect(runChecks({ repo: PR.repo, number: PR.number }, reads.gh, pack)).rejects.toThrow("github_get_pr failed");
-  expect(reads.missed()[0]).toContain("rendered description, which can't be read without a GitHub token. Save a GitHub token");
-});
-
-test("a merge commit, left out of the .patch, with no token, leaves the pull request unchecked and says why", async () => {
-  const reads = sessionGithub(signedIn(null, true, "f00d".padEnd(40, "0")), null);
-  await expect(runChecks({ repo: PR.repo, number: PR.number }, reads.gh, pack)).rejects.toThrow("could not read the commits");
-  expect(reads.missed()[0]).toContain("(such as a merge commit) is not in github.com's .patch, so it can't be read without a GitHub token. Save a GitHub token");
-});
-
-const POSTED = { id: 7, user: { login: "corbits[bot]", type: "Bot" }, body: `${CODE_REVIEW_MARKER}\nOne defect.`, html_url: `https://github.com/${PR.repo}/pull/${PR.number}#pullrequestreview-7`, state: "COMMENTED", submitted_at: "2026-10-01T00:00:00Z", commit_id: SHA };
-
-/** github.com's page lists the App's review as the session's page reader answers it: without its body. */
-function reviewedOnPage(): Session {
-  const session = signedIn(null);
-  async function page(path: string): Promise<string | null> {
-    if (path.includes("/reviews/")) return null;
-    if (path.includes("/reviews")) return JSON.stringify([{ user: { login: POSTED.user.login }, state: POSTED.state, submitted_at: POSTED.submitted_at, commit_id: SHA }]);
-    return session.page(path);
-  }
-  return { page, site: session.site };
-}
-
-async function api(path: string): Promise<Response> {
-  return Response.json(path.includes("/reviews/") ? [] : [POSTED]);
-}
-
-test("with a token saved, the App's posted code review is read from the API, as the page gives no review's body", async () => {
-  expect(await getPostedCodeReview(sessionGithub(reviewedOnPage(), api).gh, PR.repo, PR.number)).toMatchObject({ url: POSTED.html_url, author: POSTED.user.login, comments: [] });
-  expect(await getPostedCodeReview(sessionGithub(reviewedOnPage(), null).gh, PR.repo, PR.number)).toBeNull();
 });

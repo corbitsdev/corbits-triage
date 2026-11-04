@@ -239,7 +239,7 @@ function itemRepoKey(item: PrItem): string {
 }
 
 /** Triage decides nothing in a repository whose policy cannot run, so its pull requests waiting on Triage wait on its setup instead. */
-export function waitsOnIn(entry: OpenItem, needsSetup: ReadonlySet<string>): WaitsOn {
+function waitsOnIn(entry: OpenItem, needsSetup: ReadonlySet<string>): WaitsOn {
   const waits = waitsOn(entry.item, entry.handled);
   return waits === "triage" && needsSetup.has(itemRepoKey(entry.item)) ? "setup" : waits;
 }
@@ -360,7 +360,7 @@ function isReadyToMerge(item: PrItem): boolean {
 }
 
 /** Oldest pass first. */
-export function readyToMerge(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
+function readyToMerge(open: OpenItem[], enabled: ReadonlySet<string>): OpenItem[] {
   return allOpen(open, enabled).filter((entry) => isReadyToMerge(entry.item)).sort((a, b) => waitingSince(a.item) - waitingSince(b.item));
 }
 

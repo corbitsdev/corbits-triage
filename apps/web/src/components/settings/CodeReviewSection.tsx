@@ -57,7 +57,7 @@ function Place({ place }: { place: CodeReviewPlaceOption }) {
 }
 
 /** Shown until a place is in use, with the setup of the first place in the list, the one recommended. */
-export function CodeReviewPlaceNotice({ place, places }: { place: string | null | undefined; places: CodeReviewPlaceOption[] | undefined }) {
+function CodeReviewPlaceNotice({ place, places }: { place: string | null | undefined; places: CodeReviewPlaceOption[] | undefined }) {
   if (place !== null) return null;
   const recommended = places?.[0];
   return (

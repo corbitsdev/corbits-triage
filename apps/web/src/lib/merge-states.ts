@@ -13,7 +13,7 @@ function asksHost(item: PrItem): item is PrItem & { number: number } {
   return !item.closed && item.number !== null && (item.verdict === "pass" || item.state === "ready");
 }
 
-export function mergeStateReads(items: PrItem[]): Array<{ repo: string; source: RepoSource; batch: number; numbers: number[] }> {
+function mergeStateReads(items: PrItem[]): Array<{ repo: string; source: RepoSource; batch: number; numbers: number[] }> {
   const byHost = new Map<string, { repo: string; source: RepoSource; numbers: number[] }>();
   for (const item of items) {
     if (!asksHost(item)) continue;
@@ -49,7 +49,7 @@ function stateKey(source: RepoSource, repo: string, number: number): string {
 }
 
 /** A read that failed says nothing, even of pull requests an earlier read answered. */
-export function knownMergeStates(reads: Array<{ repo: string; source: RepoSource }>, results: Array<Pick<UseQueryResult<MergeState[]>, "data" | "isError">>): Map<string, MergeState> {
+function knownMergeStates(reads: Array<{ repo: string; source: RepoSource }>, results: Array<Pick<UseQueryResult<MergeState[]>, "data" | "isError">>): Map<string, MergeState> {
   return new Map(results.flatMap((result, i) => {
     const read = reads[i];
     if (read === undefined || result.isError) return [];

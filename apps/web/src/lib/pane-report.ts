@@ -114,7 +114,7 @@ export function endedText(item: PrItem, detail: GithubPullDetail | undefined, ha
 }
 
 /** `detail` is the host's own read, which only the pane has; without it the list's read of the host stands in. */
-export type StatusInput = { item: PrItem; detail: GithubPullDetail | undefined; handled: HandledMark | null; pack: CheckPack | null };
+type StatusInput = { item: PrItem; detail: GithubPullDetail | undefined; handled: HandledMark | null; pack: CheckPack | null };
 
 type Said = { tone: StatusTone; text: string };
 

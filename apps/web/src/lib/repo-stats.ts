@@ -19,7 +19,7 @@ function pollWhileMeasuring(query: Query<TriageStats>): number | false {
 export type StatsReader = { tenantId: string; transport: Transport };
 
 /** The hub caches the stats for a minute, so reading sooner returns the same answer. */
-export function repoStatsQuery(reader: StatsReader | null, repo: string, days: number) {
+function repoStatsQuery(reader: StatsReader | null, repo: string, days: number) {
   const queryFn = reader === null ? skipToken : async function loadStats() {
     return loadTriageStats(reader.transport, reader.tenantId, repo, days);
   };

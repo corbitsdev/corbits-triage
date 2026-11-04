@@ -7,7 +7,7 @@ import { repoKey, sameRepo, type RepoId } from "./repo-id.ts";
 
 export type RepoHealth = { tone: "ok" | "warn" | "idle"; label: string };
 
-export function repoHealth(state: { needsSetup: boolean; enabled: boolean; catchingUp: boolean; receivingEvents: boolean }): RepoHealth {
+function repoHealth(state: { needsSetup: boolean; enabled: boolean; catchingUp: boolean; receivingEvents: boolean }): RepoHealth {
   if (state.needsSetup) return { tone: "warn", label: "Needs setup" };
   if (!state.enabled) return { tone: "idle", label: "Disabled" };
   if (state.catchingUp) return { tone: "idle", label: "Catching up" };
