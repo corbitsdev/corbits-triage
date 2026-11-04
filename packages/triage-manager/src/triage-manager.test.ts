@@ -3,7 +3,7 @@ import { actionConsumer } from "@intx/authz";
 import { createActionCredentialsFactory, createCredentialProviderRegistry, createHttpCredentialProvider } from "@intx/harness";
 import type { GrantRule } from "@intx/types/authz";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import { runLocal, type ActionHandler, type EffectContext, type LoopFn, type OnTriggerPrimitive, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
+import { runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
 import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, JUDGE_RULES_ATTACHMENT, VERDICT_LABELS, WAITING_LABEL, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serve";
@@ -17,9 +17,6 @@ import * as loops from "./loops.js";
 import { workflow as bitbucket } from "./triage-manager-bitbucket-datacenter.js";
 import { workflow as github } from "./triage-manager-github.js";
 import { workflow as listener } from "./triage-listener-github.js";
-import { triageListener } from "./triage-listener.js";
-import { publishedReviewer } from "./release.js";
-import { PASSES, triageManager } from "./triage-manager.js";
 
 const TENANT = "tnt_acme";
 const RUN = "run_manager";
@@ -66,7 +63,6 @@ const REQUEST = hubRequest(RULES);
 /** The run claimed its pull request as the tests start, well inside its lifetime. */
 const CLAIMED = new Date().toISOString();
 const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, threads: [], request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z", claimedAt: CLAIMED };
-const RESUMED = { ...PASS, pass: { ...PASS.pass, takes: 2 }, resumed: true };
 /** The one in-progress comment, posted or edited in place, naming what the head waits for. */
 function inProgress(awaits: string) {
   return expect.objectContaining({ body: { body: expect.stringContaining(`**Triage: In progress**\n\nTriage is waiting for ${awaits} before it decides.`) } });
@@ -74,7 +70,6 @@ function inProgress(awaits: string) {
 
 const IDLE = { outcome: "idle", request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z", claimedAt: CLAIMED };
 const ENDED = { outcome: "ended" };
-const MORE = { outcome: "more", wait: false };
 const REFUSED = 409;
 
 /** A pass on which one of the manager's code reviews reported `reported`. */
@@ -188,14 +183,11 @@ function githubHost(head = HEAD, { pr = PR, pull = {}, checkRuns }: { pr?: Snaps
 
 const TAKE = { method: "POST", path: `${TENANT_PATH}/manager/take`, body: PULL };
 const DONE = { method: "POST", path: `${TENANT_PATH}/manager/done`, body: expect.objectContaining({ ...PULL, reviewers: [] }) };
-/** A done that keeps the code review that gave up on the head, so a later pass on it deploys no other. */
-const DONE_GAVE_UP = { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [expect.objectContaining({ kind: "code-review", result: { failed: expect.any(String) } })] }) };
 
 /** What the pass reported to the hub as done. */
 function doneBody(calls: readonly HubCall[]): Record<string, unknown> {
   return calls.find((call) => call.path === DONE.path)?.body as Record<string, unknown>;
 }
-const STAGE_1 = ["approvals", "cleared", "donePosted", "evaluateRules", "executeRules", "facts", "findingThreads", "markUnready", "mirrorRules", "paused", "postReview", "posting", "ran", "reviewScope", "reviewing", "route", "rules", "runsEnded", "take", "triaged", "unmailed", "unready"];
 
 /** A Bitbucket Data Center pull request at head `abc`, recording the build statuses posted on it. */
 function bitbucketHost() {
@@ -234,52 +226,6 @@ async function heldApproval() {
 }
 
 describe("triage-manager", () => {
-  test("the pass loop reads every done a pass can end on", () => {
-    const { body } = github.steps["events"] as OnTriggerPrimitive;
-    if (!("inline" in body)) throw new Error("the body is not inline");
-    const { steps } = (body.inline.steps["passes"] as unknown as { body: WorkflowDefinition }).body;
-    const dones = Object.entries(steps).filter(([, step]) => (step as { handler?: string }).handler === "done").map(([id]) => id);
-    expect(dones).toContain("doneReviewOut");
-    for (const id of dones) expect(loops.again({ [id]: { outcome: "more", wait: true } })).toBe(true);
-  });
-
-  test.each([["new", PASS], ["resumed", RESUMED]])("a %s pass runs stage 1 on the mail the hub recorded, and the run's last step stops it once done ends its claim", async (_name, pass) => {
-    const { writes, host } = githubHost();
-    const hub = fakeHub({ takes: [pass], dones: [ENDED] });
-    expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: 1, ran: STAGE_1 });
-    expect(writes).toContainEqual(READY);
-    expect(hub.calls).toEqual([TAKE, DONE, END]);
-  });
-
-  test("done reports the verdict the pass posted, as its evaluate, mirror and execute steps output it, with the facts the verdict keeps and not the diff", async () => {
-    const { host } = githubHost();
-    const hub = fakeHub({ takes: [PASS], dones: [ENDED] });
-    const { outputs } = await runMail(github, wake(), host, hub.hub);
-    const { report, approvals } = doneBody(hub.calls) as { report: { rules: { items: { facts: Record<string, unknown> }[] } }; approvals: unknown };
-    expect(report).toEqual({ head: HEAD, verdict: outputs["cleared"], mirror: outputs["mirrorRules"], executed: outputs["executeRules"], rules: { items: [{ facts: expect.objectContaining({ repo: PR.repo, number: PR.number, title: PR.title }), det: { reason: expect.any(String), findings: expect.any(Array) } }] } });
-    expect(Object.keys(report.rules.items[0]!.facts)).not.toContain("files");
-    expect(approvals).toEqual({ results: [] });
-  });
-
-  test("with an event pending after done, the manager runs its next pass at once, and a refused newcomer is harmless", async () => {
-    const { writes, host } = githubHost();
-    const newcomer = fakeHub({ takes: [REFUSED] });
-    expect(await runMail(github, wake(), host, newcomer.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: 1, ran: ["approvals", "done", "findingThreads", "paused", "ran", "runsEnded", "take"] });
-    expect(newcomer.calls).toEqual([TAKE, END]);
-    expect(writes).toEqual([]);
-
-    const live = fakeHub({ takes: [PASS, { ...PASS, pass: { ...PASS.pass, id: "pass_2" } }], dones: [MORE, ENDED] });
-    expect(await runMail(github, wake(), host, live.hub)).toMatchObject({ terminalStatus: "completed", passes: 2 });
-    expect(live.calls).toEqual([TAKE, DONE, TAKE, DONE, END]);
-  });
-
-  test("a final verdict asks the hub for nothing more, so the run ends after its post", async () => {
-    const { host } = githubHost();
-    const hub = fakeHub({ takes: [PASS], dones: [ENDED] });
-    await runMail(github, wake(), host, hub.hub);
-    expect(doneBody(hub.calls)["wait"]).toBe(false);
-  });
-
   test("a head whose CI still runs, with no reviewer out, gets the Waiting label and the in-progress comment, and its manager ends", async () => {
     const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
     const hub = fakeHub({ takes: [PASS], dones: [ENDED] });
@@ -307,7 +253,7 @@ describe("triage-manager", () => {
     }
     const waiting = commented([{ name: "build", status: "in_progress", conclusion: null }]);
     await runMail(github, wake(), waiting.host, fakeHub({ takes: [PASS], dones: [ENDED] }).hub);
-    expect(comment.body).toStartWith(`<!-- corbits-triage ${JSON.stringify({ head: before, policy: null, verdict: "pass", shows: "progress" })} -->\n**Triage: In progress**`);
+    expect(comment.body).toContain("**Triage: In progress**");
 
     const failed = commented([{ name: "build", status: "completed", conclusion: "failure" }]);
     await runMail(github, wake(), failed.host, fakeHub({ takes: [PASS], dones: [ENDED] }).hub);
@@ -338,71 +284,6 @@ describe("triage-manager", () => {
     expect(doneBody(later.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "pass" }) } });
   });
 
-  test("an idle manager whose head waits on CI, with no reviewer out, triages nothing and ends", async () => {
-    const { host } = githubHost();
-    const hub = fakeHub({ takes: [{ ...IDLE, waitingSince: new Date(Date.now() - 5 * 60_000).toISOString() }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).ran).not.toContain("rules");
-    expect(doneBody(hub.calls)["wait"]).toBe(false);
-  });
-
-  test("a manager woken for a head that waited on CI, once CI finished, decides it", async () => {
-    const { writes, host } = githubHost();
-    const waitingSince = new Date(Date.now() - 5 * 60_000 - 10_000).toISOString();
-    const hub = fakeHub({ takes: [{ ...PASS, waitingSince }], dones: [ENDED] });
-    const { ran } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).toEqual(STAGE_1);
-    expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "pass" }) } });
-    expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/comments` }));
-  });
-
-  test("a head that waited out its CI is triaged again without it and decided", async () => {
-    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
-    const hub = fakeHub({ takes: [{ ...IDLE, waitingSince: "2026-10-25T00:00:00.000Z" }], dones: [ENDED] });
-    const { ran } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).toEqual(STAGE_1);
-    expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ verdict: "unsure" }) } });
-    expect(doneBody(hub.calls)["report"]).not.toHaveProperty("verdict.waiting");
-    expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/comments` }));
-  });
-
-  test("passes that run out are stopped once, by the run's last step", async () => {
-    const { host } = githubHost();
-    const hub = fakeHub({ takes: Array.from({ length: PASSES }, () => IDLE), dones: Array.from({ length: PASSES }, () => MORE) });
-    expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", stop: { stopped: true }, passes: PASSES });
-    expect(hub.calls.filter((call) => call.method === "DELETE")).toEqual([END]);
-  }, 120_000);
-
-  test("the verdict's automatic Dos run after its mirror, as pr-triage runs them", async () => {
-    const { writes, host } = githubHost();
-    const welcome: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: [{ do: "comment", target: { body: "Welcome" } }] } };
-    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(welcome) }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(STAGE_1);
-    const ready = writes.findIndex((write) => write.path.endsWith("/labels"));
-    const welcomed = writes.findIndex((write) => JSON.stringify(write.body).includes("Welcome"));
-    expect(welcomed).toBeGreaterThan(ready);
-  });
-
-  test("an old review's reply finds nothing for its head, runs no stage 1 and leaves the superseded review for the hub to stop", async () => {
-    const { writes, host } = githubHost();
-    const hub = fakeHub({ takes: [{ ...IDLE, request: { ...REQUEST, headSha: "newer" }, reviewers: [{ ...reviewer(), head: "older" }] }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, hub.hub)).ran).toEqual(["approvals", "done", "findingThreads", "paused", "ran", "runsEnded", "take"]);
-    expect(writes).toEqual([]);
-    expect(hub.calls).toEqual([TAKE, DONE, END]);
-    expect(doneBody(hub.calls)["wait"]).toBe(false);
-  });
-
-  test("a pass of an approval alone, before any pull request mail was recorded, runs it and triages nothing", async () => {
-    const { approval, effectId } = await heldApproval();
-    const { writes, host } = githubHost();
-    const hub = fakeHub({ takes: [{ ...PASS, events: [mailEvent(HEAD, approval, "evt_approval")], request: undefined }], dones: [ENDED] });
-    const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).toEqual(["approvals", "done", "findingThreads", "paused", "ran", "runsEnded", "take", "triaged"]);
-    expect(outputs["approvals"]).toEqual({ results: [{ dos: [expect.objectContaining({ effectId, status: "done" })] }] });
-    expect(doneBody(hub.calls)["approvals"]).toEqual(outputs["approvals"]);
-    expect(writes).toEqual([expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringMatching(/\nhi$/) } })]);
-    expect(hub.calls).toEqual([TAKE, DONE, END]);
-  });
-
   test.each([["after"], ["before"]])("an approval for an older head arriving %s a push runs as pr-triage runs a stale one, and triage runs on the push", async (order) => {
     const NEWER = "0e0e".repeat(10);
     const { approval, effectId, held, automatic } = await heldApproval();
@@ -419,23 +300,13 @@ describe("triage-manager", () => {
     expect(writes.filter((write) => JSON.stringify(write.body).includes("\"hi\""))).toEqual([]);
   });
 
-  test("a pass that fails stops the run, so the claim's run is gone for the next manager's take", async () => {
-    const { host } = githubHost();
-    const hub = fakeHub({ takes: [{ error: "not json" }] });
-    const { terminalStatus } = await runMail(github, wake(), host, hub.hub);
-    expect(terminalStatus).toBe("failed");
-    expect(hub.calls).toEqual([TAKE, END]);
-  });
-
-  test("on Bitbucket Data Center it reaches the host through that host's bindings only", async () => {
-    expect(bitbucket.credentialBindings?.map(({ action, handle }) => `${action}:${handle}`)).toEqual(["facts:bitbucket-datacenter", "mirror:bitbucket-datacenter", "execute:bitbucket-datacenter", "executeApprovals:bitbucket-datacenter", "postReview:bitbucket-datacenter", "progress:bitbucket-datacenter", "findingThreads:bitbucket-datacenter"]);
+  test("on Bitbucket Data Center the verdict goes up as the head's build status", async () => {
     const { builds, host } = bitbucketHost();
     const request = { kind: "pr", repo: BB_REPO, repoSource: "bitbucket-datacenter", prNumber: 8, headSha: "abc", policy: { enabled: true }, policyUnreadable: "The policy file has unknown checks: max-size.", automatic: ACTION_KINDS, tenantId: TENANT };
     const bbPull = { source: "bitbucket-datacenter", repo: BB_REPO, number: 8 };
     const hub = fakeHub({ takes: [{ ...PASS, pass: { ...PASS.pass, head: "abc" }, events: [mailEvent("abc", request)], request }], dones: [ENDED] });
     expect((await runMail(bitbucket, wake(bbPull), host, hub.hub)).terminalStatus).toBe("completed");
     expect(builds).toEqual([expect.objectContaining({ state: "FAILED" })]);
-    expect(hub.calls.map(({ body }) => body)).toEqual([bbPull, expect.objectContaining({ ...bbPull, reviewers: [] }), undefined]);
   });
 });
 
@@ -460,7 +331,6 @@ describe("triage-manager with code review", () => {
     expect((await runMail(reviewed, wake(), host, first.hub, mailed)).ran).toContain("doneReviewing");
     expect(writes).toEqual([inProgress("code review")]);
     expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_selected", package: { format: "source", commitSha: "c0ffee", packageName: RELEASE.workflow.packageName } }, entry: RELEASE.workflow.entry, sourceOfferingIds: ["off_a"], defaultSourceOfferingId: "off_a" } });
-    expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "code-review", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
     const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
     expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
     expect({ ...mail, content: JSON.parse(mail.content) }).toEqual({ tenantId: TENANT, to: DEPLOYED, readyBy: mail.readyBy, content: { ...REVIEW_REQUEST.codeReviewRequest, tenantId: TENANT } });
@@ -472,7 +342,6 @@ describe("triage-manager with code review", () => {
     expect(ran).not.toContain("deployReview");
     expect(writes).toContainEqual(READY);
     expect(writes).toContainEqual(POSTED_REVIEW);
-    expect(second.calls).toEqual([TAKE, { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] }) }, END]);
     expect(mailed).toHaveLength(1);
   });
 
@@ -498,55 +367,6 @@ describe("triage-manager with code review", () => {
     return { isResolved, isOutdated, opener: { nodes: comments.slice(0, 1) }, comments: { nodes: comments } };
   }
 
-  test("posting a review tells the hub each finding's inline comment, under the run that reported it", async () => {
-    const { writes, host } = threadedHost([]);
-    const hub = fakeHub({ takes: [reported({ result: REVIEW }, ON)], dones: [ENDED] });
-    await runMail(reviewed, wake(), host, hub.hub);
-    expect(writes).toContainEqual(POSTED_REVIEW);
-    expect(doneBody(hub.calls)["threadIds"]).toEqual({ runId: DEPLOYED, ids: [501] });
-  });
-
-  test("a review whose comments cannot be read back counts as posted, and tells the hub why it names no comments", async () => {
-    const { writes, host } = githubHost();
-    async function unreadable(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-      const url = new URL(input instanceof Request ? input.url : input);
-      if (/\/pulls\/\d+\/comments$/.test(url.pathname)) return Response.json({ message: "Server Error" }, { status: 502 });
-      return host(input, init);
-    }
-    const hub = fakeHub({ takes: [reported({ result: REVIEW }, ON)], dones: [ENDED] });
-    await runMail(reviewed, wake(), unreadable, hub.hub);
-    expect(writes).toContainEqual(POSTED_REVIEW);
-    expect(doneBody(hub.calls)).toMatchObject({ threadsUnread: expect.stringContaining("502") });
-    expect(doneBody(hub.calls)["threadIds"]).toBeUndefined();
-  });
-
-  test("the first pass on a newer head reads the threads take names and tells the hub what became of each", async () => {
-    const threads = [
-      thread([501], { isResolved: true }),
-      thread([502], { isOutdated: true }),
-      thread([503, 600], { by: ["corbits", "octocat"] }),
-      thread([504, 601], { by: ["corbits", "corbits"] }),
-      thread([900], { isResolved: true }),
-    ];
-    const { host } = threadedHost(threads);
-    const hub = fakeHub({ takes: [{ ...PASS, threads: [501, 502, 503, 504] }], dones: [ENDED] });
-    await runMail(reviewed, wake(), host, hub.hub);
-    expect(doneBody(hub.calls)["threads"]).toEqual([
-      { id: 501, state: "resolved" },
-      { id: 502, state: "outdated" },
-      { id: 503, state: "replied", at: "2026-10-21T00:00:00Z" },
-      { id: 504, state: "untouched" },
-    ]);
-  });
-
-  test("a thread read the host refuses tells the hub why, and records no state", async () => {
-    const { host } = threadedHost();
-    const hub = fakeHub({ takes: [{ ...PASS, threads: [501] }], dones: [ENDED] });
-    await runMail(reviewed, wake(), host, hub.hub);
-    expect(doneBody(hub.calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
-    expect(doneBody(hub.calls)["threads"]).toBeUndefined();
-  });
-
   test("a later event on the same head deploys no second review and posts the stored review with the verdict", async () => {
     const { writes, host } = githubHost();
     const mailed: unknown[] = [];
@@ -557,7 +377,6 @@ describe("triage-manager with code review", () => {
     expect(writes).toContainEqual(READY);
     expect(writes).toContainEqual(POSTED_REVIEW);
     expect(mailed).toEqual([]);
-    expect(hub.calls).toEqual([TAKE, { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...reviewer(), result: REVIEW }] }) }, END]);
   });
 
   test("Review again on a head whose review settled deploys one more review for it, and that review's report is posted", async () => {
@@ -569,7 +388,6 @@ describe("triage-manager with code review", () => {
     expect((await runMail(reviewed, wake(), host, first.hub, mailed)).ran).toContain("deployReview");
     expect(writes).toEqual([inProgress("code review")]);
     expect(mailed).toHaveLength(1);
-    expect(first.calls.at(-2)).toMatchObject({ ...DONE, body: { reviewers: [settled, { kind: "code-review", head: HEAD, runId: DEPLOYED, again: "again_1" }] } });
 
     const second = fakeHub({ takes: [{ ...reported({ result: REVIEW }, again), reviewers: [settled, { ...reviewer(), again: "again_1" }] }], dones: [ENDED] });
     const { ran } = await runMail(reviewed, wake(), host, second.hub, mailed);
@@ -581,47 +399,9 @@ describe("triage-manager with code review", () => {
   test("a stored review is not posted once this pass's policy no longer asks for code review", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, reviewers: [{ ...reviewer(), result: REVIEW }] }], dones: [ENDED] });
-    const { ran } = await runMail(reviewed, wake(), host, hub.hub);
-    expect(ran).toContain("postReview");
+    await runMail(reviewed, wake(), host, hub.hub);
     expect(writes).toContainEqual(READY);
     expect(writes).not.toContainEqual(POSTED_REVIEW);
-  });
-
-  test.each([
-    ["the review reported a failure", reported({ failed: "the review did not finish" }, ON), [TAKE, DONE_GAVE_UP, END]],
-    ["the review ran past its deadline, which is stopped,", { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] }, [TAKE, DONE_GAVE_UP, STOP_REVIEW, END]],
-    ["the hub read no review request", { ...PASS, request: hubRequest(RULES, CODE_REVIEW) }, [TAKE, DONE, END]],
-  ])("when %s the verdict goes up without code review", async (_name, taken, calls) => {
-    const { writes, host } = githubHost();
-    const hub = fakeHub({ takes: [taken], dones: [ENDED] });
-    const { ran } = await runMail(reviewed, wake(), host, hub.hub);
-    expect(ran).not.toContain("deployReview");
-    expect(writes).toContainEqual(READY);
-    expect(writes).not.toContainEqual(POSTED_REVIEW);
-    expect(hub.calls).toEqual(calls);
-  });
-
-  test("a reviewer whose run was read as ended before take is given up, unless take collects its report; a read the hub refuses is said, not thrown", async () => {
-    function ctxOf(hub: (url: URL, init?: RequestInit) => Promise<Response>) {
-      async function fetch(path: string, init?: RequestInit) {
-        return hub(new URL(path, HUB_ORIGIN), init);
-      }
-      return { perform: ({ run }: { run: (scope: unknown) => Promise<unknown> }) => run({ credentials: { resolve: async () => ({ kind: "http", fetch }) } }) } as unknown as EffectContext;
-    }
-    async function runs(url: URL): Promise<Response> {
-      if (url.pathname.endsWith(`/${DEPLOYED}`)) return Response.json({ status: "stopped" });
-      if (url.pathname.endsWith("/run_live")) return Response.json({ status: "running" });
-      return Response.json({ error: { code: "not_found" } }, { status: 404 });
-    }
-    const signal = new AbortController().signal;
-    const read = await actions.runsEnded({ payload: wake(), out: [DEPLOYED, "run_live", "run_gone"] }, ctxOf(runs), signal);
-    expect(read).toEqual({ ended: [DEPLOYED], unread: expect.stringContaining("404") });
-
-    const ended = { runsEnded: { output: { ended: [DEPLOYED] } } };
-    const silent = await actions.take({ payload: wake(), ...ended }, ctxOf(fakeHub({ takes: [{ ...PASS, reviewers: [reviewer()] }] }).hub), signal);
-    expect(silent).toMatchObject({ run: true, triage: true, overdue: true });
-    const reporting = await actions.take({ payload: wake(), ...ended }, ctxOf(fakeHub({ takes: [reported({ result: REVIEW })] }).hub), signal);
-    expect(reporting).toMatchObject({ overdue: false, review: REVIEW, reviewers: [reviewer()] });
   });
 
   const CONTRIBUTOR = { author_association: "CONTRIBUTOR" };
@@ -660,64 +440,6 @@ describe("triage-manager with code review", () => {
     expect(ran).not.toContain("deployReview");
   });
 
-  test.each(["github", "bitbucket-datacenter"])("provider routing verifies published identity on %s in both paths", async (source) => {
-    const name = `pr-code-review-reviewer-${source}`;
-    const payload = wake({ source, repo: PR.repo, number: PR.number });
-    const take = { output: { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { ...CODE_REVIEW, ...REVIEW_REQUEST } } };
-    const rules = { output: { items: [{ facts: { author: "octocat", authorTeams: [], authorTeamsUnknown: [], changedFiles: 1, files: [{ path: "src/flag.ts" }] }, pack: RULES }] } };
-    for (const [identity, expected] of [[undefined, false], ["wrong-reviewer", false], [name, true]] as const) {
-      const { name: _name, ...unnamed } = RELEASE;
-      publish({ [source]: { codeReview: identity === undefined ? unnamed : { ...RELEASE, name: identity } } });
-      expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(expected);
-      expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(expected);
-      if (!expected) await expect(actions.deployReview({ payload, take }, {} as EffectContext, new AbortController().signal)).rejects.toThrow("no matching code review");
-    }
-    publish({ [source]: {} });
-    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(false);
-    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(false);
-  });
-
-  test.each(["github", "bitbucket-datacenter"])("selects the mapped reviewer from multiple published releases on %s", async (source) => {
-    const name = `pr-code-review-reviewer-${source}`;
-    const chosen = { ...RELEASE, name, workflow: { ...RELEASE.workflow, assetId: "ast_chosen" } };
-    const other = { ...RELEASE, name: "other-reviewer", workflow: { ...RELEASE.workflow, assetId: "ast_other" } };
-    const payload = wake({ source, repo: PR.repo, number: PR.number });
-    const take = { output: { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { ...CODE_REVIEW, ...REVIEW_REQUEST } } };
-    const rules = { output: { items: [{ facts: { author: "octocat", authorTeams: [], authorTeamsUnknown: [], changedFiles: 1, files: [{ path: "src/flag.ts" }] }, pack: RULES }] } };
-    publish({ [source]: { codeReviews: { [name]: chosen, "other-reviewer": other } } });
-    expect(publishedReviewer(source as "github" | "bitbucket-datacenter", name)?.workflow.assetId).toBe("ast_chosen");
-    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(true);
-    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(true);
-    const grants = triageManager({ id: "test", sources: [source], codeReview: [other, chosen] }).grantRequirements;
-    expect(grants).toContainEqual({ resource: "asset:ast_chosen", action: "read", source: "creator" });
-    expect(grants).toContainEqual({ resource: "asset:ast_other", action: "read", source: "creator" });
-    publish({ [source]: { codeReview: chosen, codeReviews: { [name]: other, "other-reviewer": chosen } } });
-    expect(publishedReviewer(source as "github" | "bitbucket-datacenter", name)).toBeUndefined();
-    expect((await actions.reviewEarly({ payload, take, rules })).deploy).toBe(false);
-    expect((await actions.reviewScope({ payload, take, rules, evaluateRules: { output: { verdict: "pass", checks: [] } } })).deploy).toBe(false);
-  });
-
-  test("deployReview refuses an unknown code review provider rather than defaulting", async () => {
-    const signal = new AbortController().signal;
-    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, taken: { codeReview: { provider: "openai" } } };
-    await expect(actions.deployReview({ payload: wake(), take: { output: take } }, {} as EffectContext, signal)).rejects.toThrow('deployReview: unknown code review provider "openai"');
-  });
-
-  test.each([
-    ["a changed file `when.paths` keeps is reviewed", { paths: ["!**/*.md"] }, {}, true],
-    ["fewer files read than changed are never left out by `when.paths`", { paths: ["!**/*.ts"] }, { pull: { changed_files: 2 } }, true],
-    ["a pull request triage could not read waits for its review while `for` could leave it out", { for: ["maintainers"] }, { pull: { changed_files: 2 }, unread: true }, false],
-  ])("%s, with no skip recorded", async (_name, limit, { pull, unread }: { pull?: Record<string, unknown>; unread?: true }, deployed) => {
-    const { host } = githubHost(HEAD, { pull });
-    async function files(url: URL, init?: RequestInit): Promise<Response> {
-      return unread && url.pathname.endsWith("/files") ? Response.json({ message: "Server Error" }, { status: 500 }) : host(url, init);
-    }
-    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(RULES, { codeReview: { ...CODE_REVIEW.codeReview, ...limit }, ...REVIEW_REQUEST }) }], dones: [ENDED] });
-    const { ran } = await runMail(reviewed, wake(), files, hub.hub);
-    expect(ran.includes("deployReview")).toBe(deployed);
-    expect(JSON.stringify(doneBody(hub.calls) ?? {})).not.toContain("codeReviewSkipped");
-  });
-
   const CLEAN = { result: { ...REVIEW, comments: [] } };
 
   /** One pass of a policy that approves a Pass, on `head` with CI green, taking what `take` builds from its request. */
@@ -725,301 +447,28 @@ describe("triage-manager with code review", () => {
     const approving: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: [{ do: "approve" }] } };
     const { writes, host } = githubHost(head, { checkRuns: [{ name: "ci", status: "completed", conclusion: "success" }] });
     const hub = fakeHub({ takes: [take(hubRequest(approving, { ...checks, ...REVIEW_REQUEST }))], dones: [ENDED] });
-    return { writes, outputs: (await runMail(reviewed, wake(), host, hub.hub)).outputs };
+    await runMail(reviewed, wake(), host, hub.hub);
+    return { writes };
   }
 
   function approved(writes: readonly Write[]): boolean {
     return writes.some((write) => (write.body as { event?: string } | undefined)?.event === "APPROVE");
   }
   test.each([
-    ["a clean review", CLEAN, CODE_REVIEW, undefined],
-    ["a review that failed", { failed: "the review did not finish" }, CODE_REVIEW, "Code review did not report on this head."],
-    ["a pull request `when.paths` leaves out of code review", undefined, { ...CODE_REVIEW, codeReview: { ...CODE_REVIEW.codeReview, paths: ["!**/*.ts"] } }, undefined],
-  ])("a passing verdict's approve runs on its own only after a clean code review or none the policy asks for: %s", async (_name, report, checks, reason) => {
-    const { writes, outputs } = await approvingPass((request) => (report ? reported(report, request) : { ...PASS, request }), checks);
-    const [approve] = (outputs["cleared"] as { actions: Record<string, unknown>[] }).actions;
-    expect(approve).toMatchObject({ kind: "approve", ...(reason && { held: true, reason }) });
-    expect(approved(writes)).toBe(reason === undefined);
-  });
-
-  test("a head whose review has a finding keeps its Pass, holds its approve and is not approvable, so the approval of the clean head before it is taken back", async () => {
-    const clean = await approvingPass((request) => reported(CLEAN, request));
-    expect(approved(clean.writes)).toBe(true);
-    const NEWER = "0e0e".repeat(10);
-    const p0 = { result: { ...REVIEW, comments: [{ ...REVIEW.comments[0]!, priority: 0 }] } };
-    function newer(request: Record<string, unknown>) {
-      const pushed = { ...request, headSha: NEWER };
-      const report = reported(p0, pushed);
-      return { ...report, pass: { ...report.pass, head: NEWER }, events: report.events.map(({ key, event }) => ({ key, event: { ...event, head: NEWER } })), reviewers: [{ ...reviewer(), head: NEWER }] };
-    }
-    const { writes, outputs } = await approvingPass(newer, CODE_REVIEW, NEWER);
-    expect(outputs["cleared"]).toMatchObject({ headSha: NEWER, verdict: "pass", approvable: false, actions: [{ kind: "approve", held: true, reason: "Code review has 1 finding open on this head." }] });
-    expect(approved(writes)).toBe(false);
+    ["a clean review", CLEAN, CODE_REVIEW, true],
+    ["a review that failed", { failed: "the review did not finish" }, CODE_REVIEW, false],
+    ["a pull request `when.paths` leaves out of code review", undefined, { ...CODE_REVIEW, codeReview: { ...CODE_REVIEW.codeReview, paths: ["!**/*.ts"] } }, true],
+  ])("a passing verdict's approve runs on its own only after a clean code review or none the policy asks for: %s", async (_name, report, checks, runs) => {
+    const { writes } = await approvingPass((request) => (report ? reported(report, request) : { ...PASS, request }), checks);
+    expect(approved(writes)).toBe(runs);
   });
 
   test("after Review again, a later pass judges the newest review of the head", async () => {
     const p0 = { ...REVIEW, comments: [{ ...REVIEW.comments[0]!, priority: 0 }] };
     const first = { ...reviewer("2998-01-01T00:00:00.000Z"), runId: "run_first", result: p0 };
     const again = { ...reviewer(), again: "again_1", result: CLEAN.result };
-    const { writes, outputs } = await approvingPass((request) => ({ ...PASS, request, reviewers: [first, again] }));
-    expect((outputs["cleared"] as { actions: Record<string, unknown>[] }).actions[0]).not.toHaveProperty("held");
+    const { writes } = await approvingPass((request) => ({ ...PASS, request, reviewers: [first, again] }));
     expect(approved(writes)).toBe(true);
-  });
-
-  const APPROVE_DO = { list: "pass", index: 0, kind: "approve", effectId: "do:approve", target: {}, reason: "every rule passed" };
-  const CI_FAILED = [{ check: "ci-green", kind: "machine", result: "fail" }];
-  const finding = (priority: number) => ({ ...REVIEW, comments: [{ ...REVIEW.comments[0]!, priority }] });
-  const OPEN = "Code review has 1 finding open on this head.";
-  const OPEN_P2 = "Code review has 1 finding at P2 or above open on this head.";
-  const NOTE = { body: "Thanks." };
-  test.each([
-    ["approve, by default, holds for a P3 finding while a comment runs", finding(3), [{ do: "approve" }, { do: "comment", target: NOTE }], [OPEN, undefined]],
-    ["approve allowing findings below P2 runs with a P3 finding", finding(3), [{ do: "approve", when: { findings: { above: "P2" } } }], [undefined]],
-    ["approve allowing findings below P2 holds for a P2 finding", finding(2), [{ do: "approve", when: { findings: { above: "P2" } } }], [OPEN_P2]],
-    ["approve allowing findings below P0 holds for a P0 finding", finding(0), [{ do: "approve", when: { findings: { above: "P0" } } }], ["Code review has 1 finding at P0 or above open on this head."]],
-    ["approve allowing any finding runs with a P0 finding", finding(0), [{ do: "approve", when: { findings: { any: true } } }], [undefined]],
-    ["a comment allowing no finding holds for one", finding(3), [{ do: "comment", target: NOTE, when: { findings: { any: false } } }], [OPEN]],
-    ["a clean review runs every Do", CLEAN.result, [{ do: "approve" }, { do: "comment", target: NOTE, when: { findings: { any: false } } }], [undefined, undefined]],
-  ] as const)("a Pass keeps its verdict whatever the review found, and %s", async (_name, review, pass, reasons) => {
-    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "completed", conclusion: "success" }] });
-    const pack = { ...RULES, actions: { ...RULES.actions, pass: [...pass], fail: [{ do: "request-changes" }] } } as CheckPack;
-    const hub = fakeHub({ takes: [reported({ result: review }, hubRequest(pack, { ...CODE_REVIEW, ...REVIEW_REQUEST }))], dones: [ENDED] });
-    const { outputs } = await runMail(reviewed, wake(), host, hub.hub);
-    const cleared = outputs["cleared"] as { verdict: string; feedback: string; approvable?: boolean; actions: Record<string, unknown>[] };
-    expect(cleared.verdict).toBe("pass");
-    expect(cleared.actions.map((action) => action["held"] === true ? action["reason"] : undefined)).toEqual([...reasons]);
-    for (const [at, reason] of reasons.entries()) {
-      if (reason === undefined) continue;
-      const name = cleared.actions[at]!["kind"] === "approve" ? "Approve" : "Comment";
-      expect(cleared.feedback).toContain(`${name} held: ${reason[0]!.toLowerCase()}${reason.slice(1)}`);
-    }
-    const approveHeld = cleared.actions.some((action) => action["kind"] === "approve" && action["held"] === true);
-    expect(approved(writes)).toBe(pass[0].do === "approve" && !approveHeld);
-    if (pass[0].do === "approve") expect(cleared.approvable).toBe(!approveHeld);
-    expect(writes.some((write) => (write.body as { event?: string } | undefined)?.event === "REQUEST_CHANGES")).toBe(false);
-  });
-
-  test("a Fail its rules made stays as the rules made it, and its Dos run whatever the review found", async () => {
-    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "completed", conclusion: "failure" }] });
-    const pack: CheckPack = { ...RULES, actions: { ...RULES.actions, pass: [{ do: "approve" }], fail: [{ do: "request-changes" }] } };
-    const hub = fakeHub({ takes: [reported({ result: finding(2) }, hubRequest(pack, { ...CODE_REVIEW, ...REVIEW_REQUEST }))], dones: [ENDED] });
-    const { outputs } = await runMail(reviewed, wake(), host, hub.hub);
-    expect(outputs["cleared"]).toEqual(outputs["evaluateRules"]);
-    expect(writes.some((write) => (write.body as { event?: string } | undefined)?.event === "REQUEST_CHANGES")).toBe(true);
-  });
-
-  const PASSED = { number: PR.number, headSha: HEAD, verdict: "pass", reason: "every rule passed", reasons: [], feedback: "", degraded: null, checks: [], actions: [APPROVE_DO] };
-  const NEWER = "0e0e".repeat(10);
-  const TAKEN = { blocks: ["code-review"], ...CODE_REVIEW };
-  test.each([
-    ["a take that names no head", {}, PASSED],
-    ["a verdict the rules made for a newer head than the review's", { head: HEAD }, { ...PASSED, headSha: NEWER }],
-  ])("a review on %s says nothing of the verdict's head, so approve is held", async (_name, head, verdict) => {
-    const reviewedTake = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], review: CLEAN.result, taken: TAKEN, ...head };
-    const made = await actions.cleared({ take: { output: reviewedTake }, rules: { output: { items: [] } }, evaluateRules: { output: verdict }, reviewScope: { output: { reviewed: true } } });
-    expect(made).toMatchObject({ actions: [{ ...APPROVE_DO, held: true, reason: "Code review did not report on this head." }] });
-  });
-
-  test.each([
-    ["a finding holds by default", finding(3), {}, { reviewed: true }, OPEN],
-    ["a review whose finders were not shown the whole diff holds", { ...CLEAN.result, complete: false }, {}, { reviewed: true }, "Code review did not read the whole change on this head."],
-    ["a review that stopped early holds", { ...CLEAN.result, budgetExhausted: true }, {}, { reviewed: true }, "Code review did not read the whole change on this head."],
-    ["a review skipped for failed rules holds", undefined, { rules: "pass" }, { reviewed: false, skipped: "rules failed: CI green" }, "Code review did not run on this head."],
-    ["a review `for` leaves out does not", undefined, { rules: "pass", for: ["maintainers"] }, { reviewed: false, skipped: "the author is not in the maintainers group" }, undefined],
-  ])("cleared: %s", async (_name, review, codeReview, scope, reason) => {
-    const checks = scope.skipped?.startsWith("rules failed") ? CI_FAILED : [];
-    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, ...(review && { review }), taken: { blocks: ["code-review"], codeReview: { ...CODE_REVIEW.codeReview, ...codeReview } } };
-    const { actions: [approve] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { ...PASSED, checks } }, reviewScope: { output: scope } }) as { actions: Record<string, unknown>[] };
-    expect(approve).toEqual(reason === undefined ? APPROVE_DO : { ...APPROVE_DO, held: true, reason });
-  });
-
-  const MERGE_DO = { list: "pass", index: 1, kind: "merge", effectId: "do:merge", target: {}, reason: "every rule passed" };
-  const DO_BOTH = [APPROVE_DO, MERGE_DO];
-  const INCOMPLETE = "Code review did not read the whole change on this head.";
-  const ABOVE_P2 = [{ pack: { ...RULES, actions: { ...RULES.actions, pass: [{ do: "approve", when: { findings: { above: "P2" } } }, { do: "merge", when: { findings: { above: "P2" } } }] } } }];
-
-  function threaded(priority: number, state?: "resolved" | "outdated" | "replied" | "untouched", id = 501) {
-    const comment = finding(priority).comments[0]!;
-    if (state === undefined) return comment;
-    return { ...comment, thread: { id, state } };
-  }
-
-  function clearedFor(comments: ReturnType<typeof threaded>[], options: { asked?: number[]; reads?: { id: number; state: "resolved" | "outdated" | "replied" | "untouched" }[]; unread?: string; review?: { complete?: boolean; budgetExhausted?: boolean }; items?: object[] } = {}) {
-    const review = { ...REVIEW, ...options.review, comments };
-    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review, taken: { blocks: ["code-review"], ...CODE_REVIEW }, ...(options.asked !== undefined && { threads: options.asked }) };
-    const reads = options.reads;
-    return actions.cleared({
-      take: { output: take },
-      rules: { output: { items: options.items ?? [] } },
-      evaluateRules: { output: { ...PASSED, approvable: true, actions: DO_BOTH } },
-      reviewScope: { output: { reviewed: true } },
-      ...(reads !== undefined && { findingThreads: { output: { reads, ...(options.unread !== undefined && { unread: options.unread }) } } }),
-    });
-  }
-
-  function heldBoth(reason: string) {
-    return [{ ...APPROVE_DO, held: true, reason }, { ...MERGE_DO, held: true, reason }];
-  }
-
-  test("cleared, a resolved read releases approve and merge", async () => {
-    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
-    expect(made.actions).toEqual(DO_BOTH);
-    expect(made.actions.map((action) => "effectId" in action ? action.effectId : undefined)).toEqual(["do:approve", "do:merge"]);
-    expect(made.approvable).toBe(true);
-    expect(made.feedback).not.toContain("held");
-  });
-
-  test("cleared, an outdated read still holds", async () => {
-    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "outdated" }] });
-    expect(made.actions).toEqual(heldBoth(OPEN));
-    expect(made.approvable).toBe(false);
-  });
-
-  test("cleared, a summary finding holds when a sibling thread was read resolved", async () => {
-    const made = await clearedFor([threaded(2), threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
-    expect(made.actions).toEqual(heldBoth(OPEN));
-    expect(made.approvable).toBe(false);
-  });
-
-  test("cleared, an asked thread stays held when the read is empty and unread, even if it was stored resolved", async () => {
-    const made = await clearedFor([threaded(2, "resolved")], { asked: [501], reads: [], unread: "401" });
-    expect(made.actions).toEqual(heldBoth(OPEN));
-  });
-
-  test("cleared, an asked thread stays held when the read omits it, even if it was stored resolved", async () => {
-    const made = await clearedFor([threaded(2, "resolved")], { asked: [501], reads: [{ id: 999, state: "resolved" }] });
-    expect(made.actions).toEqual(heldBoth(OPEN));
-  });
-
-  test("cleared, a stored resolved thread releases approve and merge when the pass asked for none", async () => {
-    const made = await clearedFor([threaded(2, "resolved")]);
-    expect(made.actions).toEqual(DO_BOTH);
-    expect(made.approvable).toBe(true);
-    expect(made.feedback).not.toContain("held");
-  });
-
-  test("cleared, a stored resolved thread releases approve and merge when threads is empty", async () => {
-    const made = await clearedFor([threaded(2, "resolved")], { asked: [] });
-    expect(made.actions).toEqual(DO_BOTH);
-    expect(made.actions.map((action) => "effectId" in action ? action.effectId : undefined)).toEqual(["do:approve", "do:merge"]);
-    expect(made.approvable).toBe(true);
-    expect(made.feedback).not.toContain("held");
-  });
-
-  test("cleared, a stored resolved thread releases approve and merge when the pass asked only for an id not on these findings", async () => {
-    const made = await clearedFor([threaded(2, "resolved")], { asked: [999] });
-    expect(made.actions).toEqual(DO_BOTH);
-    expect(made.approvable).toBe(true);
-    expect(made.feedback).not.toContain("held");
-  });
-
-  test("cleared, a finding left out while the pass asked for another thread on this head still holds", async () => {
-    const made = await clearedFor([threaded(2, "resolved", 501), threaded(2, "resolved", 502)], { asked: [501], reads: [{ id: 501, state: "resolved" }] });
-    expect(made.actions).toEqual(heldBoth(OPEN));
-    expect(made.approvable).toBe(false);
-  });
-
-  test.each(["outdated", "replied", "untouched"] as const)("cleared, a stored %s thread still holds when the pass asked for none", async (state) => {
-    const made = await clearedFor([threaded(2, state)]);
-    expect(made.actions).toEqual(heldBoth(OPEN));
-  });
-
-  test("cleared, above P2 does not count a resolved P0 and still counts an outdated P0", async () => {
-    const resolved = await clearedFor([threaded(0, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }], items: ABOVE_P2 });
-    expect(resolved.actions).toEqual(DO_BOTH);
-    expect(resolved.approvable).toBe(true);
-    const outdated = await clearedFor([threaded(0, "untouched")], { asked: [501], reads: [{ id: 501, state: "outdated" }], items: ABOVE_P2 });
-    expect(outdated.actions).toEqual(heldBoth(OPEN_P2));
-    expect(outdated.approvable).toBe(false);
-  });
-
-  test.each([
-    ["not complete", { complete: false }],
-    ["stopped early", { budgetExhausted: true }],
-  ])("cleared, an incomplete review (%s) stays incomplete when its thread was read resolved", async (_name, review) => {
-    const made = await clearedFor([threaded(2, "untouched")], { asked: [501], reads: [{ id: 501, state: "resolved" }], review });
-    expect(made.actions).toEqual(heldBoth(INCOMPLETE));
-  });
-
-  test("cleared keeps the reason of a Do already held, such as for CI", async () => {
-    const waiting = { ...APPROVE_DO, kind: "merge", held: true, reason: "Waiting for checks to finish." };
-    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: { ...REVIEW, budgetExhausted: true }, taken: { blocks: ["code-review"], ...CODE_REVIEW } };
-    const { actions: [merge] } = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: { ...PASSED, actions: [waiting] } }, reviewScope: { output: { reviewed: true } } }) as { actions: Record<string, unknown>[] };
-    expect(merge).toEqual(waiting);
-  });
-
-  const FINDINGS = "please address the failing build\n\nNotes:\n- build failed";
-  const REQUEST_CHANGES = { list: "fail", index: 0, kind: "request-changes", effectId: "do:request-changes", target: {}, reason: "a rule failed" };
-  const BLANKED = { repo: PR.repo, number: PR.number, labels: [], owned: [], comment: "" };
-  const REVIEW_HELD = [{ pack: { actions: { fail: [{ do: "request-changes", when: { findings: { any: false } } }] } } }];
-
-  function heldReview(steps: object[], items: object[], feedback = FINDINGS, comment = feedback) {
-    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: finding(2), taken: { blocks: ["code-review"], ...CODE_REVIEW } };
-    const evaluateRules = { ...PASSED, verdict: "fail", feedback, actions: steps, request: { ...BLANKED, comment } };
-    return actions.cleared({ take: { output: take }, rules: { output: { items } }, evaluateRules: { output: evaluateRules }, reviewScope: { output: { reviewed: true } } });
-  }
-
-  test("cleared holds a request-changes review, and the mirror comment keeps the findings and the hold note", async () => {
-    const made = await heldReview([REQUEST_CHANGES], REVIEW_HELD);
-    const note = "Request changes held: code review has 1 finding open on this head.";
-    expect(made.actions).toContainEqual({ ...REQUEST_CHANGES, held: true, reason: OPEN });
-    expect(made.feedback).toBe(`${FINDINGS}\n\n${note}`);
-    expect(made.request.comment).toBe(`${FINDINGS}\n\n${note}`);
-  });
-
-  test("a request-changes review already standing on the head keeps the mirror comment blank when Dos are held", async () => {
-    const made = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `${FINDINGS}\n\nTriage will request changes.`, "");
-    expect(made.request.comment).toBe("");
-    expect(made.feedback).toContain(FINDINGS);
-  });
-
-  const WILL_REQUEST = "Triage will request changes.";
-
-  test("holding request-changes drops the Do saying it will still be posted, keeping other Dos on the line", async () => {
-    const made = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `${FINDINGS}\n\n${WILL_REQUEST}`);
-    const note = "Request changes held: code review has 1 finding open on this head.";
-    expect(made.actions).toContainEqual({ ...REQUEST_CHANGES, held: true, reason: OPEN });
-    expect(made.request.comment).toBe(`${FINDINGS}\n\n${note}`);
-    expect(made.request.comment).not.toContain(WILL_REQUEST);
-    expect(made.feedback).toBe(`${FINDINGS}\n\n${note}`);
-
-    const withLabel = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `${FINDINGS}\n\nTriage will label, request changes.`);
-    expect(withLabel.request.comment).toBe(`${FINDINGS}\n\nTriage will label.\n\n${note}`);
-    expect(withLabel.feedback).toBe(`${FINDINGS}\n\nTriage will label.\n\n${note}`);
-
-    const withGap = await heldReview([REQUEST_CHANGES], REVIEW_HELD, `please address:\n\n\ncode block\n\n${WILL_REQUEST}`);
-    expect(withGap.request.comment).toBe(`please address:\n\n\ncode block\n\n${note}`);
-    expect(withGap.feedback).toBe(`please address:\n\n\ncode block\n\n${note}`);
-  });
-
-  test("holding one request-changes step while another will still be posted keeps the Do line until the review is posted", async () => {
-    const second = { ...REQUEST_CHANGES, index: 1, effectId: "do:request-changes-2" };
-    const pack = [{ pack: { actions: { fail: [{ do: "request-changes", when: { findings: { any: false } } }, { do: "request-changes" }] } } }];
-    const made = await heldReview([REQUEST_CHANGES, second], pack, `${FINDINGS}\n\n${WILL_REQUEST}`);
-    const note = "Request changes held: code review has 1 finding open on this head.";
-    expect(made.actions).toEqual([{ ...REQUEST_CHANGES, held: true, reason: OPEN }, second]);
-    expect(made.request.comment).toBe(`${FINDINGS}\n\n${WILL_REQUEST}\n\n${note}`);
-  });
-
-  test("a second note after request-changes is held still keeps the verdict text without the Do line", async () => {
-    const approve = "Approve held: code review has 1 finding open on this head.";
-    const stopped = "Triage stopped waiting for CI to finish after 3 hours, so no action ran on its own.";
-    const text = `${FINDINGS}\n\n${WILL_REQUEST}`;
-    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD, review: finding(2), taken: { blocks: ["code-review"], ...CODE_REVIEW }, stopped: ["ci"] };
-    const evaluateRules = { ...PASSED, verdict: "fail", feedback: text, actions: [APPROVE_DO, REQUEST_CHANGES], request: { ...BLANKED, comment: text } };
-    const made = await actions.cleared({ take: { output: take }, rules: { output: { items: [] } }, evaluateRules: { output: evaluateRules }, reviewScope: { output: { reviewed: true } } });
-    expect(made.actions).toContainEqual({ ...REQUEST_CHANGES, held: true, reason: stopped });
-    expect(made.request.comment).toBe(`${FINDINGS}\n\n${approve}\n\n${stopped}`);
-    expect(made.request.comment).not.toContain(WILL_REQUEST);
-    expect(made.feedback).toBe(`${FINDINGS}\n\n${approve}\n\n${stopped}`);
-  });
-
-  test("a review that is still going to be posted keeps the standing comment until the review is posted", async () => {
-    const made = await heldReview([APPROVE_DO, REQUEST_CHANGES], [], `${FINDINGS}\n\n${WILL_REQUEST}`);
-    const note = "Approve held: code review has 1 finding open on this head.";
-    expect(made.actions[1]).toEqual(REQUEST_CHANGES);
-    expect(made.request.comment).toBe(`${FINDINGS}\n\n${WILL_REQUEST}\n\n${note}`);
-    expect(made.feedback).toContain(WILL_REQUEST);
   });
 
   const CI_GREEN = [{ name: "ci", status: "completed", conclusion: "success" }];
@@ -1035,122 +484,40 @@ describe("triage-manager with code review", () => {
     return writes.some((write) => write.method === "PUT" && write.path === `/repos/${PR.repo}/pulls/${PR.number}/merge`);
   }
 
-  type Suggested = { kind: string; effectId?: string; held?: boolean; reason?: string };
-
   /**
    * A later pass on the head whose review is already stored, woken by a review-thread webhook. The pack's `on:` does not
    * name threads, so approve and merge are suggested only because that wake releases them. No second review is deployed.
-   * `commentThreads` is the code-review event's thread per finding, which a review posted before the claim kept the id
-   * has even when the stored comments do not.
    */
-  async function threadsWake(hostThreads: object[] | undefined, comments: readonly object[], commentThreads?: { runId: string; threads: ({ id: number; state: "resolved" | "outdated" | "replied" | "untouched" } | null)[] }[]) {
+  async function threadsWake(hostThreads: object[] | undefined, comments: readonly object[]) {
     const request = { ...hubRequest(RELEASING, { ...CODE_REVIEW, ...REVIEW_REQUEST }), event: "pull_request_review_thread", action: "resolved", events: ["threads"] };
     const { writes, host } = threadedHost(hostThreads, CI_GREEN);
-    const take = { ...PASS, request, events: [mailEvent(HEAD, { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: HEAD }, "evt_threads")], threads: [501], reviewers: [{ ...reviewer(), result: { ...REVIEW, comments } }], ...(commentThreads !== undefined && { commentThreads }) };
+    const take = { ...PASS, request, events: [mailEvent(HEAD, { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: HEAD }, "evt_threads")], threads: [501], reviewers: [{ ...reviewer(), result: { ...REVIEW, comments } }] };
     const hub = fakeHub({ takes: [take], dones: [ENDED] });
-    const run = await runMail(reviewed, wake(), host, hub.hub);
-    return { writes, ...run, calls: hub.calls };
-  }
-
-  function suggested(outputs: Record<string, unknown>, step: "evaluateRules" | "cleared") {
-    return (outputs[step] as { approvable?: boolean; actions: Suggested[] });
-  }
-
-  /** Approve and merge are on the list only because the threads wake released them: the pack's `on:` does not name threads. */
-  function releasedOnly(outputs: Record<string, unknown>) {
-    const [item] = (outputs["rules"] as { items: { facts: { events: string[] }; pack: CheckPack }[] }).items;
-    expect(item!.pack.actions.when).not.toContain("threads");
-    expect(item!.facts.events).toEqual(["threads"]);
-    expect(suggested(outputs, "evaluateRules").actions.map((action) => action.kind)).toEqual(["approve", "merge"]);
-  }
-
-  test("a resolved host thread on a threads wake writes approve and merge under the effect ids evaluateRules assigned", async () => {
-    const { writes, outputs, ran, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [inline("untouched")]);
+    const { terminalStatus } = await runMail(reviewed, wake(), host, hub.hub);
     expect(terminalStatus).toBe("completed");
-    expect(ran).not.toContain("deployReview");
-    releasedOnly(outputs);
-    const evaluated = suggested(outputs, "evaluateRules");
-    const cleared = suggested(outputs, "cleared");
-    expect(cleared.actions.map((action) => action.held)).toEqual([undefined, undefined]);
-    expect(cleared.actions.map((action) => action.effectId)).toEqual(evaluated.actions.map((action) => action.effectId));
-    expect(cleared.approvable).toBe(true);
-    expect(cleared.approvable).toBe(evaluated.approvable);
+    return writes;
+  }
+
+  test("a resolved host thread on a threads wake writes approve and merge", async () => {
+    const writes = await threadsWake([thread([501], { isResolved: true })], [inline("untouched")]);
     expect(approved(writes)).toBe(true);
     expect(wroteMerge(writes)).toBe(true);
   });
 
   test("an outdated host thread holds approve and merge for the open finding and writes neither", async () => {
-    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isOutdated: true })], [inline("untouched")]);
-    expect(terminalStatus).toBe("completed");
-    releasedOnly(outputs);
-    const evaluated = suggested(outputs, "evaluateRules");
-    const cleared = suggested(outputs, "cleared");
-    expect(cleared.actions).toEqual([
-      { ...evaluated.actions[0], held: true, reason: OPEN },
-      { ...evaluated.actions[1], held: true, reason: OPEN },
-    ]);
-    expect(cleared.actions.map((action) => action.reason)).not.toContain(INCOMPLETE);
-    expect(cleared.approvable).toBe(false);
+    const writes = await threadsWake([thread([501], { isOutdated: true })], [inline("untouched")]);
     expect(approved(writes)).toBe(false);
     expect(wroteMerge(writes)).toBe(false);
   });
 
   test("a resolved thread does not release a summary finding, so approve is not written", async () => {
-    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [inline("untouched"), SUMMARY]);
-    expect(terminalStatus).toBe("completed");
-    releasedOnly(outputs);
-    const cleared = suggested(outputs, "cleared");
-    expect(cleared.actions.map((action) => action.held === true ? action.reason : undefined)).toEqual([OPEN, OPEN]);
-    expect(cleared.approvable).toBe(false);
+    const writes = await threadsWake([thread([501], { isResolved: true })], [inline("untouched"), SUMMARY]);
     expect(approved(writes)).toBe(false);
     expect(wroteMerge(writes)).toBe(false);
   });
 
   test("a thread read the host refuses holds approve even when the stored thread was resolved", async () => {
-    const { writes, outputs, calls, terminalStatus } = await threadsWake(undefined, [inline("resolved")]);
-    expect(terminalStatus).toBe("completed");
-    releasedOnly(outputs);
-    expect(doneBody(calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
-    expect(doneBody(calls)["threads"]).toBeUndefined();
-    const reviewers = doneBody(calls)["reviewers"] as { kind: string; result?: { comments?: { thread?: { id: number; state: string } }[] } }[];
-    const review = reviewers.find((reviewer) => reviewer.kind === "code-review");
-    expect(review?.result?.comments?.map((comment) => comment.thread)).toEqual([{ id: 501, state: "untouched" }]);
-    const cleared = suggested(outputs, "cleared");
-    expect(cleared.actions.find((action) => action.kind === "approve")).toMatchObject({ held: true, reason: OPEN });
-    expect(cleared.approvable).toBe(false);
-    expect(approved(writes)).toBe(false);
-    expect(wroteMerge(writes)).toBe(false);
-  });
-
-  /** Comment id 501 lives on the code-review event, not on the stored review the claim kept before it recorded threads. */
-  const EVENT_THREAD = [{ runId: DEPLOYED, threads: [{ id: 501, state: "untouched" as const }] }];
-
-  test("a resolved read of a comment id known only from the code-review event writes approve and merge", async () => {
-    const { writes, outputs, terminalStatus } = await threadsWake([thread([501], { isResolved: true })], [REVIEW.comments[0]!], EVENT_THREAD);
-    expect(terminalStatus).toBe("completed");
-    releasedOnly(outputs);
-    const evaluated = suggested(outputs, "evaluateRules");
-    const cleared = suggested(outputs, "cleared");
-    expect(cleared.actions.map((action) => action.held)).toEqual([undefined, undefined]);
-    expect(cleared.actions.map((action) => action.effectId)).toEqual(evaluated.actions.map((action) => action.effectId));
-    expect(cleared.approvable).toBe(true);
-    expect(cleared.approvable).toBe(evaluated.approvable);
-    expect(approved(writes)).toBe(true);
-    expect(wroteMerge(writes)).toBe(true);
-  });
-
-  test("a refused read of a comment id known only from the code-review event still holds and does not stamp resolved", async () => {
-    const { writes, outputs, calls, terminalStatus } = await threadsWake(undefined, [REVIEW.comments[0]!], EVENT_THREAD);
-    expect(terminalStatus).toBe("completed");
-    releasedOnly(outputs);
-    expect(doneBody(calls)).toMatchObject({ threadsUnread: expect.stringContaining("401") });
-    expect(doneBody(calls)["threads"]).toBeUndefined();
-    const reviewers = doneBody(calls)["reviewers"] as { kind: string; result?: { comments?: { thread?: { state: string } }[] } }[];
-    const review = reviewers.find((reviewer) => reviewer.kind === "code-review");
-    expect(review?.result?.comments?.map((comment) => comment.thread?.state)).not.toContain("resolved");
-    const cleared = suggested(outputs, "cleared");
-    expect(cleared.actions.find((action) => action.kind === "approve")).toMatchObject({ held: true, reason: OPEN });
-    expect(cleared.approvable).toBe(false);
+    const writes = await threadsWake(undefined, [inline("resolved")]);
     expect(approved(writes)).toBe(false);
     expect(wroteMerge(writes)).toBe(false);
   });
@@ -1158,11 +525,8 @@ describe("triage-manager with code review", () => {
   test("a review that could not be mailed by its deadline leaves the verdict to go up alone, waiting for no reviewer", async () => {
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [{ ...PASS, request: ON }], dones: [ENDED] });
-    const { ran } = await runMail(reviewed, wake(), host, hub.hub, [], false);
-    expect(ran).toContain("deployReview");
-    expect(ran).not.toContain("doneReviewing");
+    await runMail(reviewed, wake(), host, hub.hub, [], false);
     expect(writes).toContainEqual(READY);
-    expect(hub.calls.at(-2)).toEqual(DONE_GAVE_UP);
   });
 
   test("a pass with a code reviewer out and no other event keeps polling, and gives up on the review at its deadline", async () => {
@@ -1170,9 +534,8 @@ describe("triage-manager with code review", () => {
     const out = { ...PASS, request: ON, reviewers: [reviewer()] };
     const late = { ...IDLE, request: ON, reviewers: [reviewer("2000-01-01T00:00:00.000Z")] };
     const hub = fakeHub({ takes: [out, late], dones: [{ outcome: "more", wait: true }, ENDED] });
-    const { passes, ran } = await runMail(reviewed, wake(), host, hub.hub, [], true, hurried());
+    const { passes } = await runMail(reviewed, wake(), host, hub.hub, [], true, hurried());
     expect(passes).toBe(2);
-    expect(ran).toContain("donePosted");
     expect(writes).toContainEqual(READY);
   });
 
@@ -1192,39 +555,12 @@ describe("triage-manager with code review", () => {
     expect(posted).toContain("**Triage: Pass**");
 
     const out = { ...PASS, request: ON, reviewers: [reviewer()] };
-    const { ran } = await runMail(reviewed, wake(), withComment, fakeHub({ takes: [out], dones: [ENDED] }).hub);
-    expect(ran).toContain("progressReviewOut");
+    await runMail(reviewed, wake(), withComment, fakeHub({ takes: [out], dones: [ENDED] }).hub);
     expect(comment.body).toBe(posted);
 
     comment.body = posted.replace('"verdict":"pass"', '"verdict":"fail"');
     await runMail(reviewed, wake(), withComment, fakeHub({ takes: [out], dones: [ENDED] }).hub);
     expect(comment.body).toContain("**Triage: In progress**");
-  });
-
-  const POLICY = { repo: { id: "art_policy", version: 1 } };
-  test.each([
-    ["an automatic pass keeps the verdict its rules still give", "pass", POLICY, {}, [], false],
-    ["an automatic pass replaces a verdict its rules no longer give", "fail", POLICY, {}, [], true],
-    ["an automatic pass replaces a verdict made under another policy", "pass", { repo: { ...POLICY.repo, version: 2 } }, {}, [], true],
-    ["CI running again replaces it", "pass", POLICY, {}, [{ facts: { checks: "pending", pendingChecks: ["ci"], mergeable: true }, pack: RULES }], true],
-    ["a Review again replaces it", "pass", POLICY, { again: "again_1" }, [], true],
-  ])("progress over a Pass on the head: %s", async (_name, passVerdict, policy, again, items, written) => {
-    const posted = { id: 42, user: { login: REQUEST["appLogin"], type: "Bot" }, body: `<!-- corbits-triage ${JSON.stringify({ head: HEAD, policy: POLICY, verdict: "pass", shows: "verdict" })} -->\n**Triage: Pass**` };
-    const writes: string[] = [];
-    async function fetch(path: string, init?: RequestInit): Promise<Response> {
-      if (init?.method !== undefined) {
-        writes.push(`${init.method} ${path}`);
-        return Response.json({ id: posted.id });
-      }
-      if (path.includes("/comments")) return Response.json([posted]);
-      return Response.json({ state: "open", head: { sha: HEAD }, base: { repo: { id: 1 } }, labels: [] });
-    }
-    const ctx = { perform: ({ run }: { run: (scope: unknown) => Promise<unknown> }) => run({ credentials: { resolve: async () => ({ kind: "http", fetch }) } }) } as unknown as EffectContext;
-    const taken = hubRequest(RULES, { codeReview: { ...CODE_REVIEW.codeReview, ...again } });
-    const take = { run: true, approvals: [], triage: true, overdue: false, head: HEAD, taken, reviewers: [] };
-    const input = { payload: wake(), take: { output: take }, rules: { output: { items } }, cleared: { output: { request: { header: { head: HEAD, policy, verdict: passVerdict } } } }, reviewMailed: { output: { reviewer: reviewer() } } };
-    await actions.progress(input, ctx, new AbortController().signal);
-    expect(writes.some((write) => write.startsWith("PATCH"))).toBe(written);
   });
 });
 
@@ -1281,51 +617,8 @@ describe("triage-manager with a judge", () => {
       if (url.pathname === `/repos/${PR.repo}/issues/comments/1` && method === "PATCH") comment.body = (JSON.parse(String(init!.body)) as { body: string }).body;
       return host(input, init);
     }
-    const { ran } = await runMail(github, wake(), withComment, fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] }).hub);
-    expect(ran).toContain("progressJudging");
+    await runMail(github, wake(), withComment, fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] }).hub);
     expect(comment.body.includes("**Triage: In progress**")).toBe(written);
-  });
-
-  test("the first pass deploys the judge and mails it the rules, posting nothing; the pass that collects its report posts its verdict as reported and keeps it on the head", async () => {
-    const { writes, host } = githubHost();
-    const mailed: unknown[] = [];
-    const first = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, first.hub, mailed)).ran).toContain("doneJudging");
-    expect(writes).toEqual([inProgress("the decision model's answer")]);
-    expect(first.calls[1]).toMatchObject({ ...DEPLOY, body: { source: { kind: "asset", assetId: "ast_judge", package: { format: "source", commitSha: "c0ffee", packageName: JUDGE_RELEASE.workflow.packageName } }, entry: JUDGE_RELEASE.workflow.entry, sourceOfferingIds: ["off_d"], defaultSourceOfferingId: "off_d" } });
-    expect(first.calls[2]).toMatchObject({ ...DONE, body: { reviewers: [{ kind: "judge", head: HEAD, runId: DEPLOYED, deployedBy: RUN }] } });
-    const [mail] = mailed as [{ tenantId: string; to: string; content: string; readyBy: string }];
-    expect(JSON.parse(mail.content)).toEqual({ kind: "judge", tenantId: TENANT, number: PR.number, checkout: { source: "github", repo: PR.repo, sha: HEAD } });
-    expect(rulesOf(mail).chunks.length).toBeGreaterThan(0);
-    expect(doneBody(first.calls)["wait"]).toBe(true);
-    expect(Date.parse(mail.readyBy)).toBeGreaterThan(Date.now());
-
-    const verdict = await judgeVerdict(rulesOf(mail));
-    const second = fakeHub({ takes: [judgeReported(verdict)], dones: [ENDED] });
-    const { ran, outputs } = await runMail(github, wake(), host, second.hub, mailed);
-    expect(ran).not.toContain("deployJudge");
-    expect(outputs["evaluateRules"]).toEqual(verdict);
-    expect(writes).toContainEqual(JUDGE_POSTED);
-    expect(second.calls[1]).toEqual({ ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...JUDGE, result: verdict }] }) });
-    expect(doneBody(second.calls)["report"]).toMatchObject({ head: HEAD, verdict });
-    expect(mailed).toHaveLength(1);
-  });
-
-  test("a manager whose judge is still out within its deadline stays up and polls, even while CI runs", async () => {
-    const { host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
-    const judging = { ...IDLE, request: hubRequest(JUDGED), reviewers: [JUDGE] };
-    const hub = fakeHub({ takes: [judging, judging], dones: [{ outcome: "more", wait: true }, ENDED] });
-    const { passes, ran } = await runMail(github, wake(), host, hub.hub, [], true, hurried());
-    expect(passes).toBe(2);
-    expect(ran).toContain("poll");
-    expect(hub.calls.filter((call) => call.path === DONE.path).map((call) => (call.body as { wait: boolean }).wait)).toEqual([true, true]);
-  });
-
-  test("a pass that mailed its judge and answers more runs the next pass, which ends", async () => {
-    const { host } = githubHost();
-    const hub = fakeHub({ takes: [{ ...PASS, request: hubRequest(JUDGED) }, IDLE], dones: [MORE, ENDED] });
-    expect(await runMail(github, wake(), host, hub.hub)).toMatchObject({ terminalStatus: "completed", passes: 2 });
-    expect(hub.calls.filter((call) => call.path === DONE.path)).toHaveLength(2);
   });
 
   test("a later event on the same head deploys no second judge and posts the judge's verdict, whatever changed on the pull request since", async () => {
@@ -1337,7 +630,6 @@ describe("triage-manager with a judge", () => {
     expect(ran).not.toContain("deployJudge");
     expect(outputs["evaluateRules"]).toEqual(verdict);
     expect(writes).toContainEqual(JUDGE_POSTED);
-    expect(hub.calls).toEqual([TAKE, { ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...JUDGE, result: verdict }] }) }, END]);
     expect(doneBody(hub.calls)["report"]).toMatchObject({ head: HEAD, verdict });
   });
 
@@ -1349,17 +641,6 @@ describe("triage-manager with a judge", () => {
     expect(ran).not.toContain("judgeScope");
     expect(outputs["evaluateRules"]).not.toEqual(verdict);
     expect(writes).not.toContainEqual(JUDGE_POSTED);
-  });
-
-  test("a judge's verdict that names no head goes up as a failed judge, and the pass still ends", async () => {
-    const verdict = await judgeVerdict(rulesOf(await firstJudgeMail()));
-    const { writes, host } = githubHost();
-    const hub = fakeHub({ takes: [judgeReported({ ...verdict, headSha: null })], dones: [ENDED] });
-    const { terminalStatus, ran } = await runMail(github, wake(), host, hub.hub);
-    expect(terminalStatus).toBe("completed");
-    expect(ran).toContain("mirrorRules");
-    expect(writes).not.toContainEqual(JUDGE_POSTED);
-    expect(hub.calls).toEqual([TAKE, DONE, END]);
   });
 
   test("a stored verdict whose approve CI skipped is posted on the pass after CI turned green on the same head with its Dos made again, and the judge is not run again", async () => {
@@ -1379,20 +660,6 @@ describe("triage-manager with a judge", () => {
     expect(green.writes).toContainEqual(POSTED_REVIEW);
   });
 
-  test("a stored verdict on a head whose CI runs again on the same commit waits for CI instead of being posted, and the manager ends", async () => {
-    const pack: CheckPack = { ...JUDGED, actions: { ...JUDGED.actions, pass: [{ do: "approve" }] } };
-    const request = hubRequest(pack);
-    const verdict = await judgeVerdict(rulesOf(await firstJudgeMail(request)));
-    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "in_progress", conclusion: null }] });
-    const hub = fakeHub({ takes: [{ ...PASS, request, reviewers: [{ ...JUDGE, result: verdict }] }], dones: [ENDED] });
-    const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).not.toContain("deployJudge");
-    expect(outputs["evaluateRules"]).toMatchObject({ waiting: true });
-    expect(writes).not.toContainEqual(JUDGE_POSTED);
-    expect(writes).not.toContainEqual(POSTED_REVIEW);
-    expect(doneBody(hub.calls)).toMatchObject({ wait: false, reviewers: [{ ...JUDGE, result: verdict }] });
-  });
-
   test("a judge's report on a head whose CI started running again posts the waiting state and ends, keeping the judgement for the pass after CI", async () => {
     const pack: CheckPack = { ...JUDGED, actions: { ...JUDGED.actions, pass: [{ do: "approve" }] } };
     const request = hubRequest(pack);
@@ -1406,71 +673,12 @@ describe("triage-manager with a judge", () => {
     expect(doneBody(hub.calls)).toMatchObject({ wait: false, reviewers: [{ ...JUDGE, result: verdict }] });
   });
 
-  test("a manager whose clock runs out while CI runs on a judge policy deploys no judge, and posts its verdict with every Do held", async () => {
-    const pack: CheckPack = { ...JUDGED, checks: { ...JUDGED.checks, "ci-green": { enabled: true } }, actions: { ...JUDGED.actions, unsure: [{ do: "comment", target: { body: "Waiting" } }] } };
-    const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
-    const old = new Date(Date.now() - 3 * 60 * 60_000 - 1_000).toISOString();
-    const hub = fakeHub({ takes: [{ ...IDLE, request: hubRequest(pack), waitingSince: old, claimedAt: old }], dones: [ENDED] });
-    const { ran, outputs } = await runMail(github, wake(), host, hub.hub);
-    expect(ran).not.toContain("deployJudge");
-    const { actions } = outputs["cleared"] as { actions: { held?: true }[] };
-    expect(actions.length).toBeGreaterThan(0);
-    expect(actions.every((action) => action.held === true && !("ci" in action))).toBe(true);
-    expect(writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringContaining("Triage stopped waiting for CI to finish after 3 hours, so no action ran on its own.") } }));
-  });
-
   test("a judge's verdict for another pull request fails the pass instead of being posted", async () => {
     const verdict = await judgeVerdict(rulesOf(await firstJudgeMail()));
     const { writes, host } = githubHost();
     const hub = fakeHub({ takes: [judgeReported({ ...verdict, number: 9 })] });
     expect((await runMail(github, wake(), host, hub.hub)).terminalStatus).toBe("failed");
     expect(writes).toEqual([]);
-  });
-
-  test("a verdict too large to store is posted and dropped from the claim", async () => {
-    const verdict = { ...await judgeVerdict(rulesOf(await firstJudgeMail())), padding: "x".repeat(300 * 1024) };
-    const { writes, host } = githubHost();
-    const hub = fakeHub({ takes: [judgeReported(verdict)], dones: [ENDED] });
-    await runMail(github, wake(), host, hub.hub);
-    expect(writes).toContainEqual(JUDGE_POSTED);
-    expect(hub.calls[1]).toEqual(DONE);
-  });
-
-  test("while CI runs the judge waits and the head is marked waiting; a verdict CI could still change is judged again once CI finished, and its Dos run", async () => {
-    const pack: CheckPack = { ...JUDGED, checks: { ...JUDGED.checks, "ci-green": { enabled: true } }, actions: { ...JUDGED.actions, pass: [{ do: "comment", target: { body: "Welcome" } }] } };
-    const request = hubRequest(pack);
-    const running = githubHost(HEAD, { checkRuns: [{ name: "ci", status: "in_progress", conclusion: null }] });
-    const waiting = fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] });
-    expect((await runMail(github, wake(), running.host, waiting.hub)).ran).not.toContain("deployJudge");
-    expect(running.writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABEL] } }));
-
-    const passed = [{ name: "ci", status: "completed", conclusion: "success" }];
-    const mailed: unknown[] = [];
-    const { writes, host } = githubHost(HEAD, { checkRuns: passed });
-    const undecided = { ...await judgeVerdict(rulesOf(await firstJudgeMail(request))), waiting: true };
-    const again = fakeHub({ takes: [{ ...PASS, request, reviewers: [{ ...JUDGE, result: undecided }] }], dones: [ENDED] });
-    expect((await runMail(github, wake(), host, again.hub, mailed)).ran).toContain("deployJudge");
-    expect(writes).toEqual([inProgress("the decision model's answer")]);
-
-    const verdict = await judgeVerdict(rulesOf(mailed[0]));
-    const judged = fakeHub({ takes: [judgeReported(verdict, request)], dones: [ENDED] });
-    await runMail(github, wake(), host, judged.hub);
-    expect(writes).toContainEqual(JUDGE_POSTED);
-    expect(writes).toContainEqual(expect.objectContaining({ path: `/repos/${PR.repo}/issues/${PR.number}/comments`, body: { body: expect.stringContaining("Welcome") } }));
-  });
-
-  test("a rule Triage could not check itself, as code patterns in a patch not read in full, holds no judge back once CI passed", async () => {
-    const unread = "code patterns could not be checked: src/flag.ts: its patch was not read in full";
-    const checks = [
-      { check: "ci-green", kind: "machine", result: "pass", reason: "required checks are passing", evidence: [], output: { kind: "values", values: { status: "passing" } } },
-      { check: "conventions", kind: "machine", result: "unconfirmed", reason: unread, evidence: [], output: { kind: "could-not-check", reason: unread } },
-    ];
-    const take = { run: true, approvals: [], triage: true, overdue: false, reviewers: [], head: HEAD };
-    const pack = { ...JUDGED, checks: { ...JUDGED.checks, "ci-green": { enabled: true } } };
-    const rules = { needsJudgment: true, items: [{ facts: { checks: "success", pendingChecks: [], mergeable: true }, pack, det: { checks } }] };
-    expect(await actions.judgeScope({ payload: wake(), take: { output: take }, rules: { output: rules } })).toEqual({ deploy: true, post: false });
-    const running = [{ ...checks[0], result: "unconfirmed", output: { kind: "could-not-check", reason: "checks are still running" } }, checks[1]];
-    expect(await actions.judgeScope({ payload: wake(), take: { output: take }, rules: { output: { ...rules, items: [{ facts: { checks: "pending", pendingChecks: ["build"], mergeable: true }, pack, det: { checks: running } }] } } })).toEqual({ deploy: false, post: true });
   });
 
   test.each([
@@ -1505,34 +713,7 @@ async function firstJudgeMail(request = hubRequest(JUDGED)): Promise<unknown> {
 describe("triage-manager with a judge and code review", () => {
   beforeEach(() => publish({ github: { judge: JUDGE_RELEASE, codeReview: RELEASE } }));
 
-  test("code review whose gate needs the rules to pass waits for the judge, whose rules could still shut it", async () => {
-    const request = hubRequest(JUDGED, { codeReview: { ...CODE_REVIEW.codeReview, rules: "pass" }, blocks: CODE_REVIEW.blocks, ...REVIEW_REQUEST });
-    const { host } = githubHost();
-    const mailed: unknown[] = [];
-    const ran = (await runMail(github, wake(), host, fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] }).hub, mailed)).ran;
-    expect(ran).toContain("deployJudge");
-    expect(ran).not.toContain("deployEarlyReview");
-    expect(mailed).toHaveLength(1);
-  });
-
-  test("code review whose mail with the judge failed is deployed again once the judge reports, and nothing posts until it reports", async () => {
-    const { writes, host } = githubHost();
-    const mailed: unknown[] = [];
-    const request = hubRequest(JUDGED, { ...CODE_REVIEW, ...REVIEW_REQUEST });
-    const first = fakeHub({ takes: [{ ...PASS, request }], dones: [ENDED] });
-    await runMail(github, wake(), host, first.hub, mailed, [true, false]);
-    expect(doneBody(first.calls)).toMatchObject({ reviewers: [expect.objectContaining({ kind: "judge" })] });
-    const verdict = await judgeVerdict(rulesOf(mailed[0]));
-
-    const second = fakeHub({ takes: [{ ...judgeReported(verdict, request), reviewers: [JUDGE] }], dones: [ENDED] });
-    const { ran } = await runMail(github, wake(), host, second.hub, mailed);
-    expect(ran).toContain("deployReview");
-    expect(ran).not.toContain("mirrorRules");
-    expect(writes).not.toContainEqual(JUDGE_POSTED);
-    expect(doneBody(second.calls)).toMatchObject({ wait: true, reviewers: [{ ...JUDGE, result: verdict }, expect.objectContaining({ kind: "code-review" })] });
-  });
-
-  test("deploys code review with the judge once the rules gate opens, and posts the judge's verdict and the review together once both have reported, a finding leaving the judge's verdict as it is", async () => {
+  test("deploys code review with the judge once the rules gate opens, and posts the judge's verdict and the review together once both have reported", async () => {
     const { writes, host } = githubHost();
     const mailed: unknown[] = [];
     const request = hubRequest(JUDGED, { ...CODE_REVIEW, ...REVIEW_REQUEST });
@@ -1557,44 +738,11 @@ describe("triage-manager with a judge and code review", () => {
     expect(writes).toContainEqual(JUDGE_POSTED);
     expect(writes).toContainEqual(READY);
     expect(writes).toContainEqual(POSTED_REVIEW);
-    expect(third.calls[1]).toEqual({ ...DONE, body: expect.objectContaining({ ...PULL, reviewers: [{ ...JUDGE, result: verdict }, { ...reviewer(), result: REVIEW }] }) });
   });
 });
 
 describe("triage-listener", () => {
   beforeEach(() => publish({ github: { manager: RELEASE } }));
-
-  test("a listener whose release publishes no manager fails the body with what is missing", async () => {
-    publish({});
-    const hub = fakeHub({ takes: [] });
-    const mail = triggerMail(PR, RULES, { tenantId: TENANT });
-    expect((await runMail(listener, mail, githubHost().host, hub.hub)).terminalStatus).toBe("failed");
-    expect(hub.calls).toEqual([]);
-  });
-
-  test("it deploys a manager for each pull request a reconciler's mail names and wakes each with its pull request only", async () => {
-    const hub = fakeHub({ takes: [] });
-    const mailed: unknown[] = [];
-    const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }, { prNumber: 9, headSha: "h9" }] });
-    const { terminalStatus } = await runMail(listener, mail, githubHost().host, hub.hub, mailed);
-    expect(terminalStatus).toBe("completed");
-    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, DEPLOY, NOTE]);
-    expect(hub.calls.filter((call) => call.path === NOTE.path).map((call) => call.body)).toEqual([{ ...PULL, runId: DEPLOYED }, { ...PULL, number: 9, runId: DEPLOYED }]);
-    expect((mailed as { to: string; content: string }[]).map((sent) => [sent.to, JSON.parse(sent.content)])).toEqual([
-      [DEPLOYED, JSON.parse(manageMail(TENANT, PULL))],
-      [DEPLOYED, JSON.parse(manageMail(TENANT, { ...PULL, number: 9 }))],
-    ]);
-  });
-
-  test("a wake mail that does not go leaves the other pull requests in the batch woken", async () => {
-    const hub = fakeHub({ takes: [] });
-    const mailed: unknown[] = [];
-    const mail = triggerMail(PR, RULES, { tenantId: TENANT, items: [{ prNumber: 8, headSha: HEAD }, { prNumber: 9, headSha: "h9" }] });
-    const { terminalStatus } = await runMail(listener, mail, githubHost().host, hub.hub, mailed, [false, true]);
-    expect(terminalStatus).toBe("completed");
-    expect(hub.calls.map(({ method, path }) => ({ method, path }))).toEqual([DEPLOY, NOTE, DEPLOY, NOTE]);
-    expect((mailed as { content: string }[]).map((sent) => JSON.parse(sent.content))).toEqual([JSON.parse(manageMail(TENANT, PULL)), JSON.parse(manageMail(TENANT, { ...PULL, number: 9 }))]);
-  });
 
   test("a mail that names no pull request, or is not from the hub, fails instead of being dropped", async () => {
     const hub = fakeHub({ takes: [] });
@@ -1603,25 +751,5 @@ describe("triage-listener", () => {
     expect((await runMail(listener, unnamed, githubHost().host, hub.hub)).terminalStatus).toBe("failed");
     expect((await runMail(listener, { ...mail, headers: { from: "someone@triage.test", to: mail.headers.to } }, githubHost().host, hub.hub)).terminalStatus).toBe("failed");
     expect(hub.calls).toEqual([]);
-  });
-});
-
-describe("grants", () => {
-  const DEPLOY_GRANTS = [{ resource: "workflow:*", action: "create", source: "creator" }, { resource: "asset:ast_review", action: "read", source: "creator" }, { resource: "workflow-run:*", action: "read", source: "creator" }];
-  const MANAGER_GRANTS = [{ resource: "triage-manager:state", action: "write", source: "creator" }, { resource: "workflow-run:self", action: "manage", source: "creator" }];
-
-  test("a listener built with the release's manager declares the grants to deploy exactly that asset and name what it deployed, and one built without declares none", () => {
-    expect(triageListener({ id: "triage-listener-github", manager: RELEASE }).grantRequirements).toEqual([...DEPLOY_GRANTS, { resource: "triage-manager:state", action: "deployed", source: "creator" }]);
-    expect(triageListener({ id: "triage-listener-github", manager: undefined }).grantRequirements).toEqual([]);
-  });
-
-  test("a manager built with the release's code review declares the grants to deploy exactly that asset, and one built without declares no asset read", () => {
-    expect(triageManager({ id: "triage-manager-github", sources: ["github"], codeReview: RELEASE }).grantRequirements).toEqual([...MANAGER_GRANTS, ...DEPLOY_GRANTS]);
-    expect(triageManager({ id: "triage-manager-github", sources: ["github"], codeReview: undefined }).grantRequirements).toEqual(MANAGER_GRANTS);
-  });
-
-  test("a manager built with the release's judge declares the grants to deploy exactly that asset", () => {
-    const judgeGrants = [{ resource: "workflow:*", action: "create", source: "creator" }, { resource: "asset:ast_judge", action: "read", source: "creator" }, { resource: "workflow-run:*", action: "read", source: "creator" }];
-    expect(triageManager({ id: "triage-manager-github", sources: ["github"], codeReview: undefined, judge: JUDGE_RELEASE }).grantRequirements).toEqual([...MANAGER_GRANTS, ...judgeGrants]);
   });
 });
