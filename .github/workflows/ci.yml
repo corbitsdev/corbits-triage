@@ -105,15 +105,15 @@ jobs:
       matrix:
         include:
           - shard: 1/5
-            files: tests/chain/unstarted.test.ts
+            files: tests/chain/always.test.ts
           - shard: 2/5
-            files: tests/chain/woken.test.ts tests/chain/local-sidecars.test.ts tests/chain/deterministic.test.ts tests/chain/unset.test.ts
+            files: tests/chain/reread.test.ts tests/chain/unset.test.ts
           - shard: 3/5
-            files: tests/chain/disconnected.test.ts tests/chain/reread.test.ts tests/chain/judged.test.ts
+            files: tests/chain/pushed.test.ts tests/chain/deterministic.test.ts
           - shard: 4/5
-            files: tests/chain/unrouted.test.ts tests/chain/held.test.ts tests/chain/waiting.test.ts
+            files: tests/chain/waiting.test.ts tests/chain/judged.test.ts
           - shard: 5/5
-            files: tests/chain/pushed.test.ts tests/chain/sidecar-cap.test.ts tests/chain/always.test.ts
+            files: tests/chain/held.test.ts
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

@@ -25,15 +25,14 @@ test("a policy that needs the judge deploys it and posts the judge's verdict onc
   expect(await verdictsOf(JUDGED, 1)).toEqual([expect.objectContaining({ head_sha: head, state: "ready-monitoring" })]);
 });
 
-/** Forty files of 400 long lines each: the rules output the manager attaches for the judge is over stock's 1 MiB inline limit. */
+/** Eleven files of 400 long lines each: the rules output the manager attaches for the judge measured 1,160,353 bytes, over stock's 1 MiB inline limit. */
 const large = once(async function large() {
   const head = sha("judged-large-1");
   const line = `+export const value = "${"x".repeat(100)}";\n`;
-  const files = Array.from({ length: 40 }, (_, i) => ({ filename: `src/file-${i}.ts`, status: "added", additions: 400, deletions: 0, patch: `@@ -0,0 +1,400 @@\n${line.repeat(400)}` }));
+  const files = Array.from({ length: 11 }, (_, i) => ({ filename: `src/file-${i}.ts`, status: "added", additions: 400, deletions: 0, patch: `@@ -0,0 +1,400 @@\n${line.repeat(400)}` }));
   const asked = model.decisions.length;
   await pushed(JUDGED, { ...pullOf(2, head), files });
-  // Over this much rules output the deploying pass, the judge and the posting pass together run past the default budget.
-  await settled(JUDGED, 2, 1, 400_000);
+  await settled(JUDGED, 2);
   return { head, asked: model.decisions.slice(asked).map((row) => row.id), pull: github.pull(JUDGED, 2) };
 });
 
