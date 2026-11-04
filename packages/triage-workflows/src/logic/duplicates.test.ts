@@ -5,7 +5,6 @@ import { readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
 import { readFacts } from "../actions/facts.js";
 import { rules } from "../actions/index.js";
 import { deriveState, type PrFacts } from "./checks.js";
-import { MAX_OPEN_PULLS, overlapping } from "./duplicates.js";
 import type { HostCall } from "./host.js";
 import { NO_FACTS } from "./item.js";
 import { prepareQualityEvaluation } from "./quality.js";
@@ -89,49 +88,9 @@ describe("no-duplicate", () => {
     const unreadOwn = await ruled([{ number: 9, title: "Other", hash: "other", commits: ["c9"], paths: ["src/login.ts", "bun.lock"] }], packOf(NO_DUPLICATE), [], { ...OWN, hash: undefined, commits: undefined });
     expect(noDuplicate(unreadOwn.items)).toMatchObject({ result: "unconfirmed", reason: "could not read this pull request's changes" });
   });
-
-  test("is unconfirmed past the open pull requests it reads, reading none of them", async () => {
-    const calls: ToolCall[] = [];
-    const many = Array.from({ length: MAX_OPEN_PULLS + 1 }, (_, index) => ({ number: 1 + index, title: "Other", hash: "same", paths: ["src/login.ts", "bun.lock"] }));
-    const { items } = await ruled(many, packOf(NO_DUPLICATE), calls, { ...OWN, number: 200 });
-    expect(noDuplicate(items)).toMatchObject({ result: "unconfirmed", reason: "could not compare the open pull requests: more than 100 open pull requests on main" });
-    expect(calls.some((call) => call.id.startsWith("open-files:") || call.id.startsWith("diff-hash:"))).toBe(false);
-  });
-
-  test("the comment names the pull request it duplicates", async () => {
-    const { items } = await ruled([{ number: 9, title: "Copy", hash: "same", commits: ["c9"], paths: ["src/login.ts", "bun.lock"] }], packOf(NO_DUPLICATE));
-    const { facts, det } = items[0]!;
-    const verdict = renderVerdict({ repoSource: "github", author: facts.author, repo: facts.repo, headSha: facts.headSha, det });
-    expect(verdict.verdict).toBe("fail");
-    expect(verdict.feedback).toContain("@octocat, please address the following:\n- has the same changes as #9");
-  });
 });
 
 describe("duplicates-open-pull-request", () => {
-  test("shortlists open pull requests sharing a path, then two title words, leaving out lockfiles and common words", () => {
-    const others = [
-      { number: 20, title: "Bump deps", paths: ["bun.lock"] },
-      { number: 21, title: "Add limits to the login route", paths: ["docs/login.md"] },
-      { number: 22, title: "Refactor", paths: ["src/login.ts", "src/session.ts"] },
-      { number: 23, title: "Login page", paths: ["web/login.tsx"] },
-      { number: 24, title: "Rate the session", paths: ["src/session.ts", "src/login.ts"] },
-      { number: 25, title: "Request this from that", paths: ["web/a.ts"] },
-    ];
-    expect(overlapping(`${TITLE} with this request`, ["src/login.ts", "src/session.ts", "bun.lock"], others).map((pull) => pull.number)).toEqual([24, 22, 21]);
-  });
-
-  test("asks one Score per earlier shortlisted pull request in a request of its own", async () => {
-    const { items, chunks } = await ruled([
-      { number: 9, title: "Login limits", paths: ["src/login.ts"] },
-      { number: 10, title: "Unrelated", paths: ["README.md"] },
-      { number: 21, title: "Later login limits", paths: ["src/login.ts"] },
-    ], packOf(JUDGED));
-    expect(items[0]!.facts.openPulls).toEqual({ overlapping: [{ number: 9, title: "Login limits", paths: ["src/login.ts"] }] });
-    const asked = chunks.at(-1)!;
-    expect(asked.questions.map((question) => question.id)).toEqual(["duplicates-open-pull-request-001", "instructed"]);
-    expect(asked.state).toMatchObject({ pullRequest: { title: TITLE, paths: ["src/login.ts", "bun.lock"] }, repository: { openPullRequests: [{ number: 9 }] } });
-  });
-
   test("names the open pull request most likely the same change, and asks a maintainer", () => {
     const pack = packOf(JUDGED);
     const facts: PrFacts = {

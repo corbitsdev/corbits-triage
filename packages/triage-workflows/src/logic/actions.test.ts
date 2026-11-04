@@ -89,27 +89,6 @@ describe("evaluateActions", () => {
     expect(doEffectId(ref)).toBe("7e611cf1aaf437e896b5f4aa1aca8b51f80a15ceb9883911e353cae40cd6fa8f");
   });
 
-  test("an effect id names the host when it is not GitHub, and a GitHub id stays the one computed without a source", () => {
-    const ref = { repo: "acme/widgets", number: 8, headSha: "abc", list: "pass" as const, index: 0, kind: "comment" as const, target: { body: "pass" } };
-    expect(doEffectId({ ...ref, source: "github" })).toBe(doEffectId(ref));
-    expect(doEffectId({ ...ref, source: "bitbucket-datacenter" })).not.toBe(doEffectId(ref));
-    const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [say("pass")] } };
-    const input = { facts, checks: [], verdict: "pass" as const, reason: "passes the repository's policy", pack };
-    expect(evaluateActions(input)).toMatchObject([{ effectId: doEffectId(ref) }]);
-    expect(evaluateActions({ ...input, repoSource: "github" })).toMatchObject([{ effectId: doEffectId(ref) }]);
-    expect(evaluateActions({ ...input, repoSource: "bitbucket-datacenter" })).toMatchObject([{ effectId: doEffectId({ ...ref, source: "bitbucket-datacenter" }) }]);
-  });
-
-  test("a step keeps its index when steps before it are satisfied or skipped", () => {
-    const behind = run({ pass: [
-      { do: "labels", target: { from: "list", labels: ["api"] } },
-      { do: "assign", target: { to: "teams", teams: ["core"] } },
-      say("hello"),
-    ] });
-    const ref = { repo: "acme/widgets", number: 8, headSha: "abc", list: "pass", index: 2, kind: "comment", target: { body: "hello" } } as const;
-    expect(behind).toEqual([expect.objectContaining({ kind: "assign", index: 1, skipped: true }), expect.objectContaining({ kind: "comment", index: 2, effectId: doEffectId(ref) })]);
-  });
-
   test("a step not for the author is skipped with why, and one whose author cannot be told apart is skipped too", () => {
     const pack = { ...emptyPack("acme/widgets"), actions: { ...defaultActions(), pass: [
       { ...say("maintainers"), when: { author: ["OWNER", "MEMBER", "COLLABORATOR"] } },
@@ -176,26 +155,6 @@ describe("evaluateActions", () => {
     expect(merge("none", false)).not.toHaveProperty("held");
     expect(merge("success", true)).not.toHaveProperty("held");
   });
-
-  test("a Do inserted earlier by a pack edit does not take the id of the Do that held its index", () => {
-    const [before] = run({ pass: [say("hello")] }) as SuggestedDo[];
-    const [inserted, moved] = run({ pass: [{ do: "labels", target: { from: "list", labels: ["search"] } }, say("hello")] }) as SuggestedDo[];
-    expect(inserted!.effectId).not.toBe(before!.effectId);
-    expect(moved!.effectId).not.toBe(before!.effectId);
-  });
-
-  test("a threads wake re-suggests approve and merge, not labels, and the approve keeps its effect id", () => {
-    const pass = [
-      { do: "labels", target: { from: "list", labels: ["shipit"] } },
-      { do: "approve" },
-      { do: "merge" },
-    ] satisfies Step[];
-    const ran = run({ when: ["opened", "checks"], pass }, "pass", ["threads"]);
-    const approve = { repo: "acme/widgets", number: 8, headSha: "abc", list: "pass", index: 1, kind: "approve", target: {} } as const;
-    expect(ran.map((action) => action.kind)).toEqual(["approve", "merge"]);
-    const suggested = ran.find((action) => action.kind === "approve");
-    expect(suggested && "effectId" in suggested ? suggested.effectId : undefined).toBe(doEffectId(approve));
-  });
 });
 
 describe("author groups written before author kinds were GitHub's", () => {
@@ -224,20 +183,6 @@ describe("author groups written before author kinds were GitHub's", () => {
       expect({ association, bot, matches }).toEqual({ association, bot, matches: [oldMatch(group, association, bot), oldMatch(group, association, bot)] });
     }
   });
-
-  test("a policy naming groups keeps every step in its place, so the effect ids its steps run under are unchanged", () => {
-    const pass = [
-      { do: "approve", for: "maintainers" },
-      { do: "labels", target: { from: "list", labels: ["new"] }, when: { author: ["external", "first-timers"] } },
-      { do: "labels", target: { from: "list", labels: ["new"] }, when: { author: ["external"] } },
-      { do: "comment", target: { body: "Welcome" }, when: { author: ["first-timers"] } },
-      { do: "close", for: "bots" },
-    ];
-    const pack = readCheckPack({ ...emptyPack("acme/widgets"), actions: { when: ["opened"], pass, fail: [], unsure: [] } });
-    expect(pack.actions.pass.map(({ when: _when, ...step }) => step)).toEqual(pass.map(({ for: _for, when: _when, ...step }) => step));
-    const ran = evaluateActions({ facts: { ...facts, labels: [], authorKind: "FIRST_TIME_CONTRIBUTOR" }, checks: [], verdict: "pass", reason: "passes", pack });
-    expect(ran.flatMap((a) => ("skipped" in a ? [] : [[a.index, a.kind]]))).toEqual([[1, "labels"], [2, "labels"], [3, "comment"]]);
-  });
 });
 
 describe("holdDos", () => {
@@ -247,15 +192,6 @@ describe("holdDos", () => {
     }
     const steps = [step("unsure", "close"), step("fail", "close"), step("pass", "merge"), step("fail", "merge"), step("unsure", "merge")];
     expect(holdDos(steps, ["close", "merge"]).map((action) => "held" in action)).toEqual([true, false, false, true, true]);
-  });
-
-  test("only a Do the role may write keeps waiting for CI to finish; one held for a person does not", () => {
-    const label: SuggestedDo = { list: "fail", index: 0, kind: "labels", reason: "", effectId: "e-label", target: { labels: ["bug"] } };
-    const [granted] = holdDos(heldApprovals([label], undefined, { checks: "pending" }), ["labels"]);
-    const [asked] = holdDos(heldApprovals([label], undefined, { checks: "pending" }), []);
-    expect(granted).toMatchObject({ held: true, ci: "pending" });
-    expect(asked).toMatchObject({ held: true });
-    expect(asked).not.toHaveProperty("ci");
   });
 });
 

@@ -18,7 +18,7 @@ export type DoResult = { effectId: string; status: DoOutcome["status"] | "failed
 export type ExecuteOutput = { dos: DoResult[]; reason?: string };
 
 /** Dos one run writes at most; the rest wait for the next run. */
-export const MAX_DOS_PER_RUN = 10;
+const MAX_DOS_PER_RUN = 10;
 const NOT_SETTLED = "verdict not settled";
 const OVER_CAP = `more than ${MAX_DOS_PER_RUN} unattended Dos in one run`;
 

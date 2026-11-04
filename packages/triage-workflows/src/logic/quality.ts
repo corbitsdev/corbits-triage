@@ -175,7 +175,7 @@ const FOCUSED_PATH_BYTES = 8 * 1024;
 // Jev caps a request's state at about 32k tokens, roughly 105 KB of diff; questions do not count toward it.
 export const MAX_SYSTEM_ONE_STATE_BYTES = 90_000;
 // No cap is documented; requests of 300 questions were answered whole.
-export const MAX_SYSTEM_ONE_QUESTIONS = 256;
+const MAX_SYSTEM_ONE_QUESTIONS = 256;
 // Below this much room for files a hunk is cut into so many pieces that each costs a request of mostly metadata.
 const MIN_FILE_ROOM = 8 * 1024;
 // About 5.8 MB of state; 3,000 small files take 24.
