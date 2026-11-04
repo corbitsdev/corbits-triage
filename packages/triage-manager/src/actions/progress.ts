@@ -1,10 +1,10 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { repoSourceOf, type KeptVerdict } from "@corbits/triage-contracts";
-import { progressMark } from "@corbits/triage-workflows/actions/waiting";
+import { repoSourceOf, VERDICT_LABELS, type Awaits, type KeptVerdict } from "@corbits/triage-contracts";
+import { waitingMark } from "@corbits/triage-workflows/actions/waiting";
 import { writeMark, type MirrorOutcome } from "@corbits/triage-workflows/actions/mirror";
-import type { Awaits } from "@corbits/triage-workflows/logic/render";
+import type { Item } from "@corbits/triage-workflows/logic/item";
 import { managerMailOf } from "./hub.js";
 import { verdict } from "./judge.js";
 import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
@@ -33,16 +33,16 @@ async function keptBy(input: unknown, parsed: Parsed, awaits: readonly Awaits[],
 }
 
 /**
- * Shows the in-progress comment while the pass's head waits for its judge or code review, naming what it waits for,
- * CI among it while that still runs, where triage comments; the verdict replaces it in place. The host leaves a comment
- * that already says this as it is.
+ * Shows the waiting marker while the pass's head waits for its judge or code review, naming what it waits for, CI among
+ * it while that still runs: its labels where triage labels, its in-progress comment where triage comments. The verdict
+ * replaces both. The host leaves a comment that already says this as it is.
  */
 export async function progress(input: unknown, ctx: EffectContext, signal: AbortSignal): Promise<MirrorOutcome | { skipped: true }> {
   const parsed = ProgressInput(input);
   if (parsed instanceof type.errors) throw new Error(`progress: ${parsed.summary}`);
   const { head, taken, reviewers, judge, judgeFailed, review, reviewFailed } = parsed.take.output;
   const granted = Granted(taken);
-  if (head === undefined || granted instanceof type.errors || !granted.automatic.includes("comment")) return { skipped: true };
+  if (head === undefined || granted instanceof type.errors) return { skipped: true };
   const mailed = [parsed.judgeMailed, parsed.earlyReviewMailed, parsed.reviewMailed].flatMap((step) => (step?.output.reviewer ? [step.output.reviewer] : []));
   const out = [...reviewers, ...mailed].filter((reviewer) => reviewer.head === head && reviewer.result === undefined && Date.parse(reviewer.deadline) > Date.now());
   const reported = { judge: judge !== undefined || judgeFailed !== undefined, "code-review": review !== undefined || reviewFailed !== undefined };
@@ -50,7 +50,9 @@ export async function progress(input: unknown, ctx: EffectContext, signal: Abort
   const awaits: Awaits[] = [...(waitingOnHost(parsed.rules.output.items) ? ["ci" as const] : []), ...reviewing];
   if (awaits.length === 0) return { skipped: true };
   const { pullRequest } = managerMailOf(parsed.payload);
-  const pull = { repo: pullRequest.repo, number: pullRequest.number, onHead: head };
+  const item = parsed.rules.output.items[0] as Item;
+  const facts = { repo: pullRequest.repo, number: pullRequest.number, headSha: head, checks: item.facts.checks, events: item.facts.events };
   const keepVerdict = await keptBy(input, parsed, awaits, asRecord(granted.codeReview)?.["again"], ctx, signal);
-  return writeMark(progressMark(repoSourceOf(pullRequest.source), pull, awaits, granted.appLogin, keepVerdict), ctx);
+  const mark = waitingMark(repoSourceOf(pullRequest.source), facts, awaits, granted.automatic, item.pack?.labels ?? VERDICT_LABELS, granted.appLogin, keepVerdict);
+  return mark ? writeMark(mark, ctx) : { skipped: true };
 }

@@ -560,12 +560,14 @@ any other tenant or an unknown sender.
   approve or merge, `dependsOnCi`), or mergeability not computed
   (`mergeable: null`) where no-merge-conflicts is on. Such a verdict, Fail
   aside, waits: its pass writes only the waiting marker and records no
-  verdict, and the judge is held. Otherwise CI never holds a verdict. Where the
-  role holds Comment, a pass that ends waiting writes the one triage comment
-  as **Triage: In progress**, naming what the head waits for (CI, the judge,
-  code review), through the same writer as the verdict's comment
-  (`mirror_auto`); a pass that ends waiting for a reviewer writes it in its
-  `progress` step before its done. Every such pass writes it, and the host
+  verdict, and the judge is held. Otherwise CI never holds a verdict. A pass
+  that ends waiting writes its waiting marker (`waitingMark`) from one fact,
+  what the head waits for (`Awaits`: CI, the judge, code review): where the
+  role holds Comment, the one triage comment as **Triage: In progress**
+  naming each, and where it holds Labels, on GitHub, the waiting label of
+  each (`WAITING_LABELS`, triage-contracts), taking off the others, through
+  the same writer as the verdict's comment (`mirror_auto`); a pass that ends
+  waiting for a reviewer writes it in its `progress` step before its done. Every such pass writes it, and the host
   leaves a comment that already says the same as it is, so it changes only
   when what the head waits for does; the verdict then edits that comment in
   place. A pass that deploys code review while CI is still awaited reports
@@ -970,13 +972,15 @@ still takes the pass label off.
    (triage-contracts) gives, linked to the comment, or to the pull request
    without one; each of its writes runs even when another fails. It runs
    before execute, so a merge or close finds the final verdict on the head. A
-   waiting verdict writes only its waiting marker: the waiting label or
-   pending build status, and, where the role holds Comment, the
-   in-progress comment naming CI. On GitHub the marker passes the fail and
-   unsure verdict labels as `keep`, so a pull request carrying one keeps its
-   labels until the verdict, which swaps them only when it differs. A head
-   with no checks (facts' `checks: "none"`) gets no waiting label: the marker
-   only takes the pass label off. The portal reads the wait from the live
+   waiting verdict writes only its waiting marker: the waiting label of each
+   thing the head waits for, or the pending build status while it waits for
+   CI, and, where the role holds Comment, the in-progress comment naming the
+   same. On GitHub the marker passes the fail and unsure verdict labels as
+   `keep`, so a pull request carrying one keeps its labels until the
+   verdict, which swaps them only when it differs, and a comment kept as the
+   verdict (`kept: "verdict"`) keeps its labels too. A head with no checks
+   (facts' `checks: "none"`) gets no CI waiting label: a marker with no other
+   label only takes the pass label off. The portal reads the wait from the live
    manager's claim (`waitingSince`), not the label.
 8. **review** (manager): posts the code review reported for the head through
    the host's `send_code_review` tool under the effect id `review:<head sha>`,

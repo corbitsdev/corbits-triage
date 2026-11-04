@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
-import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABEL, WAITING_STATUS, type KeptVerdict, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
-import { progressComment, type Awaits, type MarkArgs, type WaitingMark } from "../logic/render.js";
+import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABELS, WAITING_STATUS, type Awaits, type KeptVerdict, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import { progressComment, type MarkArgs, type WaitingMark } from "../logic/render.js";
 
 /** `mark` is absent when there is nothing to take off, so nothing is written either. */
 export type UnreadyOutput = { unready: true; mark?: WaitingMark };
@@ -8,15 +8,10 @@ export type UnreadyOutput = { unready: true; mark?: WaitingMark };
 type Pull = { repo: string; number: number; onHead: string };
 
 /** Ready never stands on a head triage has not checked; Not Ready and Needs Human Review stay until its verdict, so a push changes no label. */
-function markArgs(source: RepoSource, pull: Pull, labels: Record<VerdictWord, string>, ci: boolean): MarkArgs {
+function markArgs(source: RepoSource, pull: Pull, labels: Record<VerdictWord, string>, waiting: readonly string[]): MarkArgs {
   if (source === "bitbucket-datacenter") return { ...pull, labels: [], owned: [], status: WAITING_STATUS, statusHead: pull.onHead };
-  if (!ci) return { ...pull, labels: [], owned: [labels.pass] };
-  return { ...pull, labels: [WAITING_LABEL], owned: ownedLabels(labels), keep: [labels.fail, labels.unsure] };
-}
-
-function mark(kind: "waiting" | "unready", source: RepoSource, pull: Pull, labels: Record<VerdictWord, string>, ci: boolean, appLogin: string | undefined): WaitingMark {
-  const args = { ...markArgs(source, pull, labels, ci), ...(appLogin && { appLogin }) };
-  return { effectId: `${kind}:${pull.repo.replace("/", "--")}:${pull.number}:${pull.onHead}`, repoSource: source, args };
+  if (waiting.length === 0) return { ...pull, labels: [], owned: [labels.pass] };
+  return { ...pull, labels: [...waiting], owned: ownedLabels(labels), keep: [labels.fail, labels.unsure] };
 }
 
 function marks(source: RepoSource, automatic: readonly unknown[]): boolean {
@@ -29,32 +24,28 @@ function approvalOnly(events: unknown): boolean {
 }
 
 /**
- * The waiting marker on `headSha`, `Triage: Waiting for CI` only where the head has CI, with the in-progress comment
- * where triage comments; none where triage writes neither on this host. An approval-only GitHub pass writes no labels,
- * including when it waits; the in-progress comment is unchanged.
+ * Whether the waiting marker writes labels, or Bitbucket Data Center's status, for `awaits`: where triage marks on this
+ * host, except on an approval-only GitHub pass. Bitbucket's status names only CI.
  */
-export function waitingMark(source: RepoSource, { repo, number, headSha, events = [] }: { repo: string; number: number; headSha: string; events?: readonly unknown[] }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, ci: boolean, appLogin: string | undefined): WaitingMark | undefined {
-  const pull = { repo, number, onHead: headSha };
-  const comment = automatic.includes("comment") ? { comment: progressComment(["ci"]) } : {};
-  if (marks(source, automatic)) {
-    if (source === "github" && approvalOnly(events)) {
-      if (!("comment" in comment)) return undefined;
-      const marked = mark("waiting", source, pull, labels, false, appLogin);
-      return { ...marked, args: { ...marked.args, labels: [], owned: [], ...comment } };
-    }
-    const marked = mark("waiting", source, pull, labels, ci, appLogin);
-    return { ...marked, args: { ...marked.args, ...comment } };
-  }
-  return "comment" in comment ? progressMark(source, pull, ["ci"], appLogin, undefined) : undefined;
+function marked(source: RepoSource, awaits: readonly Awaits[], automatic: readonly unknown[], events: readonly unknown[]): boolean {
+  if (!marks(source, automatic)) return false;
+  return source === "github" ? !approvalOnly(events) : awaits.includes("ci");
 }
 
 /**
- * The in-progress comment alone on `pull`'s head, written once for each set of what it waits for. With `keepVerdict`,
- * the host keeps that verdict, under that policy, where it is already posted on the head rather than writing this over it.
+ * The waiting marker on `headSha` while its verdict waits for `awaits`: the label of each, CI's only where the head has
+ * checks, and the in-progress comment naming them where triage comments; none where triage writes neither. With
+ * `keepVerdict`, the host keeps that verdict, under that policy, where it is already posted on the head rather than
+ * writing this over it, labels included.
  */
-export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Awaits[], appLogin: string | undefined, keepVerdict: Omit<KeptVerdict, "head"> | undefined): WaitingMark {
-  const args = { ...pull, labels: [], owned: [], comment: progressComment(awaits), ...(keepVerdict && { keepVerdict }), ...(appLogin && { appLogin }) };
-  return { effectId: `progress:${pull.repo.replace("/", "--")}:${pull.number}:${pull.onHead}:${awaits.join("+")}`, repoSource: source, args };
+export function waitingMark(source: RepoSource, { repo, number, headSha, checks, events = [] }: { repo: string; number: number; headSha: string; checks: string; events?: readonly unknown[] }, awaits: readonly Awaits[], automatic: readonly unknown[], labels: Record<VerdictWord, string>, appLogin: string | undefined, keepVerdict?: Omit<KeptVerdict, "head">): WaitingMark | undefined {
+  const pull = { repo, number, onHead: headSha };
+  const comment = automatic.includes("comment") ? { comment: progressComment(awaits), ...(keepVerdict && { keepVerdict }) } : {};
+  const labelled = marked(source, awaits, automatic, events);
+  if (!labelled && !("comment" in comment)) return undefined;
+  const waiting = awaits.filter((awaited) => awaited !== "ci" || checks !== "none").map((awaited) => WAITING_LABELS[awaited]);
+  const args = labelled ? markArgs(source, pull, labels, waiting) : { ...pull, labels: [], owned: [] };
+  return { effectId: `waiting:${repo.replace("/", "--")}:${number}:${headSha}:${awaits.join("+")}`, repoSource: source, args: { ...args, ...comment, ...(appLogin && { appLogin }) } };
 }
 
 /**
@@ -65,7 +56,7 @@ export function progressMark(source: RepoSource, pull: Pull, awaits: readonly Aw
 export function closedMark(source: RepoSource, { repo, number, headSha, merged }: { repo: string; number: number; headSha: string; merged: boolean }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, appLogin: string | undefined): WaitingMark | undefined {
   const comment = automatic.includes("comment");
   let owned: readonly string[] = [];
-  if (source === "github" && automatic.includes("labels")) owned = comment ? ownedLabels(labels) : [WAITING_LABEL];
+  if (source === "github" && automatic.includes("labels")) owned = comment ? ownedLabels(labels) : Object.values(WAITING_LABELS);
   if (!comment && owned.length === 0) return undefined;
   const args = { repo, number, onHead: headSha, labels: [], owned, closedOut: { merged, comment }, ...(appLogin && { appLogin }) };
   return { effectId: `closed:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
@@ -86,5 +77,6 @@ export async function unready(input: unknown, _ctx: EffectContext, _signal: Abor
   if (!marks(source, automatic) || source !== "github") return { unready: true };
   if (approvalOnly(request["events"])) return { unready: true };
   const appLogin = typeof request["appLogin"] === "string" ? request["appLogin"] : undefined;
-  return { unready: true, mark: mark("unready", source, { repo, number: prNumber, onHead: headSha }, pack.labels, false, appLogin) };
+  const args = { ...markArgs(source, { repo, number: prNumber, onHead: headSha }, pack.labels, []), ...(appLogin && { appLogin }) };
+  return { unready: true, mark: { effectId: `unready:${repo.replace("/", "--")}:${prNumber}:${headSha}`, repoSource: source, args } };
 }

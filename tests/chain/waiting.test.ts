@@ -1,6 +1,6 @@
 // A head whose CI runs after the first post: its manager ends while it waits, and the check event wakes the next.
 import { expect, test } from "bun:test";
-import { VERDICT_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
+import { VERDICT_LABELS, WAITING_LABELS } from "@corbits/triage-contracts";
 import { deliver } from "./stack.ts";
 import { chainStack, WAITING, isLiveDeployment, once } from "./chain.ts";
 import { sha, pullOf, comments, labelled } from "./github.ts";
@@ -13,7 +13,7 @@ const waiting = once(async function waiting() {
   const [before, asked, missed] = [(await managers()).length, model.decisions.length, github.misses.length];
   github.setChecks(WAITING, head, [{ name: "build", status: "in_progress", conclusion: null }]);
   await pushed(WAITING, pullOf(1, head));
-  await until("the Waiting label", () => labelled(github.writesTo(WAITING, 1)).includes(WAITING_LABEL) || undefined);
+  await until("the Waiting label", () => labelled(github.writesTo(WAITING, 1)).includes(WAITING_LABELS.ci) || undefined);
   // The manager ends once it posted that the head waits; the check event is sent only after.
   const ended = await settled(WAITING, 1);
   const whileWaiting = { writes: [...github.writesTo(WAITING, 1)], claim: ended, managers: (await managers()).slice(before), asked: model.decisions.length - asked };
@@ -29,7 +29,7 @@ const waiting = once(async function waiting() {
 test("a head whose CI runs after the first post ends its manager while it waits, and the check event wakes a fresh one that judges it and posts the final verdict", async () => {
   const { head, whileWaiting, claim, deployed, asked, pull, misses } = await waiting();
   expect(misses).toEqual([]);
-  expect(labelled(whileWaiting.writes)).toEqual([WAITING_LABEL]);
+  expect(labelled(whileWaiting.writes)).toEqual([WAITING_LABELS.ci]);
   expect(comments(whileWaiting.writes)).toEqual([expect.stringContaining("**Triage: In progress**\n\nTriage is waiting for CI to finish")]);
   expect(whileWaiting.asked).toBe(0);
   expect(whileWaiting.claim.status).toBe("ended");

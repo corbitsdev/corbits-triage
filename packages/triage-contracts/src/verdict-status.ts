@@ -1,4 +1,4 @@
-import { ruleLabel, WAITING_LABEL, type VerdictWord } from "./check-pack.js";
+import { ruleLabel, WAITING_LABELS, type VerdictWord } from "./check-pack.js";
 
 /** The verdict as a status on the head, which a host shows beside it and can require before merge; each host maps the state to its own. */
 type StatusState = "success" | "failure" | "pending" | "error";
@@ -14,7 +14,7 @@ export function verdictStatus(verdict: VerdictWord, failedRules: readonly string
 }
 
 /** On a head held for its CI until the verdict replaces it. */
-export const WAITING_STATUS: VerdictStatus = { state: "pending", description: WAITING_LABEL };
+export const WAITING_STATUS: VerdictStatus = { state: "pending", description: WAITING_LABELS.ci };
 
 /** On a head Triage could not read. */
 export const UNREAD_STATUS: VerdictStatus = { state: "error", description: "Triage couldn't run" };

@@ -210,7 +210,7 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
   const source = repoSourceOf(it.repoSource);
   const labelNames = it.pack?.labels ?? VERDICT_LABELS;
   const closed = it.facts.state === "closed";
-  const mark = closed ? closedMark(source, it.facts, automatic, labelNames, it.appLogin) : rendered.waiting && waitingMark(source, it.facts, automatic, labelNames, it.facts.checks !== "none", it.appLogin);
+  const mark = closed ? closedMark(source, it.facts, automatic, labelNames, it.appLogin) : rendered.waiting && waitingMark(source, it.facts, ["ci"], automatic, labelNames, it.appLogin);
   const verdict = {
     ...stamp(it, it.facts.headSha), ...rendered, labels, reasons, feedback: shown, automatic, actions,
     ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),

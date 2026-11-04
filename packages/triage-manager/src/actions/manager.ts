@@ -1,9 +1,9 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, FindingThread, JudgeVerdict, MANAGER_LIFETIME_MS, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, type Awaits, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, FindingThread, JudgeVerdict, MANAGER_LIFETIME_MS, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
 import type { Item } from "@corbits/triage-workflows/logic/item";
-import { hostAwaited, type Awaits } from "@corbits/triage-workflows/logic/render";
+import { hostAwaited } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
 import { answered, callHub, endRun, managerMailOf, runEnded, tenantPath, type ManagerMail } from "./hub.js";
 

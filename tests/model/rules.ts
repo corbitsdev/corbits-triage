@@ -1,7 +1,8 @@
 // The rules in docs/INVARIANTS.md that a settled pull request is checked against: what GitHub ends up holding, the
 // writes it received, and what is left of its runs and mail.
 import { isTriageComment } from "@corbits/github-reads";
-import { closedText, HTML_MARKERS, TRIAGE_LABELS, WAITING_LABEL } from "@corbits/triage-contracts";
+import { closedText, HTML_MARKERS, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABELS, type Awaits } from "@corbits/triage-contracts";
+import { progressComment } from "@corbits/triage-workflows/logic/render";
 import type { Write } from "../chain/github.ts";
 import type { Played } from "./events.ts";
 import type { modelStack } from "./stack.ts";
@@ -10,6 +11,8 @@ type Stack = Awaited<ReturnType<typeof modelStack>>;
 
 /** More takes than this by one manager on one head is a manager polling for what will not come; the model needs two. */
 const TAKES_PER_HEAD = 4;
+
+const PROGRESS_TITLE = "**Triage: In progress**";
 
 /** The title a verdict comment opens with under its marker, by the verdict its header names. */
 const VERDICT_TITLES: Record<string, string> = { pass: "**Triage: Pass**", fail: "**Triage: Fail**", unsure: "**Triage: Unsure**" };
@@ -37,7 +40,8 @@ function oneVerdict(stack: Stack, pull: Played): string[] {
     const title = header && VERDICT_TITLES[header.verdict];
     if (!title || line !== title) breaks.push(`R1: the Triage comment is no verdict: ${line}`);
   }
-  if (labels.includes(WAITING_LABEL)) breaks.push(`R1: the pull request still has ${WAITING_LABEL}`);
+  const waiting = labels.filter((label) => Object.values(WAITING_LABELS).includes(label));
+  if (waiting.length > 0) breaks.push(`R1: the pull request still has ${waiting.join(", ")}`);
   return breaks;
 }
 
@@ -86,10 +90,42 @@ function onceEach(writes: readonly Write[]): string[] {
   return breaks;
 }
 
+/**
+ * R7, over every write the pull request received: whenever a Triage comment is written, and once it settles, the
+ * waiting labels the pull request holds name what its in-progress comment waits for, and none stand beside a verdict.
+ * Not Ready and Needs Human Review keep the labels as they are until the verdict.
+ */
+function waitingNamed(writes: readonly Write[]): string[] {
+  const breaks: string[] = [];
+  const on = new Set<string>();
+  let shown: string | undefined;
+  function check(): void {
+    if (shown === undefined || [VERDICT_LABELS.fail, VERDICT_LABELS.unsure].some((label) => on.has(label))) return;
+    const awaits = (Object.keys(WAITING_LABELS) as Awaits[]).filter((awaited) => on.has(WAITING_LABELS[awaited]));
+    const labels = awaits.map((awaited) => WAITING_LABELS[awaited]).join(", ") || "no waiting label";
+    const progress = shown.includes(PROGRESS_TITLE);
+    if (!progress && awaits.length > 0) breaks.push(`R7: ${labels} beside a verdict`);
+    if (progress && (awaits.length === 0 || !shown.endsWith(progressComment(awaits)))) breaks.push(`R7: ${labels} beside ${shown.slice(shown.indexOf(PROGRESS_TITLE))}`);
+  }
+  for (const { method, path, body } of writes) {
+    const text = (body as { body?: unknown } | null)?.body;
+    if ((method === "POST" || method === "PATCH") && path.includes("/comments") && typeof text === "string" && isTriageComment(text) && !HTML_MARKERS.isSuperseded(text)) {
+      check();
+      shown = text;
+    } else if (method === "POST" && path.endsWith("/labels")) {
+      for (const label of (body as { labels: string[] }).labels) on.add(label);
+    } else if (method === "DELETE" && path.includes("/labels/")) {
+      on.delete(decodeURIComponent(path.slice(path.lastIndexOf("/") + 1)));
+    }
+  }
+  check();
+  return breaks;
+}
+
 /** Each rule the settled pull request breaks, by its number, saying how; `missed` is how many misses the fake GitHub had before it. */
 export async function broken(stack: Stack, pull: Played, missed: number): Promise<string[]> {
   const { live, unattributed, lost, failed, waited, exhausted, mostTakes } = await stack.leftover(pull.number);
-  const breaks = [...oneVerdict(stack, pull), ...onceEach(stack.writes(pull.number))];
+  const breaks = [...oneVerdict(stack, pull), ...onceEach(stack.writes(pull.number)), ...waitingNamed(stack.writes(pull.number))];
   if (live.length > 0) breaks.push(`R5: managers still live: ${live.join(", ")}`);
   if (unattributed.length > 0) breaks.push(`R5: live managers deployed for no single pull request: ${unattributed.join(", ")}`);
   if (lost.length > 0) breaks.push(`R5: mail no run took: ${lost.map((mail) => mail.to).join(", ")}`);
