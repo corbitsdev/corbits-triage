@@ -109,7 +109,7 @@ async function collect(stream: ReadableStream<Uint8Array>, lines: string[], file
   keep(partial === "" ? [] : [partial]);
 }
 
-export type Hub = { origin: string; dataDir: string; logs: string[]; logFile: string; stop: () => Promise<void> };
+export type Hub = { origin: string; logs: string[]; logFile: string; stop: () => Promise<void> };
 
 /** The hub as the image starts it, serving the portal build in `portalDir`, with its sidecar a local process under its data directory. */
 export async function startHub(database: Database, github: FakeGithub, portalDir: string): Promise<Hub> {
@@ -158,7 +158,7 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
   const deadline = Date.now() + READY_MS;
   while (Date.now() < deadline && child.exitCode === null) {
     try {
-      if ((await fetch(`${origin}/api/me`)).status === 401) return { origin, dataDir, logs, logFile, stop };
+      if ((await fetch(`${origin}/api/me`)).status === 401) return { origin, logs, logFile, stop };
     } catch {
       // Still binding its socket.
     }
