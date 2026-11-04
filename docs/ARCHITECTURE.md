@@ -567,7 +567,8 @@ any other tenant or an unknown sender.
   naming each, and where it holds Labels, on GitHub, the waiting label of
   each (`WAITING_LABELS`, triage-contracts), taking off the others, through
   the same writer as the verdict's comment (`mirror_auto`); a pass that ends
-  waiting for a reviewer writes it in its `progress` step before its done. Every such pass writes it, and the host
+  waiting for a reviewer writes it in its `progress` step before its done.
+  Every such pass writes it, and the host
   leaves a comment that already says the same as it is, so it changes only
   when what the head waits for does; the verdict then edits that comment in
   place. A pass that deploys code review while CI is still awaited reports

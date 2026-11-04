@@ -1,5 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { ACTION_KINDS, marksWaiting, ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_LABELS, WAITING_STATUS, type Awaits, type KeptVerdict, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import type { PrFacts } from "../logic/checks.js";
 import { progressComment, type MarkArgs, type WaitingMark } from "../logic/render.js";
 
 /** `mark` is absent when there is nothing to take off, so nothing is written either. */
@@ -38,7 +39,7 @@ function marked(source: RepoSource, awaits: readonly Awaits[], automatic: readon
  * `keepVerdict`, the host keeps that verdict, under that policy, where it is already posted on the head rather than
  * writing this over it, labels included.
  */
-export function waitingMark(source: RepoSource, { repo, number, headSha, checks, events = [] }: { repo: string; number: number; headSha: string; checks: string; events?: readonly unknown[] }, awaits: readonly Awaits[], automatic: readonly unknown[], labels: Record<VerdictWord, string>, appLogin: string | undefined, keepVerdict?: Omit<KeptVerdict, "head">): WaitingMark | undefined {
+export function waitingMark(source: RepoSource, { repo, number, headSha, checks, events = [] }: { repo: string; number: number; headSha: string; checks: PrFacts["checks"]; events?: readonly unknown[] }, awaits: readonly Awaits[], automatic: readonly unknown[], labels: Record<VerdictWord, string>, appLogin: string | undefined, keepVerdict?: Omit<KeptVerdict, "head">): WaitingMark | undefined {
   const pull = { repo, number, onHead: headSha };
   const comment = automatic.includes("comment") ? { comment: progressComment(awaits), ...(keepVerdict && { keepVerdict }) } : {};
   const labelled = marked(source, awaits, automatic, events);
