@@ -336,8 +336,12 @@ export async function endNeverRan(
     ));
   for (const run of candidates) {
     if (onSidecarMs(run, now) < neverRanMs()) continue;
-    await cancel(run.tenantId, run.runId, `${run.workflow} deployed but never ran`);
-    log({ level: "warn", msg: "triage_deployment_never_ran", runId: run.runId, workflow: run.workflow });
+    try {
+      await cancel(run.tenantId, run.runId, `${run.workflow} deployed but never ran`);
+      log({ level: "warn", msg: "triage_deployment_never_ran", runId: run.runId, workflow: run.workflow });
+    } catch (err) {
+      log({ level: "error", msg: "triage_never_ran_cancel_failed", tenantId: run.tenantId, runId: run.runId, error: String(err) });
+    }
   }
 }
 

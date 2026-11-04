@@ -582,6 +582,27 @@ test("PostgreSQL: a manager that waited past the mail hold for a slot is timed f
   });
 }, 120_000);
 
+test("PostgreSQL: a cancel that fails is logged and the reaper still ends the next run that never ran", async () => {
+  await withDatabase(async function cancelFails(db) {
+    const deployedAt = new Date(Date.now() - timings().mailHoldMs - MINUTE);
+    for (const [runId, sidecarId] of [["run_a", "sdc_a"], ["run_bb", "sdc_b"]]) {
+      await deployedRun(db, runId, deployedAt);
+      await allocate(db, runId, { status: "allocated", sidecarId });
+      notePlaced({ allocationId: `alc_${runId}`, generation: 0 }, deployedAt);
+    }
+    const attempted: string[] = [];
+    const logs: Record<string, unknown>[] = [];
+
+    await endNeverRan(db, new Date(), async function cancel(_, runId) {
+      attempted.push(runId);
+      if (attempted.length === 1) throw new Error("cancel refused");
+    }, (entry) => logs.push(entry));
+
+    expect(attempted.toSorted()).toEqual(["run_a", "run_bb"]);
+    expect(logs).toContainEqual({ level: "error", msg: "triage_never_ran_cancel_failed", tenantId: TENANT, runId: attempted[0], error: "Error: cancel refused" });
+  });
+}, 120_000);
+
 const LIMITS = { stuckAfterMs: PR_TRIAGE_STUCK_RUN_MS, reviewerGraceMs: MINUTE };
 
 async function claimed(db: Db, pr: PullRequestRef, claim: Record<string, unknown>): Promise<void> {

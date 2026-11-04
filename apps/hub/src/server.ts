@@ -702,10 +702,14 @@ const reconcilers = REPO_SOURCES.map(reconcilerFor);
 async function reconcileAll(): Promise<ReconcileOutcome> {
   // A host removed through the stock credential route tells the hub nothing, so each pass releases what it left running.
   for (const tenant of await reconcileTenants()) {
-    await releaseHostsOf(tenant.id);
-    await watchListeners(tenant.id);
-    await supersedeAll(tenant.id);
-    await wakeOverdue(tenant.id);
+    try {
+      await releaseHostsOf(tenant.id);
+      await watchListeners(tenant.id);
+      await supersedeAll(tenant.id);
+      await wakeOverdue(tenant.id);
+    } catch (err) {
+      logJson({ level: "error", msg: "triage_tenant_sweep_failed", tenantId: tenant.id, error: String(err) });
+    }
   }
   await endNeverRan(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
   await endOverdue(composition.db, new Date(), { stuckAfterMs: reconcilePolicy.stuckAfterMs, reviewerGraceMs: triageTimings.reconcileIntervalMs }, composition.workflowLifecycleService.requestCancellation, logJson);
