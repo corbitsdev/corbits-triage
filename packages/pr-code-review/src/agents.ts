@@ -7,7 +7,7 @@ import { SYSTEM_PROMPTS } from "./prompts.js";
 
 export type Sources = readonly RepoSource[];
 
-/** GitHub's review token is contents-read-only; Bitbucket binds its workspace credential. */
+/** GitHub's review token only reads contents and pull requests; Bitbucket binds its workspace credential. */
 const CREDENTIAL: Record<RepoSource, string> = { github: "github-read", "bitbucket-datacenter": "bitbucket-datacenter" };
 
 export function credentialBindingsFor(sources: Sources) {

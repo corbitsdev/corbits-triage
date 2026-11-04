@@ -1295,8 +1295,9 @@ posting a review); it is the only deployed workflow that can write to GitHub.
 The listener and the judge bind no host credential, only the hub's. Code
 review, which runs a model over the pull request's code, binds only
 `github-read` (same provider): a second token for the same installation the
-hub mints with `contents: read` and the workspace's repositories from that
-installation that GitHub still lists in it, so a renamed or transferred
+hub mints with `contents: read` and `pull_requests: read` for the
+workspace's repositories from that installation that GitHub still lists in
+it, so a renamed or transferred
 repository is left out rather than failing the token. Past GitHub's limit
 of 500 repositories it asks for no list and reads every repository of the
 installation, still read-only. It refuses to keep a token GitHub answers
