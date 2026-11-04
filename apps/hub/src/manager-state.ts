@@ -1040,7 +1040,7 @@ const MAIL_PULL = /^(.+)#(\d+)$/;
 export async function pendingMails(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<{ repo: string; number: number; at: string }[]> {
   const since = after === undefined ? undefined : sql`(${managerState.state}->>'receivedAt')::timestamptz > ${after}::timestamptz`;
   const ofHost = like(managerState.key, `evt:${source}:%`);
-  const pull = sql<string>`substring(${managerState.key} from '^evt:[^:]+:(.+#[0-9]+):')`;
+  const pull = sql<string>`substring(${managerState.key} from '^evt:[^:]+:([^:#]+#[0-9]+):')`;
   const rows = await db.select({ pull, at: sql<string>`min(${managerState.state}->>'receivedAt')` }).from(managerState)
     .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since))
     .groupBy(pull);

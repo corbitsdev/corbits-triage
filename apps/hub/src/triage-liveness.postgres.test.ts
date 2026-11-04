@@ -323,14 +323,14 @@ test("a pull request waiting by an older mail and a newer queued head keeps the 
   });
 }, 60_000);
 
-test("an untaken mail of a triaged pull request waits from its oldest mail, whatever later writes touch its row", async () => {
+test("an untaken mail of a triaged pull request waits from its oldest mail, whatever later writes touch its row or its delivery id holds", async () => {
   await withDatabase(async (db) => {
     const triagedAt = new Date().toISOString();
     const store = memoryStore([{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, updatedAt: triagedAt }]);
     const hub = stack(db, store);
     await new Promise((done) => setTimeout(done, 5));
     const beforeFirst = Date.now();
-    await mailOf(PR, "d1", db);
+    await mailOf(PR, "d1:#999:tail", db);
     await new Promise((done) => setTimeout(done, 5));
     const rewrittenAt = new Date().toISOString();
     await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, staleBefore: rewrittenAt, updatedAt: rewrittenAt }]);
