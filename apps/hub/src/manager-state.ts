@@ -1034,13 +1034,21 @@ export async function lastTakes(db: DB["db"]): Promise<{ tenantId: string; sourc
   });
 }
 
-/** When the oldest pull request mail of the tenant's host that no manager has taken was recorded, among those recorded after `after`. */
-export async function oldestPendingMail(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<string | undefined> {
+const MAIL_PULL = /^(.+)#(\d+)$/;
+
+/** Each pull request on the tenant's host with mail no manager has taken, among mail recorded after `after`, and when its oldest such mail was recorded. */
+export async function pendingMails(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<{ repo: string; number: number; at: string }[]> {
   const since = after === undefined ? undefined : sql`(${managerState.state}->>'receivedAt')::timestamptz > ${after}::timestamptz`;
   const ofHost = like(managerState.key, `evt:${source}:%`);
-  const [row] = await db.select({ at: sql<string | null>`min(${managerState.state}->>'receivedAt')` }).from(managerState)
-    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since));
-  return row?.at ?? undefined;
+  const pull = sql<string>`substring(${managerState.key} from '^evt:[^:]+:([^:#]+#[0-9]+):')`;
+  const rows = await db.select({ pull, at: sql<string>`min(${managerState.state}->>'receivedAt')` }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since))
+    .groupBy(pull);
+  return rows.map(function pullMails(row) {
+    const match = MAIL_PULL.exec(row.pull);
+    if (match?.[1] === undefined || match[2] === undefined) throw new Error(`manager_state mail of ${row.pull} names no pull request`);
+    return { repo: match[1], number: Number(match[2]), at: row.at };
+  });
 }
 
 /** The tenant's pull requests whose claim holds a reviewer with no result. */

@@ -220,7 +220,7 @@ function observe(row: PrTriageRow, observed: readonly ObservedRun[], roomless: b
   return row;
 }
 
-const NEVER_STARTED = "run never started";
+export const NEVER_STARTED = "run never started";
 
 function uncapped(row: PrTriageRow, now: Date, policy: ReconcilePolicy, bootAt?: Date): PrTriageRow {
   if (row.status !== "failed") return row;

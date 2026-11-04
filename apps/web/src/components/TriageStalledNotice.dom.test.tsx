@@ -20,8 +20,12 @@ test("the workspace is told which host has pull requests waiting for Triage only
   expect(status?.textContent).toBe("");
 
   const since = new Date("2026-10-27T10:42:00Z");
+  const at = since.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   act(() => root?.render(<MemoryRouter><TriageStalledNotice stalled={[{ source: "bitbucket-datacenter", since: since.toISOString() }]} /></MemoryRouter>));
   expect(document.querySelector("[role=status]")).toBe(status);
-  expect(status?.textContent).toContain(`Pull requests on Bitbucket Data Center have waited since ${since.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} for Triage to start.`);
+  expect(status?.textContent).toContain(`Pull requests on Bitbucket Data Center have waited since ${at} for Triage to start.`);
   expect(document.querySelector("a")?.getAttribute("href")).toBe("/settings/triage");
+
+  act(() => root?.render(<MemoryRouter><TriageStalledNotice stalled={[{ source: "github", since: since.toISOString(), pull: "acme/widgets#7", count: 3, reason: "run never started" }]} /></MemoryRouter>));
+  expect(status?.textContent).toContain(`acme/widgets#7 and 2 other pull requests on GitHub have waited since ${at} for Triage to start: run never started.`);
 });

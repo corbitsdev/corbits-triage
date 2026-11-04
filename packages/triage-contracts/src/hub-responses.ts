@@ -226,8 +226,8 @@ export const DeployedVersions = type({
    * because it was full (`overflow`).
    */
   sidecar: type({ active: "number", waiting: "number", cap: "number", overflow: "number" }),
-  /** Each host whose pull requests have waited for a manager past the hub's alarm age: since when the oldest waits, and when a manager of that host last took one. */
-  "stalled?": type({ source: type.enumerated(...REPO_SOURCES), since: "string", "lastTakeAt?": "string" }).array(),
+  /** Each host whose pull requests have waited for a manager past the hub's alarm age: since when the oldest waits, which pull request it is, how many have waited past the alarm age, why if known, and when a manager of that host last took one. */
+  "stalled?": type({ source: type.enumerated(...REPO_SOURCES), since: "string", "lastTakeAt?": "string", "pull?": "string", "count?": "number", "reason?": "string" }).array(),
 });
 export type DeployedVersions = typeof DeployedVersions.infer;
 
