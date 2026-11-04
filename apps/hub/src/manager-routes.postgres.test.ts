@@ -426,6 +426,20 @@ test("PostgreSQL: done records the verdict a pass posted as its run's on its hos
   });
 }, 60_000);
 
+test("PostgreSQL: a verdict the host skipped, as on a pull request merged before the write, is neither commented nor posted", async () => {
+  await withDatabase(async function skipped(db) {
+    const app = buildHub(db);
+    const manager = bearer(await runWithToken(db, "run_skipped", [STATE]));
+    await launchedAs(db, "run_skipped", "triage-manager-github");
+    await mailed(db, GITHUB, "h1", "opened");
+    await post(app, "take", GITHUB, manager);
+    const { report } = postedOn(GITHUB, "h1");
+    await post(app, "done", { ...GITHUB, reviewers: [], report: { ...report, mirror: { call: mirrorCallId(GITHUB.repo, GITHUB.number), ok: false, skipped: "the pull request is not open" } } }, manager);
+    expect(await createVerdictRecordStore(db).latestFor(TENANT, GITHUB)).toMatchObject({ headSha: "h1", commented: false });
+    expect(await passRequest(db, TENANT, GITHUB, "run_skipped", "h1")).toBeUndefined();
+  });
+}, 60_000);
+
 test("PostgreSQL: the events of passes whose verdicts held an action for CI wake again once CI finishes, though a later verdict of their run replaced one", async () => {
   await withDatabase(async function heldTwice(db) {
     const app = buildHub(db);

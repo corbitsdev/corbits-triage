@@ -10,7 +10,10 @@ import type { UnreadyOutput } from "./waiting.js";
 
 const MIRRORED_KINDS: readonly ActionKind[] = ["comment", "labels", "approve", "request-changes"];
 
-/** `kept` when the host kept a verdict already on the head rather than writing a progress comment over it. */
+/**
+ * `kept` when the host kept a verdict already on the head rather than writing a progress comment over it. `skipped` when
+ * the host wrote nothing, as on a pull request no longer open or moved past the head, which is not `ok`.
+ */
 export type MirrorOutcome = { call: string; ok: boolean; error?: string; changeRequestsKept?: string; unchanged?: string; skipped?: string; kept?: "verdict" };
 /** Why a verdict was not posted: it could not be decided, it waits on the host's checks, it carries nothing to post, or the pr-triage role is granted no write. */
 export type NotPostedReason = "stale" | "waiting" | "no_request" | "no_grants";
@@ -67,7 +70,7 @@ function outcome(r: ToolResult): MirrorOutcome {
   const error = errorOf(r, failed);
   return {
     call: r.callId,
-    ok: error === undefined,
+    ok: error === undefined && typeof skipped !== "string",
     ...(error !== undefined && { error }),
     ...(typeof changeRequestsKept === "string" ? { changeRequestsKept } : {}),
     ...(typeof unchanged === "string" ? { unchanged } : {}),
