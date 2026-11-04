@@ -1,7 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type, type Type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, FindingThread, JudgeVerdict, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
+import { APPROVE_DO_KIND, CI_START_MS, CI_WAIT_MS, CodeReviewOutput, FindingThread, JudgeVerdict, MANAGER_LIFETIME_MS, StageResult, ThreadRead, VerdictFacts } from "@corbits/triage-contracts";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { hostAwaited, type Awaits } from "@corbits/triage-workflows/logic/render";
 import { decided } from "@corbits/triage-workflows/logic/settled";
@@ -16,13 +16,6 @@ const Latest = { "request?": "Record<string, unknown>", reviewers: Reviewer.arra
 const CommentThreads = type({ runId: "string > 0", threads: FindingThread.or("null").array() });
 const Taken = type({ outcome: "'idle'", ...Latest }).or({ outcome: "'pass'", pass: { head: "string" }, events: TakenEvent.array(), threads: "number[]", "commentThreads?": CommentThreads.array(), ...Latest });
 const Done = type({ outcome: "'ended'" }).or({ outcome: "'more'", wait: "boolean" });
-
-/**
- * How long a manager lives from claiming its pull request, time for the judge and code review to each take their hour
- * with CI in between; a new head does not extend it. A manager ends while it waits only on CI, so this bounds one its
- * reviewers keep alive.
- */
-export const LIFETIME_MS = 3 * 60 * 60_000;
 
 /**
  * What a pass works on. `run` when there is anything to do: a pass, a reviewer the manager waits for is past its
@@ -186,7 +179,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   const approvals = mails.filter((event) => event.payload["kind"] === APPROVE_DO_KIND).map((event) => event.payload);
   const forHead = mails.findLast((event) => event.head === head && event.payload["kind"] !== APPROVE_DO_KIND);
   const report = reportOf(events, head, answer.reviewers);
-  const outstanding = Date.now() - Date.parse(claimedAt) >= LIFETIME_MS ? stillAwaited(answer.reviewers, head, waitingSince, report) : [];
+  const outstanding = Date.now() - Date.parse(claimedAt) >= MANAGER_LIFETIME_MS ? stillAwaited(answer.reviewers, head, waitingSince, report) : [];
   const stopped = outstanding.length > 0;
   // A manager out of time takes every reviewer it still waits for as past its deadline, so the pass decides without it.
   const now = new Date().toISOString();

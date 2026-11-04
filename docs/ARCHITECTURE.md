@@ -611,7 +611,21 @@ any other tenant or an unknown sender.
   reached its sidecar never ran, its mail dropped by stock's hold: it is gone for the claim, and each reconcile pass ends it and logs
   `triage_deployment_never_ran` with its run id and workflow. The hub times
   that from the sidecar's connection for the run, or from its own start for a
-  run placed before it.
+  run placed before it. Each reconcile pass also cancels a judge or code
+  review still live one reconcile interval past its deadline with no result,
+  as one whose manager went away before stopping it, and logs
+  `triage_reviewer_overdue_ended`; the reviewer stays on the claim, so the
+  overdue wake below still runs. A manager whose run has held its open pass
+  longer than the reconciler's stuck limit (ninety minutes) is cancelled the
+  same way and logged as `triage_manager_stuck_ended`, and the reconciler
+  fails its head as `run stuck` and queues it again; a manager that resumed a
+  gone run's pass is timed from its takeover. A manager up between passes,
+  waiting on a reviewer or CI, is not stuck, but one that has neither claimed
+  nor closed a pass for `MANAGER_POLL_LIMIT_MS` (six hours), by which its own
+  loop would have ended it, is cancelled and logged as
+  `triage_manager_idle_ended`. Every cancellation logs stock's outcome; one
+  that fails is logged as `triage_overdue_cancel_failed` and tried again on
+  the next pass.
   When the rules need the judge, the host's own checks have finished (or the
   manager waits for them no longer) and `release.json` publishes a judge for the
   host, a pass deploys it under `workflow:*` `create` and `read` on exactly

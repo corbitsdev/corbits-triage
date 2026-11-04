@@ -39,7 +39,7 @@ import { asRecord, decodedSegment, errorText } from "@corbits/common";
 import { createInterchangeHub } from "./interchange-hub.js";
 import { createManagerIntake, createManagerWake, createOverdueWake, createSupersede } from "./manager-intake.js";
 import { MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { deploymentUp, endNeverRan, liveListener, notePlaced, passRequest, recordRefused } from "./manager-state.js";
+import { deploymentUp, endNeverRan, endOverdue, liveListener, notePlaced, passRequest, recordRefused } from "./manager-state.js";
 import { createTakeLedger, createTriageLiveness } from "./triage-liveness.js";
 import { setTimings } from "./timings.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
@@ -707,6 +707,7 @@ async function reconcileAll(): Promise<ReconcileOutcome> {
     await wakeOverdue(tenant.id);
   }
   await endNeverRan(composition.db, new Date(), composition.workflowLifecycleService.requestCancellation, logJson);
+  await endOverdue(composition.db, new Date(), { stuckAfterMs: reconcilePolicy.stuckAfterMs, reviewerGraceMs: triageTimings.reconcileIntervalMs }, composition.workflowLifecycleService.requestCancellation, logJson);
   const outcomes: ReconcileOutcome[] = [];
   for (const reconcile of reconcilers) outcomes.push(await reconcile());
   const retry = outcomes.some((outcome) => outcome.retry);
