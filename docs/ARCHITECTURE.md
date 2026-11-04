@@ -748,7 +748,7 @@ any other tenant or an unknown sender.
   has taken, a triage state row `queued` after it, or any head whose mail
   found no listener or did not go out, which no pass can have taken. A mail
   stops counting once its pull request has no row in a repository the store
-  has saved (it closed), or its rows are failed or newer than it. Such a head
+  has saved (it closed), or all its rows are failed. Such a head
   keeps when its mail first did not go out (`undeliveredSince` on its row)
   while the reconciler queues it again, and counts until a run of it is
   seen. Once that one waited past `TRIAGE_STALLED_AFTER_MS` (five minutes by

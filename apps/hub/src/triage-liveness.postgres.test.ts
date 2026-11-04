@@ -307,27 +307,26 @@ test("a raised alarm clears without a newer take once its head's run failed, wha
   });
 }, 60_000);
 
-test("a pull request's mail waits from its first mail newer than its triaged head, not its oldest or newest", async () => {
+test("an untaken mail of a triaged pull request waits from its oldest mail, whatever later writes touch its row", async () => {
   await withDatabase(async (db) => {
-    const store = memoryStore([]);
+    const triagedAt = new Date().toISOString();
+    const store = memoryStore([{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, updatedAt: triagedAt }]);
     const hub = stack(db, store);
+    await new Promise((done) => setTimeout(done, 5));
+    const beforeFirst = Date.now();
     await mailOf(PR, "d1", db);
     await new Promise((done) => setTimeout(done, 5));
-    const triagedAt = new Date().toISOString();
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, updatedAt: triagedAt }]);
-    await new Promise((done) => setTimeout(done, 5));
+    const rewrittenAt = new Date().toISOString();
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, staleBefore: rewrittenAt, updatedAt: rewrittenAt }]);
     await mailOf(PR, "d2", db);
-    await new Promise((done) => setTimeout(done, 5));
-    const beforeLast = Date.now();
-    await mailOf(PR, "d3", db);
 
     hub.advance(STALLED_AFTER_MS + 60_000);
     await hub.check();
     const [stalled] = hub.stalled();
     expect(stalled).toMatchObject({ source: "github", pull: "acme/widgets#7", count: 1 });
     const since = Date.parse(String(stalled?.since));
-    expect(since).toBeGreaterThan(Date.parse(triagedAt));
-    expect(since).toBeLessThan(beforeLast);
+    expect(since).toBeGreaterThanOrEqual(beforeFirst);
+    expect(since).toBeLessThan(Date.parse(rewrittenAt));
   });
 }, 60_000);
 

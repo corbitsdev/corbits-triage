@@ -8,7 +8,7 @@
 // Raising and clearing each email the workspace's owners and admins once, when the hub sends email.
 import { and, eq, inArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { REPO_SOURCES, repoPolicy, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
+import { REPO_SOURCES, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
 import { NEVER_STARTED } from "./github/reconcile-plan.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey } from "./github/tenant-config.js";
 import { undelivered } from "./github/triage-queue.js";
@@ -25,11 +25,6 @@ type WaitingPull = { pull: string; at: number; reason?: string; failed?: true };
 export type StallNotice = { to: string[]; workspace: string; source: RepoSource; since: string; cleared: boolean };
 
 type LivenessTenant = { id: string; config: unknown };
-
-/** Whether a mail recorded at `at` is newer than every row the store holds of its pull request, none of them failed. */
-function newerThanStore(rows: readonly PrTriageRow[], at: number): boolean {
-  return rows.every((row) => row.status !== "failed" && at > Date.parse(row.updatedAt));
-}
 
 function hostKey(tenantId: string, source: RepoSource): string {
   return `${tenantId}\n${source}`;
@@ -115,8 +110,8 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
   /**
    * When each waiting pull request of each host began to wait: a mail or queued head since the host's last take, and
    * any head whose mail did not go out, which no take can have picked up, until a run of it is seen. Only enabled,
-   * connected repositories count. A mail counts while the store holds nothing newer of its pull request: one without rows
-   * in a repository the store has saved has closed, and a failed head waits on a new head rather than a manager. A head
+   * connected repositories count. A mail counts while its pull request is open and not only failed: one without rows in a
+   * repository the store has saved has closed, and a failed head waits on a new head rather than a manager. A head
    * that failed to start and will be queued again is listed too, as it cycles back to queued while managers stay down.
    */
   async function waiting(tenant: LivenessTenant): Promise<Map<RepoSource, WaitingPull[]>> {
@@ -130,7 +125,7 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       const source = sourceOf(record);
       const taken = deps.takes.last(tenant.id, source);
       const { rows, version } = await deps.store.load(tenant.id, triageStateKey(record));
-      const byNumber = Map.groupBy(rows, (row) => row.number);
+      const live = new Set(rows.filter((row) => row.status !== "failed").map((row) => row.number));
       for (const row of rows) {
         const pull = `${record.name}#${row.number}`;
         if (row.status === "failed" && row.error === NEVER_STARTED) {
@@ -148,12 +143,8 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       if (hostMails === undefined) continue;
       for (const mail of hostMails) {
         if (mail.repo !== record.name) continue;
-        const ofPull = byNumber.get(mail.number);
-        const times = mail.at.map((at) => Date.parse(at));
-        let first: number | undefined;
-        if (ofPull !== undefined) first = times.find((at) => newerThanStore(ofPull, at));
-        else if (version === null && rows.length === 0) first = times[0];
-        if (first !== undefined) byHost.get(source)?.push({ pull: `${record.name}#${mail.number}`, at: first });
+        const unstored = version === null && rows.length === 0;
+        if (unstored || live.has(mail.number)) byHost.get(source)?.push({ pull: `${record.name}#${mail.number}`, at: Date.parse(mail.at) });
       }
     }
     return byHost;
