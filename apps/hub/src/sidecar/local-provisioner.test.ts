@@ -157,15 +157,22 @@ test("a sidecar that exits on its own is retired at once, freeing its slot and i
   await local.shutdown();
 });
 
-test("a sidecar whose retirement fails after it exits keeps its manifest for the next boot, and frees its slot", async () => {
-  const { manifests, crashes, retireFailed, started } = await setup({ maxSidecars: 1 });
+test("a sidecar whose retirement fails after it exits removes its directory and keeps its manifest for the next boot, through a destroy too", async () => {
+  const { dataRoot, manifests, spawned, crashes, retireFailed, started } = await setup({ maxSidecars: 1 });
   const local = await started("sc_a");
 
   await local.provisioner.ensure(request("a"));
   crashes.get("sc_a")!();
   await retireFailed;
 
+  expect(await fs.readdir(dataRoot)).not.toContain(path.basename(spawned[0]!.dataDir));
   expect(await manifests.listed()).toEqual(["sc_a"]);
+  await fs.mkdir(path.join(dataRoot, "a-Left01"));
+  await fs.mkdir(path.join(dataRoot, "a-b-Other1"));
+  expect(await local.provisioner.destroy({ allocationId: "a", generation: 2, sidecarId: "sc_a" })).toEqual({ kind: "destroyed", cleanup: "confirmed" });
+  expect(await manifests.listed()).toEqual(["sc_a"]);
+  expect(await fs.readdir(dataRoot)).not.toContain("a-Left01");
+  expect(await fs.readdir(dataRoot)).toContain("a-b-Other1");
   expect((await local.provisioner.ensure(request("b"))).kind).toBe("accepted");
 
   await local.shutdown();
