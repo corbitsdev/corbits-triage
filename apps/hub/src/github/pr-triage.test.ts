@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { checkPackName, emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
+import type { CodeReviewRecord } from "../manager-state.js";
 import { GithubRateLimited } from "./github-usage.js";
 import { createGithubPrTriage, type GithubPrTriageDeps } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY, planTenant, type ObservedRun } from "./reconcile-plan.js";
@@ -74,6 +75,7 @@ function handler(repo: Record<string, unknown>, s: Stub, overrides: Partial<Gith
     readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
     listener: async () => LISTENER,
     managerRuns: observed([]),
+    codeReviews: async () => [],
     store: stored([], s.saved),
     send: async ({ payload }) => {
       s.delivered.push({ payload });
@@ -117,6 +119,22 @@ describe("createGithubPrTriage", () => {
     expect((s.delivered[0]!.payload as { pack: unknown }).pack).toEqual(PACK);
     const at = NOW.toISOString();
     expect(s.saved).toEqual([[{ number: 8, headSha: "abc123", status: "queued", attempts: 0, firstSeenAt: at, queuedAt: at, updatedAt: at }]]);
+  });
+
+  test("on a head whose code review failed, it asks for one more review as Review again does; on one whose review finished, it does not", async () => {
+    const readCheckPack: GithubPrTriageDeps["readCheckPack"] = async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } }, policyWorkflow: { "code-review": { on: true } } });
+    const at = NOW.toISOString();
+    const failed: CodeReviewRecord[] = [
+      { runId: "review-1", head: "abc123", at, state: "failed", failed: "the reviewer's run ended" },
+      { runId: "review-2", head: "abc123", at, state: "reported", payload: { kind: "code-review", failed: "the reviewer failed" } },
+    ];
+    const finished: CodeReviewRecord[] = [...failed, { runId: "review-3", head: "abc123", at, state: "reported", payload: { kind: "code-review", result: {} } }];
+    const s = stub();
+    await handler(ENABLED, s, { readCheckPack, codeReviews: async () => failed })(request(), MEMBER);
+    await handler(ENABLED, stub(), { readCheckPack, store: stored([], []), codeReviews: async () => finished, send: async ({ payload }) => { s.delivered.push({ payload }); } })(request(), MEMBER);
+    const [again, done] = s.delivered.map((mail) => (mail.payload as { codeReview: Record<string, unknown> }).codeReview);
+    expect(again).toMatchObject({ on: true, again: expect.any(String) });
+    expect(done).toEqual({ on: true, for: expect.any(Array), triage: expect.any(Array), rules: "pass" });
   });
 
   test("a member denied use of the GitHub App credential gets 403 and nothing is mailed", async () => {

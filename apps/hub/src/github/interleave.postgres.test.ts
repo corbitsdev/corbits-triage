@@ -54,6 +54,7 @@ function route(store: TriageStateStore, deliver: Deliver) {
     readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
     listener: async () => DEPLOYMENT,
     managerRuns: noRuns,
+    codeReviews: async () => [],
     store,
     send: async ({ payload }) => deliver(payload),
     retry() {},
