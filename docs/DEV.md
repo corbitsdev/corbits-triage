@@ -81,7 +81,7 @@ Code review against the emulator: the emulator ignores GitHub's diff media type 
 
 ```sh
 bun run test     # unit + integration; hub tests need Postgres
-bun run test:chain  # the live chain: hub, sidecars, listener, manager, judge; about ten minutes
+bun run test:chain  # the live chain: hub, sidecars, listener, manager, judge
 bun run check    # typecheck tooling, portal, extension, hub, packages, e2e and the tests; check exact dependencies; bundle the hub
 bun run lint
 ```
@@ -90,7 +90,7 @@ Hub tests connect to `postgres://postgres:postgres@localhost:5432/interchange` a
 
 `bun run test:chain` (`tests/chain/`) runs its files two at a time, one scenario each, each isolated from the others. Each file starts a hub on a database of its own, serving a portal build, sets up a workspace through the portal's routes, waits for the hub to start its listener, and sends GitHub's webhooks to it. GitHub and the decision model are local stand-ins, so it needs no account or key; each hub's sidecars are local processes, and it installs the workflows' native modules from the npm registry as a deploy does. Code review needs an isolated sidecar, which a local process is not, so it is not part of the chain test.
 
-The chain starts its hub with its waits short (`TIMINGS` and `MAIL_HOLD_MS` in `tests/chain/stack.ts`, set through the `TRIAGE_*_MS` variables in [SELF_HOST.md](SELF_HOST.md#triage-tuning) and `HUB_MAIL_HOLD_TTL_MS`). A scenario polls every 100 ms for the state it names and never sleeps for a fixed time, which `bun run lint` enforces under `tests/chain/`. The real waits left are stock's one-minute ping timeout in the scenarios that freeze a listener's sidecar, the one-minute mail hold `unstarted` waits out, and the manager's 30-second poll in `woken`. A failed shard is handled as the [Tests rules](../AGENTS.md#tests) say.
+The chain starts its hub with its waits short (`TIMINGS` and `MAIL_HOLD_MS` in `tests/chain/stack.ts`, set through the `TRIAGE_*_MS` variables in [SELF_HOST.md](SELF_HOST.md#triage-tuning) and `HUB_MAIL_HOLD_TTL_MS`). A scenario polls every 100 ms for the state it names and never sleeps for a fixed time, which `bun run lint` enforces under `tests/chain/`. A failed shard is handled as the [Tests rules](../AGENTS.md#tests) say.
 
 Each hub's full log, which holds its sidecars' and their workflow processes' output too, is written to `tmp/chain-logs/<test file>/hub.log` as the scenario runs (the path is printed when the hub starts, and the file is truncated then), and a timeout names that directory and shows the last 80 lines. Run one file with `bun --conditions=intx-src test tests/chain/<file>`. When a CI shard fails, its `chain-hub-logs-<job index>` artifact holds the `tmp/chain-logs` directory, one subdirectory per test file in the shard.
 

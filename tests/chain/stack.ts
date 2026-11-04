@@ -50,7 +50,7 @@ export const TIMINGS: Timings = {
  * Stock's hold on mail to a just-deployed run, and so the hub's start grace for a manager. A manager must still reach
  * its sidecar inside it, which takes half a minute on a loaded machine.
  */
-export const MAIL_HOLD_MS = 60_000;
+const MAIL_HOLD_MS = 60_000;
 
 function timingEnv(timings: Timings): Record<string, string> {
   return Object.fromEntries(Object.entries(TIMING_VARIABLES).map(([key, variable]) => [variable, String(timings[key as keyof Timings])]));
@@ -112,7 +112,7 @@ async function collect(stream: ReadableStream<Uint8Array>, lines: string[], file
 export type Hub = { origin: string; dataDir: string; logs: string[]; logFile: string; stop: () => Promise<void> };
 
 /** The hub as the image starts it, serving the portal build in `portalDir`, with its sidecar a local process under its data directory. */
-export async function startHub(database: Database, github: FakeGithub, portalDir: string, env: Record<string, string> = {}): Promise<Hub> {
+export async function startHub(database: Database, github: FakeGithub, portalDir: string): Promise<Hub> {
   const port = freePort();
   const origin = `http://127.0.0.1:${port}`;
   const dataDir = mkdtempSync(join(tmpdir(), "corbits-chain-"));
@@ -141,7 +141,6 @@ export async function startHub(database: Database, github: FakeGithub, portalDir
       // Every sidecar a local process, as on a hub without Docker, so each reaches the fake GitHub and model on loopback.
       DOCKER_HOST: "unix:///nonexistent/docker.sock",
       NPM_REGISTRY_URL: npmRegistry.origin,
-      ...env,
     },
     stdin: "ignore",
     stdout: "pipe",

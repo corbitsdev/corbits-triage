@@ -25,12 +25,8 @@ export const WAITING = `${OWNER}/waiting`;
 export const PUSHED = `${OWNER}/pushed`;
 export const HELD = `${OWNER}/held`;
 export const ALWAYS = `${OWNER}/always`;
-export const WOKEN = `${OWNER}/woken`;
 export const REREAD = `${OWNER}/reread`;
-export const UNSTARTED = `${OWNER}/unstarted`;
-export const DISCONNECTED = `${OWNER}/disconnected`;
 export const UNSET = `${OWNER}/unset`;
-export const UNROUTED = `${OWNER}/unrouted`;
 
 // Interchange's `liveWorkflowRunStatuses`: an anchor is born `deployed` and flips to `running` on its first trigger.
 const LIVE_DEPLOYMENT_STATUSES = new Set(["deployed", "running"]);
@@ -56,10 +52,10 @@ function decide(id: string, question: Question): Answer {
   return { type: "choice", choice: first!, probabilities: { [first!]: 0.96, ...Object.fromEntries(rest.map((option) => [option, 0.04 / rest.length])) }, confidence: 0.96 };
 }
 
-export type Claim = { status: "live" | "ended"; runId?: string; history: { head: string; runId: string; doneAt: string }[] };
+type Claim = { status: "live" | "ended"; runId?: string; history: { head: string; runId: string; doneAt: string }[] };
 
-/** This test file's stack, started before its tests and stopped after them; call it once, at the file's top level. `env` overrides the hub's. */
-export function chainStack(env: Record<string, string> = {}) {
+/** This test file's stack, started before its tests and stopped after them; call it once, at the file's top level. */
+export function chainStack() {
   setDefaultTimeout(20 * 60_000);
   const github = fakeGithub();
   const model = stubModel(decide);
@@ -76,16 +72,12 @@ export function chainStack(env: Record<string, string> = {}) {
     github.addRepo(PUSHED, policy([MAX_FILES]));
     github.addRepo(HELD, policy([MAX_FILES], ASSIGN_ON_PASS));
     github.addRepo(ALWAYS, policy([MAX_FILES], REVIEW_ON_PASS));
-    github.addRepo(WOKEN, policy([MAX_FILES, FOCUSED]));
     github.addRepo(REREAD, policy([MAX_FILES, CI_GREEN]));
-    github.addRepo(UNSTARTED, policy([MAX_FILES]));
-    github.addRepo(DISCONNECTED, policy([MAX_FILES]));
     github.addRepo(UNSET, null);
-    github.addRepo(UNROUTED, policy([MAX_FILES]));
     const [created] = await Promise.all([createDatabase(), buildPortal(portalDir)]);
     database = created;
     handle = createDB(database.config);
-    hub = await startHub(database, github, portalDir, env);
+    hub = await startHub(database, github, portalDir);
     workspace = await signUp(hub, database);
     // Until a scenario switches it to policy, only posting runs on its own, so a Do in a policy is held.
     await saveAutomationMode(workspace.transport, workspace.tenantId, "ask");
@@ -207,7 +199,6 @@ export function chainStack(env: Record<string, string> = {}) {
       return workspace;
     },
     pushed,
-    eachRunEvent,
     until,
     rows,
     claimOf,
