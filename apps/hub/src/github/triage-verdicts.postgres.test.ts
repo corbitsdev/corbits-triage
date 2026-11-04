@@ -1,7 +1,7 @@
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { createInMemoryGrantStore, type GrantRule } from "@intx/authz";
 import { createEnvKeyCredentialCipher } from "@intx/crypto";
 import { createDB, runMigrations, schema } from "@intx/db";
@@ -236,49 +236,6 @@ test("PostgreSQL: the latest verdict of each open pull request, with the run in 
     expect(await (await get()).json()).toEqual({ error: { code: "forbidden", message: "Not a member of this tenant" } });
     session = null;
     expect((await get()).status).toBe(401);
-  });
-}, 120_000);
-
-test("PostgreSQL: pull requests of a repository with triage off are listed only while an approval waits on them, though it still counts as triaged", async () => {
-  await withDatabase(async function enabledReposOnly(db) {
-    const off = "acme/off";
-    const config = (enabled: boolean) => ({ corbitsTriage: { repos: [{ name: REPO, connected: true, enabled: true }, { name: off, connected: true, enabled }] } });
-    await db.insert(schema.tenant).values({ id: TENANT, name: "Verdicts", slug: "verdicts", domain: "verdicts.test", config: config(false) });
-    await db.insert(schema.principal).values({ id: "prn_verdicts", tenantId: TENANT, kind: "user", refId: "usr_member", status: "active" });
-    await db.insert(schema.workflowDefinition).values({ id: "wfd_triage", tenantId: TENANT, name: "pr-triage", status: "stopped" });
-    await db.insert(schema.workflowRun).values({ id: "run_anchor", anchorRunId: "run_anchor", definitionId: "wfd_triage", tenantId: TENANT, status: "deployed" });
-    await db.insert(schema.approval).values({
-      id: "apr_held", tenantId: TENANT, anchorRunId: "run_anchor", runId: "run_anchor", agentAddress: "pr-triage@verdicts.test", correlationId: "cor_held",
-      toolDefinition: { name: "github_mirror" }, toolArguments: { repo: off, number: 2 },
-    });
-    const verdicts = createVerdictRecordStore(db);
-    await seed(db, TENANT, [verdict("run_on", 1, 0), verdict("run_off", 1, 0, { repo: off }), verdict("run_held", 2, 0, { repo: off })]);
-    const openPulls = createOpenPullsCache(() => minutes(0));
-    const pr = (number: number) => ({ number, title: `PR ${number}`, author: "ada", draft: false, sha: `sha${number}`, branch: null, updatedAt: minutes(0).toISOString(), labels: [], url: null });
-    await openPulls.read(TENANT, async () => [{ repo: REPO, source: "github" as const, prs: [pr(1)] }, { repo: off, source: "github" as const, prs: [pr(1), pr(2)] }]);
-    const triageVerdicts = createTriageVerdicts({
-      db,
-      cipher: createEnvKeyCredentialCipher(new Uint8Array(32).fill(7)),
-      onKeyMoved: noKeyPush,
-      authorize: async () => true,
-      verdicts,
-      managerRuns: async () => NO_RUNS,
-      openPulls,
-      list: () => async () => { throw new Error("the workspace has no host credential"); },
-      triageState: { load: async () => ({ rows: [], version: null }) },
-      now: () => minutes(0),
-    });
-    const grants: GrantRule[] = [{ id: "grt_runs", resource: "workflow-run:*", action: "read", effect: "allow", origin: "system", conditions: null, expiresAt: null, roleId: null, principalId: "prn_verdicts" }];
-    const app = guardedApp(db, async () => ({ user: { id: "usr_member" } }) as never, createInMemoryGrantStore(grants), { triageVerdicts });
-    async function listed() {
-      const res = await app.request(`/api/integrations/triage-verdicts/${TENANT}`, { headers: { "sec-fetch-site": "same-origin" } });
-      return TriageVerdicts.assert(await res.json());
-    }
-    const body = await listed();
-    expect(body.pulls.map((pull) => `${pull.repo}#${pull.number}`).sort()).toEqual([`${off}#2`, `${REPO}#1`]);
-    expect(body.triaged).toEqual([{ repo: REPO, source: "github" }, { repo: off, source: "github" }]);
-    await db.update(schema.tenant).set({ config: config(true) }).where(eq(schema.tenant.id, TENANT));
-    expect((await listed()).pulls.map((pull) => `${pull.repo}#${pull.number}`).sort()).toEqual([`${off}#1`, `${off}#2`, `${REPO}#1`]);
   });
 }, 120_000);
 

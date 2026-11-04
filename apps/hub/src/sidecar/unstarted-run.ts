@@ -2,7 +2,7 @@ import type { SidecarAllocation } from "@intx/db";
 import type { ParkedRunClassifier } from "@intx/hub-sessions";
 
 /** Workers a run that never deployed gets in all: a sandbox that never connects mostly comes up on a fresh start. */
-export const UNSTARTED_RUN_ATTEMPTS = 3;
+const UNSTARTED_RUN_ATTEMPTS = 3;
 
 type ReplaceUnstartedRunsOpts = {
   /** The anchor run's public key, which stock records only once a generation finished deploying it. */

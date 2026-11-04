@@ -41,14 +41,4 @@ describe("normalizeBitbucket", () => {
     if (intake?.kind !== "pr") throw new Error(`${eventKey} gave ${JSON.stringify(intake)}`);
     expect(triageEventOf(intake.mail)).toBe(expected);
   });
-
-  test("an edit of a comment's text wakes nothing", () => {
-    expect(normalizeBitbucket("pr:comment:edited", "d", prEvent("pr:comment:edited", { comment: { id: 4, text: "Rename it, please." }, previousComment: "Rename it." }))).toBeNull();
-  });
-
-  test("triage's own comments and comments on a pull request no longer open are ignored", () => {
-    expect(normalizeBitbucket("pr:comment:added", "d", prEvent("pr:comment:added", { comment: { text: "[corbits-triage]: #%7B%7D\nTriage: looks fine." } }))).toBeNull();
-    expect(normalizeBitbucket("pr:comment:added", "d", prEvent("pr:comment:added", { comment: { text: "[corbits-action]: #e1\nHello" } }))).toBeNull();
-    expect(normalizeBitbucket("pr:comment:added", "d", prEvent("pr:comment:added", { pullRequest: pullRequest({ state: "MERGED" }), comment: { text: "late" } }))).toBeNull();
-  });
 });

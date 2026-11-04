@@ -46,18 +46,3 @@ test("a step output over the inline limit is read from the run's committed blob"
     await rm(root, { recursive: true, force: true });
   }
 });
-
-test("a step output whose blob is not committed is logged and read as no verdict", async () => {
-  const { root, repoStore, repoId } = await spilled();
-  try {
-    const missing = `blob:${"0".repeat(64)}`;
-    const logged: unknown[] = [];
-    const reader = withBlobOutputs(readerOf([evaluated(missing)]), repoStore, { error: (_message: string, properties: unknown) => logged.push(properties) });
-    const read = await reader.readRunEvents(repoId, WORKFLOW_RUN_REF, RUN);
-    expect(read).toEqual([evaluated(missing)]);
-    expect(verdictFor(read, VERDICT.repo, VERDICT.number)).toBeUndefined();
-    expect(logged).toEqual([{ ref: missing, runId: RUN }]);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});

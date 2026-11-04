@@ -53,7 +53,7 @@ export async function hubIdOf(database: DatabaseConfig): Promise<string> {
 }
 
 /** The image sidecars run: the one written into the hub image at `file`, or the locally built one when none was. */
-export async function sidecarImageOf(file: URL): Promise<string> {
+async function sidecarImageOf(file: URL): Promise<string> {
   try {
     return (await fs.readFile(file, "utf8")).trim();
   } catch (error) {

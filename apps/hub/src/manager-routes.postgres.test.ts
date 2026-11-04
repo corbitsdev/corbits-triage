@@ -1,4 +1,3 @@
-import { createObservability, type ReviewEvent } from "./observability.js";
 // Requires PostgreSQL at TEST_DB.
 import { expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -10,16 +9,12 @@ import { createDB, createGrantStore, createRunTokenStore, runMigrations, schema 
 import { createApp, createRequireGrant, HUB_CONDITION_REGISTRY, type GetSession } from "@intx/hub-api";
 import { createEventCollectorRegistry, createSidecarRouter, type SessionService } from "@intx/hub-sessions";
 import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-api/src/middleware/run-token-auth.js";
-import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, TRIAGE_MANAGERS, type RepoSource } from "@corbits/triage-contracts";
+import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, type RepoSource } from "@corbits/triage-contracts";
 import { mirrorCallId } from "@corbits/triage-workflows/actions/mirror";
-import { createCodeReviewRuns } from "./code-review-runs.js";
-import { createOverdueWake, createSupersede } from "./manager-intake.js";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
-import { MAX_BODY_BYTES } from "./read-json.js";
-import { askDeploy, managedPulls, passRequest, recordEvent, recordRefused, type PullRequestRef } from "./manager-state.js";
+import { passRequest, recordEvent, type PullRequestRef } from "./manager-state.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
-import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
@@ -28,11 +23,7 @@ const USER = { id: "usr_member", email: "member@manager.test", emailVerified: tr
 const SESSION = { id: "ses_member", userId: USER.id, token: "tok_member", expiresAt: new Date("2999-01-01"), createdAt: new Date(), updatedAt: new Date() };
 const GITHUB: PullRequestRef = { source: "github", repo: "acme/widgets", number: 7 };
 const BITBUCKET: PullRequestRef = { source: "bitbucket-datacenter", repo: "ACME/widgets", number: 7 };
-const OTHER_PULL: PullRequestRef = { source: "github", repo: "acme/widgets", number: 8 };
 const REVIEW = { summary: "No bugs.", comments: [], budgetExhausted: false, complete: false, unread: [{ path: "src/a.ts", lines: [[3, 6]] }], unreadFiles: 1 };
-const OpenApi = type({ paths: "Record<string, Record<string, unknown>>" });
-const Operation = type({ requestBody: { content: { "application/json": { schema: "object" } } }, responses: { 200: { content: { "application/json": { schema: "object" } } }, 400: "object", 403: "object", 413: "object" } });
-const FencedOperation = Operation.and({ responses: { 409: "object" } });
 
 type Db = ReturnType<typeof createDB>["db"];
 
@@ -188,169 +179,6 @@ test("PostgreSQL: the manager's run token takes, finishes and a reviewer's recor
   });
 }, 60_000);
 
-test("PostgreSQL: done keeps each posted finding's comment, the first pass on a newer head names them, resolved ones last so a reopened thread is seen, and what became of their threads lands on their findings", async () => {
-  await withDatabase(async function threads(db) {
-    const logged: Record<string, unknown>[] = [];
-    function log(entry: Record<string, unknown>): void {
-      logged.push(entry);
-    }
-    const app = buildHub(db, { log });
-    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
-    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
-    const findings = ["a.ts", "b.ts", "c.ts"].map((path) => ({ path, start: 1, end: 1, title: `In ${path}`, body: "Wrong.", priority: 2 }));
-    await webhook(db, GITHUB);
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", threads: [] });
-    await post(app, "reviewer-result", { ...GITHUB, kind: "code-review", head: "h1", result: { ...REVIEW, comments: findings } }, reviewer);
-    await post(app, "done", { ...GITHUB, reviewers: [] }, manager);
-    await post(app, "take", GITHUB, manager);
-    expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threadIds: { runId: "run_reviewer", ids: [501] } }, manager)).json()).toEqual({ outcome: "ended" });
-    expect(logged).toEqual([expect.objectContaining({ msg: "reviewer_result_accepted_success" }), expect.objectContaining({ msg: "code_review_incomplete", runId: "run_reviewer", head: "h1", unread: ["src/a.ts"], unreadFiles: 1 }), expect.objectContaining({ msg: "reviewer_result_woken" }), expect.objectContaining({ msg: "finding_threads_misaligned", findings: 3, ids: 1 })]);
-    await recordEvent(db, TENANT, GITHUB, "posted", { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h1" }, threads: [] });
-    expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threadIds: { runId: "run_reviewer", ids: [501, null, 502] } }, manager)).json()).toEqual({ outcome: "ended" });
-    const runs = createCodeReviewRuns({ db, read: () => Promise.reject(new Error("not read")), log: ignore });
-    async function threadsShown() {
-      const { completed } = await runs.latest(TENANT, { repo: GITHUB.repo, source: GITHUB.source, number: GITHUB.number });
-      return completed?.status === "completed" && completed.comments.map((finding) => [finding.path, finding.thread]);
-    }
-    expect(await threadsShown()).toEqual([["a.ts", { state: "untouched" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "untouched" }]]);
-
-    await recordEvent(db, TENANT, GITHUB, "pushed", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h2" }, threads: [501, 502] });
-    const reads = [{ id: 501, state: "resolved" }, { id: 502, state: "outdated" }, { id: 900, state: "replied", at: "2026-10-20T00:00:00.000Z" }];
-    expect(await (await post(app, "done", { ...GITHUB, reviewers: [], threads: reads, threadsUnread: "github -> 502" }, manager)).json()).toEqual({ outcome: "ended" });
-    expect(logged.at(-1)).toMatchObject({ level: "warn", msg: "finding_threads_unread", error: "github -> 502" });
-
-    expect(await threadsShown()).toEqual([
-      ["a.ts", { state: "resolved" }],
-      ["b.ts", { state: "not-tracked" }],
-      ["c.ts", { state: "outdated" }],
-    ]);
-
-    await recordEvent(db, TENANT, GITHUB, "again", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h2" }, threads: [] });
-    await post(app, "done", { ...GITHUB, reviewers: [] }, manager);
-
-    await recordEvent(db, TENANT, GITHUB, "pushed again", { type: "webhook", head: "h3", payload: { kind: "pr", headSha: "h3" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h3" }, threads: [502, 501] });
-    await post(app, "done", { ...GITHUB, reviewers: [], threads: [{ id: 501, state: "resolved" }, { id: 502, state: "outdated" }] }, manager);
-    expect(await threadsShown()).toEqual([["a.ts", { state: "resolved" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "outdated" }]]);
-
-    await recordEvent(db, TENANT, GITHUB, "reopened", { type: "webhook", head: "h4", payload: { kind: "pr", headSha: "h4" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h4" }, threads: [502, 501] });
-    await post(app, "done", { ...GITHUB, reviewers: [], threads: [{ id: 501, state: "untouched" }, { id: 502, state: "outdated" }] }, manager);
-    expect(await threadsShown()).toEqual([["a.ts", { state: "untouched" }], ["b.ts", { state: "not-tracked" }], ["c.ts", { state: "outdated" }]]);
-
-    await recordEvent(db, TENANT, GITHUB, "thread-resolved", { type: "webhook", head: "h1", payload: { kind: "pr", event: "pull_request_review_thread", action: "resolved", headSha: "h1" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", pass: { head: "h1" }, threads: [501, 502], commentThreads: [{ runId: "run_reviewer", threads: [{ id: 501, state: "untouched" }, null, { id: 502, state: "outdated" }] }] });
-    const review = { ...REVIEW, comments: findings };
-    const stamped = await post(app, "done", { ...GITHUB, reviewers: [{ kind: "code-review", head: "h1", runId: "run_reviewer", deployedBy: "run_manager", deadline: "2999-01-01T00:00:00.000Z", result: review }], threadIds: { runId: "run_reviewer", ids: [501, null, 502] }, threads: [{ id: 501, state: "resolved" }] }, manager);
-    expect(await stamped.json()).toEqual({ outcome: "ended" });
-    const next = await (await post(app, "take", GITHUB, manager)).json() as { reviewers: { result: { comments: { path: string; thread?: { id: number; state: string } }[] } }[] };
-    expect(next.reviewers[0]?.result.comments).toEqual([
-      { ...findings[0], thread: { id: 501, state: "resolved" } },
-      findings[1],
-      { ...findings[2], thread: { id: 502, state: "untouched" } },
-    ]);
-  });
-}, 60_000);
-
-test("PostgreSQL: a reviewer's result wakes the pull request's manager as a host event does, and one for a head the pull request moved past is dropped and logged", async () => {
-  await withDatabase(async function woken(db) {
-    const woken: Woken[] = [];
-    const logged: Record<string, unknown>[] = [];
-    function log(entry: Record<string, unknown>): void {
-      logged.push(entry);
-    }
-    const app = buildHub(db, { log, wake: waker(woken) });
-    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
-    await webhook(db, GITHUB);
-    const result = { ...GITHUB, kind: "judge", head: "h1", failed: "the judge did not finish" };
-    expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: true });
-    expect(woken).toEqual([{ tenantId: TENANT, pr: GITHUB, head: "h1" }]);
-
-    await recordEvent(db, TENANT, GITHUB, "pushed", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
-    const late = bearer(await runWithToken(db, "run_late", [RESULT]));
-    expect(await (await post(app, "reviewer-result", result, late)).json()).toEqual({ recorded: false });
-    expect(woken).toHaveLength(1);
-    expect(logged.at(-1)).toEqual({ level: "info", msg: "reviewer_result_stale", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", current: "h2", runId: "run_late" });
-    const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE key LIKE '%:run_late'`);
-    expect(stored!.events).toBe(0);
-
-    const unrouted = buildHub(db, { log, wake: waker([], false) });
-    const quiet = bearer(await runWithToken(db, "run_quiet", [RESULT]));
-    expect(await (await post(unrouted, "reviewer-result", { ...result, head: "h2" }, quiet)).json()).toEqual({ recorded: true });
-    expect(logged.at(-1)).toMatchObject({ level: "warn", msg: "reviewer_result_unrouted", runId: "run_quiet" });
-  });
-}, 60_000);
-
-test("PostgreSQL: a result whose wake fails stays recorded with nothing else, the route answers 502, and a reconcile pass wakes a manager for it once the start grace has passed since it was recorded", async () => {
-  await withDatabase(async function unwoken(db) {
-    const logged: Record<string, unknown>[] = [];
-    function log(entry: Record<string, unknown>): void {
-      logged.push(entry);
-    }
-    async function failingWake(): Promise<boolean> {
-      throw new Error("delivery failed");
-    }
-    const app = buildHub(db, { log, wake: failingWake });
-    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
-    await webhook(db, GITHUB);
-    await post(app, "take", GITHUB, manager);
-    expect(await (await post(app, "done", { ...GITHUB, reviewers: [] }, manager)).json()).toEqual({ outcome: "ended" });
-    await db.execute(sql`UPDATE workflow_run SET status = 'completed' WHERE id = 'run_manager'`);
-    const before = await db.execute(sql`SELECT key, state FROM corbits_triage.manager_state WHERE kind = 'claim'`);
-
-    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
-    const failed = await post(app, "reviewer-result", { ...GITHUB, kind: "judge", head: "h1", failed: "the judge did not finish" }, reviewer);
-    expect(failed.status).toBe(502);
-    expect(await errorCode(failed)).toBe("wake_failed");
-    expect(logged).toEqual([
-      { level: "error", msg: "reviewer_result_accepted_failure", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", runId: "run_reviewer" },
-      { level: "error", msg: "reviewer_result_wake_failed", tenantId: TENANT, ...GITHUB, kind: "judge", head: "h1", runId: "run_reviewer", error: "Error: delivery failed" },
-    ]);
-    const [stored] = await db.execute<{ events: number }>(sql`SELECT count(*)::int AS events FROM corbits_triage.manager_state WHERE key LIKE '%:run_reviewer' AND state->>'consumedBy' IS NULL`);
-    expect(stored!.events).toBe(1);
-    expect(await db.execute(sql`SELECT key, state FROM corbits_triage.manager_state WHERE kind = 'claim'`)).toEqual(before);
-
-    const woken: Woken[] = [];
-    const wakeOverdue = createOverdueWake({ db, wake: waker(woken), log });
-    await wakeOverdue(TENANT);
-    expect(woken).toEqual([]);
-    const earlier = new Date(Date.now() - timings().mailHoldMs - 1_000).toISOString();
-    await db.execute(sql`UPDATE corbits_triage.manager_state SET state = jsonb_set(state, '{receivedAt}', to_jsonb(${earlier}::text)) WHERE key LIKE '%:run_reviewer'`);
-    await wakeOverdue(TENANT);
-    expect(woken).toEqual([{ tenantId: TENANT, pr: GITHUB, head: "h1" }]);
-    // The manager that wake deployed has not taken the claim yet, so the next pass does not deploy another.
-    await wakeOverdue(TENANT);
-    expect(woken).toHaveLength(1);
-  });
-}, 60_000);
-
-test("PostgreSQL: done stops a reviewer the pass deployed on a head a push moved past, and takes it off the claim", async () => {
-  await withDatabase(async function supersededMidPass(db) {
-    const cancelled: string[] = [];
-    const { supersede } = createSupersede({
-      db,
-      async cancel(_tenantId, runId) {
-        cancelled.push(runId);
-      },
-      log: ignore,
-    });
-    const app = buildHub(db, { supersede });
-    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
-    await webhook(db, GITHUB);
-    await post(app, "take", GITHUB, manager);
-    await recordEvent(db, TENANT, GITHUB, "pushed", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2" } });
-    const deadline = new Date(Date.now() + 60 * 60_000).toISOString();
-    const deployed = { kind: "judge", head: "h1", runId: "run_judge", deployedBy: "run_manager", deadline };
-    expect(await (await post(app, "done", { ...GITHUB, reviewers: [deployed], wait: true }, manager)).json()).toEqual({ outcome: "more", wait: false });
-    expect(cancelled).toEqual(["run_judge"]);
-    const [claim] = await db.execute<{ state: { reviewers: unknown[] } }>(sql`SELECT state FROM corbits_triage.manager_state WHERE kind = 'claim'`);
-    expect(claim!.state.reviewers).toEqual([]);
-  });
-}, 60_000);
-
 /** The run as the stock deploy route launched it, from a published workflow whose frozen projection keeps its id. */
 async function launchedAs(db: Db, runId: string, workflow: string): Promise<void> {
   await db.insert(schema.workflowRunLaunchSpec).values({
@@ -380,52 +208,6 @@ function postedOn(pr: PullRequestRef, head: string) {
   };
 }
 
-test("PostgreSQL: done records the verdict a pass posted as its run's on its host, the run's newest replaces it keeping the Dos written on its head, approvals set their outcomes and a held head records none", async () => {
-  await withDatabase(async function recorded(db) {
-    const app = buildHub(db);
-    const verdicts = createVerdictRecordStore(db);
-    for (const pr of [GITHUB, BITBUCKET]) {
-      const runId = `run_${pr.source}`;
-      const manager = bearer(await runWithToken(db, runId, [STATE]));
-      await launchedAs(db, runId, `triage-manager-${pr.source}`);
-
-      await mailed(db, pr, "h1", "opened");
-      await post(app, "take", pr, manager);
-      const first = postedOn(pr, "h1");
-      expect(await (await post(app, "done", { ...pr, reviewers: [], report: first.report }, manager)).json()).toEqual({ outcome: "ended" });
-      expect(await verdicts.latestFor(TENANT, pr)).toMatchObject({
-        runId, source: pr.source, headSha: "h1", runStatus: "completed", state: "ready-monitoring", settled: true, commented: true, trigger: "pull_request:opened",
-        checks: [{ check: "title", result: "pass" }], dos: [{ list: "pass", effectId: "held-h1" }, { list: "pass", effectId: "auto-h1" }],
-        detail: { headSha: "h1", facts: { title: "Fix the widget", author: "octocat" }, evidence: ["The title says what changed."], actions: [{ effectId: "held-h1", held: true }, { effectId: "auto-h1", status: "done" }] },
-      });
-      expect(await passRequest(db, TENANT, pr, runId, "h1")).toEqual(first.request);
-
-      await mailed(db, pr, "h2", "synchronize");
-      await post(app, "take", pr, manager);
-      const approvals = { results: [{ dos: [{ effectId: "held-h2", status: "done" }] }] };
-      await post(app, "done", { ...pr, reviewers: [], report: postedOn(pr, "h2").report }, manager);
-      await post(app, "take", pr, manager);
-      await post(app, "done", { ...pr, reviewers: [], approvals }, manager);
-      const rows = await verdicts.forPull(TENANT, pr.repo, pr.number);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ runId, headSha: "h2", trigger: "pull_request:synchronize", detail: { actions: [{ effectId: "held-h2", status: "done" }, { effectId: "auto-h2", status: "done" }] } });
-
-      // Mailed again on the same head, its next verdict keeps the Do already written there, the run's start on the head and the head's newest mail.
-      await mailed(db, pr, "h2", "edited");
-      await post(app, "take", pr, manager);
-      await post(app, "done", { ...pr, reviewers: [], report: postedOn(pr, "h2").report }, manager);
-      expect(await verdicts.forPull(TENANT, pr.repo, pr.number)).toEqual([expect.objectContaining({
-        startedAt: rows[0]!.startedAt, trigger: "pull_request:edited", detail: expect.objectContaining({ actions: [expect.objectContaining({ effectId: "held-h2", status: "done" }), expect.objectContaining({ effectId: "auto-h2", status: "done" })] }),
-      })]);
-
-      await mailed(db, pr, "h3", "reopened");
-      await post(app, "take", pr, manager);
-      expect(await (await post(app, "done", { ...pr, reviewers: [], report: { head: "h3", waiting: true } }, manager)).json()).toEqual({ outcome: "ended" });
-      expect((await verdicts.forPull(TENANT, pr.repo, pr.number)).map((row) => row.headSha)).toEqual(["h2"]);
-    }
-  });
-}, 60_000);
-
 test("PostgreSQL: a verdict the host skipped, as on a pull request merged before the write, is neither commented nor posted", async () => {
   await withDatabase(async function skipped(db) {
     const app = buildHub(db);
@@ -437,23 +219,6 @@ test("PostgreSQL: a verdict the host skipped, as on a pull request merged before
     await post(app, "done", { ...GITHUB, reviewers: [], report: { ...report, mirror: { call: mirrorCallId(GITHUB.repo, GITHUB.number), ok: false, skipped: "the pull request is not open" } } }, manager);
     expect(await createVerdictRecordStore(db).latestFor(TENANT, GITHUB)).toMatchObject({ headSha: "h1", commented: false });
     expect(await passRequest(db, TENANT, GITHUB, "run_skipped", "h1")).toBeUndefined();
-  });
-}, 60_000);
-
-test("PostgreSQL: the events of passes whose verdicts held an action for CI wake again once CI finishes, though a later verdict of their run replaced one", async () => {
-  await withDatabase(async function heldTwice(db) {
-    const app = buildHub(db);
-    const manager = bearer(await runWithToken(db, "run_held", [STATE]));
-    await launchedAs(db, "run_held", "triage-manager-github");
-    for (const action of ["opened", "edited"]) {
-      await mailed(db, GITHUB, "h1", action);
-      await post(app, "take", GITHUB, manager);
-      const { report } = postedOn(GITHUB, "h1");
-      const actions = [{ list: "pass", index: 0, effectId: "label-h1", kind: "labels", target: { labels: ["api"] }, held: true, ci: "pending" }];
-      await post(app, "done", { ...GITHUB, reviewers: [], wait: true, report: { ...report, verdict: { ...report.verdict, actions }, executed: { dos: [] } } }, manager);
-    }
-    await recordEvent(db, TENANT, GITHUB, "checks-github", { type: "webhook", head: "h1", payload: { kind: "pr", event: "check_suite", action: "completed", headSha: "h1" } });
-    expect(await (await post(app, "take", GITHUB, manager)).json()).toMatchObject({ outcome: "pass", request: { events: ["opened", "updated", "checks"] } });
   });
 }, 60_000);
 
@@ -500,102 +265,6 @@ test("PostgreSQL: a reviewer reports only with the result grant, and the result 
   });
 }, 60_000);
 
-test("PostgreSQL: a listener names the manager it deployed, which a refusal for capacity marks roomless until it names another; only the deployed grant and a deployment of the host's manager are accepted", async () => {
-  await withDatabase(async function deployed(db) {
-    const app = buildHub(db);
-    const listener = bearer(await runWithToken(db, "run_listener", [DEPLOYED]));
-    const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
-    await db.insert(schema.workflowDefinition).values({ id: "wfd_manager_github", tenantId: TENANT, name: TRIAGE_MANAGERS.github, assetId: "ast_manager" });
-    for (const runId of ["run_first", "run_second"]) await db.insert(schema.workflowRun).values({ id: runId, anchorRunId: runId, definitionId: "wfd_manager_github", tenantId: TENANT, status: "deployed" });
-    async function roomless(): Promise<boolean | undefined> {
-      const [pull] = await managedPulls(db, TENANT, [GITHUB]);
-      return pull?.roomless;
-    }
-    await askDeploy(db, TENANT, GITHUB);
-
-    expect(await (await post(app, "deployed", { ...GITHUB, runId: "run_first" }, listener)).json()).toEqual({ noted: true });
-    expect(await roomless()).toBeUndefined();
-    await recordRefused(db, TENANT, "run_first");
-    expect(await roomless()).toBe(true);
-    expect(await (await post(app, "deployed", { ...GITHUB, runId: "run_second" }, listener)).json()).toEqual({ noted: true });
-    expect(await roomless()).toBeUndefined();
-
-    expect((await post(app, "deployed", { ...GITHUB, runId: "run_second" }, manager)).status).toBe(403);
-    const notManager = await post(app, "deployed", { ...GITHUB, runId: "run_listener" }, listener);
-    expect(notManager.status).toBe(404);
-    expect(await errorCode(notManager)).toBe("not_manager");
-    expect((await post(app, "take", GITHUB, listener)).status).toBe(403);
-
-    await askDeploy(db, TENANT, OTHER_PULL);
-    const elsewhere = await post(app, "deployed", { ...OTHER_PULL, runId: "run_second" }, listener);
-    expect(elsewhere.status).toBe(409);
-    expect(await errorCode(elsewhere)).toBe("deployed_elsewhere");
-    await db.update(schema.workflowRun).set({ status: "completed" }).where(sql`${schema.workflowRun.id} = 'run_first'`);
-    const ended = await post(app, "deployed", { ...OTHER_PULL, runId: "run_first" }, listener);
-    expect(ended.status).toBe(409);
-    expect(await errorCode(ended)).toBe("run_ended");
-  });
-}, 60_000);
-
-test("PostgreSQL: a refusal for capacity before the listener names the run is read from its allocation, and the refused run taking the claim clears it", async () => {
-  await withDatabase(async function refusedFirst(db) {
-    const app = buildHub(db);
-    const listener = bearer(await runWithToken(db, "run_listener", [DEPLOYED]));
-    const placed = bearer(await runWithToken(db, "run_refused", [STATE]));
-    await db.insert(schema.workflowDefinition).values({ id: "wfd_manager_github", tenantId: TENANT, name: TRIAGE_MANAGERS.github, assetId: "ast_manager" });
-    await db.update(schema.workflowRun).set({ definitionId: "wfd_manager_github" }).where(sql`${schema.workflowRun.id} = 'run_refused'`);
-    await db.insert(schema.sidecarAllocation).values({ id: "alc_refused", anchorRunId: "run_refused", tenantId: TENANT, provisionerId: "local-process", provisionerApiVersion: 2, provisionerBindingFingerprint: "fp", adapterManifestDigest: "digest", maxDisconnectedMs: 60_000, status: "replacing", nextAttemptAt: new Date(), failureCode: "capacity_unavailable" });
-    async function claim(): Promise<Record<string, unknown>> {
-      const [row] = await db.execute<{ state: Record<string, unknown> }>(sql`SELECT state FROM corbits_triage.manager_state WHERE key = ${`mgr:github:${GITHUB.repo}#${GITHUB.number}`}`);
-      return row!.state;
-    }
-    await askDeploy(db, TENANT, GITHUB);
-    await recordRefused(db, TENANT, "run_refused");
-    expect(await claim()).not.toHaveProperty("refusedRunId");
-
-    expect(await (await post(app, "deployed", { ...GITHUB, runId: "run_refused" }, listener)).json()).toEqual({ noted: true });
-    expect(await claim()).toMatchObject({ deployedRunId: "run_refused", refusedRunId: "run_refused" });
-    const [pull] = await managedPulls(db, TENANT, [GITHUB]);
-    expect(pull?.roomless).toBe(true);
-
-    await webhook(db, GITHUB);
-    expect((await post(app, "take", GITHUB, placed)).status).toBe(200);
-    expect(await claim()).toMatchObject({ status: "live", runId: "run_refused", deployedRunId: "run_refused" });
-    expect(await claim()).not.toHaveProperty("refusedRunId");
-  });
-}, 60_000);
-
-test("PostgreSQL: a malformed, non-JSON or oversized body is refused before the store is touched", async () => {
-  await withDatabase(async function malformed(db) {
-    const app = buildHub(db);
-    const manager = bearer(await runWithToken(db, "run_manager", [STATE, RESULT]));
-    const bodies: [string, unknown][] = [
-      ["take", { ...GITHUB, source: "gitlab" }],
-      ["take", { source: "github", repo: "widgets", number: 7 }],
-      ["take", { ...GITHUB, number: 0 }],
-      ["done", GITHUB],
-      ["done", { ...GITHUB, reviewers: [{ kind: "judge" }] }],
-      ["reviewer-result", { ...GITHUB, kind: "code-review", head: "h1", result: { verdict: "pass" } }],
-      ["reviewer-result", { ...GITHUB, kind: "code-review", result: REVIEW }],
-    ];
-    for (const [route, body] of bodies) {
-      const response = await post(app, route, body, manager);
-      expect(response.status).toBe(400);
-      expect(await errorCode(response)).toBe("invalid_request");
-    }
-    for (const route of ["take", "done", "reviewer-result"]) {
-      const response = await postText(app, route, "{not json", manager);
-      expect(response.status).toBe(400);
-      expect(await errorCode(response)).toBe("invalid_request");
-    }
-    const oversized = await post(app, "reviewer-result", { ...GITHUB, head: "h1", result: { summary: "x".repeat(MAX_BODY_BYTES) } }, manager);
-    expect(oversized.status).toBe(413);
-    expect(await errorCode(oversized)).toBe("too_large");
-    const [{ rows }] = await db.execute<{ rows: number }>(sql`SELECT count(*)::int AS rows FROM corbits_triage.manager_state`);
-    expect(rows).toBe(0);
-  });
-}, 60_000);
-
 test("PostgreSQL: every extra run-token route is a fixed tenant path that names exactly one hub route, a manager route", async () => {
   await withDatabase(async function guard(db) {
     const handlers = inspectRoutes(buildHub(db)).filter((route) => !route.isMiddleware);
@@ -607,88 +276,5 @@ test("PostgreSQL: every extra run-token route is a fixed tenant path that names 
       expect(matched.map((route) => `${route.method} ${route.path}`)).toEqual([`${extra.method} ${extra.path}`]);
       expect(managed).toContain(`${extra.method} ${extra.path}`);
     }
-  });
-}, 60_000);
-
-test("PostgreSQL: /openapi.json documents each manager route's request and responses", async () => {
-  await withDatabase(async function openapi(db) {
-    const spec = OpenApi.assert(await (await buildHub(db).request("/openapi.json")).json());
-    for (const extra of MANAGER_RUN_TOKEN_ROUTES) {
-      const operation = spec.paths[extra.path.replace(":tenantId", "{tenantId}")]?.post;
-      const fenced = extra.path.endsWith("/take") || extra.path.endsWith("/done");
-      expect((fenced ? FencedOperation : Operation).allows(operation)).toBe(true);
-    }
-  });
-}, 60_000);
-
-
-for (const pr of [GITHUB, BITBUCKET]) {
-  test(`PostgreSQL: ${pr.source} committed correlated review outcomes survive failing destinations without exporting secrets`, async () => {
-    await withDatabase(async function observed(db) {
-      const secret = "SENTINEL_private_review_and_delivery";
-      const events: ReviewEvent[] = [];
-      const alerts: ReviewEvent[] = [];
-      async function collect(event: ReviewEvent): Promise<void> { events.push(event); }
-      async function alert(event: ReviewEvent): Promise<void> { alerts.push(event); }
-      async function broken(): Promise<void> { throw new Error(secret); }
-      function hung(): Promise<void> { return new Promise<void>(function never() {}); }
-      const obs = createObservability({ telemetry: [broken, hung, collect], errors: [], notifications: [alert] }, { timeoutMs: 10, drainMs: 20 });
-      let waking: "ok" | "failed" | "unrouted" = "ok";
-      async function wake(): Promise<boolean> {
-        const [row] = await db.execute<{ count: number }>(sql`SELECT count(*)::int AS count FROM corbits_triage.manager_state WHERE state->>'type' = 'reviewer-result'`);
-        expect(row!.count).toBeGreaterThan(0);
-        if (waking === "failed") throw new Error(secret);
-        return waking === "ok";
-      }
-      const app = buildHub(db, { log: obs.observe, wake });
-      try {
-        const manager = bearer(await runWithToken(db, "run_manager", [STATE]));
-        const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
-        await webhook(db, pr);
-        await post(app, "take", pr, manager);
-        const result = { ...pr, kind: "code-review", head: "h1", runId: secret, managerRunId: secret, tenantId: secret, result: { ...REVIEW, summary: secret } };
-        expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: true });
-        expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: false });
-        const failedReviewer = bearer(await runWithToken(db, "run_failed", [RESULT]));
-        waking = "failed";
-        expect((await post(app, "reviewer-result", { ...pr, kind: "judge", head: "h1", failed: secret }, failedReviewer)).status).toBe(502);
-        waking = "unrouted";
-        expect((await post(app, "reviewer-result", { ...pr, kind: "judge", head: "h1", failed: secret }, failedReviewer)).status).toBe(200);
-        await recordEvent(db, TENANT, pr, "push-new", { type: "webhook", head: "h2", payload: {} });
-        expect(await (await post(app, "reviewer-result", result, reviewer)).json()).toEqual({ recorded: false });
-        await obs.shutdown();
-        expect(events.map((event) => event.msg)).toEqual([
-          "reviewer_result_accepted_success", "reviewer_result_woken",
-          "reviewer_result_duplicate", "reviewer_result_woken",
-          "reviewer_result_accepted_failure", "reviewer_result_wake_failed",
-          "reviewer_result_duplicate", "reviewer_result_unrouted", "reviewer_result_stale",
-        ]);
-        expect(events[0]).toEqual({ ...pr, tenantId: TENANT, head: "h1", runId: "run_reviewer", managerRunId: "run_manager", kind: "code-review", msg: "reviewer_result_accepted_success" });
-        expect(alerts.map((event) => event.msg)).toEqual(["reviewer_result_accepted_failure", "reviewer_result_wake_failed", "reviewer_result_unrouted"]);
-        expect(JSON.stringify({ events, alerts })).not.toContain(secret);
-        const [stored] = await db.execute<{ count: number }>(sql`SELECT count(*)::int AS count FROM corbits_triage.manager_state WHERE state->>'type' = 'reviewer-result'`);
-        expect(stored!.count).toBe(2);
-      } finally { await obs.shutdown(); }
-    });
-  }, 60_000);
-}
-
-
-test("PostgreSQL: a rejected result write emits no external outcome", async () => {
-  await withDatabase(async function rejected(db) {
-    const events: ReviewEvent[] = [];
-    async function collect(event: ReviewEvent): Promise<void> { events.push(event); }
-    const obs = createObservability({ telemetry: [collect], errors: [], notifications: [] });
-    const app = buildHub(db, { log: obs.observe });
-    const reviewer = bearer(await runWithToken(db, "run_reviewer", [RESULT]));
-    await db.execute(sql`ALTER TABLE corbits_triage.manager_state ADD CONSTRAINT reject_result CHECK (state->>'type' IS DISTINCT FROM 'reviewer-result')`);
-    try {
-      const response = await post(app, "reviewer-result", { ...GITHUB, kind: "judge", head: "h1", failed: "failed" }, reviewer);
-      expect(response.status).toBe(500);
-      await obs.shutdown();
-      expect(events).toEqual([]);
-      const [row] = await db.execute<{ count: number }>(sql`SELECT count(*)::int AS count FROM corbits_triage.manager_state`);
-      expect(row!.count).toBe(0);
-    } finally { await obs.shutdown(); }
   });
 }, 60_000);

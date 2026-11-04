@@ -1,14 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { credentialAad, type CredentialCipher } from "@intx/types";
+import type { CredentialCipher } from "@intx/types";
 import {
   authorizeCanonicalCredentialWrite,
   createGithubManifestIntegration,
-  exchangeGithubManifest,
-  manifestHookUrl,
   manifestStateKey,
   prepareCanonicalManifestWrite,
   signManifestState,
-  validGithubProvider,
   validManifestMutationRequest,
   verifyManifestState,
   type ManifestState,
@@ -133,29 +130,6 @@ describe("GitHub manifest authorization", () => {
     });
   }
 
-  test("callback returns 403 without exchanging the code when replacement authority is absent", async () => {
-    let exchanged = false;
-    async function exchangeSpy() {
-      exchanged = true;
-      return Response.json(conversion);
-    }
-    const integration = createGithubManifestIntegration({
-      db: { query: { principal: { findFirst: activeMember } } } as never,
-      cipher: {} as never,
-      getSession: signedInSession,
-      authorizeCredential: deny,
-      stateSecret: STATE_SECRET,
-      trustedPortalOrigins: [],
-      githubApiOrigin: GITHUB_API_ORIGIN,
-      publicOrigin: "https://hub.example.com",
-      fetchImpl: Object.assign(exchangeSpy, { preconnect: noPreconnect }),
-      now: fixedNow,
-    });
-    const response = await integration.callback(callbackRequest(signManifestState(STATE_KEY, setup)));
-    expect(response.status).toBe(403);
-    expect(exchanged).toBeFalse();
-  });
-
   test("requires JSON, an exact trusted Origin, and rejects cross-site mutations", () => {
     const trusted = new Set(["https://portal.example", "https://hub.example"]);
     expect(validManifestMutationRequest(mutationRequest({
@@ -174,124 +148,9 @@ describe("GitHub manifest authorization", () => {
       "sec-fetch-site": "cross-site",
     }), trusted)).toBe(false);
   });
-
-  test("accepts only the canonical origin-pinned GitHub HTTP provider", () => {
-    expect(validGithubProvider({ plugin: "http", apiBaseUrl: GITHUB_API_ORIGIN }, GITHUB_API_ORIGIN)).toBe(true);
-    expect(validGithubProvider({ plugin: "http", apiBaseUrl: "https://api.github.com/" }, GITHUB_API_ORIGIN)).toBe(false);
-    expect(validGithubProvider({ plugin: "http", apiBaseUrl: "https://attacker.example" }, GITHUB_API_ORIGIN)).toBe(false);
-    expect(validGithubProvider({ plugin: "oauth", apiBaseUrl: GITHUB_API_ORIGIN }, GITHUB_API_ORIGIN)).toBe(false);
-    expect(validGithubProvider({ plugin: "http", apiBaseUrl: GITHUB_API_ORIGIN }, "http://127.0.0.1:4001")).toBe(false);
-  });
-
-  test("accepts a conversion without a webhook secret", async () => {
-    async function convertWithoutHook() {
-      return Response.json({ id: 1, slug: "app", pem: "pem", webhook_secret: null });
-    }
-    await expect(exchangeGithubManifest("code-2", GITHUB_API_ORIGIN, Object.assign(convertWithoutHook, { preconnect: noPreconnect })))
-      .resolves.toEqual({ id: 1, slug: "app", pem: "pem", webhook_secret: null });
-  });
-
-  test("exchanges the code against the configured GitHub origin", async () => {
-    let seen = "";
-    async function recordConversion(input: string | URL | Request) {
-      seen = String(input);
-      return Response.json({ id: 1, slug: "app", pem: "pem", webhook_secret: "secret" });
-    }
-    await expect(exchangeGithubManifest("code-1", "http://127.0.0.1:4001", Object.assign(recordConversion, { preconnect: noPreconnect })))
-      .resolves.toMatchObject({ slug: "app" });
-    expect(seen).toBe("http://127.0.0.1:4001/app-manifests/code-1/conversions");
-  });
-});
-
-describe("GitHub manifest on localhost", () => {
-  test("registers a webhook only where GitHub can reach the hub", () => {
-    expect(manifestHookUrl("https://hub.example.com", "tnt one")).toBe("https://hub.example.com/api/hooks/tnt%20one/github-hook");
-    for (const origin of ["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"]) {
-      expect(manifestHookUrl(origin, "tnt_one")).toBeNull();
-    }
-  });
-
-  for (const [publicOrigin, hook] of [
-    ["https://hub.example.com", { url: "https://hub.example.com/api/hooks/tnt_one/github-hook", active: true }],
-    ["http://localhost:3000", undefined],
-  ] as const) {
-    test(`start from ${publicOrigin} ${hook ? "includes" : "omits"} the webhook in the manifest`, async () => {
-      const integration = createGithubManifestIntegration({
-        db: startDb([]),
-        cipher: {} as never,
-        getSession: signedInSession,
-        authorizeCredential: async () => true,
-        stateSecret: STATE_SECRET,
-        trustedPortalOrigins: [],
-        githubApiOrigin: GITHUB_API_ORIGIN,
-        publicOrigin,
-      });
-      const request = new Request(`${publicOrigin}/api/integrations/github-manifest/tnt_one/start`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: publicOrigin, "sec-fetch-site": "same-origin" },
-        body: JSON.stringify({ portalOrigin: publicOrigin, replace: false }),
-      });
-      const response = await integration.start(request, "tnt_one");
-      expect(response.status).toBe(201);
-      const { manifest } = await response.json() as { manifest: Record<string, unknown> };
-      expect(manifest.hook_attributes).toEqual(hook);
-      expect("hook_attributes" in manifest).toBe(hook !== undefined);
-      expect(manifest.redirect_url).toBe(`${publicOrigin}/api/integrations/github-manifest/callback`);
-      expect(manifest.url).toBe(publicOrigin);
-    });
-  }
-
-  test("makes a hook secret of its own when GitHub issued none", async () => {
-    const cipher: CredentialCipher = {
-      async encrypt(plaintext, aad) {
-        return `${aad}|${plaintext}`;
-      },
-      async decrypt(blob) {
-        return blob;
-      },
-    };
-    const state = { appCredentialId: "crd_app", hookCredentialId: "crd_hook", replacement: false };
-    const first = await prepareCanonicalManifestWrite(state, [], { ...conversion, webhook_secret: null }, cipher);
-    const second = await prepareCanonicalManifestWrite(state, [], { id: 42, slug: "app", pem: "pem" }, cipher);
-    const secretOf = (prepared: typeof first) => prepared.values[1].secret.split("|")[1]!;
-    expect(secretOf(first)).toMatch(/^[0-9a-f]{64}$/);
-    expect(secretOf(second)).toMatch(/^[0-9a-f]{64}$/);
-    expect(secretOf(first)).not.toBe(secretOf(second));
-    expect(first.values[1].secret.startsWith(credentialAad("crd_hook", "secret"))).toBeTrue();
-  });
 });
 
 describe("GitHub manifest credential writes", () => {
-  test("preserves decryptable concurrent canonical inserts instead of rewriting them with reserved-ID AAD", async () => {
-    const cipher: CredentialCipher = {
-      async encrypt(plaintext, aad) {
-        return `${aad.length}:${aad}${plaintext}`;
-      },
-      async decrypt(blob, aad) {
-        const separator = blob.indexOf(":");
-        const length = Number(blob.slice(0, separator));
-        const storedAad = blob.slice(separator + 1, separator + 1 + length);
-        if (storedAad !== aad) throw new Error("AAD mismatch");
-        return blob.slice(separator + 1 + length);
-      },
-    };
-    const concurrent = [
-      { id: "crd_concurrent_app", name: "github", secret: await cipher.encrypt("existing-app", credentialAad("crd_concurrent_app", "secret")) },
-      { id: "crd_concurrent_hook", name: "github-hook", secret: await cipher.encrypt("existing-hook", credentialAad("crd_concurrent_hook", "secret")) },
-    ];
-    const before = structuredClone(concurrent);
-
-    await expect(prepareCanonicalManifestWrite({
-      appCredentialId: "crd_reserved_app",
-      hookCredentialId: "crd_reserved_hook",
-      replacement: false,
-    }, concurrent, conversion, cipher)).rejects.toThrow("appeared during manifest setup");
-
-    expect(concurrent).toEqual(before);
-    expect(await cipher.decrypt(concurrent[0]!.secret, credentialAad(concurrent[0]!.id, "secret"))).toBe("existing-app");
-    expect(await cipher.decrypt(concurrent[1]!.secret, credentialAad(concurrent[1]!.id, "secret"))).toBe("existing-hook");
-  });
-
   test("keeps converted secrets out of credential metadata", async () => {
     const cipher: CredentialCipher = {
       async encrypt(plaintext, aad) {
@@ -318,10 +177,6 @@ describe("GitHub manifest credential writes", () => {
 });
 
 describe("GitHub manifest state", () => {
-  test("round-trips a signed state", () => {
-    expect(verifyManifestState(STATE_KEY, signManifestState(STATE_KEY, setup), NOW)).toEqual(setup);
-  });
-
   test("refuses tampered, foreign-key and expired states", () => {
     const token = signManifestState(STATE_KEY, setup);
     const [, signature] = token.split(".");

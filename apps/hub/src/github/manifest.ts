@@ -88,7 +88,7 @@ const ManifestConversion = type({
   /** Null when the App was created without a webhook. */
   "webhook_secret?": "(string > 0) | null",
 });
-export type ManifestConversion = typeof ManifestConversion.infer;
+type ManifestConversion = typeof ManifestConversion.infer;
 
 class GithubExchangeError extends Error {
   constructor(readonly retryable: boolean) {
@@ -96,7 +96,7 @@ class GithubExchangeError extends Error {
   }
 }
 
-export async function exchangeGithubManifest(code: string, githubApiOrigin: string, fetchImpl: typeof fetch): Promise<ManifestConversion> {
+async function exchangeGithubManifest(code: string, githubApiOrigin: string, fetchImpl: typeof fetch): Promise<ManifestConversion> {
   const response = await fetchImpl(`${githubApiOrigin}/app-manifests/${encodeURIComponent(code)}/conversions`, {
     method: "POST",
     headers: {
@@ -172,7 +172,7 @@ function safeOrigin(value: string): string {
  * the public internet, so a local hub registers the App without a webhook and
  * finds pull requests by polling instead.
  */
-export function manifestHookUrl(publicOrigin: string, tenantId: string): string | null {
+function manifestHookUrl(publicOrigin: string, tenantId: string): string | null {
   if (loopbackHost(new URL(publicOrigin).hostname)) return null;
   return `${publicOrigin}/api/hooks/${encodeURIComponent(tenantId)}/github-hook`;
 }

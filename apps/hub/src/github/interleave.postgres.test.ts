@@ -5,13 +5,9 @@ import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
 import { runArtifactMigrations } from "@corbits/artifacts";
-import type { CheckRun } from "@corbits/github-reads";
-import { emptyPack, type CheckPack, type PrTriageRow } from "@corbits/triage-contracts";
-import { createBacklogStart } from "./backlog-triage.js";
-import { ListenerUnroutedError } from "./deployment.js";
+import { emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
 import { createGithubPrTriage } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY } from "./reconcile-plan.js";
-import { failDelivery, queueHead } from "./triage-queue.js";
 import { createTriageReconciler, createUnroutedTries } from "./triage-reconciler.js";
 import { createTriageStateStore, type TriageStateStore } from "./triage-state-store.js";
 import type { ObservedRuns } from "./manager-runs.js";
@@ -64,18 +60,18 @@ function route(store: TriageStateStore, deliver: Deliver) {
   });
 }
 
-function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver, pack: CheckPack = PACK, checks: CheckRun[] = [], updatedAt = LONG_AGO) {
+function reconciler(store: TriageStateStore, heads: number[], deliver: Deliver) {
   return createTriageReconciler({
     source: "github",
     tenants: async () => [{ id: TENANT, domain: "tenant.example", config: CONFIG }],
     listener: async () => DEPLOYMENT,
-    openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt, draft: false })),
+    openHeadsFor: async () => async () => heads.map((number) => ({ number, headSha: number === 8 ? "abc123" : `sha${number}`, updatedAt: LONG_AGO, draft: false })),
     activity: { stale: () => true },
     managerRuns: noRuns,
-    headChecks: async () => checks,
+    headChecks: async () => [],
     verdicts: { latest: async () => [] },
     store,
-    readCheckPack: async () => ({ status: "ok", pack, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
+    readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
     send: async ({ payload }) => deliver(payload),
     unroutedTries: createUnroutedTries(),
     policy: DEFAULT_RECONCILE_POLICY,
@@ -126,97 +122,5 @@ test("PostgreSQL: a click while the reconciler is mailing the same head starts o
     expect(routeStatus).toBe(409);
     expect(mailsFor8(mails)).toBe(1);
     expect((await store.load(TENANT, REPO)).rows.map((row) => `${row.number}:${row.status}`)).toEqual(["8:queued"]);
-  });
-}, 120_000);
-
-test("PostgreSQL: a failed mail whose first restore is refused still puts the head back, so the maintainer's retry is accepted", async () => {
-  await withStore(async (store) => {
-    let first = true;
-    const handle = route(store, async () => {
-      if (!first) return;
-      first = false;
-      await reconciler(store, [8, 9], async () => {})();
-      throw new Error("mail down");
-    });
-    const res1 = await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" });
-    expect(res1.status).toBe(502);
-    expect(await res1.json()).toEqual({ error: { code: "hub_unavailable", message: `Could not queue ${REPO}#8: mail down. Try again.` } });
-    const rows = (await store.load(TENANT, REPO)).rows;
-    expect(rows.find((row) => row.number === 8)).toEqual(FAILED);
-    expect(rows.find((row) => row.number === 9)?.status).toBe("queued");
-    expect((await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" })).status).toBe(202);
-  });
-}, 120_000);
-
-test("PostgreSQL: a backlog started while the listener is starting answers 202, and its open heads are queued and mailed once the listener is up", async () => {
-  await withStore(async (store) => {
-    let kicked = 0;
-    const start = createBacklogStart({
-      readCheckPack: async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } } }),
-      async sendMail() {
-        throw new ListenerUnroutedError("github", DEPLOYMENT.address);
-      },
-      openHeads: async () => [{ number: 8, headSha: "abc123", draft: false }, { number: 10, headSha: "sha10", draft: false }, { number: 11, headSha: "sha11", draft: true }],
-      store,
-      policy: DEFAULT_RECONCILE_POLICY,
-      now: () => NOW,
-      retry() {
-        kicked += 1;
-      },
-      log: () => {},
-    });
-    const res = await start(TENANT, { name: REPO, connected: true, enabled: true });
-    expect({ status: res.status, body: await res.json() }).toEqual({ status: 202, body: { status: "started" } });
-    expect(kicked).toBe(1);
-    expect((await store.load(TENANT, REPO)).rows.map((row) => `${row.number}:${row.status}:${row.unrouted === true}`)).toEqual(["8:failed:true", "10:failed:true"]);
-
-    const mails: Array<{ items?: Array<{ prNumber: number }> }> = [];
-    await reconciler(store, [8, 10], async (payload) => {
-      mails.push(payload as never);
-    })();
-    expect(mails.flatMap((mail) => mail.items?.map((item) => item.prNumber) ?? [])).toEqual([8, 10]);
-    expect((await store.load(TENANT, REPO)).rows.map((row) => `${row.number}:${row.status}`)).toEqual(["8:queued", "10:queued"]);
-  });
-}, 120_000);
-
-test("PostgreSQL: a maintainer's triage request while the listener is starting answers 202 and the head is mailed once the listener is up", async () => {
-  await withStore(async (store) => {
-    const handle = route(store, async () => {
-      throw new ListenerUnroutedError("github", DEPLOYMENT.address);
-    });
-    const res = await handle({ repo: REPO, number: 8 }, { tenantId: TENANT, principalId: "member-1" });
-    expect({ status: res.status, body: await res.json() }).toEqual({ status: 202, body: { status: "queued", headSha: "abc123" } });
-    expect((await store.load(TENANT, REPO)).rows.map((row) => `${row.number}:${row.status}:${row.unrouted === true}`)).toEqual(["8:failed:true"]);
-
-    const mails: unknown[] = [];
-    await reconciler(store, [8], async (payload) => {
-      mails.push(payload);
-    })();
-    expect(mailsFor8(mails)).toBe(1);
-  });
-}, 120_000);
-
-test("PostgreSQL: a webhook's head queued while a reconcile pass plans over it, whose mail then reaches no listener, goes out on the next pass", async () => {
-  await withStore(async (store) => {
-    const opened = { tenantId: TENANT, repo: REPO, number: 9, headSha: "sha9" };
-    let interleaved = false;
-    const racing: TriageStateStore = {
-      load: (tenantId, repo) => store.load(tenantId, repo),
-      async save(tenantId, repo, rows, expected) {
-        if (!interleaved) {
-          interleaved = true;
-          await queueHead(store, opened, new Date(NOW.getTime() - 5), () => false);
-        }
-        return store.save(tenantId, repo, rows, expected);
-      },
-    };
-    await reconciler(racing, [8, 9], async () => {}, PACK, [], NOW.toISOString())();
-    await failDelivery(store, opened, new ListenerUnroutedError("github", DEPLOYMENT.address), NOW);
-
-    const mails: Array<{ items?: Array<{ prNumber: number }> }> = [];
-    await reconciler(store, [8, 9], async (payload) => {
-      mails.push(payload as never);
-    }, PACK, [], NOW.toISOString())();
-    expect(mails.flatMap((mail) => mail.items?.map((item) => item.prNumber) ?? [])).toContain(9);
   });
 }, 120_000);

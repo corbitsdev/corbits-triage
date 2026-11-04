@@ -215,7 +215,7 @@ type SandboxSource = Pick<HubEnv, "SANDBOX_REPOSITORY" | "SANDBOX_COMMIT_SHA" | 
  * service it deploys from GitHub and drops those names from any other container. Its commit is the one it deployed,
  * so it wins over a hand-set value left behind; the repository may still be overridden to a public fork.
  */
-export function sandboxSource(env: SandboxSource): { repository: string; commit: string } {
+function sandboxSource(env: SandboxSource): { repository: string; commit: string } {
   const repository = env.SANDBOX_REPOSITORY ?? (env.RAILWAY_GIT_REPO_OWNER !== undefined && env.RAILWAY_GIT_REPO_NAME !== undefined ? `${env.RAILWAY_GIT_REPO_OWNER}/${env.RAILWAY_GIT_REPO_NAME}` : undefined);
   const commit = env.RAILWAY_GIT_COMMIT_SHA ?? env.SANDBOX_COMMIT_SHA;
   if (repository === undefined || commit === undefined) {

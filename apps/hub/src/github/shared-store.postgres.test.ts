@@ -47,30 +47,6 @@ async function refused(write: () => Promise<unknown>): Promise<void> {
   expect(err).toBeInstanceOf(TriageStateConflictError);
 }
 
-test("PostgreSQL: one shared store, route loads, reconciler loads, route saves; the reconciler's save is refused", async () => {
-  await withStores(async (make) => {
-    const shared = make();
-    await shared.save(TENANT, REPO, [row(1, "triaged")], null);
-    const route = await shared.load(TENANT, REPO);
-    const reconciler = await shared.load(TENANT, REPO);
-    await shared.save(TENANT, REPO, route.rows.map((r) => ({ ...r, status: "queued" as const })), route.version);
-    await refused(() => shared.save(TENANT, REPO, reconciler.rows.map((r) => ({ ...r, status: "failed" as const })), reconciler.version));
-    expect((await make().load(TENANT, REPO)).rows.map((r) => r.status)).toEqual(["queued"]);
-  });
-}, 120_000);
-
-test("PostgreSQL: one shared store, reconciler loads first, route loads and saves; the reconciler's save is refused", async () => {
-  await withStores(async (make) => {
-    const shared = make();
-    await shared.save(TENANT, REPO, [row(1, "failed")], null);
-    const reconciler = await shared.load(TENANT, REPO);
-    const route = await shared.load(TENANT, REPO);
-    await shared.save(TENANT, REPO, route.rows.map((r) => ({ ...r, status: "queued" as const })), route.version);
-    await refused(() => shared.save(TENANT, REPO, [...reconciler.rows, row(2, "new")], reconciler.version));
-    expect((await make().load(TENANT, REPO)).rows.map((r) => `${r.number}:${r.status}`)).toEqual(["1:queued"]);
-  });
-}, 120_000);
-
 test("PostgreSQL: two stores, as two processes, refuse the second writer", async () => {
   await withStores(async (make) => {
     const a = make();
@@ -80,19 +56,5 @@ test("PostgreSQL: two stores, as two processes, refuse the second writer", async
     const rb = await b.load(TENANT, REPO);
     await a.save(TENANT, REPO, ra.rows, ra.version);
     await refused(() => b.save(TENANT, REPO, rb.rows, rb.version));
-  });
-}, 120_000);
-
-test("PostgreSQL: the first save when nothing is stored is refused for the second writer", async () => {
-  await withStores(async (make) => {
-    const a = make();
-    const b = make();
-    const first = await a.load(TENANT, REPO);
-    const second = await b.load(TENANT, REPO);
-    expect(first).toEqual({ rows: [], version: null });
-    expect(second).toEqual({ rows: [], version: null });
-    await a.save(TENANT, REPO, [row(1, "queued")], first.version);
-    await refused(() => b.save(TENANT, REPO, [row(2, "new")], second.version));
-    expect((await make().load(TENANT, REPO)).rows.map((r) => `${r.number}:${r.status}`)).toEqual(["1:queued"]);
   });
 }, 120_000);

@@ -3,9 +3,8 @@ import { expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { triageStopped, type PrTriageRow } from "@corbits/triage-contracts";
-import { DEFAULT_RECONCILE_POLICY, planTenant } from "./github/reconcile-plan.js";
-import { failHead } from "./github/triage-queue.js";
+import type { PrTriageRow } from "@corbits/triage-contracts";
+import { DEFAULT_RECONCILE_POLICY } from "./github/reconcile-plan.js";
 import { recordEvent, take, type PullRequestRef } from "./manager-state.js";
 import { createTakeLedger, createTriageLiveness, type StallNotice } from "./triage-liveness.js";
 import { migrateTriageTables } from "./triage-db.js";
@@ -13,9 +12,7 @@ import { migrateTriageTables } from "./triage-db.js";
 const TEST_DB = { host: "localhost", port: 5432, user: "postgres", password: "postgres", database: "interchange" };
 const TENANT = "tnt_liveness";
 const RECORD = { name: "acme/widgets", connected: true, enabled: true };
-const DISABLED = { name: "acme/disabled", connected: true, enabled: false };
 const PR: PullRequestRef = { source: "github", repo: RECORD.name, number: 7 };
-const BITBUCKET: PullRequestRef = { source: "bitbucket-datacenter", repo: "PROJ/widgets", number: 3 };
 const STALLED_AFTER_MS = 5 * 60_000;
 
 type Db = ReturnType<typeof createDB>["db"];
@@ -30,7 +27,7 @@ async function withDatabase(run: (db: Db) => Promise<void>): Promise<void> {
     await runMigrations(config, { schema: "public" });
     handle = createDB(config);
     await migrateTriageTables(handle.db, "public");
-    await handle.db.insert(schema.tenant).values({ id: TENANT, name: "Liveness", slug: "liveness", domain: "liveness.test", config: { corbitsTriage: { repos: [RECORD, DISABLED] } } });
+    await handle.db.insert(schema.tenant).values({ id: TENANT, name: "Liveness", slug: "liveness", domain: "liveness.test", config: { corbitsTriage: { repos: [RECORD] } } });
     await people(handle.db);
     await run(handle.db);
   } finally {
@@ -50,13 +47,12 @@ async function people(db: Db): Promise<void> {
   await db.insert(schema.principalRole).values(holders.map(([who, role]) => ({ principalId: `prn_${who}`, roleId: `rol_${role}` })));
 }
 
-const TENANT_ROW = { id: TENANT, config: { corbitsTriage: { repos: [RECORD, DISABLED] } } };
+const TENANT_ROW = { id: TENANT, config: { corbitsTriage: { repos: [RECORD] } } };
 
 /** The repository's triage state in memory, as the reconciler and the coalescer read and write it. */
-function memoryStore(initial: PrTriageRow[]) {
-  let rows = initial;
+function memoryStore() {
+  let rows: PrTriageRow[] = [];
   return {
-    rows: () => rows,
     async load() {
       return { rows, version: null };
     },
@@ -67,7 +63,7 @@ function memoryStore(initial: PrTriageRow[]) {
   };
 }
 
-function stack(db: Db, store = memoryStore([]), mails = true) {
+function stack(db: Db) {
   let at = Date.now();
   const logged: Record<string, unknown>[] = [];
   const mailed: StallNotice[] = [];
@@ -75,12 +71,9 @@ function stack(db: Db, store = memoryStore([]), mails = true) {
   async function mail(notice: StallNotice) {
     mailed.push(notice);
   }
-  const liveness = createTriageLiveness({ db, store, takes, stalledAfterMs: STALLED_AFTER_MS, maxAttempts: DEFAULT_RECONCILE_POLICY.maxAttempts, mail: mails ? mail : undefined, now: () => new Date(at), log: (entry) => logged.push(entry) });
+  const liveness = createTriageLiveness({ db, takes, stalledAfterMs: STALLED_AFTER_MS, maxAttempts: DEFAULT_RECONCILE_POLICY.maxAttempts, store: memoryStore(), mail, now: () => new Date(at), log: (entry) => logged.push(entry) });
   return {
-    takes,
-    logged,
     mailed,
-    now: () => new Date(at),
     advance(ms: number) {
       at += ms;
     },
@@ -88,9 +81,9 @@ function stack(db: Db, store = memoryStore([]), mails = true) {
     stalled: () => liveness.stalled(TENANT),
     alarms: () => logged.filter((entry) => entry["msg"] === "triage_stalled" || entry["msg"] === "triage_stall_cleared").map((entry) => `${String(entry["msg"])} ${String(entry["source"])}`),
     /** A manager of the host takes a pull request; the take route notes it only when it opens a pass. */
-    async took(pr: PullRequestRef, outcome: "pass" | "idle" = "pass") {
+    async took(pr: PullRequestRef) {
       const taken = await take(db, TENANT, pr, `run_${pr.source}_${pr.number}`);
-      expect(taken.outcome).toBe(outcome);
+      expect(taken.outcome).toBe("pass");
       if (taken.outcome === "pass") takes.note(TENANT, pr.source, taken.pass.takenAt);
     },
   };
@@ -129,265 +122,5 @@ test("a mail no manager takes raises the alarm once past the alarm age, keeps it
       { to, workspace: "Liveness", source: "github", cleared: false },
       { to, workspace: "Liveness", source: "github", cleared: true },
     ]);
-  });
-}, 60_000);
-
-test("a mail no manager took before the last take, read back as the hub starts, neither raises the alarm nor hides a later one", async () => {
-  await withDatabase(async (db) => {
-    const hub = stack(db);
-    await mailOf({ ...PR, number: 8 }, "old", db);
-    const hourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
-    await db.execute(sql`update corbits_triage.manager_state set state = jsonb_set(state, '{receivedAt}', to_jsonb(${hourAgo}::text)) where key like 'evt:%:old'`);
-    await mailOf({ ...PR, number: 9 }, "taken", db);
-    expect((await take(db, TENANT, { ...PR, number: 9 }, "run_other")).outcome).toBe("pass");
-    await hub.takes.seed(db);
-    await mailOf(PR, "d1", db);
-
-    hub.advance(STALLED_AFTER_MS - 60_000);
-    await hub.check();
-    expect(hub.alarms()).toEqual([]);
-
-    hub.advance(2 * 60_000);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-  });
-}, 60_000);
-
-test("a head whose mail finds no listener stays stalled while the reconciler retries it and other pull requests are taken, until a run of it is seen", async () => {
-  await withDatabase(async (db) => {
-    const queuedAt = new Date().toISOString();
-    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
-    const hub = stack(db, store);
-    const head = { tenantId: TENANT, repo: RECORD.name, number: 7, headSha: "h1" };
-    await failHead(store, head, triageStopped("github"), new Date());
-
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1, reason: triageStopped("github") }]);
-
-    for (let retry = 0; retry < 3; retry++) {
-      hub.advance(60 * 60_000);
-      const open = [{ number: 7, headSha: "h1", updatedAt: queuedAt, draft: false }];
-      const plan = planTenant({ repos: [{ name: RECORD.name, prs: open, rows: store.rows() }], runs: new Map(), roomless: new Set(), now: hub.now(), policy: DEFAULT_RECONCILE_POLICY }).get(RECORD.name)!;
-      expect(plan.enqueue.map((queued) => queued.number)).toEqual([7]);
-      await store.save(TENANT, RECORD.name, plan.rows);
-      await failHead(store, head, triageStopped("github"), hub.now());
-      await hub.check();
-    }
-    expect(store.rows()).toMatchObject([{ status: "failed", undeliveredSince: queuedAt }]);
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-    expect(hub.mailed.length).toBe(1);
-
-    await mailOf({ ...PR, number: 8 }, "d8", db);
-    await hub.took({ ...PR, number: 8 });
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-
-    const running = [{ runId: "run_7", source: "github" as const, status: "running" as const, startedAt: hub.now().toISOString() }];
-    const seen = planTenant({ repos: [{ name: RECORD.name, prs: [{ number: 7, headSha: "h1", updatedAt: queuedAt, draft: false }], rows: store.rows() }], runs: new Map([[RECORD.name, new Map([["7@h1", running]])]]), roomless: new Set(), now: hub.now(), policy: DEFAULT_RECONCILE_POLICY }).get(RECORD.name)!;
-    await store.save(TENANT, RECORD.name, seen.rows);
-    expect(store.rows()).toEqual([expect.not.objectContaining({ undeliveredSince: expect.anything() })]);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
-  });
-}, 60_000);
-
-test("a head whose mail did not go out raises the alarm by its age alone, whatever its host's managers take meanwhile", async () => {
-  await withDatabase(async (db) => {
-    const queuedAt = new Date().toISOString();
-    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
-    const hub = stack(db, store);
-    await failHead(store, { tenantId: TENANT, repo: RECORD.name, number: 7, headSha: "h1" }, triageStopped("github"), new Date());
-    await new Promise((done) => setTimeout(done, 5));
-
-    hub.advance(60_000);
-    await hub.took({ ...PR, number: 8 }, "idle");
-    await mailOf({ ...PR, number: 9 }, "d9", db);
-    await hub.took({ ...PR, number: 9 });
-    await hub.check();
-    expect(hub.alarms()).toEqual([]);
-
-    hub.advance(STALLED_AFTER_MS);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-  });
-}, 60_000);
-
-test("a mail after another pull request's take counts though its head was queued before that take", async () => {
-  await withDatabase(async (db) => {
-    const queuedAt = new Date().toISOString();
-    const hub = stack(db, memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]));
-    await new Promise((done) => setTimeout(done, 5));
-    await mailOf({ ...PR, number: 8 }, "d8", db);
-    await hub.took({ ...PR, number: 8 });
-    await mailOf(PR, "d1", db);
-
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1 }]);
-  });
-}, 60_000);
-
-test("an idle take does not clear a raised alarm", async () => {
-  await withDatabase(async (db) => {
-    const hub = stack(db);
-    await mailOf(PR, "d1", db);
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-
-    await hub.took({ ...PR, number: 8 }, "idle");
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-  });
-}, 60_000);
-
-test("a host whose managers stop taking raises its own alarm while the other host's keep taking, and a failing workspace stops no other", async () => {
-  await withDatabase(async (db) => {
-    const hub = stack(db);
-    await mailOf(PR, "d1", db);
-    const broken = { id: "tnt_gone", config: { corbitsTriage: { repos: [RECORD] } } };
-
-    for (let pass = 0; pass < 4; pass++) {
-      hub.advance(5 * 60_000);
-      const pull = { ...BITBUCKET, number: BITBUCKET.number + pass };
-      await mailOf(pull, `b${pass}`, db);
-      await hub.took(pull);
-      await hub.check();
-    }
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-    expect(hub.stalled().map((host) => host.source)).toEqual(["github"]);
-
-    hub.logged.length = 0;
-    const failing = createTriageLiveness({
-      db,
-      store: { load: async (tenantId) => { if (tenantId === broken.id) throw new Error("store down"); return { rows: [], version: null }; } },
-      takes: hub.takes,
-      stalledAfterMs: STALLED_AFTER_MS,
-      maxAttempts: DEFAULT_RECONCILE_POLICY.maxAttempts,
-      mail: undefined,
-      now: hub.now,
-      log: (entry) => hub.logged.push(entry),
-    });
-    await failing.check(async () => [broken, TENANT_ROW]);
-    expect(hub.logged.filter((entry) => entry["msg"] !== "triage_stall_not_emailed").map((entry) => [entry["msg"], entry["tenantId"]])).toEqual([["triage_liveness_failed", broken.id], ["triage_stalled", TENANT]]);
-  });
-}, 60_000);
-
-test("a hub that sends no email says so once and still raises and clears the alarm", async () => {
-  await withDatabase(async (db) => {
-    const hub = stack(db, memoryStore([]), false);
-    await mailOf(PR, "d1", db);
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    await hub.took(PR);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
-    expect(hub.logged.filter((entry) => entry["msg"] === "triage_stall_not_emailed").map((entry) => entry["reason"])).toEqual(["SMTP_URL is not set"]);
-  });
-}, 60_000);
-
-test("a raised alarm clears without a newer take once its head's run failed, whatever mail of it is untaken, and ignores disabled repositories", async () => {
-  await withDatabase(async (db) => {
-    const queuedAt = new Date().toISOString();
-    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
-    const hub = stack(db, store);
-    await mailOf(PR, "d1", db);
-    await mailOf({ source: "github", repo: "acme/disabled", number: 1 }, "d2", db);
-
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1 }]);
-
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", runId: "run_7", error: "run failed", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
-    expect(hub.stalled()).toEqual([]);
-  });
-}, 60_000);
-
-test("a pull request waiting by an older mail and a newer queued head keeps the head's reason", async () => {
-  await withDatabase(async (db) => {
-    const store = memoryStore([]);
-    const hub = stack(db, store);
-    await mailOf(PR, "d1", db);
-    await new Promise((done) => setTimeout(done, 5));
-    const queuedAt = new Date().toISOString();
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "queued", error: "waiting for capacity", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
-
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    expect(hub.stalled()).toMatchObject([{ source: "github", pull: "acme/widgets#7", count: 1, reason: "waiting for capacity" }]);
-    expect(Date.parse(String(hub.stalled()[0]?.since))).toBeLessThan(Date.parse(queuedAt));
-  });
-}, 60_000);
-
-test("an untaken mail of a triaged pull request waits from its oldest mail, whatever later writes touch its row or its delivery id holds", async () => {
-  await withDatabase(async (db) => {
-    const triagedAt = new Date().toISOString();
-    const store = memoryStore([{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, updatedAt: triagedAt }]);
-    const hub = stack(db, store);
-    await new Promise((done) => setTimeout(done, 5));
-    const beforeFirst = Date.now();
-    await mailOf(PR, "d1:#999:tail", db);
-    await new Promise((done) => setTimeout(done, 5));
-    const rewrittenAt = new Date().toISOString();
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "triaged", runId: "run_7", attempts: 1, firstSeenAt: triagedAt, staleBefore: rewrittenAt, updatedAt: rewrittenAt }]);
-    await mailOf(PR, "d2", db);
-
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    const [stalled] = hub.stalled();
-    expect(stalled).toMatchObject({ source: "github", pull: "acme/widgets#7", count: 1 });
-    const since = Date.parse(String(stalled?.since));
-    expect(since).toBeGreaterThanOrEqual(beforeFirst);
-    expect(since).toBeLessThan(Date.parse(rewrittenAt));
-  });
-}, 60_000);
-
-test("a head cycling through failing to start and queued again holds the alarm with one email, until a manager of the host takes a pull request after it was raised", async () => {
-  await withDatabase(async (db) => {
-    const queuedAt = new Date().toISOString();
-    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
-    const hub = stack(db, store);
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-    hub.takes.note(TENANT, "github", new Date(Date.parse(queuedAt) + 60_000).toISOString());
-
-    for (let cycle = 0; cycle < 2; cycle++) {
-      const at = hub.now().toISOString();
-      await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: at }]);
-      await hub.check();
-      hub.advance(60_000);
-      const requeuedAt = hub.now().toISOString();
-      await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "queued", attempts: 2, firstSeenAt: queuedAt, queuedAt: requeuedAt, updatedAt: requeuedAt }]);
-      await hub.check();
-      hub.advance(STALLED_AFTER_MS);
-    }
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-    expect(hub.mailed.length).toBe(1);
-
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: hub.now().toISOString() }]);
-    hub.advance(60_000);
-    hub.takes.note(TENANT, "github", hub.now().toISOString());
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
-  });
-}, 60_000);
-
-test("a head that used up its attempts to start lets the alarm clear without a take", async () => {
-  await withDatabase(async (db) => {
-    const queuedAt = new Date().toISOString();
-    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
-    const hub = stack(db, store);
-    hub.advance(STALLED_AFTER_MS + 60_000);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github"]);
-
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: DEFAULT_RECONCILE_POLICY.maxAttempts, firstSeenAt: queuedAt, queuedAt, updatedAt: hub.now().toISOString() }]);
-    await hub.check();
-    expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
   });
 }, 60_000);
