@@ -1,8 +1,8 @@
 // Keeps each workspace's `github` credential holding a live installation token,
-// and its `github-read` credential one that can only read contents, both minted on
-// the hub from the App key, and pushes each new one to the running deployments that
-// hold the credential, since renewal writes straight to Postgres rather than through
-// the stock credential route.
+// and its `github-read` credential one that can only read contents and pull requests,
+// both minted on the hub from the App key, and pushes each new one to the running
+// deployments that hold the credential, since renewal writes straight to Postgres
+// rather than through the stock credential route.
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { credentialSecretColumns, schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
@@ -32,7 +32,7 @@ export type InstallationToken = { token: string; expiresAt: number };
  */
 export type IssuedApp = { slug: string; token?: InstallationToken; read?: InstallationToken | { error: string } | { withdrawn: true } };
 
-const READ_SCOPE = { contents: "read" } as const;
+const READ_SCOPE = { contents: "read", pull_requests: "read" } as const;
 /** GitHub refuses to narrow a token to more repositories than this. */
 const MAX_TOKEN_REPOSITORIES = 500;
 

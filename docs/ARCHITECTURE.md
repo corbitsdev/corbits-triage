@@ -1297,25 +1297,24 @@ host's `*_read_file`), never a shell, network, write or push tool, and
 `tooling/model-step-tools.test.ts` fails `bun run test` otherwise.
 
 Each workflow binds at most one credential per host. On GitHub the manager
-binds `github` (provider `github`, stock `http`), an installation token,
-never the App key, to its host actions (facts, mirror, execute, approvals and
+binds `github` (provider `github`, stock `http`), an installation token, never
+the App key, to its host actions (facts, mirror, execute, approvals and
 posting a review); it is the only deployed workflow that can write to GitHub.
 The listener and the judge bind no host credential, only the hub's. Code
 review, which runs a model over the pull request's code, binds only
 `github-read` (same provider): a second token for the same installation the
-hub mints with `contents: read` and the workspace's repositories from that
-installation that GitHub still lists in it, so a renamed or transferred
-repository is left out rather than failing the token. Past GitHub's limit
-of 500 repositories it asks for no list and reads every repository of the
-installation, still read-only. It refuses to keep a token GitHub answers
-with any other permission, a repository it did not ask for, or every
-repository when it asked for some, so no code review deployment holds a
-token that can write or reach past the workspace. With none of the
-workspace's repositories left, `github-read` is marked `expired` and its
-token blanked. It is
-minted, stored, pushed and marked `expired` with `github`, in the same
-transaction under the same lock, and minted again when installation sync or
-an installation webhook changes the repositories. A refused read token leaves
+hub mints with `contents: read` and `pull_requests: read` for the workspace's
+repositories from that installation that GitHub still lists in it, so a
+renamed or transferred repository is left out rather than failing the token.
+Past GitHub's limit of 500 repositories it asks for no list and reads every
+repository of the installation, still read-only. It refuses to keep a token
+GitHub answers with any other permission, a repository it did not ask for, or
+every repository when it asked for some, so no code review deployment holds a
+token that can write or reach past the workspace. With none of the workspace's
+repositories left, `github-read` is marked `expired` and its token blanked. It
+is minted, stored, pushed and marked `expired` with `github`, in the same
+transaction under the same lock, and minted again when installation sync or an
+installation webhook changes the repositories. A refused read token leaves
 `github` renewed, keeps its reason as `tokenError` on `github-read`, and code
 review is not deployed until a good one is minted. Bitbucket Data Center has
 no token the hub can narrow, so its manager and its code review both bind the

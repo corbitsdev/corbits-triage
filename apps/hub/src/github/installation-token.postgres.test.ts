@@ -391,7 +391,7 @@ test("PostgreSQL: code review is launched with a token that can only read the wo
     const renewal = createGithubTokenRenewal({ db, cipher, githubApiOrigin: origin, router, log: noLog, loadRunCredentials: noRunCredentials });
     const connect = createGithubAppConnection({ db, cipher, authorize: allowAll, githubApiOrigin: origin, renewal, onConnected() {} });
     await connect({ appId: "1", privateKey: JSON.parse(theApp.json).privateKey }, { tenantId: TENANT, principalId: "prn_admin" });
-    expect(github.scoped).toEqual([{ permissions: { contents: "read" }, repositories: ["app"] }]);
+    expect(github.scoped).toEqual([{ permissions: { contents: "read", pull_requests: "read" }, repositories: ["app"] }]);
 
     function launched(bindings: Parameters<typeof buildCredentialDelivery>[0]["bindings"]) {
       return buildCredentialDelivery({ db, tenantId: TENANT, bindings, creatorPrincipalId: null, invokerPrincipalId: null, credentialCipher: cipher });
