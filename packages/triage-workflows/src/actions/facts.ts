@@ -116,10 +116,10 @@ interface FetchContext {
 const HISTORY_FILES_PAGE: FilesCursor = { offset: 0, patches: false };
 
 /** Pull requests, file histories or file contents read at once, so the host sees a bounded number of concurrent requests. */
-export const READ_CHUNK = 10;
+const READ_CHUNK = 10;
 
 /** The changed paths whose history one pull request reads, GitHub's own diff limit; the rest count as unread, so one pull request's reads stay bounded. */
-export const MAX_HISTORY_READS = 300;
+const MAX_HISTORY_READS = 300;
 
 const HISTORY_LIMIT = 200;
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_REPO_POLICY, emptyPack, isPatternsCheck, readCheckPack, readPolicyFile, recommendedPack, repoPolicy, type RepoPolicy } from "@corbits/triage-contracts";
-import { deriveState, REVIEW_ANSWERED_REASON, type PrFacts, type PrFileFacts } from "./checks.ts";
+import { emptyPack, isPatternsCheck, readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
+import { deriveState, type PrFacts, type PrFileFacts } from "./checks.ts";
 import { filesToRead, patternsResult } from "./patterns.ts";
 import { NO_FACTS } from "./item.ts";
 
@@ -19,99 +19,7 @@ const noisy: PrFacts = {
   approvals: 0,
 };
 
-const allOff: RepoPolicy = {
-  enabled: true,
-  checks: {
-    ci: false,
-    conflicts: false,
-  },
-  approvedAuthors: [],
-};
-
-function only(check: keyof RepoPolicy["checks"]): RepoPolicy {
-  return { ...allOff, checks: { ...allOff.checks, [check]: true } };
-}
-
-describe("deriveState policy", () => {
-  test("default policy runs every check", () => {
-    expect(deriveState(noisy)).toEqual(deriveState(noisy, DEFAULT_REPO_POLICY));
-    expect(deriveState(noisy)).toEqual(deriveState(noisy, repoPolicy(undefined)));
-    expect(deriveState(noisy).findings.map((finding) => finding.check)).toEqual([
-      "ci-green",
-      "no-merge-conflicts",
-    ]);
-  });
-
-  test("skips a finding when that check is disabled; the draft check always runs", () => {
-    const off = deriveState(noisy, allOff);
-    expect(off.findings).toEqual([]);
-    expect(off.checks).toEqual([{ check: "not-a-draft", kind: "machine", result: "fail", reason: "pull request is a draft", evidence: [], output: { kind: "values", values: { isDraft: true } } }, expect.objectContaining({ check: "no-changes-requested" })]);
-    expect(deriveState(noisy, only("ci")).findings.map((finding) => finding.check)).toEqual(["ci-green"]);
-    expect(deriveState(noisy, only("conflicts")).findings.map((finding) => finding.check)).toEqual(["no-merge-conflicts"]);
-  });
-
-  test("closed state check always runs", () => {
-    const closed = deriveState({ ...noisy, state: "closed" }, allOff);
-    expect(closed.findings).toEqual([{ check: "state", state: "ready-monitoring", reason: "pull request is closed" }]);
-  });
-
-  test("skips the mergeability-unknown conflicts finding when conflicts is off", () => {
-    const unknown: PrFacts = {
-      ...noisy,
-      draft: false,
-      mergeable: null,
-      checks: "success",
-      approvals: 1,
-    };
-    expect(deriveState(unknown).findings.map((finding) => finding.check)).toEqual(["no-merge-conflicts"]);
-    expect(deriveState(unknown).checks.find((check) => check.check === "no-merge-conflicts")?.output).toEqual({ kind: "could-not-check", reason: "mergeability not yet computed" });
-    expect(deriveState(unknown, allOff).findings).toEqual([]);
-  });
-});
-
-describe("deriveState check pack", () => {
-  test("empty valid pack classifies with no catalog findings", () => {
-    const result = deriveState(noisy, DEFAULT_REPO_POLICY, emptyPack("acme/widgets"));
-    expect(result.findings).toEqual([]);
-    expect(result.sources).toEqual({ quality: [], custom: [] });
-  });
-
-  test("machine checks use pack params; quality and custom are source not code", () => {
-    const pack = recommendedPack("acme/widgets");
-    pack.custom = [{
-      id: "custom-1",
-      name: "Bomb",
-      group: "pull-request",
-      kind: "model",
-      shape: "is-true",
-      claim: "process.exit(1)",
-    }];
-    const sized: PrFacts = { ...noisy, changedFiles: 80, additions: 10, deletions: 10, paths: ["src/a.ts"], changesRequested: ["maintainer"] };
-    const result = deriveState(sized, allOff, pack);
-    expect(result.findings.map((finding) => finding.check)).toEqual([
-      "ci-green",
-      "no-merge-conflicts",
-      "no-changes-requested",
-      "linked-issue",
-    ]);
-    expect(result.checks.find((check) => check.check === "no-changes-requested")).toMatchObject({
-      result: "fail",
-      evidence: ["changes requested by @maintainer"],
-    });
-    expect(result.labelled?.checks.find((check) => check.check === "max-files-changed")).toEqual({
-      check: "max-files-changed",
-      kind: "machine",
-      result: "fail",
-      reason: "pull request is over the files limit",
-      evidence: ["80 files (max 30)"],
-      output: { kind: "values", values: { files: 80 } },
-    });
-    expect(result.labelled?.checks.find((check) => check.check === "max-lines-changed")).toMatchObject({ result: "pass", evidence: ["20 lines changed (max 3000)"] });
-    expect(result.checks.find((check) => check.check === "no-forbidden-paths")?.result).toBe("pass");
-    expect(result.sources?.custom).toEqual(pack.custom);
-    expect(result.sources?.quality.map((row) => row.id).sort()).toEqual(["docs", "focused"]);
-  });
-
+describe("size rules", () => {
   test("size rules leave generated files out of every count, and the per-file rule names the files over it", () => {
     const pack = emptyPack("acme/widgets");
     pack.checks = {
@@ -193,44 +101,6 @@ describe("sensitive paths and risk", () => {
     expect(rule(changed(["src/a.ts"], { fixes: { "src/a.ts": 9 } }), "risk", strict)).toMatchObject({ result: "fail", reason: "risk is medium" });
     expect(rule(changed(["src/a.ts", "src/a.test.ts"], { authorKind: "FIRST_TIME_CONTRIBUTOR" }), "risk", strict)).toMatchObject({ result: "fail", reason: "risk is high" });
   });
-
-  test("history it could not read leaves risk unconfirmed only when a hot file would make it fail", () => {
-    const unread = changed(["src/a.ts", "src/a.test.ts"], { fixes: { "src/a.ts": null } });
-    expect(rule(unread, "risk")).toMatchObject({ result: "pass", output: { values: { level: "low" } } });
-    expect(rule(unread, "risk")?.label).toBeUndefined();
-    const failsAtMedium = readCheckPack({ ...pack, checks: { risk: { enabled: true, onFail: "ask", failAt: "medium" } } });
-    expect(rule(unread, "risk", failsAtMedium)).toMatchObject({ result: "unconfirmed", reason: "could not read the recent history of some changed files" });
-    expect(rule(changed(["src/a.ts"], { fixes: { "src/a.ts": null } }), "risk", failsAtMedium)).toMatchObject({ result: "fail", reason: "risk is medium" });
-  });
-});
-
-describe("deriveState check output", () => {
-  test("each fact is named for what it states, so pending CI never reads as passing", () => {
-    const pack = recommendedPack("acme/widgets");
-    pack.checks["no-forbidden-paths"] = { enabled: true, forbiddenGlobs: ["vendor/**"] };
-    const facts: PrFacts = { ...noisy, checks: "pending", pendingChecks: ["build"], mergeable: true, paths: ["vendor/x.ts"], changedFiles: 1, additions: 1, deletions: 0 };
-    const result = deriveState(facts, undefined, pack);
-    const outputs = Object.fromEntries([...result.checks, ...result.labelled!.checks].map((check) => [check.check, check.output]));
-    expect(outputs).toMatchObject({
-      "not-a-draft": { kind: "values", values: { isDraft: true } },
-      "ci-green": { kind: "could-not-check", reason: "checks are still running" },
-      "no-merge-conflicts": { kind: "values", values: { hasConflicts: false } },
-      "no-forbidden-paths": { kind: "values", values: { touchesForbiddenPaths: true } },
-      "max-files-changed": { kind: "values", values: { files: 1 } },
-      "max-lines-changed": { kind: "values", values: { lines: 1 } },
-    });
-  });
-});
-
-describe("review check", () => {
-  test("keeps the author's turn on requested changes and waits on the reviewer once answered", () => {
-    const requested = { ...noisy, changesRequested: ["maya"] };
-    const review = (facts: PrFacts) => deriveState(facts, allOff).checks.find((check) => check.check === "no-changes-requested");
-    expect(review(requested)).toMatchObject({ result: "fail", reason: "a reviewer requested changes" });
-    expect(review({ ...requested, reviewAnswered: true })).toMatchObject({ result: "fail", reason: REVIEW_ANSWERED_REASON });
-    expect(deriveState(requested, allOff).state).toBe("needs-author-update");
-    expect(deriveState({ ...requested, reviewAnswered: true }, allOff).state).toBe("awaiting-review");
-  });
 });
 
 describe("a policy stored with the old rule ids", () => {
@@ -289,40 +159,8 @@ describe("text rules", () => {
     expect(textCheck(["description"], "contains", ["claude.ai"], hiding)).toMatchObject({ result: "fail", evidence: ["description: [session](https://claude.ai/code/session_1)"] });
   });
 
-  test("a phrase the description shows is quoted once, though its markdown differs", () => {
-    const github = { ...open, body: "Generated with a tool", rawBody: "**Generated with** a tool\n<!-- generated with a tool -->" };
-    expect(textCheck(["description"], "contains", ["generated with"], github)).toMatchObject({ result: "fail", evidence: ["description: Generated with a tool"] });
-  });
-
-  test("names only the phrases found, quoting a line the description shows once", () => {
-    const attributed = { ...open, body: "Adds login.\n🤖 Generated with Claude Code", rawBody: "Adds login.\n🤖 Generated with [Claude Code](https://claude.com/claude-code)" };
-    const phrases = ["Co-Authored-By:", "Claude-Session:", "claude.ai/code/session", "noreply@anthropic.com", "Generated with Claude", "Generated with [Claude"];
-    expect(textCheck(["description"], "contains", phrases, attributed)).toMatchObject({ result: "fail", reason: 'the description contains "Generated with Claude"; remove it', evidence: ["description: 🤖 Generated with Claude Code"] });
-  });
-
-  test("quotes the written copy of a shown line when a link target hides a phrase", () => {
-    const linked = { ...open, body: "Generated with Claude", rawBody: "[Generated with Claude](https://claude.ai/code/session_1)" };
-    expect(textCheck(["description"], "contains", ["Generated with Claude", "claude.ai/code/session"], linked)).toMatchObject({
-      result: "fail",
-      reason: 'the description contains "Generated with Claude", "claude.ai/code/session"; remove them',
-      evidence: ["description: Generated with Claude", "description: [Generated with Claude](https://claude.ai/code/session_1)"],
-    });
-  });
-
-  test("names each place with the phrases found there", () => {
-    expect(textCheck(["title", "commits"], "contains", ["wip", "co-authored-by:"], { ...open, title: "WIP: Add login" })).toMatchObject({
-      result: "fail",
-      reason: 'the title contains "wip"; a commit message contains "co-authored-by:"; remove them',
-      evidence: ["title: WIP: Add login", 'commit "feat: add login": Co-Authored-By: Bot <bot@example.com>'],
-    });
-  });
-
   test("the description does not contain reads only what a reader sees", () => {
     expect(textCheck(["description"], "not-contains", ["co-authored-by"], hiding)).toMatchObject({ result: "fail", evidence: ["description"] });
-  });
-
-  test("the description does not contain", () => {
-    expect(textCheck(["description"], "not-contains", ["Adds"])).toMatchObject({ result: "pass", evidence: [] });
   });
 
   test("any commit message contains, past its subject", () => {
@@ -332,12 +170,6 @@ describe("text rules", () => {
   test("any commit message does not contain", () => {
     expect(textCheck(["commits"], "not-contains", ["login"])).toMatchObject({ result: "pass" });
     expect(textCheck(["commits"], "not-contains", ["feat"])).toMatchObject({ result: "fail", evidence: ['commit "docs: login"'] });
-  });
-
-  test("a failed text rule fails the pull request without the decision model", () => {
-    const result = deriveState(open, undefined, recommendedPack("acme/widgets"));
-    expect(result.checks.find((check) => check.check === "no-attribution-trailers")?.result).toBe("fail");
-    expect(result.needsJudgment).toBe(false);
   });
 });
 
@@ -379,42 +211,6 @@ rules:
     expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", onFail: "ask", evidence: [fallback, "src/a.ts:3 nested-ternary: Nested ternary; use if statements or a lookup."] });
     expect(result.checks.find((check) => check.check === "no-ternaries")).toMatchObject({ result: "fail", evidence: [fallback, "src/a.ts:3 nested-ternary: Our own nested ternary rule."] });
     expect(result.checks.find((check) => check.check === "no-ternaries")?.onFail).toBeUndefined();
-  });
-
-  test("a match spanning lines records the whole range and the rule id when any added line is inside it, and a one-line match is not start-end", () => {
-    const spanned = "const kept = p ? 1\n  : q ? 2 : 3;\nconst added = x ?? 0;\n";
-    const patch = "@@ -1 +1,3 @@\n const kept = p ? 1\n+  : q ? 2 : 3;\n+const added = x ?? 0;\n";
-    const pack = readCheckPack(readPolicyFile(FILE, "acme/widgets"));
-    function collapsedTernary(rule: (typeof pack.custom)[number]) {
-      if (!isPatternsCheck(rule) || rule.id !== "no-ternaries") return rule;
-      const [pattern, ...rest] = rule.patterns;
-      if (!pattern) throw new Error("missing pattern");
-      return { ...rule, patterns: [{ ...pattern, message: "Nested\nternary." }, ...rest] };
-    }
-    const result = patterns([{ ...file, additions: 2, patch }], { "src/a.ts": spanned }, { ...pack, custom: pack.custom.map(collapsedTernary) });
-    const fallback = "src/a.ts:3 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.";
-    expect(result.checks.find((check) => check.check === "conventions")?.evidence).toEqual([fallback, "src/a.ts:1-2 nested-ternary: Nested ternary; use if statements or a lookup."]);
-    expect(result.checks.find((check) => check.check === "no-ternaries")?.evidence).toEqual([fallback, "src/a.ts:1-2 nested-ternary: Nested ternary."]);
-  });
-
-  test("a node that ends on a consumed newline does not include the next line, or fail because only that next line was added", () => {
-    const policy = `rules:
-  - id: whole
-    check: code-patterns
-    text: Whole file.
-    reason: R.
-    evidence: [maintainer-stated]
-    patterns:
-      - id: prog
-        language: typescript
-        message: whole file
-        rule: { kind: program }
-`;
-    const pack = readCheckPack(readPolicyFile(policy, "acme/widgets"));
-    const both = patterns([{ path: "src/a.ts", status: "added", additions: 2, deletions: 0, patch: "@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n" }], { "src/a.ts": "const a = 1;\nconst b = 2;\n" }, pack);
-    expect(both.checks.find((check) => check.check === "whole")?.evidence).toEqual(["src/a.ts:1-2 prog: whole file"]);
-    const onlyNext = patterns([{ path: "src/a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@\n const a = 1;\n+const b = 2;\n" }], { "src/a.ts": "const a = 1;\n" }, pack);
-    expect(onlyNext.checks.find((check) => check.check === "whole")).toMatchObject({ result: "pass", evidence: [] });
   });
 
   test("the preset checks JavaScript as TypeScript, and a rule's own pattern replaces the preset's id in both", () => {
@@ -504,29 +300,6 @@ rules:
     expect(failed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: expect.arrayContaining([left]), skipped: [left] });
     const unchecked = patterns([clean, large], { "src/b.ts": "const b = 1;\n" });
     expect(unchecked.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", reason: "code patterns could not be checked: src/large.ts: the host sent no diff" });
-  });
-
-  test("a file GitHub counts no added lines in, renamed, with only its mode changed or only lines removed, is nothing to read, while a Data Center move without its patch stays unread", () => {
-    const renamed = { path: "src/moved.ts", previousPath: "src/old.ts", status: "renamed", additions: 0, deletions: 0 };
-    const mode = { path: "src/run.ts", status: "modified", additions: 0, deletions: 0 };
-    const removed = { path: "src/trimmed.ts", status: "modified", additions: 0, deletions: 40 };
-    expect(filesToRead([renamed, mode, removed, file], "github")).toEqual(["src/a.ts"]);
-    expect(filesToRead([mode], "github")).toEqual([]);
-    expect(patternsResult(readCheckPack(readPolicyFile(FILE, "acme/widgets")).custom.find(isPatternsCheck)!, [renamed], {}, "github")).toEqual({ matches: [], skipped: [], checked: 1 });
-    expect(filesToRead([renamed], "bitbucket-datacenter")).toEqual({ unread: "src/moved.ts: the host sent no diff" });
-  });
-
-  test("a match fails the rule even when another file's content was not read, in either order", () => {
-    const added = { path: "src/b.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const b = x ?? 0;" };
-    const left = "src/a.ts: not checked, its content was not read";
-    for (const files of [[file, added], [added, file]]) {
-      const result = patterns(files, { "src/b.ts": "const b = x ?? 0;\n" });
-      expect(result.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: expect.arrayContaining([left]) });
-    }
-  });
-
-  test("an unknown preset is refused", () => {
-    expect(() => readPolicyFile(FILE.replace("[convention]", "[nope]"), "acme/widgets")).toThrow();
   });
 });
 

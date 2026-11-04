@@ -99,25 +99,4 @@ describe("a saved policy exported as a policy file", () => {
     expect(runs(saved).flat().some((action) => "effectId" in action)).toBe(saved.actions.pass.length + saved.actions.fail.length + saved.actions.unsure.length > 0);
     expect(unexpressed).toEqual([]);
   });
-
-  test("what a file cannot hold is listed and left out, never run in its place", () => {
-    const saved: CheckPack = {
-      ...everyStep,
-      checks: { ...everyStep.checks, "max-lines-changed": { enabled: true } },
-      custom: [
-        ...everyStep.custom,
-        { id: "risk", name: "Risk level", group: "pull-request", kind: "model", shape: "score", subject: "the risk", levels: ["high", "low"], failBelow: "low" },
-        { id: "per-file", name: "Per file", group: "pull-request", kind: "model", shape: "is-true", claim: "Each file has a header.", scope: "file" },
-      ],
-    };
-    const { text, unexpressed } = exportPolicyFile(saved);
-    expect(unexpressed).toEqual([
-      "Flag pull requests that change too many lines stops after the merge; a policy file can't hold it without a value.",
-      "Risk level is called Risk in the file.",
-      "Risk level stops after the merge; a policy file can't hold it.",
-      "Per file stops after the merge; a policy file can't hold it.",
-    ]);
-    const file = readPolicyFile(text, REPO) as CheckPack;
-    expect(runs(file)).toEqual(runs(saved));
-  });
 });

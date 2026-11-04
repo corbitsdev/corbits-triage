@@ -81,7 +81,7 @@ function readPath(file: PrFileFacts): string {
 }
 
 /** The files one pull request reads the content of, GitHub's own diff limit, so one pull request's reads stay bounded. */
-export const MAX_CONTENT_READS = 300;
+const MAX_CONTENT_READS = 300;
 
 /**
  * The files whose content the rules need, or why they cannot be checked: files in scope have no patch and no other
