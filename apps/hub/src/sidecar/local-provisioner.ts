@@ -201,6 +201,15 @@ export function createLocalProcessSidecarProvisioner({
     await removeStored(sidecar.allocationId);
   }
 
+  // Logged rather than thrown, so a cleanup failure never hides the retirement's own outcome.
+  async function removeExitedDirs(sidecar: LiveSidecar): Promise<void> {
+    try {
+      await removeAllocationDirs(sidecar.allocationId);
+    } catch (error) {
+      log({ level: "error", msg: "local_sidecar_dirs_remove_failed", allocationId: sidecar.allocationId, sidecarId: sidecar.sidecarId, error: errorText(error) });
+    }
+  }
+
   // Retired at once, so its work is placed again without waiting out a reconnect window. Its state directory goes
   // either way; a report that fails keeps the manifest, so the next boot retires the sidecar.
   async function retireExited(sidecar: LiveSidecar): Promise<void> {
@@ -210,7 +219,7 @@ export function createLocalProcessSidecarProvisioner({
       await attached().sidecarStopped(sidecar.sidecarId, { endReconnectWindow: true });
       await manifests.remove(sidecar.allocationId);
     } finally {
-      await removeAllocationDirs(sidecar.allocationId);
+      await removeExitedDirs(sidecar);
     }
     log({ level: "warn", msg: "local_sidecar_retired", allocationId: sidecar.allocationId, sidecarId: sidecar.sidecarId });
   }
