@@ -75,7 +75,7 @@ function stack(db: Db, store = memoryStore([]), mails = true) {
   async function mail(notice: StallNotice) {
     mailed.push(notice);
   }
-  const liveness = createTriageLiveness({ db, store, takes, stalledAfterMs: STALLED_AFTER_MS, mail: mails ? mail : undefined, now: () => new Date(at), log: (entry) => logged.push(entry) });
+  const liveness = createTriageLiveness({ db, store, takes, stalledAfterMs: STALLED_AFTER_MS, maxAttempts: DEFAULT_RECONCILE_POLICY.maxAttempts, mail: mails ? mail : undefined, now: () => new Date(at), log: (entry) => logged.push(entry) });
   return {
     takes,
     logged,
@@ -265,6 +265,7 @@ test("a host whose managers stop taking raises its own alarm while the other hos
       store: { load: async (tenantId) => { if (tenantId === broken.id) throw new Error("store down"); return { rows: [], version: null }; } },
       takes: hub.takes,
       stalledAfterMs: STALLED_AFTER_MS,
+      maxAttempts: DEFAULT_RECONCILE_POLICY.maxAttempts,
       mail: undefined,
       now: hub.now,
       log: (entry) => hub.logged.push(entry),
@@ -323,7 +324,7 @@ test("a mail newer than its pull request's triaged head counts though an older u
   });
 }, 60_000);
 
-test("a head cycling through failing to start and queued again holds the alarm with one email, until a manager of the host takes a pull request", async () => {
+test("a head cycling through failing to start and queued again holds the alarm with one email, until a manager of the host takes a pull request after it was raised", async () => {
   await withDatabase(async (db) => {
     const queuedAt = new Date().toISOString();
     const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
@@ -331,6 +332,7 @@ test("a head cycling through failing to start and queued again holds the alarm w
     hub.advance(STALLED_AFTER_MS + 60_000);
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github"]);
+    hub.takes.note(TENANT, "github", new Date(Date.parse(queuedAt) + 60_000).toISOString());
 
     for (let cycle = 0; cycle < 2; cycle++) {
       const at = hub.now().toISOString();
@@ -345,9 +347,24 @@ test("a head cycling through failing to start and queued again holds the alarm w
     expect(hub.alarms()).toEqual(["triage_stalled github"]);
     expect(hub.mailed.length).toBe(1);
 
-    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 5, firstSeenAt: queuedAt, queuedAt, updatedAt: hub.now().toISOString() }]);
-    await mailOf({ ...PR, number: 8 }, "d8", db);
-    await hub.took({ ...PR, number: 8 });
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: hub.now().toISOString() }]);
+    hub.advance(60_000);
+    hub.takes.note(TENANT, "github", hub.now().toISOString());
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
+  });
+}, 60_000);
+
+test("a head that used up its attempts to start lets the alarm clear without a take", async () => {
+  await withDatabase(async (db) => {
+    const queuedAt = new Date().toISOString();
+    const store = memoryStore([{ number: 7, headSha: "h1", status: "queued", attempts: 1, firstSeenAt: queuedAt, queuedAt, updatedAt: queuedAt }]);
+    const hub = stack(db, store);
+    hub.advance(STALLED_AFTER_MS + 60_000);
+    await hub.check();
+    expect(hub.alarms()).toEqual(["triage_stalled github"]);
+
+    await store.save(TENANT, RECORD.name, [{ number: 7, headSha: "h1", status: "failed", error: "run never started", attempts: DEFAULT_RECONCILE_POLICY.maxAttempts, firstSeenAt: queuedAt, queuedAt, updatedAt: hub.now().toISOString() }]);
     await hub.check();
     expect(hub.alarms()).toEqual(["triage_stalled github", "triage_stall_cleared github"]);
   });

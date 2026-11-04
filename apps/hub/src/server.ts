@@ -669,6 +669,7 @@ const triageLiveness = createTriageLiveness({
   store: triageStateStore,
   takes,
   stalledAfterMs: triageTimings.stalledAfterMs,
+  maxAttempts: reconcilePolicy.maxAttempts,
   mail: smtp && async function mailStall(notice) {
     await smtp.triageStall({ ...notice, link: triageSettingsLink });
   },

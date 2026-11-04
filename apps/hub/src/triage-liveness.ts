@@ -8,7 +8,7 @@
 // Raising and clearing each email the workspace's owners and admins once, when the hub sends email.
 import { and, eq, inArray } from "drizzle-orm";
 import { schema, type DB } from "@intx/db";
-import { REPO_SOURCES, repoPolicy, type RepoSource } from "@corbits/triage-contracts";
+import { REPO_SOURCES, repoPolicy, type PrTriageRow, type RepoSource } from "@corbits/triage-contracts";
 import { NEVER_STARTED } from "./github/reconcile-plan.js";
 import { repoRecords, sourceOf, triageNs, triageStateKey } from "./github/tenant-config.js";
 import { undelivered } from "./github/triage-queue.js";
@@ -25,6 +25,11 @@ type WaitingPull = { pull: string; at: number; reason?: string; failed?: true };
 export type StallNotice = { to: string[]; workspace: string; source: RepoSource; since: string; cleared: boolean };
 
 type LivenessTenant = { id: string; config: unknown };
+
+/** Whether a mail recorded at `at` is newer than every row the store holds of its pull request, none of them failed. */
+function newerThanStore(rows: readonly PrTriageRow[], at: number): boolean {
+  return rows.every((row) => row.status !== "failed" && at > Date.parse(row.updatedAt));
+}
 
 function hostKey(tenantId: string, source: RepoSource): string {
   return `${tenantId}\n${source}`;
@@ -75,6 +80,8 @@ export type TriageLivenessDeps = {
   takes: Pick<TakeLedger, "last">;
   /** How long a pull request may wait for a manager before its host counts as stalled. */
   stalledAfterMs: number;
+  /** The reconciler's attempts per head: a head that failed to start with fewer is queued again. */
+  maxAttempts: number;
   /** Undefined when the hub sends no email. */
   mail: ((notice: StallNotice) => Promise<void>) | undefined;
   now: () => Date;
@@ -82,7 +89,7 @@ export type TriageLivenessDeps = {
 };
 
 export function createTriageLiveness(deps: TriageLivenessDeps) {
-  const alarms = new Map<string, Stalled>();
+  const alarms = new Map<string, { stalled: Stalled; raisedAt: number }>();
   let unmailedLogged = false;
 
   async function email(tenantId: string, alarm: Stalled, cleared: boolean): Promise<void> {
@@ -110,11 +117,11 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
    * any head whose mail did not go out, which no take can have picked up, until a run of it is seen. Only enabled,
    * connected repositories count. A mail counts while the store holds nothing newer of its pull request: one without rows
    * in a repository the store has saved has closed, and a failed head waits on a new head rather than a manager. A head
-   * that failed to start is listed too, as it is queued again while managers stay down.
+   * that failed to start and will be queued again is listed too, as it cycles back to queued while managers stay down.
    */
   async function waiting(tenant: LivenessTenant): Promise<Map<RepoSource, WaitingPull[]>> {
     const byHost = new Map<RepoSource, WaitingPull[]>(REPO_SOURCES.map((source) => [source, []]));
-    const mails = new Map<RepoSource, { repo: string; number: number; at: string }[]>();
+    const mails = new Map<RepoSource, Awaited<ReturnType<typeof pendingMails>>>();
     for (const source of REPO_SOURCES) {
       mails.set(source, await pendingMails(deps.db, tenant.id, source, deps.takes.last(tenant.id, source)));
     }
@@ -123,10 +130,11 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       const source = sourceOf(record);
       const taken = deps.takes.last(tenant.id, source);
       const { rows, version } = await deps.store.load(tenant.id, triageStateKey(record));
+      const byNumber = Map.groupBy(rows, (row) => row.number);
       for (const row of rows) {
         const pull = `${record.name}#${row.number}`;
         if (row.status === "failed" && row.error === NEVER_STARTED) {
-          byHost.get(source)?.push({ pull, at: Date.parse(row.updatedAt), reason: NEVER_STARTED, failed: true });
+          if (row.attempts < deps.maxAttempts) byHost.get(source)?.push({ pull, at: Date.parse(row.updatedAt), reason: NEVER_STARTED, failed: true });
           continue;
         }
         const since = row.undeliveredSince ?? row.queuedAt;
@@ -140,11 +148,17 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
       if (hostMails === undefined) continue;
       for (const mail of hostMails) {
         if (mail.repo !== record.name) continue;
-        const at = Date.parse(mail.at);
-        const ofPull = rows.filter((each) => each.number === mail.number);
-        const unstored = ofPull.length === 0 && version === null && rows.length === 0;
-        const newer = ofPull.length > 0 && ofPull.every((each) => each.status !== "failed" && at > Date.parse(each.updatedAt));
-        if (unstored || newer) byHost.get(source)?.push({ pull: `${record.name}#${mail.number}`, at });
+        const ofPull = byNumber.get(mail.number);
+        const oldest = Date.parse(mail.oldest);
+        const newest = Date.parse(mail.newest);
+        const pull = `${record.name}#${mail.number}`;
+        if (ofPull === undefined) {
+          if (version === null && rows.length === 0) byHost.get(source)?.push({ pull, at: oldest });
+        } else if (newerThanStore(ofPull, oldest)) {
+          byHost.get(source)?.push({ pull, at: oldest });
+        } else if (newerThanStore(ofPull, newest)) {
+          byHost.get(source)?.push({ pull, at: newest });
+        }
       }
     }
     return byHost;
@@ -183,20 +197,20 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
     const raised = alarms.get(key);
     if (raised === undefined) {
       if (stalled === undefined) return;
-      alarms.set(key, stalled);
+      alarms.set(key, { stalled, raisedAt: deps.now().getTime() });
       deps.log({ level: "error", msg: "triage_stalled", tenantId, ...stalled });
       await email(tenantId, stalled, false);
       return;
     }
     if (stalled !== undefined) {
-      alarms.set(key, stalled);
+      alarms.set(key, { stalled, raisedAt: raised.raisedAt });
       return;
     }
-    const takenSince = taken !== undefined && Date.parse(taken) > Date.parse(raised.since);
+    const takenSince = taken !== undefined && Date.parse(taken) > raised.raisedAt;
     if (pulls.length > 0 && !takenSince) return;
     alarms.delete(key);
-    deps.log({ level: "info", msg: "triage_stall_cleared", tenantId, source, since: raised.since });
-    await email(tenantId, raised, true);
+    deps.log({ level: "info", msg: "triage_stall_cleared", tenantId, source, since: raised.stalled.since });
+    await email(tenantId, raised.stalled, true);
   }
 
   /** Checks each of the workspace's hosts; one that fails is logged, so the other workspaces are still checked. */
@@ -225,7 +239,10 @@ export function createTriageLiveness(deps: TriageLivenessDeps) {
 
   /** The workspace's stalled hosts. */
   function stalled(tenantId: string): Stalled[] {
-    return REPO_SOURCES.flatMap((source) => alarms.get(hostKey(tenantId, source)) ?? []);
+    return REPO_SOURCES.flatMap(function raisedOn(source) {
+      const alarm = alarms.get(hostKey(tenantId, source));
+      return alarm === undefined ? [] : [alarm.stalled];
+    });
   }
 
   return { check, stalled };

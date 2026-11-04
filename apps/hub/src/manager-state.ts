@@ -1034,18 +1034,21 @@ export async function lastTakes(db: DB["db"]): Promise<{ tenantId: string; sourc
   });
 }
 
-const EVENT_KEY = /^evt:[^:]+:([^#]+)#(\d+):/;
+const MAIL_PULL = /^(.+)#(\d+)$/;
 
-/** Each pull request mail on the tenant's host that no manager has taken, among those recorded after `after`. */
-export async function pendingMails(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<{ repo: string; number: number; at: string }[]> {
+/** Each pull request on the tenant's host with mail no manager has taken, among mail recorded after `after`: when its oldest and newest such mail were recorded. */
+export async function pendingMails(db: DB["db"], tenantId: string, source: RepoSource, after: string | undefined): Promise<{ repo: string; number: number; oldest: string; newest: string }[]> {
   const since = after === undefined ? undefined : sql`(${managerState.state}->>'receivedAt')::timestamptz > ${after}::timestamptz`;
   const ofHost = like(managerState.key, `evt:${source}:%`);
-  const rows = await db.select({ key: managerState.key, at: sql<string>`${managerState.state}->>'receivedAt'` }).from(managerState)
-    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since));
-  return rows.map(function pullMail(row) {
-    const [, repo, number] = EVENT_KEY.exec(row.key) ?? [];
-    if (repo === undefined || number === undefined) throw new Error(`manager_state ${row.key} is not an event key`);
-    return { repo, number: Number(number), at: row.at };
+  const pull = sql<string>`substring(${managerState.key} from '^evt:[^:]+:(.+#[0-9]+):')`;
+  const receivedAt = sql`${managerState.state}->>'receivedAt'`;
+  const rows = await db.select({ pull, oldest: sql<string>`min(${receivedAt})`, newest: sql<string>`max(${receivedAt})` }).from(managerState)
+    .where(and(eq(managerState.tenantId, tenantId), sql`${managerState.kind} = 'event'`, sql`${managerState.state}->>'consumedBy' IS NULL`, sql`${managerState.state}->>'type' = 'webhook'`, ofHost, since))
+    .groupBy(pull);
+  return rows.map(function pullMails(row) {
+    const match = MAIL_PULL.exec(row.pull);
+    if (match?.[1] === undefined || match[2] === undefined) throw new Error(`manager_state mail of ${row.pull} names no pull request`);
+    return { repo: match[1], number: Number(match[2]), oldest: row.oldest, newest: row.newest };
   });
 }
 

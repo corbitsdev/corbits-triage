@@ -759,7 +759,8 @@ any other tenant or an unknown sender.
   and admins with a verified address get one email naming the host. The
   alarm clears once nothing waits past the alarm age any more and either
   nothing waits at all or a manager of the host opened a pass since it was
-  raised; a head failed with `run never started` counts as waiting here, so
+  raised; a head failed with `run never started` that the reconciler will
+  queue again (fewer attempts than its maximum) counts as waiting here, so
   heads the reconciler cycles through queued and failed while managers stay
   down hold the alarm rather than clearing and raising it again. Then the
   hub logs `triage_stall_cleared` and emails them once more. Without SMTP the
