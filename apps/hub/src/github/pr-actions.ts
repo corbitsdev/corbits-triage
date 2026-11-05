@@ -16,9 +16,9 @@ import {
   upsertTriageComment,
 } from "@corbits/github-tool/github";
 import { readMergeGate } from "@corbits/github-tool/do";
-import { codeownersForPr, readPr, type GithubFetch } from "@corbits/github-reads";
-import { ownedLabels, TRIAGE_LABELS, type ActionKind, type SendCodeReviewInput, type SentThreads } from "@corbits/triage-contracts";
-import { mergesWithoutCi } from "@corbits/triage-workflows/logic/actions";
+import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
+import { ownedLabels, TRIAGE_LABELS, type ActionKind, type CheckPack, type SendCodeReviewInput, type SentThreads } from "@corbits/triage-contracts";
+import { mergesWithoutCi, refusalText } from "@corbits/triage-workflows/logic/actions";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import type { CodeReviewRuns, CompletedReview } from "../code-review-runs.js";
 import type { PolicyReader } from "./repo-policy.js";
@@ -53,7 +53,7 @@ export const ActionBody = type({ repo: /^[\w.-]+\/[\w.-]+$/, number: "number.int
     .or({ action: "'review'", event: "'REQUEST_CHANGES'", body: "string" })
     .or({ action: "'review'", event: "'APPROVE'", body: "string", headSha: "string > 0" })
     .or({ action: "'code-review'", headSha: "string > 0" })
-    .or({ action: "'merge'", "headSha?": "string > 0" })
+    .or({ action: "'merge'", headSha: "string > 0" })
     .or({ action: "'close'", labels: "string[]", comment: "string" }),
 );
 
@@ -101,7 +101,7 @@ async function runAction(gh: GithubFetch, login: string, body: Exclude<typeof Ac
     case "review":
       return createReview(gh, { repo, number, body: body.body, event: body.event, ...("headSha" in body ? { commitId: body.headSha } : {}) });
     case "merge":
-      return mergePr(gh, { repo, number, ...(body.headSha ? { sha: body.headSha } : {}) });
+      return mergePr(gh, { repo, number, sha: body.headSha });
     case "close":
       return mirror(gh, { repo, number, labels: body.labels, owned, comment: body.comment, close: true }, login);
   }
@@ -135,33 +135,33 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
 }) {
   const appFetch = createGithubAppCredentialFetch({ apiOrigin: deps.githubApiOrigin });
 
-  async function ownedBy(tenantId: string, body: { action: string; repo: string }): Promise<readonly string[]> {
-    if (body.action !== "close") return TRIAGE_LABELS;
+  /** Only a close and a merge depend on the repository's policy. */
+  async function policyOf(tenantId: string, body: typeof ActionBody.infer): Promise<CheckPack | undefined> {
+    if (body.action !== "close" && body.action !== "merge") return undefined;
     const read = await deps.readCheckPack(tenantId, body.repo, "github");
-    return read.status === "ok" ? ownedLabels(read.pack.labels) : TRIAGE_LABELS;
+    return read.status === "ok" ? read.pack : undefined;
   }
 
   /** The portal's Merge is held by the same gate as triage's own; bypassing it is a GitHub admin's call, made on GitHub. */
-  async function mergeRefused(gh: GithubFetch, login: string, tenantId: string, { repo, number, headSha }: { repo: string; number: number; headSha?: string }) {
-    const read = await deps.readCheckPack(tenantId, repo, "github");
-    const ciOptional = read.status === "ok" && mergesWithoutCi(read.pack);
-    const sha = headSha ?? (await readPr(gh, repo, number)).sha;
-    const { gate } = await readMergeGate(gh, { repo, number, sha, login, ciOptional });
-    return gate.allowed ? undefined : failure(409, "merge_refused", `Not merged: ${gate.reason}.`);
+  async function mergeRefused(gh: GithubFetch, login: string, pack: CheckPack | undefined, { repo, number, headSha }: { repo: string; number: number; headSha: string }) {
+    const ciOptional = pack !== undefined && mergesWithoutCi(pack);
+    const { gate } = await readMergeGate(gh, { repo, number, sha: headSha, login, ciOptional });
+    return gate.allowed ? undefined : failure(409, "merge_refused", refusalText(gate));
   }
 
   async function act(gh: GithubFetch, login: string, tenantId: string, body: typeof ActionBody.infer) {
-    if (body.action === "merge") {
-      const refused = await mergeRefused(gh, login, tenantId, body);
-      if (refused) return refused;
-    }
     if (body.action === "code-review") {
       const { completed, carriedTo } = await deps.codeReviews.latest(tenantId, { repo: body.repo, number: body.number, head: body.headSha });
       return sendReview(function sendToGithub(input) {
         return sendCodeReview(gh, input, login);
       }, body, completed, carriedTo);
     }
-    return runAction(gh, login, body, await ownedBy(tenantId, body));
+    const pack = await policyOf(tenantId, body);
+    if (body.action === "merge") {
+      const refused = await mergeRefused(gh, login, pack, body);
+      if (refused) return refused;
+    }
+    return runAction(gh, login, body, pack ? ownedLabels(pack.labels) : TRIAGE_LABELS);
   }
 
   return async function handle(body: typeof ActionBody.infer, { tenantId, principalId }: Member): Promise<Response> {

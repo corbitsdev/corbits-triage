@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, ciRefusal, classificationSources, labelRules, LEVEL_LABELS, levelLabel, mergeGate, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type RepoSource, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, ciRefusal, classificationSources, labelRules, LEVEL_LABELS, levelLabel, mergeGate, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type MergeRefusal, type RepoSource, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
 import { authorFailures, bounded, inlineCode, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
@@ -192,6 +192,11 @@ function sentence(text: string): string {
   return `${text[0]!.toUpperCase()}${text.slice(1)}.`;
 }
 
+/** The threads' hold is already a sentence; the gate's other reasons are not. */
+export function refusalText(refusal: MergeRefusal): string {
+  return refusal.cause === "threads" ? refusal.reason : sentence(refusal.reason);
+}
+
 // Cancelled CI waits on a re-run, so a step reads it as not finished.
 const CI: Record<PrFacts["checks"], CiState> = { success: "passing", failure: "failing", pending: "pending", cancelled: "pending", none: "none" };
 
@@ -333,8 +338,8 @@ export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold
     if (action.kind === "merge") {
       const gate = mergeGate({ ci, ciOptional: "ciOptional" in action.target, changesRequestedBy: changesRequested, threadsHold: mergeHold });
       if (gate.allowed) return action;
-      if (gate.cause === "ci") return { ...action, held: true, reason: sentence(gate.reason), ci: gate.ci };
-      return { list: action.list, index: action.index, kind: action.kind, skipped: true, waits: true, reason: gate.cause === "threads" ? gate.reason : sentence(gate.reason) };
+      if (gate.cause === "ci") return { ...action, held: true, reason: refusalText(gate), ci: gate.ci };
+      return { list: action.list, index: action.index, kind: action.kind, skipped: true, waits: true, reason: refusalText(gate) };
     }
     if (ci === "pending") return { ...action, held: true, reason: sentence(ciRefusal(ci)), ci };
     return action;

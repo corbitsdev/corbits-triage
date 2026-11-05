@@ -179,7 +179,7 @@ test("PostgreSQL: holding read or use on the GitHub credential reads pull reques
     expect(await details.json()).toMatchObject({ pr: { number: 8 }, files: [{ path: "src/widget.ts" }] });
   }
 
-  const act = await prActions({ action: "merge", repo: REPO, number: 8 }, member("usr_member"));
+  const act = await prActions({ action: "merge", repo: REPO, number: 8, headSha: HEAD }, member("usr_member"));
   expect(act.status).toBe(403);
   expect(await act.json()).toEqual({ error: { code: "forbidden", message: "You do not have access to the GitHub App credential." } });
   expect(requested.some((line) => line.startsWith("PUT"))).toBe(false);
@@ -202,7 +202,7 @@ test("PostgreSQL: approving needs the approve Do grant on top of use, and pins t
   expect(approved.status).toBe(200);
   expect(reviewed).toEqual([{ body: "", event: "APPROVE", commit_id: HEAD }]);
 
-  const merge = await prActions({ action: "merge", repo: REPO, number: 8 }, member("usr_approver"));
+  const merge = await prActions({ action: "merge", repo: REPO, number: 8, headSha: HEAD }, member("usr_approver"));
   expect(merge.status).toBe(403);
   expect(await merge.json()).toEqual({ error: { code: "forbidden", message: "You do not have the grant for this kind of Do in this repository." } });
 
@@ -212,7 +212,7 @@ test("PostgreSQL: approving needs the approve Do grant on top of use, and pins t
   expect(reviewed).toHaveLength(1);
 });
 
-test("PostgreSQL: the portal's Merge is refused while a reviewer requests changes or CI has failed, and nothing is merged", async () => {
+test("PostgreSQL: the portal's Merge is refused while a reviewer requests changes or CI has failed, or without the head it was shown, and nothing is merged", async () => {
   const merge = { action: "merge", repo: REPO, number: 8, headSha: HEAD } as const;
   try {
     reviews = [{ user: { login: "hubot" }, state: "CHANGES_REQUESTED", commit_id: HEAD }];
@@ -224,6 +224,13 @@ test("PostgreSQL: the portal's Merge is refused while a reviewer requests change
     checkRuns = [{ name: "ci", status: "completed", conclusion: "failure" }];
     const failing = await prActions(merge, member("usr_merger"));
     expect({ status: failing.status, body: await failing.json() }).toMatchObject({ status: 409, body: { error: { code: "merge_refused", message: expect.stringContaining("CI has failed") } } });
+
+    checkRuns = [{ name: "ci", status: "completed", conclusion: "success" }];
+    const app = guardedApp(handle.db, sessionOf, grants, { prActions });
+    const unpinned = await app.request(`/api/integrations/github-actions/${TENANT}`, {
+      method: "POST", headers: { "x-test-user": "usr_merger", authorization: "Bearer test", "content-type": "application/json" }, body: JSON.stringify({ action: "merge", repo: REPO, number: 8 }),
+    });
+    expect({ status: unpinned.status, body: await unpinned.json() }).toMatchObject({ status: 400, body: { error: { code: "invalid_request" } } });
     expect(requested).not.toContain(`PUT /repos/${REPO}/pulls/8/merge`);
   } finally {
     reviews = [];
