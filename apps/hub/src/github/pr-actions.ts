@@ -15,8 +15,10 @@ import {
   sendCodeReview,
   upsertTriageComment,
 } from "@corbits/github-tool/github";
-import { codeownersForPr, type GithubFetch } from "@corbits/github-reads";
+import { readMergeGate } from "@corbits/github-tool/do";
+import { codeownersForPr, readPr, type GithubFetch } from "@corbits/github-reads";
 import { ownedLabels, TRIAGE_LABELS, type ActionKind, type SendCodeReviewInput, type SentThreads } from "@corbits/triage-contracts";
+import { mergesWithoutCi } from "@corbits/triage-workflows/logic/actions";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
 import type { CodeReviewRuns, CompletedReview } from "../code-review-runs.js";
 import type { PolicyReader } from "./repo-policy.js";
@@ -139,7 +141,20 @@ export function createGithubPrActions(deps: PortalCredentialDeps & {
     return read.status === "ok" ? ownedLabels(read.pack.labels) : TRIAGE_LABELS;
   }
 
+  /** The portal's Merge is held by the same gate as triage's own; bypassing it is a GitHub admin's call, made on GitHub. */
+  async function mergeRefused(gh: GithubFetch, login: string, tenantId: string, { repo, number, headSha }: { repo: string; number: number; headSha?: string }) {
+    const read = await deps.readCheckPack(tenantId, repo, "github");
+    const ciOptional = read.status === "ok" && mergesWithoutCi(read.pack);
+    const sha = headSha ?? (await readPr(gh, repo, number)).sha;
+    const { gate } = await readMergeGate(gh, { repo, number, sha, login, ciOptional });
+    return gate.allowed ? undefined : failure(409, "merge_refused", `Not merged: ${gate.reason}.`);
+  }
+
   async function act(gh: GithubFetch, login: string, tenantId: string, body: typeof ActionBody.infer) {
+    if (body.action === "merge") {
+      const refused = await mergeRefused(gh, login, tenantId, body);
+      if (refused) return refused;
+    }
     if (body.action === "code-review") {
       const { completed, carriedTo } = await deps.codeReviews.latest(tenantId, { repo: body.repo, number: body.number, head: body.headSha });
       return sendReview(function sendToGithub(input) {

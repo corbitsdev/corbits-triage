@@ -52,6 +52,11 @@ export interface ActionInput {
   repoSource?: RepoSource;
 }
 
+/** Only a policy that switched CI green off may merge a head with no CI; one that never names CI still requires it. */
+export function mergesWithoutCi(pack: CheckPack): boolean {
+  return pack.checks["ci-green"]?.enabled === false;
+}
+
 /** Catch-up runs the policy's actions whatever woke it. */
 export function wakes(pack: CheckPack, facts: PrFacts): boolean {
   return facts.events.includes("catch-up") || facts.events.some((event) => (pack.actions.when as readonly string[]).includes(event));
@@ -154,8 +159,7 @@ function resolve(step: Exclude<Step, { do: "nothing" }>, input: ActionInput): Re
     case "comment":
       return step.target;
     case "merge":
-      // Only a policy that switched CI green off may merge a head with no CI; one that never names CI still requires it.
-      return input.pack.checks["ci-green"]?.enabled === false ? { ciOptional: true } : {};
+      return mergesWithoutCi(input.pack) ? { ciOptional: true } : {};
     case "approve":
     case "close":
       return {};
