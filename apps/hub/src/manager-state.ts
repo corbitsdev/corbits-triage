@@ -474,6 +474,24 @@ export async function closeOutDue(db: DB["db"], tenantId: string, pr: PullReques
 }
 
 /**
+ * Deletes the webhooks a pull request the host says is no longer open recorded by `closedAfter`, once no manager is up
+ * on it. Reviewer results stay for its code reviews, and mail recorded after `closedAfter`, as on a reopen, stays.
+ */
+export async function retireClosed(db: DB["db"], tenantId: string, pr: PullRequestRef, closedAfter: Date): Promise<void> {
+  await db.transaction(async function retire(tx) {
+    const claim = await lockClaim(tx, tenantId, pr);
+    if (claim?.status === "live" && claim.runId !== undefined && !(await runGone(tx, claim.runId, new Date()))) return;
+    await tx.delete(managerState).where(and(
+      eq(managerState.tenantId, tenantId),
+      sql`${managerState.kind} = 'event'`,
+      sql`${managerState.state}->>'type' = 'webhook'`,
+      sql`(${managerState.state}->>'receivedAt')::timestamptz <= ${closedAfter.toISOString()}::timestamptz`,
+      like(managerState.key, `${eventPrefix(pr)}%`),
+    ));
+  });
+}
+
+/**
  * The claim `runId` holds, taken for it when no up run holds it: it is missing or ended, or the run it names has gone,
  * whose open pass the caller resumes. Undefined while another up run holds it, a run being cancelled included until it
  * ends, or once stock no longer lets `runId` execute. Concurrent callers queue on the claim's row lock, so exactly one

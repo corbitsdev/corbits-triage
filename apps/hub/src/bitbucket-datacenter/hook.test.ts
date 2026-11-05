@@ -84,6 +84,7 @@ function harness(overrides: Partial<ProviderHookDeps> = {}) {
     async closeOutDue() {
       return false;
     },
+    async retireClosed() {},
     async refreshPolicyFile(_tenant, repo) {
       synced.push(repo);
       return { status: "absent" };

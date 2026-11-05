@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
-import { closeOutDue, done, endNeverRan, notePlaced, recordEvent, take, type PullRequestRef } from "./manager-state.js";
+import { closeOutDue, done, endNeverRan, notePlaced, recordEvent, retireClosed, take, type PullRequestRef } from "./manager-state.js";
 import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
 
@@ -83,6 +83,30 @@ test("PostgreSQL: a close is due only while a manager is on the pull request or 
     expect(await done(db, TENANT, GITHUB, "run_a", [], { report: { head: "h1", request: { comment: "Triage: Pass" } } })).toEqual({ outcome: "ended" });
     expect(await closeOutDue(db, TENANT, GITHUB, "h1")).toBe(false);
     expect(await closeOutDue(db, TENANT, GITHUB, "h2")).toBe(true);
+  });
+}, 120_000);
+
+test("PostgreSQL: a closed pull request whose manager is gone has its webhooks deleted, and an open one keeps its own", async () => {
+  await withDatabase(async function retiring(db) {
+    const OPEN: PullRequestRef = { ...GITHUB, number: 70 };
+    await startManager(db, GITHUB, "run_a");
+    await recordEvent(db, TENANT, GITHUB, "d1", prMail("h1", ["opened"]));
+    await take(db, TENANT, GITHUB, "run_a");
+    await recordEvent(db, TENANT, GITHUB, "d2", prMail("h2", ["synchronize"]));
+    await recordEvent(db, TENANT, OPEN, "d3", prMail("h3", ["opened"]));
+    // The database stamps events to the microsecond, the hub's clock to the millisecond.
+    await Bun.sleep(2);
+    const closedAt = new Date();
+    await Bun.sleep(2);
+    await recordEvent(db, TENANT, GITHUB, "d4", prMail("h4", ["reopened"]));
+
+    await retireClosed(db, TENANT, GITHUB, closedAt);
+    expect(await stateOf(db, CLAIM)).toMatchObject({ status: "live", runId: "run_a" });
+
+    await db.update(schema.workflowRun).set({ status: "completed" });
+    await retireClosed(db, TENANT, GITHUB, closedAt);
+    const keys = await db.execute<{ key: string }>(sql`SELECT key FROM corbits_triage.manager_state WHERE kind = 'event' ORDER BY key`);
+    expect(keys.map((row) => row.key)).toEqual(["evt:github:acme/widgets#7:d4", "evt:github:acme/widgets#70:d3"]);
   });
 }, 120_000);
 
