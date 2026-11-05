@@ -145,7 +145,7 @@ export function postsRequestChanges(actions: readonly SuggestedAction[]): boolea
 }
 
 /** `feedback` without the Dos `withDos` closed it with. */
-function withoutDos(feedback: string, actions: SuggestedAction[]): string {
+export function withoutDos(feedback: string, actions: SuggestedAction[]): string {
   const dos = withDos(" ", actions).slice(1);
   return dos && feedback.endsWith(dos) ? feedback.slice(0, -dos.length) : feedback;
 }

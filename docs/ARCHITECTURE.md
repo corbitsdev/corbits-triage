@@ -976,7 +976,9 @@ still takes the pass label off.
    waiting verdict writes only its waiting marker: the waiting label of each
    thing the head waits for, or the pending build status while it waits for
    CI, and, where the role holds Comment, the in-progress comment naming the
-   same. On GitHub the marker passes the fail and unsure verdict labels as
+   same. While only code review is out, that comment also carries the pass's
+   verdict comment under its title, without its Dos, and the code review
+   running line. On GitHub the marker passes the fail and unsure verdict labels as
    `keep`, so a pull request carrying one keeps its labels until the
    verdict, which swaps them only when it differs, and a comment kept as the
    verdict (`kept: "verdict"`) keeps its labels too. A head with no checks

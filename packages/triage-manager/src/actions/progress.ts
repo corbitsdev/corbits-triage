@@ -2,9 +2,11 @@ import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
 import { repoSourceOf, VERDICT_LABELS, type Awaits, type KeptVerdict } from "@corbits/triage-contracts";
+import { withoutDos } from "@corbits/triage-workflows/actions/evaluate";
 import { waitingMark } from "@corbits/triage-workflows/actions/waiting";
 import { writeMark, type MirrorOutcome } from "@corbits/triage-workflows/actions/mirror";
 import type { Item } from "@corbits/triage-workflows/logic/item";
+import { CODE_REVIEW_RUNNING, type Verdict } from "@corbits/triage-workflows/logic/render";
 import { managerMailOf } from "./hub.js";
 import { verdict } from "./judge.js";
 import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
@@ -12,7 +14,7 @@ import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
 const Mailed = { output: { "reviewer?": Reviewer } } as const;
 /** A verdict's comment header, which names the verdict and policy it was made under. */
 const Headed = type({ request: { "header?": type({ verdict: "string", policy: "object | null" }).as<Omit<KeptVerdict, "head">>() } });
-const ProgressInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, "cleared?": { output: Headed }, "judgeMailed?": Mailed, "earlyReviewMailed?": Mailed, "reviewMailed?": Mailed });
+const ProgressInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { items: "object[]" } }, "cleared?": { output: Headed }, "evaluateRules?": { output: type({ feedback: "string", actions: "object[]" }).as<Pick<Verdict, "feedback" | "actions">>() }, "judgeMailed?": Mailed, "earlyReviewMailed?": Mailed, "reviewMailed?": Mailed });
 const Granted = type({ automatic: "string[]", "appLogin?": "string", "codeReview?": "unknown" });
 type Parsed = typeof ProgressInput.infer;
 
@@ -33,9 +35,21 @@ async function keptBy(input: unknown, parsed: Parsed, awaits: readonly Awaits[],
 }
 
 /**
+ * What the in-progress comment shows once the decision model answered and only code review is out: the verdict's comment
+ * under its title, without the Dos, which wait for code review too.
+ */
+function knownOf(parsed: Parsed, awaits: readonly Awaits[]): string | undefined {
+  const rules = parsed.evaluateRules?.output;
+  if (rules === undefined || !awaits.includes("code-review") || awaits.includes("judge")) return undefined;
+  const results = withoutDos(rules.feedback, rules.actions).split("\n\n").slice(1).join("\n\n").trimEnd();
+  return [results, CODE_REVIEW_RUNNING].filter(Boolean).join("\n\n");
+}
+
+/**
  * Shows the waiting marker while the pass's head waits for its judge or code review, naming what it waits for, CI among
- * it while that still runs: its labels where triage labels, its in-progress comment where triage comments. The verdict
- * replaces both. The host leaves a comment that already says this as it is.
+ * it while that still runs: its labels where triage labels, its in-progress comment where triage comments, showing the
+ * verdict's results while only code review is out. The verdict replaces both. The host leaves a comment that already
+ * says this as it is.
  */
 export async function progress(input: unknown, ctx: EffectContext, signal: AbortSignal): Promise<MirrorOutcome | { skipped: true }> {
   const parsed = ProgressInput(input);
@@ -53,6 +67,6 @@ export async function progress(input: unknown, ctx: EffectContext, signal: Abort
   const item = parsed.rules.output.items[0] as Item;
   const facts = { repo: pullRequest.repo, number: pullRequest.number, headSha: head, checks: item.facts.checks, events: item.facts.events };
   const keepVerdict = await keptBy(input, parsed, awaits, asRecord(granted.codeReview)?.["again"], ctx, signal);
-  const mark = waitingMark(repoSourceOf(pullRequest.source), facts, awaits, granted.automatic, item.pack?.labels ?? VERDICT_LABELS, granted.appLogin, keepVerdict);
+  const mark = waitingMark(repoSourceOf(pullRequest.source), facts, awaits, granted.automatic, item.pack?.labels ?? VERDICT_LABELS, granted.appLogin, keepVerdict, knownOf(parsed, awaits));
   return mark ? writeMark(mark, ctx) : { skipped: true };
 }
