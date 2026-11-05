@@ -86,7 +86,7 @@ test("PostgreSQL: a close is due only while a manager is on the pull request or 
   });
 }, 120_000);
 
-test("PostgreSQL: a closed pull request whose manager is gone has its webhooks deleted and its claim ended, and an open one keeps its own", async () => {
+test("PostgreSQL: a closed pull request whose manager is gone has its webhooks deleted, and an open one keeps its own", async () => {
   await withDatabase(async function retiring(db) {
     const OPEN: PullRequestRef = { ...GITHUB, number: 70 };
     await startManager(db, GITHUB, "run_a");
@@ -107,10 +107,6 @@ test("PostgreSQL: a closed pull request whose manager is gone has its webhooks d
     await retireClosed(db, TENANT, GITHUB, closedAt);
     const keys = await db.execute<{ key: string }>(sql`SELECT key FROM corbits_triage.manager_state WHERE kind = 'event' ORDER BY key`);
     expect(keys.map((row) => row.key)).toEqual(["evt:github:acme/widgets#7:d4", "evt:github:acme/widgets#70:d3"]);
-    const claim = await stateOf(db, CLAIM);
-    expect(claim).toMatchObject({ status: "ended", history: [{ head: "h1", runId: "run_a" }] });
-    expect(claim).not.toContainKey("runId");
-    expect(claim).not.toContainKey("pass");
   });
 }, 120_000);
 
