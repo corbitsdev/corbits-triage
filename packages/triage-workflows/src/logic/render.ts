@@ -922,3 +922,6 @@ export function summarize(results: Array<RenderOutput | null>): BacklogSummary {
 export function codeReviewSummary(review: Pick<CodeReviewOutput, "summary" | "budgetExhausted" | "complete">): string {
   return [review.summary, ...(review.budgetExhausted ? [BUDGET_EXHAUSTED_NOTE] : []), ...(review.complete === true ? [] : [INCOMPLETE_NOTE])].filter(Boolean).join("\n\n");
 }
+
+/** The verdict comment's line, in place of findings, while code review of its head is still running. */
+export const CODE_REVIEW_RUNNING = "Code review: running";
