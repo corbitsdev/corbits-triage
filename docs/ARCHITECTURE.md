@@ -40,18 +40,20 @@ Shared code lives in `packages/`: the policy and state types (`triage-contracts`
 ## The policy
 
 A repository's rules and actions live in `.corbits-triage.yml` on its default branch and nowhere else. The hub reads
-the file on every trigger and keeps no copy of its own. Each rule ends Pass, Fail or Unsure; the actions run on that
+the file, resolves it, and mails the resolved policy with each pull request. It keeps a read until a push changes the
+file, or for at most a minute while the repository's webhook is silent. Each rule ends Pass, Fail or Unsure; the actions run on that
 result. Nothing repository-specific is written into workflow code.
 
-Whether an action runs on its own is decided by the workspace's role grants, written from the policy file. An action
-the grants do not allow is held for a person.
+Whether an action runs on its own is decided by the workspace's role grants. Under the workspace's `policy` automation
+the hub writes those grants from each policy file; under `ask` it grants only posting. An action the grants do not
+allow is held for a person.
 
 ## How a pull request flows
 
 1. A host webhook, or the reconciler re-reading open pull requests, names a pull request head. The hub records it.
 2. If a manager is running for that pull request, the hub mails it. Otherwise it mails the host's listener, which
    deploys a manager and wakes it.
-3. The manager resolves the policy from the default branch and runs the deterministic checks.
+3. The manager runs the deterministic checks against the policy the hub mailed.
 4. Unless that pass decides the head, the manager posts at once that it is in progress and what it is waiting for.
 5. If the rules need the judge, the manager deploys it once the host's checks finish. If code review is on, it
    deploys code review in a sandbox. Each mails its result back.
@@ -63,6 +65,14 @@ the grants do not allow is held for a person.
 
 Reviewing, fixing or cleaning up a pull request is a workflow of its own, started by mail or by an action's signal,
 never a step inside the manager.
+
+## Keeping it running
+
+- **Reconciler**: a hub loop that re-reads open pull requests, mails heads no manager took, and ends runs that never
+  started or ran past their limit.
+- **Liveness**: the hub alarms when webhooks arrive but no manager takes them.
+- **Release**: the hub publishes the workflows at boot and rolls a workspace's deployments when its credentials or
+  catalog change.
 
 ## Three isolated parts
 
@@ -99,4 +109,6 @@ Before building logic, look for an Interchange route or primitive that already d
 raise it upstream rather than copying it. A change to `vendor/interchange` needs maintainer approval and is listed in
 `VENDORED.md` and `tooling/vendor-diff-allowlist.txt`.
 
-Secrets live in the hub vault and reach sidecars at launch and rotation. Nothing else reads or stores them.
+Secrets live in the hub vault and reach sidecars at launch and rotation. Nothing else reads or stores them. The GitHub
+App key stays in the hub, which mints installation tokens for the sidecars. Code review, which runs a model over
+untrusted code, holds only a token that can read contents and pull requests.
