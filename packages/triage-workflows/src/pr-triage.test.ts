@@ -3,7 +3,7 @@ import { runLocal, type ActionHandler, type OnTriggerPrimitive, type StepInvoker
 import type { ReactorCapabilities, ReactorInboundEvent, ReactorState } from "@intx/types/runtime";
 import { doMarker } from "@corbits/github-tool/do";
 import { REPO_DOCS_MAX_BYTES, REPO_RULES_MAX_BYTES, type GithubFetch } from "@corbits/github-reads";
-import { ACTION_KINDS, defaultActions, emptyPack, readPolicyFile, recommendedPack, WAITING_LABELS, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
+import { ACTION_KINDS, defaultActions, emptyPack, readPolicyFile, recommendedPack, type ActionKind, type CheckPack, type CustomCheck, type Step, type PolicyActions, type PolicySource } from "@corbits/triage-contracts";
 import { localActionCredentials } from "./local-credentials.js";
 import * as actions from "./actions/index.js";
 import type { ExecuteOutput } from "./actions/execute.js";
@@ -552,24 +552,24 @@ describe("pr-triage body", () => {
     expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([]);
   });
 
-  test("a new head swaps Ready for Waiting for CI until it passes, and the verdict takes the waiting label back", async () => {
+  test("a new head keeps the earlier verdict's label while it waits, and its own verdict replaces it", async () => {
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-    const github = fakeGithub({ labels: ["bug", "Triage: Ready"] });
+    const github = fakeGithub({ labels: ["bug", "Triage: Not Ready"] });
     github.pr.head = "def0000000000000000000000000000000000000";
     github.pr.ci = "pending";
     await triage(pack, { github });
-    expect(github.labels).toEqual(["bug", WAITING_LABELS.ci]);
+    expect(github.labels).toEqual(["bug", "Triage: Not Ready"]);
     github.pr.ci = "success";
     await triage(pack, { github });
     expect(github.labels).toEqual(["bug", "Triage: Ready"]);
   });
 
-  test("CI still running holds the head under the waiting label with the in-progress comment and no Dos; once CI completes the verdict replaces the comment in place", async () => {
+  test("CI still running holds the head with the in-progress comment and no Dos; once CI completes the verdict replaces the comment in place", async () => {
     const github = fakeGithub();
     github.pr.ci = "pending";
     const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } }, actions: HELLO };
     const held = await triage(pack, { github });
-    expect(held.verdict).toMatchObject({ waiting: true, labels: [WAITING_LABELS.ci], feedback: "", actions: [] });
+    expect(held.verdict).toMatchObject({ waiting: true, labels: [], feedback: "", actions: [] });
     expect(held.dos).toEqual([]);
     expect(github.comments.map((comment) => comment.body.split("\n")[1])).toEqual(["**Triage: In progress**"]);
     expect(github.comments[0]!.body).toContain("waiting for CI to finish");
@@ -845,7 +845,7 @@ describe("a run that could not read the pull request", () => {
     const { verdict } = await triage(pack, { github });
     expect(verdict).toMatchObject({ degraded: "error", actions: [] });
     expect(github.labels).toEqual(["bug", "Triage: Failed to Run"]);
-    expect(writes(github.requests)).toEqual([READY_OFF, FAILED]);
+    expect(writes(github.requests)).toEqual([FAILED, READY_OFF]);
     github.pr.unreadFiles = false;
     await triage(pack, { github });
     expect(github.labels).toEqual(["bug", "Triage: Ready"]);

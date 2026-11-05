@@ -107,7 +107,7 @@ function judgeSteps(sources: Sources): Record<string, Primitive> {
  * reviewer first waits `POLL_MS`.
  */
 function passOf(id: string, sources: Sources) {
-  const { unready, markUnready, rules, mirrorRules, executeRules } = triageSteps(sources);
+  const { rules, mirrorRules, executeRules } = triageSteps(sources);
   return defineWorkflow({
     id: `${id}-pass`,
     trigger: { type: "manual" },
@@ -123,10 +123,8 @@ function passOf(id: string, sources: Sources) {
       // Runs on every pass, approving nothing when there is nothing to run, so every branch's done reports its outcomes.
       approvals: { ...hostAction("execute", sources, stepsOf("take"), ["findingThreads"]), handler: "executeApprovals" },
       ran: gate({ when: { from: "steps.take.output.run" }, then: "triaged", else: "done", after: ["approvals"] }),
-      triaged: gate({ when: { from: "steps.take.output.triage" }, then: "unready", else: "done", after: ["ran"] }),
-      unready: { ...unready, input: TAKEN, after: ["triaged"] },
-      markUnready,
-      facts: hostAction("facts", sources, TAKEN, ["markUnready"]),
+      triaged: gate({ when: { from: "steps.take.output.triage" }, then: "facts", else: "done", after: ["ran"] }),
+      facts: hostAction("facts", sources, TAKEN, ["triaged"]),
       rules,
       route: gate({ when: { from: "steps.rules.output.needsJudgment" }, then: "judgeScope", else: "evaluateRules", after: ["rules"] }),
       ...judgeSteps(sources),

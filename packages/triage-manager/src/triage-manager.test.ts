@@ -4,7 +4,7 @@ import { createActionCredentialsFactory, createCredentialProviderRegistry, creat
 import type { GrantRule } from "@intx/types/authz";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
 import { runLocal, type ActionHandler, type LoopFn, type OnTriggerPrimitive, type WorkflowAuthorizeFn, type WorkflowDefinition } from "@intx/workflow";
-import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, JUDGE_RULES_ATTACHMENT, VERDICT_LABELS, WAITING_LABELS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
+import { ACTION_KINDS, APPROVE_DO_KIND, emptyPack, JUDGE_RULES_ATTACHMENT, VERDICT_LABELS, type ActionKind, type CheckPack } from "@corbits/triage-contracts";
 import type { Snapshot } from "@corbits/triage-workflows/evals/cases";
 import { fixtureGithub, triggerMail } from "@corbits/triage-workflows/evals/serve";
 import { evaluate } from "@corbits/triage-workflows/actions/evaluate";
@@ -226,13 +226,13 @@ async function heldApproval() {
 }
 
 describe("triage-manager", () => {
-  test("a head whose CI still runs, with no reviewer out, gets the Waiting label and the in-progress comment, and its manager ends", async () => {
+  test("a head whose CI still runs, with no reviewer out, gets the in-progress comment and no label, and its manager ends", async () => {
     const { writes, host } = githubHost(HEAD, { checkRuns: [{ name: "build", status: "in_progress", conclusion: null }] });
     const hub = fakeHub({ takes: [PASS], dones: [ENDED] });
     const { passes } = await runMail(github, wake(), host, hub.hub);
     expect(passes).toBe(1);
     expect(doneBody(hub.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true }) } });
-    expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABELS.ci] } }));
+    expect(writes.filter((write) => write.path.includes("/labels"))).toEqual([]);
     expect(writes.filter((write) => write.path.endsWith("/comments"))).toEqual([inProgress("CI to finish")]);
   });
 
@@ -272,12 +272,11 @@ describe("triage-manager", () => {
   });
 
   test("a new head with no checks yet waits for its CI to start and its manager ends; one woken past the start grace decides it as having none", async () => {
-    const { writes, host } = githubHost();
+    const { host } = githubHost();
     const fresh = { ...PASS, headSince: undefined };
     const first = fakeHub({ takes: [fresh], dones: [ENDED] });
     await runMail(github, wake(), host, first.hub);
     expect(doneBody(first.calls)).toMatchObject({ wait: false, report: { head: HEAD, verdict: expect.objectContaining({ waiting: true, reason: expect.stringContaining("checks have not started yet") }) } });
-    expect(writes).toContainEqual(expect.objectContaining({ method: "POST", path: `/repos/${PR.repo}/issues/${PR.number}/labels`, body: { labels: [WAITING_LABELS.ci] } }));
     const since = new Date(Date.now() - 2 * 60_000 - 10_000).toISOString();
     const later = fakeHub({ takes: [{ ...PASS, waitingSince: since, headSince: since }], dones: [ENDED] });
     await runMail(github, wake(), host, later.hub);

@@ -1,8 +1,7 @@
 // The rules in docs/INVARIANTS.md that a settled pull request is checked against: what GitHub ends up holding, the
 // writes it received, and what is left of its runs and mail.
 import { isTriageComment } from "@corbits/github-reads";
-import { closedText, HTML_MARKERS, TRIAGE_LABELS, VERDICT_LABELS, WAITING_LABELS, type Awaits } from "@corbits/triage-contracts";
-import { progressComment } from "@corbits/triage-workflows/logic/render";
+import { closedText, FAILED_LABEL, HTML_MARKERS, TRIAGE_LABELS, VERDICT_LABELS } from "@corbits/triage-contracts";
 import type { Write } from "../chain/github.ts";
 import type { Played } from "./events.ts";
 import type { modelStack } from "./stack.ts";
@@ -12,13 +11,11 @@ type Stack = Awaited<ReturnType<typeof modelStack>>;
 /** More takes than this by one manager on one head is a manager polling for what will not come; the model needs two. */
 const TAKES_PER_HEAD = 4;
 
-const PROGRESS_TITLE = "**Triage: In progress**";
-
 /** The title a verdict comment opens with under its marker, by the verdict its header names. */
 const VERDICT_TITLES: Record<string, string> = { pass: "**Triage: Pass**", fail: "**Triage: Fail**", unsure: "**Triage: Unsure**" };
 
 /**
- * R1: exactly one current Triage comment, a verdict on the head, and no waiting label left. A pull request that closed
+ * R1: exactly one current Triage comment, a verdict on the head. A pull request that closed
  * keeps a verdict it had on its last head, or else says it closed before Triage finished, with none of Triage's labels;
  * one closed before any comment went up has none.
  */
@@ -40,8 +37,6 @@ function oneVerdict(stack: Stack, pull: Played): string[] {
     const title = header && VERDICT_TITLES[header.verdict];
     if (!title || line !== title) breaks.push(`R1: the Triage comment is no verdict: ${line}`);
   }
-  const waiting = labels.filter((label) => Object.values(WAITING_LABELS).includes(label));
-  if (waiting.length > 0) breaks.push(`R1: the pull request still has ${waiting.join(", ")}`);
   return breaks;
 }
 
@@ -91,42 +86,31 @@ function onceEach(writes: readonly Write[]): string[] {
 }
 
 /**
- * R7, over every write the pull request received: whenever a Triage comment is written, and once it settles, the
- * waiting labels the pull request holds name what its in-progress comment waits for, and none stand beside a verdict.
- * Not Ready and Needs Human Review keep the labels as they are until the verdict.
+ * R3 for labels, over every write the pull request received: Triage adds no label but a verdict's or Failed to Run, and
+ * adds one only when it differs from the last it added, so a verdict's label is written once per verdict.
  */
-function waitingNamed(writes: readonly Write[]): string[] {
+function labelPerVerdict(writes: readonly Write[]): string[] {
   const breaks: string[] = [];
-  const on = new Set<string>();
-  let shown: string | undefined;
-  function check(): void {
-    if (shown === undefined || [VERDICT_LABELS.fail, VERDICT_LABELS.unsure].some((label) => on.has(label))) return;
-    const awaits = (Object.keys(WAITING_LABELS) as Awaits[]).filter((awaited) => on.has(WAITING_LABELS[awaited]));
-    const labels = awaits.map((awaited) => WAITING_LABELS[awaited]).join(", ") || "no waiting label";
-    const progress = shown.includes(PROGRESS_TITLE);
-    if (!progress && awaits.length > 0) breaks.push(`R7: ${labels} beside a verdict`);
-    // What the comment already shows of the verdict sits between its title and what it waits for.
-    if (progress && (awaits.length === 0 || !shown.endsWith(progressComment(awaits).slice(PROGRESS_TITLE.length)))) breaks.push(`R7: ${labels} beside ${shown.slice(shown.indexOf(PROGRESS_TITLE))}`);
-  }
+  const verdicts = [...Object.values(VERDICT_LABELS), FAILED_LABEL];
+  let last: string | undefined;
   for (const { method, path, body } of writes) {
-    const text = (body as { body?: unknown } | null)?.body;
-    if ((method === "POST" || method === "PATCH") && path.includes("/comments") && typeof text === "string" && isTriageComment(text) && !HTML_MARKERS.isSuperseded(text)) {
-      check();
-      shown = text;
-    } else if (method === "POST" && path.endsWith("/labels")) {
-      for (const label of (body as { labels: string[] }).labels) on.add(label);
-    } else if (method === "DELETE" && path.includes("/labels/")) {
-      on.delete(decodeURIComponent(path.slice(path.lastIndexOf("/") + 1)));
+    if (method !== "POST" || !path.endsWith("/labels")) continue;
+    for (const label of (body as { labels: string[] }).labels) {
+      if (!verdicts.includes(label)) {
+        if (TRIAGE_LABELS.includes(label)) breaks.push(`R3: ${label} was added`);
+        continue;
+      }
+      if (label === last) breaks.push(`R3: ${label} was added again with no other verdict between`);
+      last = label;
     }
   }
-  check();
   return breaks;
 }
 
 /** Each rule the settled pull request breaks, by its number, saying how; `missed` is how many misses the fake GitHub had before it. */
 export async function broken(stack: Stack, pull: Played, missed: number): Promise<string[]> {
   const { live, unattributed, lost, failed, waited, exhausted, mostTakes } = await stack.leftover(pull.number);
-  const breaks = [...oneVerdict(stack, pull), ...onceEach(stack.writes(pull.number)), ...waitingNamed(stack.writes(pull.number))];
+  const breaks = [...oneVerdict(stack, pull), ...onceEach(stack.writes(pull.number)), ...labelPerVerdict(stack.writes(pull.number))];
   if (live.length > 0) breaks.push(`R5: managers still live: ${live.join(", ")}`);
   if (unattributed.length > 0) breaks.push(`R5: live managers deployed for no single pull request: ${unattributed.join(", ")}`);
   if (lost.length > 0) breaks.push(`R5: mail no run took: ${lost.map((mail) => mail.to).join(", ")}`);
