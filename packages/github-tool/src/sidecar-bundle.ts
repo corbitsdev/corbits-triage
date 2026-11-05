@@ -177,7 +177,7 @@ const MIRROR_FIELDS = {
   fixedHead: str,
   onHead: { ...str, description: "Write nothing once the pull request has moved past this head" },
   keepVerdict: { ...obj({ verdict: str, policy: POLICY_REF }), description: "The pass's verdict and policy: a comment that already shows them for onHead is kept rather than written over" },
-  closedOut: { ...obj({ merged: { type: "boolean" }, comment: { type: "boolean" } }), description: "Only on a merged or closed pull request, with onHead: with comment, the triage comment says it merged or closed before Triage finished, and owned labels come off, unless the comment shows a verdict on onHead" },
+  closedOut: { ...obj({ merged: { type: "boolean" }, comment: { type: "boolean" } }), description: "Only on a merged or closed pull request, with onHead: with comment, the triage comment says it merged or closed before Triage finished; owned labels come off whether or not comment is set, unless the comment shows a verdict on onHead" },
 };
 const MIRROR_REQUIRED = ["repo", "number", "labels"];
 const MIRROR_INPUT = obj({ ...MIRROR_FIELDS, appLogin: APP_LOGIN }, [...MIRROR_REQUIRED, "appLogin"]);

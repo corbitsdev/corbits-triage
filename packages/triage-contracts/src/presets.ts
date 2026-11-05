@@ -11,7 +11,7 @@ const OWNERS: Record<WorkflowState, string> = {
 };
 
 // Labels earlier versions set; owning them clears them from a pull request the next time it is triaged.
-const RETIRED_LABELS = [
+export const RETIRED_LABELS: readonly string[] = [
   "Triage: Needs changes",
   "Triage: Needs review",
   "Triage: Ready to merge",

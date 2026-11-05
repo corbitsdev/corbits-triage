@@ -33,6 +33,8 @@ const labellingReviewed = await modelStack(`${OWNER}/labelling-reviewed`, { pack
 const UNLABELLED: typeof PACK = { ...PACK, repo: `${OWNER}/unlabelled` };
 delete UNLABELLED.labels;
 const unlabelled = await modelStack(UNLABELLED.repo, { pack: UNLABELLED, automatic: ["labels", "comment"] });
+const labelsOnly = await modelStack(`${OWNER}/labels-only`, { pack: { ...PACK, repo: `${OWNER}/labels-only` }, automatic: ["labels"] });
+const ungranted = await modelStack(`${OWNER}/ungranted`, { pack: { ...PACK, repo: `${OWNER}/ungranted` }, automatic: [] });
 const MERGING: typeof PACK = { ...PACK, repo: `${OWNER}/merging`, actions: { ...PACK.actions, fail: [{ do: "merge" }] } };
 const merging = await modelStack(MERGING.repo, { pack: MERGING, automatic: ["labels", "comment", "merge"] });
 setDefaultTimeout(5 * 60_000);
@@ -43,6 +45,8 @@ afterAll(async () => {
   await labelling.stop();
   await labellingReviewed.stop();
   await unlabelled.stop();
+  await labelsOnly.stop();
+  await ungranted.stop();
   await merging.stop();
 });
 
@@ -183,6 +187,39 @@ test("with labels off, Triage adds no label and takes an earlier verdict label o
   const removed = writes.filter((write) => write.method === "DELETE" && write.path.includes("/labels/")).map((write) => decodeURIComponent(write.path.split("/labels/")[1]!));
   expect(labelled(writes)).toEqual([]);
   expect(removed).toEqual([VERDICT_LABELS.pass]);
+});
+
+test("without the comment, a pull request closed before its verdict loses Triage's labels", async () => {
+  const number = ++pulls;
+  const pull: Played = { number, heads: [sha(`${number}-0`)], draft: false };
+  await labelsOnly.open({ ...pullOf(number, pull.heads[0]!), labels: ["Triage: Waiting for CI"] });
+  await labelsOnly.drain();
+  await play(labelsOnly, pull, "close");
+  await settle(labelsOnly, pull);
+  const writes = labelsOnly.writes(number);
+  const removed = writes.filter((write) => write.method === "DELETE" && write.path.includes("/labels/")).map((write) => decodeURIComponent(write.path.split("/labels/")[1]!));
+  expect(labelled(writes)).toEqual([]);
+  expect(removed).toEqual(["Triage: Waiting for CI"]);
+});
+
+test("without the comment, a pull request closed after its verdict keeps the verdict label", async () => {
+  const pull = await open(labelsOnly, ++pulls);
+  await settle(labelsOnly, pull);
+  const [verdict] = labelled(labelsOnly.writes(pull.number));
+  await play(labelsOnly, pull, "close");
+  await settle(labelsOnly, pull);
+  expect(verdict).toBeDefined();
+  expect(labelsOnly.github.pull(labelsOnly.repo, pull.number).labels).toContain(verdict!);
+});
+
+test("without any posting grant, a pull request closed before its verdict is not written to", async () => {
+  const number = ++pulls;
+  const pull: Played = { number, heads: [sha(`${number}-0`)], draft: false };
+  await ungranted.open({ ...pullOf(number, pull.heads[0]!), labels: ["Triage: Waiting for CI"] });
+  await ungranted.drain();
+  await play(ungranted, pull, "close");
+  await settle(ungranted, pull);
+  expect(ungranted.writes(number)).toEqual([]);
 });
 
 test("a merge waits while a reviewer requests changes", async () => {

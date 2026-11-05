@@ -68,7 +68,8 @@ export type CloseOutInput = { repo: string; number: number; onHead: string; owne
 
 /**
  * A pull request that merged or closed before its head's verdict: where `comment` is set, its comment says so in place
- * of progress, and the `owned` labels come off with it. A verdict already shown on the head stays, as do its labels.
+ * of progress. The `owned` labels come off whether or not `comment` is set, unless the comment shows a verdict on the
+ * head, which stays with its labels.
  */
 export async function closeOut(gh: GithubFetch, i: CloseOutInput, login: string) {
   const { repo, number } = i;
