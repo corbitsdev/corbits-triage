@@ -111,8 +111,9 @@ function fileActions(pack: CheckPack): Record<string, unknown> | undefined {
   return Object.keys(actions).length ? actions : undefined;
 }
 
-function fileLabels(pack: CheckPack): Record<string, string> | undefined {
-  const changed = VERDICTS.flatMap((verdict) => (pack.labels[verdict] === VERDICT_LABELS[verdict] ? [] : [[verdict, pack.labels[verdict]]]));
+function fileLabels({ labels }: CheckPack): Record<string, string> | undefined {
+  if (!labels) return undefined;
+  const changed = VERDICTS.flatMap((verdict) => (labels[verdict] === VERDICT_LABELS[verdict] ? [] : [[verdict, labels[verdict]]]));
   return changed.length ? Object.fromEntries(changed) : undefined;
 }
 

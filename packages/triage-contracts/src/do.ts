@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { ACTION_KINDS, VERDICTS, type ActionKind, type CheckPack, type VerdictWord } from "./check-pack.js";
+import { ACTION_KINDS, VERDICTS, type ActionKind, type CheckPack, type VerdictLabels, type VerdictWord } from "./check-pack.js";
 import { kindsOf, type DecideRule } from "./policy-workflow.js";
 import type { RepoSource } from "./repo-source.js";
 
@@ -41,9 +41,9 @@ export function alwaysHeld(list: VerdictWord, kind: ActionKind): boolean {
   return (list === "unsure" && kind === "close") || (list !== "pass" && kind === "merge");
 }
 
-/** What Triage posts with every verdict: a comment, and a label where the host has labels. */
-export function postingKinds(source: RepoSource): ActionKind[] {
-  return hostKinds(source).filter((kind) => kind === "comment" || kind === "labels");
+/** What Triage posts with every verdict: a comment, and a label where the host has labels and the policy turns them on. */
+export function postingKinds(source: RepoSource, labels: VerdictLabels | undefined): ActionKind[] {
+  return hostKinds(source).filter((kind) => kind === "comment" || (kind === "labels" && labels !== undefined));
 }
 
 /**
@@ -52,7 +52,7 @@ export function postingKinds(source: RepoSource): ActionKind[] {
  */
 export function policyKinds(pack: CheckPack, decide: readonly DecideRule[], source: RepoSource): ActionKind[] {
   const steps = VERDICTS.flatMap((verdict) => pack.actions[verdict].filter((step) => step.do === "nothing" || !alwaysHeld(verdict, step.do)).map((step) => step.do));
-  const used = new Set<string>([...postingKinds(source), ...decide.flatMap((rule) => kindsOf(rule.do)), ...steps]);
+  const used = new Set<string>([...postingKinds(source, pack.labels), ...decide.flatMap((rule) => kindsOf(rule.do)), ...steps]);
   return hostKinds(source).filter((kind) => used.has(kind));
 }
 

@@ -44,7 +44,7 @@ const EXPECTED: ReadonlyArray<readonly [Pattern, string | typeof MAPPING, "exact
   [["actions"], MAPPING],
   [["actions", "on"], `a list of ${words(POLICY_EVENTS)}`],
   [["actions", VERDICT], "a list of steps", "exact"],
-  [["labels"], MAPPING],
+  [["labels"], "true, or a mapping of pass, fail and unsure"],
   [["labels", VERDICT], LABEL_TEXT],
   [["groups"], "a mapping of group names to who is in them"],
   [["groups", NAME], MAPPING],

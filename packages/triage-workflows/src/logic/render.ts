@@ -1,4 +1,4 @@
-import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, INCOMPLETE_NOTE, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, VERDICT_LABELS, type ActionKind, type Awaits, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type KeptVerdict, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictStatus, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
+import { BUDGET_EXHAUSTED_NOTE, catalogCheckEnabled, INCOMPLETE_NOTE, citationOf, citationUrl, dependsOnCi, hardFailures, isSizeRule, itemText, NO_CHANGES_REQUESTED, NOT_A_DRAFT, render, TRIAGE_LABELS, type ActionKind, type Awaits, type CheckPack, type CheckItem, type CheckOutput, type CodeReviewOutput, type KeptVerdict, type ModelCustomCheck, type PolicySource, type Rendered, type RepoSource, type TriageHeader, type VerdictLabels, type VerdictStatus, type VerdictWord, type WorkflowState } from "@corbits/triage-contracts";
 import { isRecord } from "@corbits/common";
 import type { Stack } from "@corbits/github-reads";
 import { Decision } from "@corbits/system-one";
@@ -112,6 +112,8 @@ export interface RenderInput {
   repoSource: RepoSource;
   headSha: string;
   det: DeterministicResult;
+  /** The verdict label names; absent, the verdict carries no label. */
+  labels: VerdictLabels | undefined;
   answers?: ParsedAnswers | Record<string, number> | null;
   plan?: QualityPlan;
   focused?: FocusedPlan;
@@ -251,7 +253,7 @@ function band(noul: number, yesPasses: boolean): Decided {
   return { result: "unconfirmed", reason: UNDECIDED_REASON };
 }
 
-export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped, choice }: Omit<RenderInput, "repoSource">): ModelEvaluation {
+export function evaluateModel({ det, answers, plan = {}, focused, stack, judgeError, judgeLimitExceeded, judgeSkipped, choice }: Omit<RenderInput, "repoSource" | "labels">): ModelEvaluation {
   if (!det.sources) return { checks: [], unanswered: false, instructed: false };
   const sources = det.sources;
   // A failed chunk leaves only its own questions unanswered; the other chunks' answers still count.
@@ -734,6 +736,7 @@ interface RenderContext {
   /** Set only on a stacked branch: the pull requests merged into it, and the open one it is based on. */
   stack?: Stack;
   labelled: CheckResult[];
+  labels: VerdictLabels | undefined;
 }
 
 function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number | null, reasons: string[], ctx: RenderContext): RenderOutput {
@@ -741,7 +744,7 @@ function withChecks(rendered: VerdictBase, checks: CheckResult[], score: number 
     ...rendered,
     ...nextStep(checks, ctx.sources, ctx.reviewers, rendered.verdict),
     mirror: rendered.state !== "stale-unknown",
-    labels: [VERDICT_LABELS[rendered.verdict]],
+    labels: ctx.labels ? [ctx.labels[rendered.verdict]] : [],
     score,
     reasons,
     feedback: authorComment(ctx, checks, rendered.verdict),
@@ -782,7 +785,7 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   const awaited = input.hostAwaited === undefined ? undefined : HOST_AWAITED_TEXT[input.hostAwaited];
   const evaluated = evaluateModel(input);
   const { deciding, labelled } = splitLabelled(det, evaluated.checks);
-  const ctx = { author, repo, repoSource, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, stack: input.stack, labelled };
+  const ctx = { author, repo, repoSource, headSha, sources: det.sources, reviewers, purpose: input.focused?.purpose, stack: input.stack, labelled, labels: input.labels };
   const checks = [...det.checks, ...deciding];
   const flaggedReason = checks.filter(isFlagged).map((check) => reasonOf(check, det.sources)).join("; ");
   const reasons = reasonsOf(det, deciding);
@@ -825,11 +828,11 @@ export function renderVerdict(input: RenderInput): RenderOutput {
   return withChecks({ ...render(VERDICT_STATES[decided]), verdict: decided, degraded: null, reason: DECIDED_REASONS[decided] }, checks, choice.pass, reasons, ctx);
 }
 
-export function degradedVerdict(reason: string): RenderOutput {
+export function degradedVerdict(reason: string, labels: VerdictLabels | undefined): RenderOutput {
   return {
     ...render("stale-unknown"),
     mirror: false,
-    labels: [VERDICT_LABELS.unsure],
+    labels: labels ? [labels.unsure] : [],
     verdict: "unsure",
     score: null,
     reasons: ["Could not evaluate"],

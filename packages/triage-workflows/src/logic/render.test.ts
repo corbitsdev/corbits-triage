@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classificationSources, emptyPack, type CheckPack } from "@corbits/triage-contracts";
+import { classificationSources, emptyPack, VERDICT_LABELS, type CheckPack } from "@corbits/triage-contracts";
 import { MAX_MIRROR_COMMENT_BYTES, parseAnswers, renderVerdict } from "./render.js";
 import type { DeterministicResult } from "./checks.js";
 
@@ -9,7 +9,7 @@ describe("cited evidence", () => {
     const failing = { check: "custom-1", kind: "machine", result: "fail", reason: "breaks the rule", evidence: ["src/a.ts:3"], output: { kind: "score", score: 0, passAt: 70, items: [citation] } } as const;
     const det: DeterministicResult = { state: "needs-author-update", reason: "a rule failed", findings: [], checks: [failing], needsJudgment: false, sources: classificationSources(emptyPack("acme/widgets")) };
     function feedback(repoSource: "github" | "bitbucket-datacenter"): string {
-      return renderVerdict({ repoSource, author: "octocat", repo: "acme/widgets", headSha: "abc123", det }).feedback;
+      return renderVerdict({ labels: VERDICT_LABELS, repoSource, author: "octocat", repo: "acme/widgets", headSha: "abc123", det }).feedback;
     }
     expect(feedback("github")).toContain("[`src/a.ts:3`](https://github.com/acme/widgets/blob/abc123/src/a.ts?plain=1#L3)");
     expect(feedback("bitbucket-datacenter")).toContain("breaks the rule: `src/a.ts:3`");
@@ -25,7 +25,7 @@ describe("a long comment", () => {
   test("an over-long comment is cut at line boundaries and still posts", () => {
     const custom = Array.from({ length: 200 }, (_, index) => ({ id: `custom-${index + 1}`, name: `${"N".repeat(500)}-${index}`, group: "code-vs-ci" as const, kind: "model" as const, shape: "is-true" as const, claim: "Keeps boundaries" }));
     const det: DeterministicResult = { state: "ready-monitoring", reason: "all configured checks pass", findings: [], checks: [], needsJudgment: true, sources: { quality: [], custom, rules: [] } };
-    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul(Object.fromEntries(custom.map((row) => [row.id, 0.1]))), choice: { pass: 0.1, fail: 0.85, cant_tell: 0.05 } });
+    const verdict = renderVerdict({ labels: VERDICT_LABELS, repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det, answers: noul(Object.fromEntries(custom.map((row) => [row.id, 0.1]))), choice: { pass: 0.1, fail: 0.85, cant_tell: 0.05 } });
     const lines = verdict.feedback.split("\n").slice(3);
     expect(new TextEncoder().encode(verdict.feedback).byteLength).toBeLessThanOrEqual(MAX_MIRROR_COMMENT_BYTES);
     expect(lines[0]).toContain(custom[0]!.name);
@@ -55,7 +55,7 @@ describe("score and choose rules", () => {
   test("a score rule records its level, never fails without failBelow, and fails when the level is likely below it", () => {
     const kind = JSON.stringify({ id: "kind", type: "choice", choice: "chore", probabilities: { fix: 0.1, feature: 0.1, chore: 0.8 }, confidence: 0.9 });
     const answers = parseAnswers([score("style", [0.9, 0.1, 0, 0]), score("care", [0.5, 0.3, 0.2, 0]), kind].join("\n"));
-    const checks = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
+    const checks = renderVerdict({ labels: VERDICT_LABELS, repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det: scored, answers }).checks;
     expect(checks.map((c) => [c.check, c.result, c.evidence])).toEqual([["style", "pass", ["poor"]], ["care", "fail", ["poor"]], ["kind", "fail", ["chore"]]]);
     expect(checks[1]!.output).toEqual({ kind: "level", level: "poor", levels, failBelow: "good" });
   });
@@ -75,6 +75,7 @@ describe("author text in the comment", () => {
       { check: "focused", kind: "model" as const, result: "fail" as const, reason: "unrelated changes", evidence: hostile },
     ];
     const verdict = renderVerdict({
+      labels: VERDICT_LABELS,
       repoSource: "github",
       author: "octocat",
       repo: "acme/widgets",

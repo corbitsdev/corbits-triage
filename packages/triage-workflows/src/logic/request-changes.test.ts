@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getReviews, REQUEST_CHANGES_DO_MARKER, type GithubFetch } from "@corbits/github-reads";
-import { DEFAULT_REPO_POLICY, defaultActions, emptyPack, type CheckPack } from "@corbits/triage-contracts";
+import { DEFAULT_REPO_POLICY, defaultActions, emptyPack, VERDICT_LABELS, type CheckPack } from "@corbits/triage-contracts";
 import { approvalHeldBy, evaluateActions, heldApprovals } from "./actions.js";
 import { deriveState, type PrFacts } from "./checks.js";
 import { buildFacts } from "./facts.js";
@@ -37,7 +37,7 @@ const pack: CheckPack = {
 function input(over: Partial<PrFacts>, using = pack) {
   const pr = { ...facts, ...over };
   const det = deriveState(pr, undefined, using);
-  const rendered = renderVerdict({ repoSource: "github", author: pr.author, repo: pr.repo, headSha: pr.headSha, det, answers: null, choice: { pass: 0.9, fail: 0.05, cant_tell: 0.05 } });
+  const rendered = renderVerdict({ labels: VERDICT_LABELS, repoSource: "github", author: pr.author, repo: pr.repo, headSha: pr.headSha, det, answers: null, choice: { pass: 0.9, fail: 0.05, cant_tell: 0.05 } });
   return { rendered, input: { facts: pr, checks: rendered.checks, verdict: rendered.verdict, reason: rendered.reason, pack: using } };
 }
 

@@ -5,11 +5,13 @@ import {
   readPolicyOverride,
   readSharedPolicy,
   refuseTriageLabels,
+  VERDICT_LABELS,
   type CatalogCheck,
   type CatalogId,
   type CheckPack,
   type PolicyOverride,
   type SharedPolicy,
+  type VerdictLabels,
 } from "./check-pack.js";
 
 /** `sha` is the file's blob on the default branch. */
@@ -61,12 +63,15 @@ export function resolvePolicy(shared: SharedPolicy, repo: PolicyOverride): Check
       fail: repo.actions.fail ?? shared.actions.fail,
       unsure: repo.actions.unsure ?? shared.actions.unsure,
     },
-    labels: {
-      pass: repo.labels.pass ?? shared.labels.pass,
-      fail: repo.labels.fail ?? shared.labels.fail,
-      unsure: repo.labels.unsure ?? shared.labels.unsure,
-    },
+    ...resolvedLabels(repo.labels, shared.labels),
   });
+}
+
+/** The repository's own `labels` key wins, each name it leaves out taken from the shared policy or the default; without one the shared policy decides. */
+function resolvedLabels(repo: PolicyOverride["labels"], shared: VerdictLabels | undefined): { labels?: VerdictLabels } {
+  if (repo === true) return { labels: { ...VERDICT_LABELS } };
+  if (Object.keys(repo).length === 0) return shared ? { labels: shared } : {};
+  return { labels: { ...VERDICT_LABELS, ...shared, ...repo } };
 }
 
 /** A policy file's pack over the policy file of the repository its `extends` names, which must extend nothing itself. */

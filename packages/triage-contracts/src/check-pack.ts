@@ -403,7 +403,9 @@ export type PolicyEvent = (typeof POLICY_EVENTS)[number];
 export const VERDICTS = ["pass", "fail", "unsure"] as const;
 export type VerdictWord = (typeof VERDICTS)[number];
 
-export const VERDICT_LABELS: Record<VerdictWord, string> = { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" };
+export type VerdictLabels = Record<VerdictWord, string>;
+
+export const VERDICT_LABELS: VerdictLabels = { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" };
 
 /** What a head's verdict still waits for. */
 export type Awaits = "ci" | "judge" | "code-review";
@@ -442,8 +444,8 @@ export type CheckPack = {
   checks: Partial<Record<CatalogId, CatalogCheck>>;
   custom: CustomCheck[];
   actions: PolicyActions;
-  /** So tools watching GitHub can react to it. */
-  labels: Record<VerdictWord, string>;
+  /** So tools watching GitHub can react to it; absent, Triage writes no labels. */
+  labels?: VerdictLabels;
   /** The groups the policy file defines, in its order, which steps name as `{ group }`. */
   groups?: Record<string, FileGroup>;
   /** What reading the stored policy left out because it no longer runs; each verdict says so. Never read back. */
@@ -583,7 +585,7 @@ export const checkPackSchema = type({
   "checks?": CatalogChecksSchema,
   "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
   "actions?": PolicyActionsSchema,
-  "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
+  "labels?": type("true").or({ "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label }),
   "groups?": FileGroupsSchema,
 });
 
@@ -1158,8 +1160,8 @@ function parseGroups(raw: unknown): Record<string, FileGroup> | undefined {
   return groups;
 }
 
-function parseLabels(raw: unknown): Record<VerdictWord, string> {
-  if (raw === undefined) return { ...VERDICT_LABELS };
+function parseLabels(raw: unknown): VerdictLabels | undefined {
+  if (raw === undefined || raw === true) return { ...VERDICT_LABELS };
   const row = record(raw, "labels");
   const extra = Object.keys(row).filter((key) => !(VERDICTS as readonly string[]).includes(key));
   if (extra.length) throw new Error(`labels must set only pass, fail or unsure, not ${extra.join(", ")}.`);
@@ -1295,7 +1297,7 @@ export function readCheckPack(raw: unknown, expectedRepo?: string, refuse = fals
   const actions = parseActions(body.actions, dropped, refuse);
   const labels = parseLabels(body.labels);
   const groups = parseGroups(body.groups);
-  return withDropped(refuseTriageLabels({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, labels, ...(groups && { groups }) }), dropped);
+  return withDropped(refuseTriageLabels({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, repo, checks, custom, actions, ...(labels && { labels }), ...(groups && { groups }) }), dropped);
 }
 
 export type SharedPolicy = Omit<CheckPack, "repo">;
@@ -1304,7 +1306,8 @@ export type PolicyOverride = Pick<CheckPack, "repo" | "custom"> & {
   extends: string;
   checks: Partial<Record<CatalogId, Partial<CatalogCheck>>>;
   actions: Partial<PolicyActions>;
-  labels: Partial<Record<VerdictWord, string>>;
+  /** `true` turns the verdict labels on with their default names. */
+  labels: Partial<VerdictLabels> | true;
 };
 
 export function extendsOf(raw: unknown): string | undefined {
@@ -1323,7 +1326,7 @@ export function readSharedPolicy(raw: unknown): SharedPolicy {
   const custom = parseCustom(body.custom);
   const actions = parseActions(body.actions, dropped, false);
   const labels = parseLabels(body.labels);
-  return withDropped({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, checks, custom, actions, labels }, dropped);
+  return withDropped({ kind: CHECK_PACK_KIND, schemaVersion: CHECK_PACK_SCHEMA_VERSION, checks, custom, actions, ...(labels && { labels }) }, dropped);
 }
 
 /** Built-in rule rows as a repository sets them: `enabled` only where the row names it, so a limit alone keeps the shared switch. */
@@ -1348,8 +1351,9 @@ function parseOverrideActions(row: Partial<Record<"when" | VerdictWord, unknown>
   return actions;
 }
 
-function parseOverrideLabels(row: Partial<Record<VerdictWord, unknown>> | undefined): PolicyOverride["labels"] {
-  const labels: PolicyOverride["labels"] = {};
+function parseOverrideLabels(row: true | Partial<Record<VerdictWord, unknown>> | undefined): PolicyOverride["labels"] {
+  if (row === true) return true;
+  const labels: Partial<VerdictLabels> = {};
   for (const verdict of VERDICTS) {
     if (row?.[verdict] !== undefined) labels[verdict] = text(row[verdict], `labels ${verdict}`, LABEL_MAX);
   }
@@ -1436,7 +1440,7 @@ function levelLabelRule(label: string): LevelLabelRule | undefined {
  * step naming a level label would flip it on and off across runs. Sensitive paths and risk add their own level labels.
  */
 export function refuseTriageLabels(pack: CheckPack): CheckPack {
-  const verdictLabels = Object.values(pack.labels).map((label) => label.toLowerCase());
+  const verdictLabels = Object.values(pack.labels ?? {}).map((label) => label.toLowerCase());
   for (const [id, label] of labelRules(pack)) {
     const lower = label.toLowerCase();
     const level = levelLabelRule(lower);

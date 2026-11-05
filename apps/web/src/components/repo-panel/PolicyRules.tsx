@@ -47,7 +47,7 @@ const WAITS = " (waits for you on Triage)";
  * labels, so a label waits there only beside a waiting comment.
  */
 function postText(pack: CheckPack, verdict: VerdictWord, kind: ActionKind, allowed: (kind: ActionKind) => boolean): string {
-  if (kind === "labels") {
+  if (kind === "labels" && pack.labels) {
     const label = `Label “${pack.labels[verdict]}”`;
     if (allowed("labels")) return label;
     return allowed("comment") ? `${label} (not added: Triage may not add labels here)` : `${label}${WAITS}`;
@@ -90,7 +90,7 @@ export default function PolicyRules({ pack, source, automatic }: { pack: CheckPa
           <div key={verdict} className="then">
             <b>{VERDICT_NAMES[verdict]}</b>
             <div className="steps">
-              {postingKinds(source).map((kind) => <span key={kind}>{postText(pack, verdict, kind, allowed)}</span>)}
+              {postingKinds(source, pack.labels).map((kind) => <span key={kind}>{postText(pack, verdict, kind, allowed)}</span>)}
               {pack.actions[verdict].filter((step) => step.do !== "nothing").map((step, at) => <span key={`${verdict}-${at}`}>{doText(step)}{forText(step)}{stepWaits(verdict, step) ? WAITS : ""}</span>)}
             </div>
           </div>

@@ -2,6 +2,7 @@ import { deriveState, type PrFacts } from "../packages/triage-workflows/src/logi
 import { prepareQualityEvaluation } from "../packages/triage-workflows/src/logic/quality.js";
 import { renderVerdict, type RenderOutput } from "../packages/triage-workflows/src/logic/render.js";
 import { NO_FACTS } from "../packages/triage-workflows/src/logic/item.js";
+import { VERDICT_LABELS } from "../packages/triage-contracts/src/check-pack.js";
 import type { PRRecord } from "../packages/triage-contracts/src/types.js";
 
 function toFacts(pr: PRRecord): PrFacts {
@@ -25,6 +26,6 @@ export function triage(pr: PRRecord): RenderOutput {
   const facts = toFacts(pr);
   const det = deriveState(facts);
   const { focused } = prepareQualityEvaluation(facts, det.sources);
-  const v = renderVerdict({ author: pr.author, repo: facts.repo, repoSource: "github", headSha: facts.headSha, det, focused });
+  const v = renderVerdict({ author: pr.author, repo: facts.repo, repoSource: "github", headSha: facts.headSha, det, labels: VERDICT_LABELS, focused });
   return { ...v, humanGated: v.humanGated || pr.spam >= 0.9 || pr.confidence < 0.5 };
 }
