@@ -26,4 +26,3 @@ bun --conditions=intx-src test apps/web
 
 - [User Manual](../../docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md)
 - [DESIGN.md](../../DESIGN.md)
-- [IMPLEMENTATION.md](../../docs/IMPLEMENTATION.md)

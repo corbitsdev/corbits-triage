@@ -23,7 +23,7 @@ Repository-wide rules. `apps/*` and some `packages/*` have their own AGENTS.md w
 - **The policy drives everything.** A repository's rules and actions live in its policy file, `.corbits-triage.yml` on its default branch, and nowhere else; under the workspace's `policy` automation that file also decides what Triage does on its own. Nothing repository-specific is written into workflow code.
 - **Workflows are deterministic.** Agents exist only where inference happens (packages/triage-workflows/AGENTS.md).
 - **Effects are idempotent** under their effect id, host writes included.
-- **One writer per pull request.** The manager is the only workflow that writes to a pull request, and it lives until its final post or until its head waits only on CI (docs/ARCHITECTURE.md, Lifecycle of a pull request).
+- **One writer per pull request.** The manager is the only workflow that writes to a pull request, and it lives until its final post or until its head waits only on CI (docs/ARCHITECTURE.md, How a pull request flows).
 - **Three isolated parts.** Deterministic checks, the judge and code review each have their own limits; one part's limit never changes what another reads.
 - **One local sidecar per deployment.** The listener, each manager and each judge run in a local sidecar of their own, up to a capped number; past the cap a deployment goes to a sandbox, and code review always runs in one.
 - **Size is a risk signal**, never a hold: a crossed size limit labels a pull request and never makes it wait.
@@ -68,5 +68,4 @@ Check these for a stock route or primitive before touching the hub, sidecars or 
 
 ## Docs
 
-- Docs follow the change: a pull request that changes behaviour, options, routes or screens updates the affected README, docs/ and `docs/Corbits Triage User Manual/` in the same pull request, or says in its description why none needed a change.
-- User docs say what a person sees and does, not how the code does it; mechanics belong in docs/ARCHITECTURE.md.
+- Docs change only when a person would notice: update the step or sentence that changed, and keep it short. docs/ARCHITECTURE.md is the architecture, not the implementation.

@@ -98,8 +98,6 @@ Each hub's full log, which holds its sidecars' and their workflow processes' out
 
 In CI the chain runs in five shards, each with its own list of files in `.github/workflows/ci.yml`; a new chain file must be added to one. A pull request that changes none of `apps/hub`, `apps/sidecar`, `apps/web/scripts`, `apps/web/src/lib`, `tooling/`, `packages/`, `tests/chain/`, `vendor/`, the lockfile, the root `package.json` or the CI workflow and setup actions skips the chain, so a change limited to the portal's pages and components, docs, e2e or research does not run it; every push to `main` runs it.
 
-Scripts are listed in [IMPLEMENTATION.md](IMPLEMENTATION.md#scripts).
-
 ## Check a change locally
 
 `packages/policy-check-action/src/cli.ts check [--base <ref>]`, run inside any clone, runs the base branch's rules that need no model on the working tree's change through the pr-triage definition, reading only local git ([README](../packages/policy-check-action/README.md#check-locally)).

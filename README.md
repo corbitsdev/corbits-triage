@@ -57,7 +57,7 @@ Then create an account, follow **Set up Triage**, and save a decision model in *
 - [Development](docs/DEV.md) and [Contributing](CONTRIBUTING.md): working on the code.
 - [AGENTS.md](AGENTS.md): conventions for coding agents.
 - [skills/](skills): agent skills to install Triage and write a policy.
-- [Product](docs/PRODUCT.md): rules, verdicts, actions and the policy file. [Bitbucket Data Center](docs/BITBUCKET_DATACENTER.md): connecting that host.
+- [Architecture](docs/ARCHITECTURE.md): the parts and how a pull request flows through them. [Bitbucket Data Center](docs/BITBUCKET_DATACENTER.md): connecting that host.
 - [GitHub emulator](docs/DEV.md#github-emulator-no-github-account), the [policy-check Action](packages/policy-check-action/README.md) and the [browser extension](apps/extension/README.md).
 
 Triage runs as workflows on an [Interchange](https://github.com/faremeter/interchange) hub, which owns identity, grants, credentials, runs and audit.

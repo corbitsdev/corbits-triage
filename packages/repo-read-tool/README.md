@@ -23,4 +23,4 @@ bun --conditions=intx-src test packages/repo-read-tool
 
 ## Docs
 
-- [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#code-review-pipeline)
+- [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)

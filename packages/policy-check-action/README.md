@@ -58,4 +58,4 @@ bun --conditions=intx-src test packages/policy-check-action
 ## Docs
 
 - [User Manual](../../docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md)
-- [PRODUCT.md](../../docs/PRODUCT.md#policy-file)
+- [User Manual](../../docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#policy)

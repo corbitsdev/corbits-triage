@@ -24,7 +24,7 @@ A real deployment also needs:
   on that one domain.
 
 Optional, locally or deployed: a Google OAuth client for sign-in, an SMTP
-account for invite emails, and for [code review](PRODUCT.md#code-review) an
+account for invite emails, and for [code review](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#code-review) an
 Anthropic key and an [isolated place to run it](#where-sidecars-run).
 
 Size the hub for its sidecars: each deployment Triage runs on the hub's
@@ -205,7 +205,7 @@ railway ssh --service Postgres "psql \"\$DATABASE_URL\" -c \"alter role postgres
    [BITBUCKET_DATACENTER.md](BITBUCKET_DATACENTER.md).
 3. **Choose repositories on GitHub.** They arrive with triage off. Press **Open Repositories** to leave setup. Nothing runs yet.
 4. **Add a policy file.** A repository's rules and actions come only from
-   `.corbits-triage.yml` on its default branch ([Policy file](PRODUCT.md#policy-file)).
+   `.corbits-triage.yml` on its default branch ([Policy](Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#policy)).
    A repository without one offers **Start a policy file**: **Create pull
    request** and merge it.
 5. **Turn on triage.** Open the repository under Repositories and turn on

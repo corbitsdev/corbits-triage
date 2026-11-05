@@ -55,5 +55,5 @@ bun --conditions=intx-src test packages/triage-contracts
 
 ## Docs
 
-- [PRODUCT.md](../../docs/PRODUCT.md#policy-file)
+- [User Manual](../../docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#policy)
 - [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)

@@ -152,7 +152,7 @@ Triage` build status whatever the role holds, since the host has no labels. Unde
 workspace's `policy` automation that pass's policy read grants the other kinds
 the policy file names, and takes back Labels and Assign, which the host lacks;
 under `ask` every other action waits for a person
-([ARCHITECTURE.md](ARCHITECTURE.md#tenancy-and-authority)).
+([ARCHITECTURE.md](ARCHITECTURE.md#the-policy)).
 
 | Status | Body |
 | --- | --- |

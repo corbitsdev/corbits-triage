@@ -49,8 +49,8 @@ substituted, and actions requiring review remain held. The repository's own `rel
 A run mails only through an agent step, so both mail through `mailAgentOf`, whose director makes no model call. The code
 review a manager deploys is `codeReviewReviewer` in [`@corbits/pr-code-review`](../pr-code-review), and the judge is
 `triageJudge` in [`@corbits/triage-judge`](../triage-judge). Each reports through its own `report` to the hub, whether or
-not it finished, and posts nothing; the hub then wakes the pull request's manager. The routes, the claim and the mail are in
-[ARCHITECTURE.md](../../docs/ARCHITECTURE.md#workflows).
+not it finished, and posts nothing; the hub then wakes the pull request's manager. How the mail flows is in
+[ARCHITECTURE.md](../../docs/ARCHITECTURE.md#how-a-pull-request-flows).
 
 ## Test
 
