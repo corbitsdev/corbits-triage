@@ -1,14 +1,12 @@
 import { action, defineWorkflow, map, onTrigger, SELF_RUN_RESOURCE, step, type Primitive, type Selector } from "@intx/workflow";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
+import { CODE_REVIEW_STEP_TIMEOUT_MS, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, TRIAGE_MAIL_ACCEPT } from "@corbits/triage-contracts";
 import { HUB_WRITE } from "@corbits/triage-manager/actions/hub";
 import { READ_REPOSITORY } from "./actions/checkout.js";
 import { credentialBindingsFor, type CodeReviewAgents, type Sources } from "./agents.js";
 import { MODEL_ATTEMPTS } from "./failures.js";
 
 export const PR_CODE_REVIEW_ADDRESS = "pr-code-review";
-
-const TIMEOUT = 10 * 60_000;
 
 /** A model step whose call failed or whose answer couldn't be read asks again, waiting out a brief overload. */
 const MODEL_RETRY = { maxAttempts: MODEL_ATTEMPTS, initialBackoffMs: 5_000 };
@@ -21,7 +19,7 @@ export const CODE_REVIEW_PLACEMENT = { capabilities: [{ capability: "isolation:w
  * `sources`; its output is a `CheckedOut`.
  */
 export function checkoutAction(sources: Sources, input: Selector, after: readonly string[]) {
-  return action({ handler: "checkout", input, after, credentials: sources, effect: { requires: [READ_REPOSITORY] }, timeout: TIMEOUT });
+  return action({ handler: "checkout", input, after, credentials: sources, effect: { requires: [READ_REPOSITORY] }, timeout: CODE_REVIEW_STEP_TIMEOUT_MS });
 }
 
 /** Where a review's steps sit in a definition: every step id under `prefix`, the request read from `request`, after `after`. */
@@ -49,18 +47,18 @@ export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { pr
   return {
     [id("reviewInput")]: action({ handler: "reviewInput", input: request, ...(after && { after }) }),
     [id("checkout")]: checkoutAction(sources, { merge: [outputOf("reviewInput", "request.checkout"), { project: outputOf("reviewInput", "request"), fields: ["number"] }] }, [id("reviewInput")]),
-    [id("lint")]: action({ handler: "lint", input: { project: { from: `steps.${id("checkout")}.output` }, fields: ["path", "diff"] }, after: [id("checkout")], timeout: TIMEOUT }),
+    [id("lint")]: action({ handler: "lint", input: { project: { from: `steps.${id("checkout")}.output` }, fields: ["path", "diff"] }, after: [id("checkout")], timeout: CODE_REVIEW_STEP_TIMEOUT_MS }),
     [id("findersInput")]: action({ handler: "findersInput", input: stepsOf("reviewInput", "checkout"), after: [id("checkout")] }),
     [id("find")]: map({
       over: outputOf("findersInput", "bundles"),
-      step: step({ agent: finderAgent(), input: { from: "trigger.payload" }, inference: outputOf("reviewInput", "inference.diffFinder"), timeout: TIMEOUT, retry: MODEL_RETRY }),
+      step: step({ agent: finderAgent(), input: { from: "trigger.payload" }, inference: outputOf("reviewInput", "inference.diffFinder"), timeout: CODE_REVIEW_STEP_TIMEOUT_MS, retry: MODEL_RETRY }),
       after: [id("findersInput")],
     }),
     [id("candidates")]: action({ handler: "candidates", input: stepsOf("reviewInput", "find"), after: [id("find")] }),
     [id("checks")]: action({ handler: "checks", input: stepsOf("reviewInput", "checkout", "candidates"), after: [id("candidates")] }),
     [id("check")]: map({
       over: outputOf("checks", "checks"),
-      step: step({ agent: checkAgent, input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: TIMEOUT, retry: MODEL_RETRY }),
+      step: step({ agent: checkAgent, input: { from: "trigger.payload.text" }, inference: { from: "trigger.payload.inference" }, timeout: CODE_REVIEW_STEP_TIMEOUT_MS, retry: MODEL_RETRY }),
       after: [id("checks")],
     }),
     [id("review")]: action({ handler: "review", input: stepsOf("candidates", "checks", "check"), after: [id("check")] }),

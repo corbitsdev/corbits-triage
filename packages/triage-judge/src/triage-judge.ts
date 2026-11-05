@@ -1,12 +1,11 @@
 import { action, defineWorkflow, map, SELF_RUN_RESOURCE, step, type Selector } from "@intx/workflow";
 import { HUB_CREDENTIAL_HANDLE } from "@intx/types/credential-delivery";
-import { MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE } from "@corbits/triage-contracts";
+import { JUDGE_STEP_TIMEOUT_MS, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE } from "@corbits/triage-contracts";
 import { HUB_WRITE } from "@corbits/triage-manager/actions/hub";
 import { judgeAgent } from "@corbits/triage-workflows/agents";
 import { rulesMailAgent } from "./rules-mail.js";
 
-const TIMEOUT = 15 * 60_000;
-const STEP = { retry: { maxAttempts: 3, initialBackoffMs: 5_000, maxBackoffMs: 60_000 }, timeout: TIMEOUT } as const;
+const STEP = { retry: { maxAttempts: 3, initialBackoffMs: 5_000, maxBackoffMs: 60_000 }, timeout: JUDGE_STEP_TIMEOUT_MS } as const;
 
 /** A map's output is an array, which a merge cannot take, so it rides as `judge.output`. */
 const JUDGED = { project: { from: "steps" }, fields: ["judge"] } as const;
@@ -36,7 +35,7 @@ export function triageJudge({ id }: { id: string }) {
     ],
     mailAccept: { invoker: true },
     steps: {
-      rules: step({ agent: rulesMailAgent, input: { from: "trigger.payload" }, timeout: TIMEOUT }),
+      rules: step({ agent: rulesMailAgent, input: { from: "trigger.payload" }, timeout: JUDGE_STEP_TIMEOUT_MS }),
       judgeRequest: action({ handler: "judgeRequest", input: { from: "steps.rules.output" }, after: ["rules"] }),
       judge: map({ over: { from: "steps.judgeRequest.output.chunks" }, step: step({ agent: judgeAgent, input: { from: "trigger.payload" }, ...STEP }), after: ["judgeRequest"] }),
       parts: action({ handler: "parts", input: { merge: [RULED, JUDGED] }, after: ["judge"] }),
