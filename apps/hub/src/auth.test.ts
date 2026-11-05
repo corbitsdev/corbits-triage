@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { authMethods, isEmailAllowed } from "./auth.js";
-import { signInSettings, type HubEnv } from "./env.js";
+import { clientIpHeaders, signInSettings, type HubEnv } from "./env.js";
 
 const ALLOWED = ["@corbits.dev", "friend@example.com"];
 
@@ -21,4 +21,9 @@ test("an allowlist requires Google or email, and admits email/password only when
   expect(authMethods(signInSettings({ ...google, AUTH_ALLOWED_EMAILS: "@corbits.dev" }), false)).toEqual({ google: true, emailPassword: false, passwordReset: false, verificationEmail: false });
   expect(authMethods(signInSettings({ ...google, AUTH_ALLOWED_EMAILS: "@corbits.dev", SMTP_URL: "smtp://mail.test" } as HubEnv), true)).toEqual({ google: true, emailPassword: true, passwordReset: true, verificationEmail: true });
   expect(authMethods(signInSettings(google), false)).toEqual({ google: true, emailPassword: true, passwordReset: false, verificationEmail: false });
+});
+
+test("the caller's address comes from the header a detected host sets, and none elsewhere", () => {
+  expect(clientIpHeaders({ RAILWAY_ENVIRONMENT_ID: "env" })).toEqual(["x-real-ip"]);
+  expect(clientIpHeaders({})).toBeUndefined();
 });

@@ -130,6 +130,29 @@ describe("GitHub manifest authorization", () => {
     });
   }
 
+  test("callback returns 403 without exchanging the code when replacement authority is absent", async () => {
+    let exchanged = false;
+    async function exchangeSpy() {
+      exchanged = true;
+      return Response.json(conversion);
+    }
+    const integration = createGithubManifestIntegration({
+      db: { query: { principal: { findFirst: activeMember } } } as never,
+      cipher: {} as never,
+      getSession: signedInSession,
+      authorizeCredential: deny,
+      stateSecret: STATE_SECRET,
+      trustedPortalOrigins: [],
+      githubApiOrigin: GITHUB_API_ORIGIN,
+      publicOrigin: "https://hub.example.com",
+      fetchImpl: Object.assign(exchangeSpy, { preconnect: noPreconnect }),
+      now: fixedNow,
+    });
+    const response = await integration.callback(callbackRequest(signManifestState(STATE_KEY, setup)));
+    expect(response.status).toBe(403);
+    expect(exchanged).toBeFalse();
+  });
+
   test("requires JSON, an exact trusted Origin, and rejects cross-site mutations", () => {
     const trusted = new Set(["https://portal.example", "https://hub.example"]);
     expect(validManifestMutationRequest(mutationRequest({
