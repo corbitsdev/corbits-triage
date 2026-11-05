@@ -202,6 +202,16 @@ test("without the comment, a pull request closed before its verdict loses Triage
   expect(removed).toEqual(["Triage: Waiting for CI"]);
 });
 
+test("without the comment, a pull request closed after its verdict keeps the verdict label", async () => {
+  const pull = await open(labelsOnly, ++pulls);
+  await settle(labelsOnly, pull);
+  const [verdict] = labelled(labelsOnly.writes(pull.number));
+  await play(labelsOnly, pull, "close");
+  await settle(labelsOnly, pull);
+  expect(verdict).toBeDefined();
+  expect(labelsOnly.github.pull(labelsOnly.repo, pull.number).labels).toContain(verdict!);
+});
+
 test("without any posting grant, a pull request closed before its verdict is not written to", async () => {
   const number = ++pulls;
   const pull: Played = { number, heads: [sha(`${number}-0`)], draft: false };
