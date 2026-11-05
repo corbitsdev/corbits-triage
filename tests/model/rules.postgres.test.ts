@@ -33,6 +33,8 @@ const labellingReviewed = await modelStack(`${OWNER}/labelling-reviewed`, { pack
 const UNLABELLED: typeof PACK = { ...PACK, repo: `${OWNER}/unlabelled` };
 delete UNLABELLED.labels;
 const unlabelled = await modelStack(UNLABELLED.repo, { pack: UNLABELLED, automatic: ["labels", "comment"] });
+const MERGING: typeof PACK = { ...PACK, repo: `${OWNER}/merging`, actions: { ...PACK.actions, fail: [{ do: "merge" }] } };
+const merging = await modelStack(MERGING.repo, { pack: MERGING, automatic: ["labels", "comment", "merge"] });
 setDefaultTimeout(5 * 60_000);
 afterAll(async () => {
   await stack.stop();
@@ -41,6 +43,7 @@ afterAll(async () => {
   await labelling.stop();
   await labellingReviewed.stop();
   await unlabelled.stop();
+  await merging.stop();
 });
 
 let pulls = 0;
@@ -180,4 +183,16 @@ test("with labels off, Triage adds no label and takes an earlier verdict label o
   const removed = writes.filter((write) => write.method === "DELETE" && write.path.includes("/labels/")).map((write) => decodeURIComponent(write.path.split("/labels/")[1]!));
   expect(labelled(writes)).toEqual([]);
   expect(removed).toEqual([VERDICT_LABELS.pass]);
+});
+
+test("a merge waits while a reviewer requests changes", async () => {
+  const number = ++pulls;
+  const pull: Played = { number, heads: [sha(`${number}-0`)], draft: false };
+  const review = { id: 1, user: { login: "maya", type: "User" }, state: "CHANGES_REQUESTED", body: "", commit_id: pull.heads[0]!, comments: [] };
+  await merging.open({ ...pullOf(number, pull.heads[0]!), reviews: [review] });
+  await settle(merging, pull);
+  const writes = merging.writes(number);
+  expect(writes.filter((write) => write.path.endsWith("/merge"))).toEqual([]);
+  expect(merging.github.misses.filter((miss) => miss.endsWith("/merge"))).toEqual([]);
+  expect(commentsAndEarlyLabels(writes).comments.at(-1)).toContain("Changes are requested by maya.");
 });

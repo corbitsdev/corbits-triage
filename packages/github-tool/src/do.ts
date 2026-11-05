@@ -1,15 +1,13 @@
 import { errorText } from "@corbits/common";
-import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { ACTION_KINDS, mergeGate, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { checkRepo } from "@corbits/repo-read-tool/host-reads";
 import {
-  ciRefusal,
   codeownersForPr,
   getChecks,
   getReviews,
   latestDecisive,
   listIssueComments,
-  mergeableCi,
   missingFrom,
   readPr,
   REQUEST_CHANGES_DO_MARKER,
@@ -179,12 +177,10 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
     case "merge": {
       onHead(pr.sha, request, step);
       const ci = summarizeChecks(await getChecks(gh, repo, step.headSha));
-      if (!mergeableCi(ci, "ciOptional" in target)) throw new DoNotRunnableError(ciRefusal(ci));
       const reviews = await getReviews(gh, repo, number, login);
-      const requested = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
-      if (requested.length) throw new DoNotRunnableError(`changes are requested by ${requested.join(", ")}`);
-      const threads = await unresolvedThreadsHold(gh, repo, number, login);
-      if (threads !== undefined) throw new DoNotRunnableError(threads);
+      const changesRequestedBy = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
+      const gate = mergeGate({ ci, ciOptional: "ciOptional" in target, changesRequestedBy, threadsHold: await unresolvedThreadsHold(gh, repo, number, login) });
+      if (!gate.allowed) throw new DoNotRunnableError(gate.reason);
       // Execute runs before the mirror, and a protected branch refuses the merge while triage's own request on this head stands; one on an earlier head is the mirror's to take back.
       const ownRequest = reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha);
       const kept = ownRequest ? await takeBackOwnRequest(gh, { repo, number, login, sha: step.headSha }) : undefined;

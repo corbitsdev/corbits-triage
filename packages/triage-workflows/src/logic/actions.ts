@@ -1,7 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { ciRefusal, mergeableCi, missingFrom } from "@corbits/github-reads";
-import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, classificationSources, labelRules, LEVEL_LABELS, levelLabel, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type RepoSource, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
+import { missingFrom } from "@corbits/github-reads";
+import { alwaysHeld, authorGroupsOf, CATALOG_IDS, catalogCheckEnabled, checkName, ciRefusal, classificationSources, labelRules, LEVEL_LABELS, levelLabel, mergeGate, RISK_MARKS, ruleLabel, whenHolds, type ActionKind, type CheckPack, type RepoSource, type ResolvedTarget, type CiState, type Step, type StepSubject, teamSlug, type TriageEvent, type VerdictWord, VERDICTS } from "@corbits/triage-contracts";
 import { issueReference, type CheckResult, type PrFacts } from "./checks.js";
 import { authorFailures, bounded, inlineCode, isLabelledFinding } from "./render.js";
 import { compare, errorText } from "@corbits/common";
@@ -319,16 +319,20 @@ export function changesWanted(input: Pick<ActionInput, "checks" | "pack" | "fact
 
 /**
  * An approve that may not stand is skipped before the CI hold, so running checks never turn it into a held approval. A
- * merge the review threads hold is skipped before it too, rather than held, so no person can approve it past them and
- * a later pass writes it under the same effect id once they allow it.
+ * merge a reviewer's requested changes or the review threads hold is skipped before it too, rather than held, so no
+ * person can approve it past them and a later pass writes it under the same effect id once they allow it.
  */
-export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, { checks: ci, mergeHold }: Pick<PrFacts, "checks" | "mergeHold">): SuggestedAction[] {
+export function heldApprovals(actions: SuggestedAction[], approval: ApprovalHold | undefined, { checks: ci, changesRequested, mergeHold }: Pick<PrFacts, "checks" | "changesRequested" | "mergeHold">): SuggestedAction[] {
   return actions.map(function held(action): SuggestedAction {
     if (!("effectId" in action)) return action;
     if (action.kind === "approve" && approval !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, ...approval };
-    if (action.kind === "merge" && mergeHold !== undefined) return { list: action.list, index: action.index, kind: action.kind, skipped: true, waits: true, reason: mergeHold };
-    if (ci === "pending") return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
-    if (ci !== "success" && action.kind === "merge" && !mergeableCi(ci, "ciOptional" in action.target)) return { ...action, held: true, reason: `${ciRefusal(ci)}.`, ci };
+    if (action.kind === "merge") {
+      const gate = mergeGate({ ci, ciOptional: "ciOptional" in action.target, changesRequestedBy: changesRequested, threadsHold: mergeHold });
+      if (gate.allowed) return action;
+      if (gate.cause === "ci") return { ...action, held: true, reason: sentence(gate.reason), ci: gate.ci };
+      return { list: action.list, index: action.index, kind: action.kind, skipped: true, waits: true, reason: gate.cause === "threads" ? gate.reason : sentence(gate.reason) };
+    }
+    if (ci === "pending") return { ...action, held: true, reason: sentence(ciRefusal(ci)), ci };
     return action;
   });
 }

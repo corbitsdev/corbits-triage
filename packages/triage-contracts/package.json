@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./code-review": "./src/code-review.ts",
+    "./merge-gate": "./src/merge-gate.ts",
     "./paths": "./src/paths.ts",
     "./team": "./src/team.ts"
   },
