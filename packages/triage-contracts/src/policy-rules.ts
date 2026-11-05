@@ -3,7 +3,7 @@
 // mapping it onto the stored policy's shape, so the stored policy's reader stays the one authority on what a policy may hold.
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, ON_FAILS, PatternRuleSchema, POLICY_EVENTS, RepoName, RISK_MARKS, RISK_SIGNALS, SIZE_RULES, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
+import { CATALOG_IDS, CONVENTIONAL_FIELDS, CONVENTIONAL_TYPE, CustomId, defaultOnFail, Evidence, ISSUE_TRACKERS, Label, namedGroups, ON_FAILS, PatternRuleSchema, POLICY_EVENTS, RepoName, RISK_MARKS, RISK_SIGNALS, SIZE_RULES, stepListSchema, Text, TEXT_FIELDS, TEXT_MATCHES, VERDICTS, type CatalogId, type SizeRuleId } from "./check-pack.js";
 import { PATTERN_PRESETS } from "./code-patterns.js";
 import { fileProblems } from "./policy-file-problems.js";
 import { withAuthors, WORKFLOW_KEYS, WORKFLOW_PROPS, workflowProblems, type PathProblem, type PolicyWorkflow } from "./policy-workflow.js";
@@ -190,7 +190,7 @@ export function readRulesFile(raw: Record<string, unknown>): { policy: Record<st
     ...mapRules(rules, onFail),
     ...(actions && { actions }),
     ...(labels && { labels }),
-    ...(workflow.groups && { groups: workflow.groups }),
+    ...(workflow.groups && { groups: namedGroups(workflow.groups) }),
   };
   return { policy, workflow: withDecideAuthors(workflow) };
 }

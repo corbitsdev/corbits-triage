@@ -1155,19 +1155,24 @@ function distinctSteps(steps: Step[]): Step[] {
   });
 }
 
-/** A policy file, and mail stored before packs listed groups, hold a mapping; a mapping is read in its key order. */
+/** The policy file's groups as a pack lists them, in the order the file wrote them. */
+export function namedGroups(groups: Readonly<Record<string, FileGroup>>): NamedGroup[] {
+  return Object.entries(groups).map(([name, group]) => ({ name, ...group }));
+}
+
+/** A pack stored before groups were listed holds a mapping whose order storage may have changed, so only one group is safe to read. */
 function parseGroups(raw: unknown): NamedGroup[] | undefined {
   if (raw === undefined) return undefined;
-  if (Array.isArray(raw)) {
-    const groups = NamedGroupsSchema(raw);
-    if (groups instanceof type.errors) throw new Error(`Groups ${groups.summary}`);
-    if (new Set(groups.map((group) => group.name)).size !== groups.length) throw new Error("Group names must be unique.");
-    return groups;
+  if (!Array.isArray(raw)) {
+    const mapped = FileGroupsSchema(raw);
+    if (mapped instanceof type.errors) throw new Error(`Groups ${mapped.summary}`);
+    if (Object.keys(mapped).length > 1) throw new Error("This pull request's policy was stored before Triage kept group order. Use Triage again.");
+    return parseGroups(namedGroups(mapped));
   }
-  const groups = FileGroupsSchema(raw);
+  const groups = NamedGroupsSchema(raw);
   if (groups instanceof type.errors) throw new Error(`Groups ${groups.summary}`);
-  if (Object.keys(groups).some((name) => !GroupName.allows(name))) throw new Error("Group names must be lowercase words joined by hyphens.");
-  return Object.entries(groups).map(([name, group]) => ({ name, ...group }));
+  if (new Set(groups.map((group) => group.name)).size !== groups.length) throw new Error("Group names must be unique.");
+  return groups;
 }
 
 function parseLabels(raw: unknown): VerdictLabels | undefined {

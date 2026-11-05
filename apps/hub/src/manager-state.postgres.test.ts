@@ -129,5 +129,8 @@ test("PostgreSQL: a pull request's mail keeps the policy's group order, so an au
     const pack = readCheckPack(taken.events[0].event.payload.pack, GITHUB.repo);
     const author = { login: "octocat", kind: "CONTRIBUTOR" as const, teams: [] };
     expect(authorGroupsOf(pack.groups ?? [], author)).toEqual(["approved", "external", "everyone"]);
+    await recordEvent(db, TENANT, GITHUB, "d2", { type: "webhook", head: "h2", payload: { kind: "pr", headSha: "h2", pack: { ...policy, groups: { approved: { users: ["octocat"] }, outside: { association: ["CONTRIBUTOR"] } } } } });
+    const [stored] = await db.execute<{ state: { payload: { pack: unknown } } }>(sql`SELECT state FROM corbits_triage.manager_state WHERE key LIKE ${"%d2"}`);
+    expect(() => readCheckPack(stored.state.payload.pack, GITHUB.repo)).toThrow("stored before Triage kept group order");
   });
 }, 120_000);
