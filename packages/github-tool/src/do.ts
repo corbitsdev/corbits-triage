@@ -102,6 +102,15 @@ function closedOutcome(kind: ActionKind, merged: boolean): DoOutcome {
   throw new DoNotRunnableError(NOT_OPEN);
 }
 
+/** Reads the head's CI, each reviewer's latest review and the open review threads, and asks the merge gate. */
+export async function readMergeGate(gh: GithubFetch, { repo, number, sha, login, ciOptional }: { repo: string; number: number; sha: string; login: string; ciOptional: boolean }) {
+  const ci = summarizeChecks(await getChecks(gh, repo, sha));
+  const reviews = await getReviews(gh, repo, number, login);
+  const changesRequestedBy = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
+  const gate = mergeGate({ ci, ciOptional, changesRequestedBy, threadsHold: await unresolvedThreadsHold(gh, repo, number, login) });
+  return { gate, reviews };
+}
+
 /** Writes one Do unless GitHub already shows it, so a repeat after a lost audit write changes nothing. `login` names the App's bot account, whose reviews are triage's own. */
 export async function executeDo(gh: GithubFetch, { request, step }: DoInput, login: string): Promise<DoOutcome> {
   const { repo, number } = request;
@@ -176,10 +185,7 @@ export async function executeDo(gh: GithubFetch, { request, step }: DoInput, log
     // CI, reviews and review threads are read again here because a held merge can be approved long after its verdict; branch protection stays the backstop.
     case "merge": {
       onHead(pr.sha, request, step);
-      const ci = summarizeChecks(await getChecks(gh, repo, step.headSha));
-      const reviews = await getReviews(gh, repo, number, login);
-      const changesRequestedBy = [...latestDecisive(reviews)].filter(([, state]) => state === "CHANGES_REQUESTED").map(([reviewer]) => reviewer);
-      const gate = mergeGate({ ci, ciOptional: "ciOptional" in target, changesRequestedBy, threadsHold: await unresolvedThreadsHold(gh, repo, number, login) });
+      const { gate, reviews } = await readMergeGate(gh, { repo, number, sha: step.headSha, login, ciOptional: "ciOptional" in target });
       if (!gate.allowed) throw new DoNotRunnableError(gate.reason);
       // Execute runs before the mirror, and a protected branch refuses the merge while triage's own request on this head stands; one on an earlier head is the mirror's to take back.
       const ownRequest = reviews.some((review) => review.triageRequest && review.state === "CHANGES_REQUESTED" && review.commitId === step.headSha);
