@@ -1,5 +1,5 @@
 /** The longest one attempt of a judge's step may take. */
-export const JUDGE_STEP_TIMEOUT_MS = 15 * 60_000;
+export const JUDGE_STEP_TIMEOUT_MS = 5 * 60_000;
 /** The longest a judge can run: its rules, then its model checks, then their parts, one attempt of each. */
 export const JUDGE_RUN_MS = 3 * JUDGE_STEP_TIMEOUT_MS;
 
