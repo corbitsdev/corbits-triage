@@ -36,6 +36,5 @@ bun --conditions=intx-src test packages/triage-workflows
 
 ## Docs
 
-- [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#triage-pipeline)
-- [DECISION_MODEL.md](../../docs/DECISION_MODEL.md)
+- [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
 - [evals/SCAN.md](evals/SCAN.md)

@@ -29,7 +29,7 @@ non-callable destinations are configuration errors, not disabled delivery. Both 
 empty arrays and derive the logging mode from validated `NODE_ENV`. No production provider, credentials, external-delivery
 environment switches, Slack/email clients or Sentry clients are configured. Adapters must return promptly
 and do asynchronous I/O, honor cancellation where possible, and must not perform blocking CPU work. JavaScript cannot
-preempt blocking provider code. See [delivery and correlation limits](../../docs/ARCHITECTURE.md#hub-observability).
+preempt blocking provider code.
 
 ## Test
 
@@ -42,6 +42,5 @@ bun --conditions=intx-src test apps/hub
 ## Docs
 
 - [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
-- [IMPLEMENTATION.md](../../docs/IMPLEMENTATION.md)
 - [SELF_HOST.md](../../docs/SELF_HOST.md)
 - [BITBUCKET_DATACENTER.md](../../docs/BITBUCKET_DATACENTER.md)

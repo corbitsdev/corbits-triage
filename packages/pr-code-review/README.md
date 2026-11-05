@@ -82,6 +82,5 @@ bun --conditions=intx-src test packages/pr-code-review packages/pr-code-review-a
 
 ## Docs
 
-- [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#code-review-pipeline): how the hub feeds reviews in and sends them to
-  the host
-- [PRODUCT.md](../../docs/PRODUCT.md#code-review)
+- [ARCHITECTURE.md](../../docs/ARCHITECTURE.md#how-a-pull-request-flows): where code review runs and how its findings reach the pull request
+- [User Manual](../../docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#code-review)

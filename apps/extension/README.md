@@ -84,4 +84,3 @@ It saves a screenshot of the sidebar block to `.output/e2e/settings-extension-pr
 ## Docs
 
 - [User Manual](../../docs/Corbits%20Triage%20User%20Manual/Corbits%20Triage%20User%20Manual.md#browser-extension)
-- [PRODUCT.md](../../docs/PRODUCT.md)

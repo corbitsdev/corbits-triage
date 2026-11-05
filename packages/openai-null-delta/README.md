@@ -16,7 +16,3 @@ A sidecar operator opts in per provider through Interchange's `SIDECAR_ADAPTER_M
 ```sh
 bun --conditions=intx-src test packages/openai-null-delta
 ```
-
-## Docs
-
-- [IMPLEMENTATION.md](../../docs/IMPLEMENTATION.md#packages)
