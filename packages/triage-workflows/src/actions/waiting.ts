@@ -1,7 +1,11 @@
-import { ownedLabels, WAITING_STATUS, type Awaits, type KeptVerdict, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import type { EffectContext } from "@intx/workflow";
+import { ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_STATUS, type Awaits, type KeptVerdict, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
 import { progressComment, type WaitingMark } from "../logic/render.js";
 
 type Head = { repo: string; number: number; headSha: string };
+
+/** `mark` is absent where triage does not label on GitHub, so nothing is written. */
+export type UnreadyOutput = { unready: true; mark?: WaitingMark };
 
 /**
  * The waiting marker on `headSha` while its verdict waits for `awaits`: the in-progress comment naming them where triage
@@ -28,4 +32,19 @@ export function closedMark(source: RepoSource, { repo, number, headSha, merged }
   const owned = source === "github" && automatic.includes("labels") ? ownedLabels(labels) : [];
   const args = { repo, number, onHead: headSha, labels: [], owned, closedOut: { merged, comment }, ...(appLogin && { appLogin }) };
   return { effectId: `closed:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
+}
+
+/**
+ * The first pass on a GitHub head takes the earlier verdict's label off before facts; a later event on the same head
+ * writes no label, and the head's own verdict puts its label on.
+ */
+export async function unready(input: unknown, _ctx: EffectContext, _signal: AbortSignal): Promise<UnreadyOutput> {
+  const { request, trusted } = trustedRequestOf(input);
+  if (!request || !trusted || request["kind"] !== "pr" || request["newHead"] !== true || repoSourceOf(request["repoSource"]) !== "github") return { unready: true };
+  const { repo, prNumber, headSha, automatic } = request;
+  const pack = parseCheckPack(request["pack"] ?? request["checkPack"]);
+  if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !automatic.includes("labels") || !pack) return { unready: true };
+  const appLogin = typeof request["appLogin"] === "string" ? request["appLogin"] : undefined;
+  const args = { repo, number: prNumber, onHead: headSha, labels: [], owned: Object.values(pack.labels), ...(appLogin && { appLogin }) };
+  return { unready: true, mark: { effectId: `unready:${repo.replace("/", "--")}:${prNumber}:${headSha}`, repoSource: "github", args } };
 }

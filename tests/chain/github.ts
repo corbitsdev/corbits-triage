@@ -34,7 +34,8 @@ export type Pull = {
   /** Absent while the pull request is open. */
   closed?: "merged" | "closed";
 };
-export type Write = { method: string; path: string; body: unknown };
+/** `head` is the pull request's head when GitHub received the write, for a write to a pull request. */
+export type Write = { method: string; path: string; body: unknown; head?: string };
 
 export function sha(seed: string): string {
   return new Bun.CryptoHasher("sha1").update(seed).digest("hex");
@@ -235,7 +236,9 @@ export function fakeGithub() {
       const body = text ? JSON.parse(text) as Record<string, unknown> : {};
       const answer = writeRoute(repo, named![2]!, req.method, body);
       if (answer) {
-        writes.push({ method: req.method, path: pathname, body });
+        const pulled = /^\/(?:pulls|issues)\/(\d+)\//.exec(named![2]!);
+        const head = pulled ? repo.pulls.get(Number(pulled[1]))?.head : undefined;
+        writes.push({ method: req.method, path: pathname, body, ...(head && { head }) });
         return answer;
       }
     }

@@ -552,18 +552,6 @@ describe("pr-triage body", () => {
     expect(github.comments.filter((c) => c.body.includes("corbits-do:"))).toEqual([]);
   });
 
-  test("a new head keeps the earlier verdict's label while it waits, and its own verdict replaces it", async () => {
-    const pack: CheckPack = { ...emptyPack(REPO), checks: { "ci-green": { enabled: true } } };
-    const github = fakeGithub({ labels: ["bug", "Triage: Not Ready"] });
-    github.pr.head = "def0000000000000000000000000000000000000";
-    github.pr.ci = "pending";
-    await triage(pack, { github });
-    expect(github.labels).toEqual(["bug", "Triage: Not Ready"]);
-    github.pr.ci = "success";
-    await triage(pack, { github });
-    expect(github.labels).toEqual(["bug", "Triage: Ready"]);
-  });
-
   test("CI still running holds the head with the in-progress comment and no Dos; once CI completes the verdict replaces the comment in place", async () => {
     const github = fakeGithub();
     github.pr.ci = "pending";

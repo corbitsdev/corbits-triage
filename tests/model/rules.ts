@@ -86,22 +86,39 @@ function onceEach(writes: readonly Write[]): string[] {
 }
 
 /**
- * R3 for labels, over every write the pull request received: Triage adds no label but a verdict's or Failed to Run, and
- * adds one only when it differs from the last it added, so a verdict's label is written once per verdict.
+ * R3 for labels, over every write the pull request received: Triage adds no label but a verdict's or Failed to Run. A
+ * new head stands with no verdict label until its own verdict or verdict label, and once a head has a verdict its labels are written
+ * again only by a verdict that differs from the one before.
  */
 function labelPerVerdict(writes: readonly Write[]): string[] {
   const breaks: string[] = [];
   const verdicts = [...Object.values(VERDICT_LABELS), FAILED_LABEL];
-  let last: string | undefined;
-  for (const { method, path, body } of writes) {
-    if (method !== "POST" || !path.endsWith("/labels")) continue;
-    for (const label of (body as { labels: string[] }).labels) {
-      if (!verdicts.includes(label)) {
-        if (TRIAGE_LABELS.includes(label)) breaks.push(`R3: ${label} was added`);
-        continue;
+  const on = new Set<string>();
+  const decided = new Map<string, string>();
+  const labelledOn = new Set<string>();
+  let changed = false;
+  for (const { method, path, body, head } of writes) {
+    const text = (body as { body?: unknown } | null)?.body;
+    const labelled = path.endsWith("/labels") || path.includes("/labels/");
+    if ((method === "POST" || method === "PATCH") && path.includes("/comments") && typeof text === "string" && isTriageComment(text) && !HTML_MARKERS.isSuperseded(text)) {
+      const header = HTML_MARKERS.headerOf(text);
+      if (header?.head && VERDICT_TITLES[header.verdict] === text.split("\n")[1]) {
+        changed = decided.get(header.head) !== header.verdict;
+        decided.set(header.head, header.verdict);
+      } else if (head && !decided.has(head) && !labelledOn.has(head) && verdicts.some((label) => on.has(label))) {
+        breaks.push(`R3: a verdict label stands on ${head} before its verdict`);
       }
-      if (label === last) breaks.push(`R3: ${label} was added again with no other verdict between`);
-      last = label;
+    } else if (labelled && head && decided.has(head) && !changed) {
+      breaks.push(`R3: ${method} ${path} on ${head} with its verdict unchanged`);
+    }
+    if (method === "POST" && path.endsWith("/labels")) {
+      for (const label of (body as { labels: string[] }).labels) {
+        if (!verdicts.includes(label) && TRIAGE_LABELS.includes(label)) breaks.push(`R3: ${label} was added`);
+        if (verdicts.includes(label) && head) labelledOn.add(head);
+        on.add(label);
+      }
+    } else if (method === "DELETE" && path.includes("/labels/")) {
+      on.delete(decodeURIComponent(path.slice(path.lastIndexOf("/") + 1)));
     }
   }
   return breaks;
