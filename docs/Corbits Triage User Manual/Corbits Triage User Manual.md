@@ -362,7 +362,7 @@ Triage reads a pull request's title, description, commit messages and file names
 
 Rules set to `onFail: label` take no part in any of these steps: they only label and note the pull request. A policy whose only Judgement rules only label is decided as one with none.
 
-Draft pull requests are not decided at all, and a closed pull request gets no verdict. When a pull request is merged or closed before Triage decides its last commit, Triage's comment on it says **Merged before Triage finished** or **Closed before Triage finished** with that commit's short id, and on GitHub Triage's labels come off it. Where Triage may post on GitHub but does not comment, only its old waiting labels come off. A verdict Triage already gave on the last commit stays, with its labels. On Bitbucket Data Center the commit's Corbits Triage build status stays as it was.
+Draft pull requests are not decided at all, and a closed pull request gets no verdict. When a pull request is merged or closed before Triage decides its last commit, Triage's comment on it says **Merged before Triage finished** or **Closed before Triage finished** with that commit's short id, and on GitHub Triage's labels come off it. Where Triage may post on GitHub but does not comment, only its old, retired labels come off. A verdict Triage already gave on the last commit stays, with its labels. On Bitbucket Data Center the commit's Corbits Triage build status stays as it was.
 
 ### Actions
 

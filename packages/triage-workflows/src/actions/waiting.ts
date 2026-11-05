@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { ownedLabels, parseCheckPack, RETIRED_LABELS, repoSourceOf, trustedRequestOf, WAITING_STATUS, type Awaits, type KeptVerdict, type RepoSource, type VerdictLabels } from "@corbits/triage-contracts";
+import { ownedLabels, parseCheckPack, postingKinds, RETIRED_LABELS, repoSourceOf, trustedRequestOf, WAITING_STATUS, type Awaits, type KeptVerdict, type RepoSource, type VerdictLabels } from "@corbits/triage-contracts";
 import { progressComment, type WaitingMark } from "../logic/render.js";
 
 type Head = { repo: string; number: number; headSha: string };
@@ -24,11 +24,11 @@ export function waitingMark(source: RepoSource, { repo, number, headSha }: Head,
 /**
  * What a pull request that merged or closed on `headSha` before its verdict shows: where triage comments, its comment
  * says Triage did not finish, and on GitHub Triage's labels come off. Without its comment a verdict on the head cannot be
- * told from a stale one, so only the retired labels come off, wherever the workspace grants it any posting.
+ * told from a stale one, so only the retired labels come off, where the workspace lets it post.
  */
 export function closedMark(source: RepoSource, { repo, number, headSha, merged }: Head & { merged: boolean }, automatic: readonly unknown[], labels: VerdictLabels | undefined, appLogin: string | undefined): WaitingMark | undefined {
   const comment = automatic.includes("comment");
-  if (!comment && (source !== "github" || automatic.length === 0)) return undefined;
+  if (!comment && (source !== "github" || !postingKinds(source, labels).some((kind) => automatic.includes(kind)))) return undefined;
   const owned = source === "github" ? closedOwned(comment, labels) : [];
   const args = { repo, number, onHead: headSha, labels: [], owned, closedOut: { merged, comment }, ...(appLogin && { appLogin }) };
   return { effectId: `closed:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
