@@ -11,7 +11,7 @@ import { deploy, managerMailOf } from "./hub.js";
 import { Reviewer, storedReviewer, TakeOutput } from "./manager.js";
 
 /** How long the manager waits for a code review it deployed, from its deploy to its report. */
-export const REVIEW_DEADLINE_MS = 60 * 60_000;
+export const REVIEW_DEADLINE_MS = 15 * 60_000;
 /** How many code reviews of one head may fail before later passes on it deploy no other. */
 const REVIEW_ATTEMPTS = 2;
 

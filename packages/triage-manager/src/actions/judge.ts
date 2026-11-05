@@ -11,7 +11,7 @@ import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
 import { ClearedVerdict } from "./review-clean.js";
 
 /** How long the manager waits for a judge it deployed, from its deploy to its report. */
-export const JUDGE_DEADLINE_MS = 60 * 60_000;
+export const JUDGE_DEADLINE_MS = 5 * 60_000;
 
 const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: type("object[]").as<Item[]>(), batch: "boolean" } } });
 
