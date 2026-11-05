@@ -105,7 +105,8 @@ function waitingNamed(writes: readonly Write[]): string[] {
     const labels = awaits.map((awaited) => WAITING_LABELS[awaited]).join(", ") || "no waiting label";
     const progress = shown.includes(PROGRESS_TITLE);
     if (!progress && awaits.length > 0) breaks.push(`R7: ${labels} beside a verdict`);
-    if (progress && (awaits.length === 0 || !shown.endsWith(progressComment(awaits)))) breaks.push(`R7: ${labels} beside ${shown.slice(shown.indexOf(PROGRESS_TITLE))}`);
+    // What the comment already shows of the verdict sits between its title and what it waits for.
+    if (progress && (awaits.length === 0 || !shown.endsWith(progressComment(awaits).slice(PROGRESS_TITLE.length)))) breaks.push(`R7: ${labels} beside ${shown.slice(shown.indexOf(PROGRESS_TITLE))}`);
   }
   for (const { method, path, body } of writes) {
     const text = (body as { body?: unknown } | null)?.body;

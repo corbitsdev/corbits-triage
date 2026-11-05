@@ -853,9 +853,9 @@ export function awaitsText(awaits: readonly Awaits[]): string {
   return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]!;
 }
 
-/** The one comment while the verdict waits, naming what it waits for; the verdict replaces it in place. */
-export function progressComment(awaits: readonly Awaits[]): string {
-  return `**Triage: In progress**\n\nTriage is waiting for ${awaitsText(awaits)} before it decides. This comment shows the verdict once it has.`;
+/** The one comment while the verdict waits, naming what it waits for, under `known`, what it already has; the verdict replaces it in place. */
+export function progressComment(awaits: readonly Awaits[], known?: string): string {
+  return ["**Triage: In progress**", ...(known ? [known] : []), `Triage is waiting for ${awaitsText(awaits)} before it decides. This comment shows the verdict once it has.`].join("\n\n");
 }
 
 /** `effectId` names the marker on its head; the write itself is a no-op where the head already shows it, and skipped once the head moved. */

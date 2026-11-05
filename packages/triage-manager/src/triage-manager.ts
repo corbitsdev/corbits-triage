@@ -56,12 +56,12 @@ function reviewSteps(sources: Sources): Record<string, Primitive> {
     reviewMailed: action({ handler: "reviewMailed", input: stepsOf("deployReview", "mailReview"), after: ["mailReview"] }),
     reviewSent: gate({ when: { from: "steps.reviewMailed.output.post" }, then: "mirrorRules", else: "progressReviewing", after: ["reviewMailed"] }),
     // Progress that follows the pass's verdict keeps it where that is already posted on the head.
-    progressReviewing: progressAction(sources, ["cleared", "reviewMailed"], ["reviewSent"]),
+    progressReviewing: progressAction(sources, ["evaluateRules", "cleared", "reviewMailed"], ["reviewSent"]),
     // A pass that mailed its review records it as a reviewer; a skipped step is missing from every selector, so this branch has its own done.
     doneReviewing: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules", "reviewMailed")] }, ["progressReviewing"]),
     posting: gate({ when: { from: "steps.reviewScope.output.post" }, then: "mirrorRules", else: "progressReviewOut", after: ["reviewing"] }),
     // A code reviewer already out on the head: the pass's verdict is kept where it is already posted on the head.
-    progressReviewOut: progressAction(sources, ["cleared"], ["posting"]),
+    progressReviewOut: progressAction(sources, ["evaluateRules", "cleared"], ["posting"]),
     doneReviewOut: hubAction("done", { merge: [MAIL, stepsOf("take", "findingThreads", "approvals", "rules")] }, ["progressReviewOut"]),
     postReview: action({ handler: "postReview", input: { merge: [MAIL, stepsOf("take", "reviewScope")] }, after: ["mirrorRules"], credentials: sources, effect: { requires: [WRITE_PULL_REQUEST] } }),
   };

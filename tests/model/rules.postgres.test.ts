@@ -2,8 +2,10 @@
 // events on a pull request, each on a pull request of its own, so no reset is needed between them.
 import { afterAll, expect, mock, setDefaultTimeout, test } from "bun:test";
 import { errorText } from "@corbits/common";
-import { emptyPack } from "@corbits/triage-contracts";
-import { labelled, OWNER } from "../chain/github.ts";
+import { isTriageComment } from "@corbits/github-reads";
+import { HTML_MARKERS, VERDICT_LABELS, emptyPack } from "@corbits/triage-contracts";
+import { CODE_REVIEW_RUNNING } from "@corbits/triage-workflows/logic/render";
+import { labelled, OWNER, type Write } from "../chain/github.ts";
 import { LETTERS, open, play, settle, walk, type Letter } from "./events.ts";
 import { broken, verdictKept } from "./rules.ts";
 import { MANAGER_RELEASE, modelStack, REVIEW_RELEASE } from "./stack.ts";
@@ -111,6 +113,32 @@ test(`${WALKS} seeded walks of ${WALK_LENGTH} events keep the rules`, async () =
     found.push(...breaks.map((rule) => `seed ${seed}, ${replayOf(played)}: ${rule}`));
   }
   expect(found).toEqual([]);
+});
+
+/** Each Triage comment written, in order, and the verdict labels added before the first that is not in progress. */
+function commentsAndEarlyLabels(writes: readonly Write[]): { comments: string[]; early: string[] } {
+  const comments: string[] = [];
+  const early: string[] = [];
+  for (const { method, path, body } of writes) {
+    const text = (body as { body?: unknown } | null)?.body;
+    if ((method === "POST" || method === "PATCH") && path.includes("/comments") && typeof text === "string" && isTriageComment(text) && !HTML_MARKERS.isSuperseded(text)) comments.push(text);
+    const verdictUp = comments.some((comment) => !comment.includes("**Triage: In progress**"));
+    if (!verdictUp && method === "POST" && path.endsWith("/labels")) early.push(...(body as { labels: string[] }).labels.filter((label) => Object.values(VERDICT_LABELS).includes(label)));
+  }
+  return { comments, early };
+}
+
+test("with code review on, the in-progress comment shows the verdict's results while the review runs, and the verdict label waits for the verdict", async () => {
+  const missed = diesAfterMail.github.misses.length;
+  const pull = await open(diesAfterMail, ++pulls);
+  await play(diesAfterMail, pull, "ci-success");
+  await settle(diesAfterMail, pull);
+  const { comments, early } = commentsAndEarlyLabels(diesAfterMail.writes(pull.number));
+  const running = comments.find((comment) => comment.includes("**Triage: In progress**") && comment.includes(CODE_REVIEW_RUNNING));
+  const verdictBody = comments.at(-1)!.split("\n\n").slice(1).join("\n\n");
+  expect(running).toContain(verdictBody);
+  expect(early).toEqual([]);
+  expect(await broken(diesAfterMail, pull, missed)).toEqual([]);
 });
 
 function shipits(model: typeof stack, number: number): string[] {

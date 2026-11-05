@@ -37,11 +37,11 @@ function marked(source: RepoSource, awaits: readonly Awaits[], automatic: readon
  * The waiting marker on `headSha` while its verdict waits for `awaits`: the label of each, CI's only where the head has
  * checks, and the in-progress comment naming them where triage comments; none where triage writes neither. With
  * `keepVerdict`, the host keeps that verdict, under that policy, where it is already posted on the head rather than
- * writing this over it, labels included.
+ * writing this over it, labels included. `known` is what the comment already shows of the verdict.
  */
-export function waitingMark(source: RepoSource, { repo, number, headSha, checks, events = [] }: { repo: string; number: number; headSha: string; checks: PrFacts["checks"]; events?: readonly unknown[] }, awaits: readonly Awaits[], automatic: readonly unknown[], labels: Record<VerdictWord, string>, appLogin: string | undefined, keepVerdict?: Omit<KeptVerdict, "head">): WaitingMark | undefined {
+export function waitingMark(source: RepoSource, { repo, number, headSha, checks, events = [] }: { repo: string; number: number; headSha: string; checks: PrFacts["checks"]; events?: readonly unknown[] }, awaits: readonly Awaits[], automatic: readonly unknown[], labels: Record<VerdictWord, string>, appLogin: string | undefined, keepVerdict?: Omit<KeptVerdict, "head">, known?: string): WaitingMark | undefined {
   const pull = { repo, number, onHead: headSha };
-  const comment = automatic.includes("comment") ? { comment: progressComment(awaits), ...(keepVerdict && { keepVerdict }) } : {};
+  const comment = automatic.includes("comment") ? { comment: progressComment(awaits, known), ...(keepVerdict && { keepVerdict }) } : {};
   const labelled = marked(source, awaits, automatic, events);
   if (!labelled && !("comment" in comment)) return undefined;
   const waiting = awaits.filter((awaited) => awaited !== "ci" || checks !== "none").map((awaited) => WAITING_LABELS[awaited]);

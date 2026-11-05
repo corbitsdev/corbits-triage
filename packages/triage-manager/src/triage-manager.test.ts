@@ -65,7 +65,7 @@ const CLAIMED = new Date().toISOString();
 const PASS = { outcome: "pass", pass: { id: "pass_1", head: HEAD, events: ["evt_1"], takenAt: "2026-10-25T00:00:00.000Z", takes: 1 }, events: [mailEvent(HEAD, REQUEST)], resumed: false, threads: [], request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z", claimedAt: CLAIMED };
 /** The one in-progress comment, posted or edited in place, naming what the head waits for. */
 function inProgress(awaits: string) {
-  return expect.objectContaining({ body: { body: expect.stringContaining(`**Triage: In progress**\n\nTriage is waiting for ${awaits} before it decides.`) } });
+  return expect.objectContaining({ body: { body: expect.stringContaining(`Triage is waiting for ${awaits} before it decides.`) } });
 }
 
 const IDLE = { outcome: "idle", request: REQUEST, reviewers: [], headSince: "2026-10-25T00:00:00.000Z", claimedAt: CLAIMED };
