@@ -27,6 +27,9 @@ const EXTENDS = "acme/extends";
 const PUSHED = "acme/pushed";
 const BITBUCKET_PUSHED = "PROJ/pushed";
 const PATCHED = "acme/patched";
+const BOTH = "acme/both";
+const UNHEARD = "acme/unheard";
+const BITBUCKET_UNHEARD = "PROJ/unheard";
 const MEMBER = { tenantId: TENANT, principalId: "prn_user" };
 /** Uses the host credential, but may neither create grants nor manage the workspace. */
 const USER = { tenantId: TENANT, principalId: "prn_plain" };
@@ -181,7 +184,7 @@ beforeAll(async () => {
   handle = createDB(config);
   const db = handle.db;
   const cipher = createEnvKeyCredentialCipher(new Uint8Array(32).fill(7));
-  const repos = [...[FROM_FILE, STARTER, PATCHED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }];
+  const repos = [...[FROM_FILE, STARTER, PATCHED, PUSHED].map((name) => ({ name, connected: true, enabled: true, installationId: 1 })), { name: SHARED, connected: true, enabled: false, installationId: 1 }, { name: EXTENDS, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_PUSHED, source: "bitbucket-datacenter", connected: true, enabled: true, defaultBranch: "main" }, { name: BOTH, connected: true, enabled: true, installationId: 1 }, { name: BOTH, source: "bitbucket-datacenter", connected: true, enabled: true }, { name: UNHEARD, connected: true, enabled: true, installationId: 1 }, { name: BITBUCKET_UNHEARD, source: "bitbucket-datacenter", connected: true, enabled: true }];
   await db.insert(schema.tenant).values({ id: TENANT, name: "Policy file", slug: "policy-file", domain: "policy-file.test", config: { corbitsTriage: { repos } } });
   await db.insert(schema.principal).values([
     { id: "prn_user", tenantId: TENANT, kind: "user", refId: "usr_user", status: "active" },
@@ -383,6 +386,39 @@ test("PostgreSQL: a policy file extending another repository runs over that repo
   onMain(SHARED, YML, "rules: [", "shared3");
   await policyFile.onPush(TENANT, SHARED, "github");
   expect(await readPack(EXTENDS)).toEqual({ status: "invalid", path: YML, reason: expect.stringContaining(`${SHARED}'s policy file is refused: Line 1: The policy file is not YAML`), automatic: [] });
+});
+
+test("PostgreSQL: a name both hosts hold is read only for the host asked, a route naming the host reads it, one naming no host refuses it, and its upgrade row names its host", async () => {
+  onMain(BOTH, YML, FILE, "both1");
+  await policyFile.onPush(TENANT, BOTH, "github");
+  expect(await readPack(BOTH)).toMatchObject({ status: "ok", source: { file: { path: YML, sha: "both1" } } });
+  expect((await policyFile.fileRoute({ repo: BOTH }, MEMBER)).status).toBe(409);
+  expect((await (await policyFile.fileRoute({ repo: BOTH, source: "github" }, MEMBER)).json()) as unknown).toMatchObject({ file: { path: YML, sha: "both1" } });
+  expect(await upgrades()).toContainEqual(expect.objectContaining({ repo: BOTH, source: "bitbucket-datacenter" }));
+});
+
+test("PostgreSQL: where no webhook is heard a merged policy file is read within a minute without a push, and kept while the webhook is heard", async () => {
+  const start = Date.now();
+  function after(ms: number): void {
+    setSystemTime(new Date(start + ms));
+  }
+  try {
+    for (const [repo, source] of [[UNHEARD, "github"], [BITBUCKET_UNHEARD, "bitbucket-datacenter"]] as const) {
+      after(0);
+      expect(await readPack(repo, source)).toEqual({ status: "missing" });
+      onMain(repo, YML, FILE, `${source}1`);
+      after(61_000);
+      expect(await readPack(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}1` } } });
+      activity.heard(TENANT, source, repo);
+      onMain(repo, YML, FILE, `${source}2`);
+      after(122_000);
+      expect(await readPack(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}1` } } });
+      after(61_000 + 30 * 60_000);
+      expect(await readPack(repo, source)).toMatchObject({ status: "ok", source: { file: { sha: `${source}2` } } });
+    }
+  } finally {
+    setSystemTime();
+  }
 });
 
 const PATCH_FILE = `# Corbits Triage policy.

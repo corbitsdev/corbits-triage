@@ -182,10 +182,17 @@ function bridge({ refreshed = [], ...overrides }: Partial<BridgeDeps> & { sent?:
 }
 
 describe("loadBridgeHook", () => {
+  test("loads an active tenant-owned hook credential", async () => {
+    const hook = await loadBridgeHook(stubDb([hookRow()]), stubCipher, HOOK_ID, undefined);
+    expect(hook).toMatchObject({ credentialId: HOOK_ID, tenantId: TENANT_ID, secret: SECRET, workflow: "pr-triage" });
+  });
   test("rejects revoked, personal and non-webhook credentials", async () => {
     expect(await loadBridgeHook(stubDb([hookRow({ status: "revoked" })]), stubCipher, HOOK_ID, undefined)).toBeUndefined();
     expect(await loadBridgeHook(stubDb([hookRow({ principalId: "prn_1" })]), stubCipher, HOOK_ID, undefined)).toBeUndefined();
     expect(await loadBridgeHook(stubDb([hookRow({ metadata: {} })]), stubCipher, HOOK_ID, undefined)).toBeUndefined();
+  });
+  test("name lookup without a tenant hint misses", async () => {
+    expect(await loadBridgeHook(stubDb([hookRow()]), stubCipher, "github-hook", undefined)).toBeUndefined();
   });
 });
 
@@ -206,6 +213,13 @@ describe("bridge handler", () => {
         checks: { ci: true, conflicts: true },
       }),
     })]);
+  });
+
+  test("unknown hook is 404", async () => {
+    const sent: Sent[] = [];
+    const res = await bridge({ db: stubDb([]), sent })(githubRequest(prPayload), TARGET);
+    expect(res.status).toBe(404);
+    expect(sent).toHaveLength(0);
   });
 
   test("oversize bodies are 413 without delivery", async () => {
@@ -307,6 +321,23 @@ describe("bridge handler", () => {
     const other = JSON.stringify({ ...JSON.parse(prPayload), action: "synchronize", sender: { type: "Bot", login: "dependabot[bot]" } });
     expect(await (await bridge({ sent })(githubRequest(other, { delivery: "del-2" }), TARGET)).json()).toEqual({ status: "queued" });
     expect(sent).toHaveLength(1);
+  });
+
+  test("a Bitbucket repository of the same name is not the GitHub one", async () => {
+    const sent: Sent[] = [];
+    const rechecks: Recheck[] = [];
+    const refreshed: string[] = [];
+    const db = stubDb([hookRow()], { corbitsTriage: { repos: [{ name: "octocat/hello", source: "bitbucket-datacenter", connected: true, enabled: true }] } });
+    const handle = bridge({ db, sent, rechecks, refreshed });
+    const pr = JSON.parse(prPayload);
+    const merged = JSON.stringify({ ...pr, action: "closed", repository: { full_name: "octocat/hello", default_branch: "main" }, pull_request: { ...pr.pull_request, state: "closed", merged: true, base: { ref: "main" } } });
+    const pushed = JSON.stringify({ ref: "refs/heads/main", forced: true, repository: { full_name: "octocat/hello", default_branch: "main" }, commits: [] });
+    const deliveries: Array<[string, string]> = [["pull_request", prPayload], ["pull_request", merged], ["push", pushed]];
+    for (const [i, [event, body]] of deliveries.entries()) {
+      const res = await handle(githubRequest(body, { event, delivery: `b${i}` }), TARGET);
+      expect(await res.json()).toEqual({ status: "ignored" });
+    }
+    expect([sent, rechecks, refreshed]).toEqual([[], [], []]);
   });
 
   test("a disabled repo is 202 ignored", async () => {

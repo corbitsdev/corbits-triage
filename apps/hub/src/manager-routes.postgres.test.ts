@@ -12,6 +12,7 @@ import { matchesRunTokenRoute } from "../../../vendor/interchange/packages/hub-a
 import { MANAGER_DEPLOYED_ACTION, MANAGER_RESULT_ACTION, MANAGER_RESULT_RESOURCE, MANAGER_STATE_ACTION, MANAGER_STATE_RESOURCE, type RepoSource } from "@corbits/triage-contracts";
 import { mirrorCallId } from "@corbits/triage-workflows/actions/mirror";
 import { createManagerRoutes, MANAGER_RUN_TOKEN_ROUTES } from "./manager-routes.js";
+import { MAX_BODY_BYTES } from "./read-json.js";
 import { passRequest, recordEvent, type PullRequestRef } from "./manager-state.js";
 import { createVerdictRecordStore } from "./github/verdict-record-store.js";
 import { mountTenantRoutes } from "./tenant-routes.js";
@@ -24,6 +25,9 @@ const SESSION = { id: "ses_member", userId: USER.id, token: "tok_member", expire
 const GITHUB: PullRequestRef = { source: "github", repo: "acme/widgets", number: 7 };
 const BITBUCKET: PullRequestRef = { source: "bitbucket-datacenter", repo: "ACME/widgets", number: 7 };
 const REVIEW = { summary: "No bugs.", comments: [], budgetExhausted: false, complete: false, unread: [{ path: "src/a.ts", lines: [[3, 6]] }], unreadFiles: 1 };
+const OpenApi = type({ paths: "Record<string, Record<string, unknown>>" });
+const Operation = type({ requestBody: { content: { "application/json": { schema: "object" } } }, responses: { 200: { content: { "application/json": { schema: "object" } } }, 400: "object", 403: "object", 413: "object" } });
+const FencedOperation = Operation.and({ responses: { 409: "object" } });
 
 type Db = ReturnType<typeof createDB>["db"];
 
@@ -265,6 +269,37 @@ test("PostgreSQL: a reviewer reports only with the result grant, and the result 
   });
 }, 60_000);
 
+test("PostgreSQL: a malformed, non-JSON or oversized body is refused before the store is touched", async () => {
+  await withDatabase(async function malformed(db) {
+    const app = buildHub(db);
+    const manager = bearer(await runWithToken(db, "run_manager", [STATE, RESULT]));
+    const bodies: [string, unknown][] = [
+      ["take", { ...GITHUB, source: "gitlab" }],
+      ["take", { source: "github", repo: "widgets", number: 7 }],
+      ["take", { ...GITHUB, number: 0 }],
+      ["done", GITHUB],
+      ["done", { ...GITHUB, reviewers: [{ kind: "judge" }] }],
+      ["reviewer-result", { ...GITHUB, kind: "code-review", head: "h1", result: { verdict: "pass" } }],
+      ["reviewer-result", { ...GITHUB, kind: "code-review", result: REVIEW }],
+    ];
+    for (const [route, body] of bodies) {
+      const response = await post(app, route, body, manager);
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe("invalid_request");
+    }
+    for (const route of ["take", "done", "reviewer-result"]) {
+      const response = await postText(app, route, "{not json", manager);
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe("invalid_request");
+    }
+    const oversized = await post(app, "reviewer-result", { ...GITHUB, head: "h1", result: { summary: "x".repeat(MAX_BODY_BYTES) } }, manager);
+    expect(oversized.status).toBe(413);
+    expect(await errorCode(oversized)).toBe("too_large");
+    const [{ rows }] = await db.execute<{ rows: number }>(sql`SELECT count(*)::int AS rows FROM corbits_triage.manager_state`);
+    expect(rows).toBe(0);
+  });
+}, 60_000);
+
 test("PostgreSQL: every extra run-token route is a fixed tenant path that names exactly one hub route, a manager route", async () => {
   await withDatabase(async function guard(db) {
     const handlers = inspectRoutes(buildHub(db)).filter((route) => !route.isMiddleware);
@@ -275,6 +310,17 @@ test("PostgreSQL: every extra run-token route is a fixed tenant path that names 
       const matched = handlers.filter((route) => (route.method === extra.method || route.method === "ALL") && matchesRunTokenRoute(route.path, extra.path));
       expect(matched.map((route) => `${route.method} ${route.path}`)).toEqual([`${extra.method} ${extra.path}`]);
       expect(managed).toContain(`${extra.method} ${extra.path}`);
+    }
+  });
+}, 60_000);
+
+test("PostgreSQL: /openapi.json documents each manager route's request and responses", async () => {
+  await withDatabase(async function openapi(db) {
+    const spec = OpenApi.assert(await (await buildHub(db).request("/openapi.json")).json());
+    for (const extra of MANAGER_RUN_TOKEN_ROUTES) {
+      const operation = spec.paths[extra.path.replace(":tenantId", "{tenantId}")]?.post;
+      const fenced = extra.path.endsWith("/take") || extra.path.endsWith("/done");
+      expect((fenced ? FencedOperation : Operation).allows(operation)).toBe(true);
     }
   });
 }, 60_000);
