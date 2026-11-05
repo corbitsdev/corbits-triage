@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_STATUS, type Awaits, type KeptVerdict, type RepoSource, type VerdictWord } from "@corbits/triage-contracts";
+import { ownedLabels, parseCheckPack, repoSourceOf, trustedRequestOf, WAITING_STATUS, type Awaits, type KeptVerdict, type RepoSource, type VerdictLabels } from "@corbits/triage-contracts";
 import { progressComment, type WaitingMark } from "../logic/render.js";
 
 type Head = { repo: string; number: number; headSha: string };
@@ -26,10 +26,10 @@ export function waitingMark(source: RepoSource, { repo, number, headSha }: Head,
  * says Triage did not finish, and Triage's labels come off where it labels. Without its comment a verdict on the head
  * cannot be told from a stale one, so nothing is written.
  */
-export function closedMark(source: RepoSource, { repo, number, headSha, merged }: Head & { merged: boolean }, automatic: readonly unknown[], labels: Record<VerdictWord, string>, appLogin: string | undefined): WaitingMark | undefined {
+export function closedMark(source: RepoSource, { repo, number, headSha, merged }: Head & { merged: boolean }, automatic: readonly unknown[], labels: VerdictLabels | undefined, appLogin: string | undefined): WaitingMark | undefined {
   const comment = automatic.includes("comment");
   if (!comment) return undefined;
-  const owned = source === "github" && automatic.includes("labels") ? ownedLabels(labels) : [];
+  const owned = source === "github" && automatic.includes("labels") && labels ? ownedLabels(labels) : [];
   const args = { repo, number, onHead: headSha, labels: [], owned, closedOut: { merged, comment }, ...(appLogin && { appLogin }) };
   return { effectId: `closed:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
 }
@@ -43,7 +43,7 @@ export async function unready(input: unknown, _ctx: EffectContext, _signal: Abor
   if (!request || !trusted || request["kind"] !== "pr" || request["newHead"] !== true || repoSourceOf(request["repoSource"]) !== "github") return { unready: true };
   const { repo, prNumber, headSha, automatic } = request;
   const pack = parseCheckPack(request["pack"] ?? request["checkPack"]);
-  if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !automatic.includes("labels") || !pack) return { unready: true };
+  if (typeof repo !== "string" || typeof prNumber !== "number" || typeof headSha !== "string" || !Array.isArray(automatic) || !automatic.includes("labels") || !pack?.labels) return { unready: true };
   const appLogin = typeof request["appLogin"] === "string" ? request["appLogin"] : undefined;
   const args = { repo, number: prNumber, onHead: headSha, labels: [], owned: Object.values(pack.labels), ...(appLogin && { appLogin }) };
   return { unready: true, mark: { effectId: `unready:${repo.replace("/", "--")}:${prNumber}:${headSha}`, repoSource: "github", args } };

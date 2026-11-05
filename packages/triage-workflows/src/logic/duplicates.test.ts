@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ToolCall, ToolResult } from "@intx/types/runtime";
 import type { EffectContext } from "@intx/workflow";
-import { readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
+import { readCheckPack, readPolicyFile, VERDICT_LABELS } from "@corbits/triage-contracts";
 import { readFacts } from "../actions/facts.js";
 import { rules } from "../actions/index.js";
 import { deriveState, type PrFacts } from "./checks.js";
@@ -111,7 +111,7 @@ describe("duplicates-open-pull-request", () => {
       return JSON.stringify({ id, type: "score", score: 1, legend: levels, probabilities: Object.fromEntries(probabilities.map((p, index) => [String(index), p])), confidence: 0.9 });
     }
     const answers = parseAnswers([score("duplicates-open-pull-request-001", [0.2, 0.5, 0.3]), score("duplicates-open-pull-request-002", [0.8, 0.15, 0.05]), JSON.stringify({ id: "instructed", type: "noul", noul: 0.1 })].join(""));
-    const verdict = renderVerdict({ repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc", det, answers, plan });
+    const verdict = renderVerdict({ labels: VERDICT_LABELS, repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc", det, answers, plan });
     expect(verdict.checks.find((check) => check.check === "duplicates-open-pull-request")).toMatchObject({ result: "fail", reason: "looks like the same change as #13", onFail: "ask", output: { kind: "level", level: "same change" } });
     expect(verdict.verdict).toBe("unsure");
     expect(verdict.feedback).toContain("Asking a maintainer about:\n- looks like the same change as #13");

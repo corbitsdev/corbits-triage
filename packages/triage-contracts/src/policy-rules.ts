@@ -46,7 +46,7 @@ export const policyRulesSchema = type({
   "onFail?": OnFailWord,
   rules: policyRuleSchema.array(),
   "actions?": { "+": "reject", "on?": type.enumerated(...POLICY_EVENTS).array().atLeastLength(1), "pass?": stepListSchema, "fail?": stepListSchema, "unsure?": stepListSchema },
-  "labels?": { "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label },
+  "labels?": type("true").or({ "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label }),
   ...WORKFLOW_PROPS,
 });
 

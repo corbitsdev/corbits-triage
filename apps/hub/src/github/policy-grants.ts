@@ -61,7 +61,7 @@ export function createPolicyGrants(deps: PolicyGrantsDeps) {
     const read = await deps.preview(tenantId, repo, source, text);
     if (read.status !== "ok") return [];
     // Enabling a repository grants posting, and triage runs on no other.
-    const waits = policyKinds(read.pack, read.policyWorkflow?.decide ?? [], source).filter((kind) => !postingKinds(source).includes(kind));
+    const waits = policyKinds(read.pack, read.policyWorkflow?.decide ?? [], source).filter((kind) => !postingKinds(source, read.pack.labels).includes(kind));
     return waits.filter((kind) => !read.automatic.includes(kind));
   }
 

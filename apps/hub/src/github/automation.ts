@@ -5,7 +5,7 @@ import { evaluateGrants } from "@intx/authz";
 import { schema, type DB } from "@intx/db";
 import { generateId } from "@intx/hub-common";
 import type { GrantRule } from "@intx/types/authz";
-import { ACTION_KINDS, DO_GRANT_ACTION, doResource, hostKinds, postingKinds, TRIAGE_ROLE, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
+import { ACTION_KINDS, DO_GRANT_ACTION, doResource, hostKinds, postingKinds, TRIAGE_ROLE, VERDICT_LABELS, type ActionKind, type RepoSource } from "@corbits/triage-contracts";
 import { lockHolder } from "../system-writes/grants.js";
 import { allowRole, grantAdminHost, type Tx } from "./admin-github-grant.js";
 
@@ -62,7 +62,7 @@ export async function grantWanted(tx: Tx, tenantId: string, repo: string, source
   await lockHolder(tx, tenantId, roleId);
   // Checked under the role's lock, which every grant writer takes, so a read overtaken meanwhile writes nothing.
   if (!stillWanted()) return;
-  const kinds = hostKinds(source).filter((kind) => wanted.includes(kind) || postingKinds(source).includes(kind));
+  const kinds = hostKinds(source).filter((kind) => wanted.includes(kind) || postingKinds(source, VERDICT_LABELS).includes(kind));
   await deleteKinds(tx, tenantId, roleId, repo, source, ACTION_KINDS.filter((kind) => !kinds.includes(kind)));
   for (const kind of kinds) await allowRole(tx, tenantId, roleId, doResource(kind, source, repo), DO_GRANT_ACTION, stamp);
 }

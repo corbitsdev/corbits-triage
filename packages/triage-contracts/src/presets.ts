@@ -1,4 +1,4 @@
-import { FAILED_LABEL, VERDICT_LABELS, type VerdictWord } from "./check-pack.js";
+import { FAILED_LABEL, VERDICT_LABELS, type VerdictLabels } from "./check-pack.js";
 import type { Priority, WorkflowState } from "./types.js";
 
 const OWNERS: Record<WorkflowState, string> = {
@@ -30,8 +30,8 @@ const RETIRED_LABELS = [
 export const TRIAGE_LABELS: readonly string[] = [...Object.values(VERDICT_LABELS), FAILED_LABEL, ...RETIRED_LABELS];
 
 /** The mirror takes back these when they no longer apply. */
-export function ownedLabels(labels: Record<VerdictWord, string>): string[] {
-  return [...new Set([...TRIAGE_LABELS, ...Object.values(labels)])];
+export function ownedLabels(labels: VerdictLabels | undefined): string[] {
+  return [...new Set([...TRIAGE_LABELS, ...Object.values(labels ?? {})])];
 }
 
 export interface Rendered {

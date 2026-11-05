@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, UNREAD_STATUS, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step } from "@corbits/triage-contracts";
+import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, UNREAD_STATUS, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step, type VerdictLabels } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { approvalHeldBy, changesWanted, heldApprovals, holdDos, packApproves, stepActions, type ActionInput, type SuggestedAction } from "../logic/actions.js";
 import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
@@ -155,19 +155,25 @@ export function withoutDos(feedback: string, actions: SuggestedAction[]): string
  * verdict label on GitHub, an error status on Bitbucket Data Center. None without a known head, so a newer head is
  * never touched, nor where triage does not write the verdict.
  */
-function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, automatic: ActionKind[], owned: readonly string[], appLogin: string | undefined): WaitingMark | undefined {
+function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, automatic: ActionKind[], labels: VerdictLabels | undefined, owned: readonly string[], appLogin: string | undefined): WaitingMark | undefined {
   if (headSha === "" || !marksWaiting(source, automatic)) return undefined;
   const pull = { repo, number, onHead: headSha, ...(appLogin && { appLogin }) };
   const args = source === "bitbucket-datacenter"
     ? { ...pull, labels: [], owned: [], status: UNREAD_STATUS, statusHead: headSha }
-    : { ...pull, labels: [FAILED_LABEL], owned };
+    : { ...pull, labels: labels ? [FAILED_LABEL] : [], owned };
   return { effectId: `degraded:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
 }
 
+/** Without a policy Triage labels with the default names. */
+function verdictLabelsOf(it: Item): VerdictLabels | undefined {
+  return it.pack ? it.pack.labels : VERDICT_LABELS;
+}
+
 function degradedOf(it: Item, reason: string): Verdict {
-  const verdict = { ...stamp(it, null), ...degradedVerdict(reason), automatic: it.automatic, actions: [] };
+  const labels = verdictLabelsOf(it);
+  const verdict = { ...stamp(it, null), ...degradedVerdict(reason, labels), automatic: it.automatic, actions: [] };
   const request = toMirrorRequest(verdict, it.pack && ownedLabels(it.pack.labels));
-  const mark = degradedMark(it.facts, repoSourceOf(it.repoSource), verdict.automatic, request.owned, it.appLogin);
+  const mark = degradedMark(it.facts, repoSourceOf(it.repoSource), verdict.automatic, labels, request.owned, it.appLogin);
   return { ...verdict, request, ...(mark && { mark }) };
 }
 
@@ -205,14 +211,12 @@ function verdictFrom(it: Item, rendered: RenderOutput): Verdict {
   const shown = it.blocksOn ? rendered.feedback : withDos(rendered.feedback, actions);
   // What reading the policy left out is said on every verdict, so the policy can be fixed.
   const reasons = [...rendered.reasons, ...(it.pack?.dropped ?? [])];
-  const labels = it.pack && !rendered.waiting ? [it.pack.labels[rendered.verdict]] : rendered.labels;
   const owned = it.pack ? ownedLabels(it.pack.labels) : undefined;
   const source = repoSourceOf(it.repoSource);
-  const labelNames = it.pack?.labels ?? VERDICT_LABELS;
   const closed = it.facts.state === "closed";
-  const mark = closed ? closedMark(source, it.facts, automatic, labelNames, it.appLogin) : rendered.waiting && waitingMark(source, it.facts, ["ci"], automatic, it.appLogin);
+  const mark = closed ? closedMark(source, it.facts, automatic, verdictLabelsOf(it), it.appLogin) : rendered.waiting && waitingMark(source, it.facts, ["ci"], automatic, it.appLogin);
   const verdict = {
-    ...stamp(it, it.facts.headSha), ...rendered, labels, reasons, feedback: shown, automatic, actions,
+    ...stamp(it, it.facts.headSha), ...rendered, reasons, feedback: shown, automatic, actions,
     ...(it.pack && packApproves(it.pack) && { approvable: held === undefined }), ...(wanted !== undefined && { changesWanted: wanted }),
     ...(mark && { mark }), ...(closed && { closed: true as const }),
   };
@@ -261,7 +265,7 @@ function verdictOf(it: Item, replies: unknown[], partReplies: unknown[]): Verdic
     const answers = { decisions, malformed: false };
     const answered = choiceOver(verdictAnswer, VERDICT_CHOICES);
     const rendered = renderVerdict({
-      author: it.facts.author, repo: it.facts.repo, repoSource: repoSourceOf(it.repoSource), headSha: it.facts.headSha, det: it.det, answers, plan, focused, stack: it.facts.stack, judgeError,
+      author: it.facts.author, repo: it.facts.repo, repoSource: repoSourceOf(it.repoSource), headSha: it.facts.headSha, det: it.det, labels: verdictLabelsOf(it), answers, plan, focused, stack: it.facts.stack, judgeError,
       judgeLimitExceeded: it.judgeLimitExceeded, judgeSkipped: it.judgeSkipped, reviewers: it.facts.reviewers, choice: answered,
       ...(choice && "judgeError" in choice && { choiceRefused: choice.judgeError }), ...(hostAwaited(it) !== undefined && { hostAwaited: hostAwaited(it) }),
     });
