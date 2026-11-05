@@ -5,8 +5,8 @@ import { errorText } from "@corbits/common";
 import { isTriageComment } from "@corbits/github-reads";
 import { HTML_MARKERS, VERDICT_LABELS, emptyPack } from "@corbits/triage-contracts";
 import { CODE_REVIEW_RUNNING } from "@corbits/triage-workflows/logic/render";
-import { labelled, OWNER, type Write } from "../chain/github.ts";
-import { LETTERS, open, play, settle, walk, type Letter } from "./events.ts";
+import { labelled, OWNER, pullOf, sha, type Write } from "../chain/github.ts";
+import { LETTERS, open, play, settle, walk, type Letter, type Played } from "./events.ts";
 import { broken, verdictKept } from "./rules.ts";
 import { MANAGER_RELEASE, modelStack, REVIEW_RELEASE } from "./stack.ts";
 
@@ -30,6 +30,9 @@ const diesAfterMail = await modelStack(REPO, { pack: PACK, automatic: ["labels",
 const LABELLING: typeof PACK = { ...PACK, actions: { ...PACK.actions, when: ["opened"], pass: [{ do: "labels", target: { from: "list", labels: ["shipit"] } }] } };
 const labelling = await modelStack(`${OWNER}/labelling`, { pack: LABELLING, automatic: ["labels", "comment"] });
 const labellingReviewed = await modelStack(`${OWNER}/labelling-reviewed`, { pack: LABELLING, automatic: ["labels", "comment"], review: "dies-after-mail" });
+const UNLABELLED: typeof PACK = { ...PACK, repo: `${OWNER}/unlabelled` };
+delete UNLABELLED.labels;
+const unlabelled = await modelStack(UNLABELLED.repo, { pack: UNLABELLED, automatic: ["labels", "comment"] });
 setDefaultTimeout(5 * 60_000);
 afterAll(async () => {
   await stack.stop();
@@ -37,6 +40,7 @@ afterAll(async () => {
   await diesAfterMail.stop();
   await labelling.stop();
   await labellingReviewed.stop();
+  await unlabelled.stop();
 });
 
 let pulls = 0;
@@ -163,4 +167,17 @@ test("with code review on, an action on opened runs once when the pass after CI 
   await play(labellingReviewed, pull, "ci-success");
   await labellingReviewed.drain();
   expect(shipits(labellingReviewed, pull.number)).toEqual(["shipit"]);
+});
+
+test("with labels off, Triage adds no label and takes an earlier verdict label off once", async () => {
+  const number = ++pulls;
+  const pull: Played = { number, heads: [sha(`${number}-0`)], draft: false };
+  await unlabelled.open({ ...pullOf(number, pull.heads[0]!), labels: [VERDICT_LABELS.pass] });
+  await settle(unlabelled, pull);
+  await play(unlabelled, pull, "push");
+  await settle(unlabelled, pull);
+  const writes = unlabelled.writes(number);
+  const removed = writes.filter((write) => write.method === "DELETE" && write.path.includes("/labels/")).map((write) => decodeURIComponent(write.path.split("/labels/")[1]!));
+  expect(labelled(writes)).toEqual([]);
+  expect(removed).toEqual([VERDICT_LABELS.pass]);
 });

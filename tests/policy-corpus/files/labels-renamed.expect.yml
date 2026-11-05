@@ -1,0 +1,3 @@
+# A rename map turns the verdict labels on; a verdict it leaves out keeps its default name.
+accept: true
+labels: { pass: "Ready to ship", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" }

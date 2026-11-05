@@ -1,0 +1,3 @@
+# Without a labels key Triage adds no labels.
+accept: true
+labels: null

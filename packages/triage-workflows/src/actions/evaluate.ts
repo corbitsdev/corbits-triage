@@ -1,5 +1,5 @@
 import type { EffectContext } from "@intx/workflow";
-import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, UNREAD_STATUS, VERDICT_LABELS, type ActionKind, type CheckPack, type RepoSource, type Step, type VerdictLabels } from "@corbits/triage-contracts";
+import { checkName, FAILED_LABEL, hostKinds, marksWaiting, ownedLabels, repoSourceOf, UNREAD_STATUS, type ActionKind, type CheckPack, type RepoSource, type Step, type VerdictLabels } from "@corbits/triage-contracts";
 import { type } from "arktype";
 import { approvalHeldBy, changesWanted, heldApprovals, holdDos, packApproves, stepActions, type ActionInput, type SuggestedAction } from "../logic/actions.js";
 import type { CheckResult, DeterministicResult, PrFacts } from "../logic/checks.js";
@@ -164,9 +164,8 @@ function degradedMark({ repo, number, headSha }: PrFacts, source: RepoSource, au
   return { effectId: `degraded:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
 }
 
-/** Without a policy Triage labels with the default names. */
 function verdictLabelsOf(it: Item): VerdictLabels | undefined {
-  return it.pack ? it.pack.labels : VERDICT_LABELS;
+  return it.pack?.labels;
 }
 
 function degradedOf(it: Item, reason: string): Verdict {

@@ -1,0 +1,3 @@
+# labels: true turns the verdict labels on with their default names.
+accept: true
+labels: { pass: "Triage: Ready", fail: "Triage: Not Ready", unsure: "Triage: Needs Human Review" }
