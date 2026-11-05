@@ -1,5 +1,5 @@
-import { ACTION_KINDS, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
-import { ciRefusal, mergeableCi, summarizeChecks } from "@corbits/github-reads";
+import { ACTION_KINDS, mergeGate, type ActionKind, type ResolvedTarget } from "@corbits/triage-contracts";
+import { summarizeChecks } from "@corbits/github-reads";
 import { defaultReviewers, getChecks, unresolvedThreadsHold } from "@corbits/bitbucket-datacenter-reads";
 import { type } from "arktype";
 import {
@@ -149,12 +149,10 @@ export async function executeAction(bb: BitbucketFetch, { request, step }: Actio
     case "merge": {
       onHead(pr.sha, request, step);
       const ci = summarizeChecks(await getChecks(bb, step.headSha));
-      if (!mergeableCi(ci, "ciOptional" in target)) throw new ActionNotRunnableError(ciRefusal(ci));
       const me = await user();
-      const requested = pr.reviewers.filter((r) => r.status === "NEEDS_WORK" && r.user.id !== me.id).map((r) => r.user.slug);
-      if (requested.length) throw new ActionNotRunnableError(`changes are requested by ${requested.join(", ")}`);
-      const threads = await unresolvedThreadsHold(bb, repo, number, me.slug);
-      if (threads !== undefined) throw new ActionNotRunnableError(threads);
+      const changesRequestedBy = pr.reviewers.filter((r) => r.status === "NEEDS_WORK" && r.user.id !== me.id).map((r) => r.user.slug);
+      const gate = mergeGate({ ci, ciOptional: "ciOptional" in target, changesRequestedBy, threadsHold: await unresolvedThreadsHold(bb, repo, number, me.slug) });
+      if (!gate.allowed) throw new ActionNotRunnableError(gate.reason);
       // Triage's own needs-work is its verdict on this head, which now merges; a "no needs work" merge check would veto it.
       if (statusOf(pr, me) === "NEEDS_WORK") await setStatus(bb, { repo, number, slug: me.slug, status: "UNAPPROVED" });
       const veto = await mergeVeto(bb, repo, number);

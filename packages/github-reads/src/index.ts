@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { minimatch } from "minimatch";
 import { asRecord, cachedLoads, compare, errorText } from "@corbits/common";
 import { parseFindingHeadline, threadsHold, threadsUnread } from "@corbits/triage-contracts/code-review";
+import type { HeadCi } from "@corbits/triage-contracts/merge-gate";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
 
@@ -368,31 +369,12 @@ export function checkCancelled(run: CheckRun): boolean {
   return run.status === "completed" && CANCELLED.has(run.conclusion ?? "");
 }
 
-export type CiState = "success" | "failure" | "pending" | "cancelled" | "none";
-
-export function summarizeChecks(runs: CheckRun[]): CiState {
+export function summarizeChecks(runs: CheckRun[]): HeadCi {
   if (!runs.length) return "none";
   if (runs.some(checkFailed)) return "failure";
   if (runs.some(checkPending)) return "pending";
   if (runs.some(checkCancelled)) return "cancelled";
   return "success";
-}
-
-/** A head may merge once its CI passed, or with no CI at all when the policy does not require it. */
-export function mergeableCi(ci: CiState, ciOptional: boolean): boolean {
-  return ci === "success" || (ci === "none" && ciOptional);
-}
-
-const CI_TEXT: Record<CiState, string> = {
-  success: "CI passed on this head",
-  failure: "CI has failed on this head",
-  pending: "CI has not finished on this head",
-  cancelled: "CI was cancelled on this head",
-  none: "There is no CI on this head",
-};
-
-export function ciRefusal(ci: CiState): string {
-  return CI_TEXT[ci];
 }
 
 /** Each reviewer's latest decisive review state; triage's own requests for changes are its verdict, not a reviewer's. */
