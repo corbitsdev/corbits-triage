@@ -1,7 +1,7 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { AUTHOR_KINDS, authorGroupsOf, checkName, CODE_REVIEW_REVIEWERS, EVERYONE, readCheckPack, repoSourceOf, RULE_GATES, rulesGate, VERDICTS, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
+import { AUTHOR_KINDS, authorGroupsOf, checkName, CODE_REVIEW_REVIEWERS, CODE_REVIEW_RUN_MS, EVERYONE, readCheckPack, repoSourceOf, RULE_GATES, rulesGate, VERDICTS, type CheckPack, type RepoSource } from "@corbits/triage-contracts";
 import { globMatch } from "@corbits/triage-workflows/logic/glob";
 import { call, hostWrite, toolName } from "@corbits/triage-workflows/logic/host";
 import { codeReviewSummary } from "@corbits/triage-workflows/logic/render";
@@ -10,8 +10,6 @@ import { publishedReviewer } from "../release.js";
 import { deploy, managerMailOf } from "./hub.js";
 import { Reviewer, storedReviewer, TakeOutput } from "./manager.js";
 
-/** How long the manager waits for a code review it deployed, from its deploy to its report. */
-export const REVIEW_DEADLINE_MS = 15 * 60_000;
 /** How many code reviews of one head may fail before later passes on it deploy no other. */
 const REVIEW_ATTEMPTS = 2;
 
@@ -199,7 +197,7 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   if (!release) throw new Error("deployReview: release.json publishes no matching code review for the provider and host");
   const again = asRecord(taken["codeReview"])?.["again"];
   const reviewRun = await deploy(ctx, "deploy", tenantId, release);
-  const deadline = new Date(Date.now() + REVIEW_DEADLINE_MS).toISOString();
+  const deadline = new Date(Date.now() + CODE_REVIEW_RUN_MS).toISOString();
   const content = reviewMailContent(taken["codeReviewRequest"], tenantId);
   return { reviewer: { kind: "code-review", head, runId: reviewRun, deployedBy: runId, deadline, ...(typeof again === "string" && { again }) }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
 }

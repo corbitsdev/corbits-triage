@@ -1,6 +1,6 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
-import { JUDGE_RULES_ATTACHMENT, JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
+import { JUDGE_RULES_ATTACHMENT, JUDGE_RUN_MS, JudgeVerdict, repoSourceOf } from "@corbits/triage-contracts";
 import { evaluate, verdictOnFacts, type EvaluateOutput } from "@corbits/triage-workflows/actions/evaluate";
 import type { Item } from "@corbits/triage-workflows/logic/item";
 import { decided } from "@corbits/triage-workflows/logic/settled";
@@ -9,9 +9,6 @@ import { publishedFor } from "../release.js";
 import { deploy, managerMailOf } from "./hub.js";
 import { Reviewer, TakeOutput, waitingOnHost } from "./manager.js";
 import { ClearedVerdict } from "./review-clean.js";
-
-/** How long the manager waits for a judge it deployed, from its deploy to its report. */
-export const JUDGE_DEADLINE_MS = 5 * 60_000;
 
 const VerdictInput = type({ payload: "unknown", take: { output: TakeOutput }, rules: { output: { needsJudgment: "boolean", items: type("object[]").as<Item[]>(), batch: "boolean" } } });
 
@@ -104,7 +101,7 @@ export async function deployJudge(input: unknown, ctx: EffectContext, _signal: A
   const release = publishedFor(source, "judge");
   if (!release) throw new Error("deployJudge: release.json publishes no judge for the host");
   const judgeRun = await deploy(ctx, "deployJudge", tenantId, release);
-  const deadline = new Date(Date.now() + JUDGE_DEADLINE_MS).toISOString();
+  const deadline = new Date(Date.now() + JUDGE_RUN_MS).toISOString();
   const content = JSON.stringify({ kind: "judge", tenantId, number: pullRequest.number, checkout: { source, repo: pullRequest.repo, sha: head } });
   const attachments = [{ name: JUDGE_RULES_ATTACHMENT, contentType: "application/json", content: JSON.stringify(rules) }];
   return { reviewer: { kind: "judge", head, runId: judgeRun, deployedBy: runId, deadline }, mail: { tenantId, to: judgeRun, content, attachments, readyBy: deadline } };
