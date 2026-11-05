@@ -22,14 +22,13 @@ export function waitingMark(source: RepoSource, { repo, number, headSha }: Head,
 }
 
 /**
- * What a pull request that merged or closed on `headSha` before its verdict shows where triage comments: its comment
- * says Triage did not finish, and Triage's labels come off where it labels. Without its comment a verdict on the head
- * cannot be told from a stale one, so nothing is written.
+ * What a pull request that merged or closed on `headSha` before its verdict shows: where triage comments, its comment
+ * says Triage did not finish, and on GitHub Triage's labels come off wherever the workspace grants it any posting.
  */
 export function closedMark(source: RepoSource, { repo, number, headSha, merged }: Head & { merged: boolean }, automatic: readonly unknown[], labels: VerdictLabels | undefined, appLogin: string | undefined): WaitingMark | undefined {
   const comment = automatic.includes("comment");
-  if (!comment) return undefined;
-  const owned = source === "github" && automatic.includes("labels") && labels ? ownedLabels(labels) : [];
+  if (!comment && (source !== "github" || automatic.length === 0)) return undefined;
+  const owned = source === "github" ? ownedLabels(labels) : [];
   const args = { repo, number, onHead: headSha, labels: [], owned, closedOut: { merged, comment }, ...(appLogin && { appLogin }) };
   return { effectId: `closed:${repo.replace("/", "--")}:${number}:${headSha}`, repoSource: source, args };
 }
