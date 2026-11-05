@@ -123,7 +123,7 @@ export function exportPolicyFile(pack: CheckPack): PolicyFileExport {
   const rules = [...CATALOG_IDS.flatMap((id) => catalogRule(pack, id, unexpressed)), ...pack.custom.flatMap((row) => customRule(row, unexpressed))];
   const actions = fileActions(pack);
   const labels = fileLabels(pack);
-  const body = { ...(pack.groups && { groups: pack.groups }), rules, ...(actions && { actions }), ...(labels && { labels }) };
+  const body = { ...(pack.groups && { groups: Object.fromEntries(pack.groups.map(({ name, ...group }) => [name, group])) }), rules, ...(actions && { actions }), ...(labels && { labels }) };
   return { text: `# Corbits Triage policy.\n${stringify(body, { lineWidth: 0, aliasDuplicateObjects: false })}`, unexpressed };
 }
 

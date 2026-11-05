@@ -1,4 +1,4 @@
-import { AUTHOR_GROUPS, type AuthorKind, type AuthorMatch, type CiState, type FileGroup, type SizeBound, type StepWhen } from "./check-pack.js";
+import { AUTHOR_GROUPS, type AuthorKind, type AuthorMatch, type CiState, type FileGroup, type NamedGroup, type SizeBound, type StepWhen } from "./check-pack.js";
 
 /** The group every author is in; it always matches. */
 export const EVERYONE = "everyone";
@@ -21,18 +21,18 @@ function inGroup(group: FileGroup, author: StepAuthor): boolean | undefined {
  * their kind is in that no file group replaces by name, then `everyone`. Failing closed, it is undefined, so that no
  * group but `everyone` holds, when the author's kind is not known or teams that can't be read would decide their group.
  */
-export function authorGroupsOf(groups: Readonly<Record<string, FileGroup>>, author: StepAuthor): string[] | undefined {
+export function authorGroupsOf(groups: readonly NamedGroup[], author: StepAuthor): string[] | undefined {
   const kind = author.kind;
   if (kind === undefined) return undefined;
   let own: string | undefined;
-  for (const [name, group] of Object.entries(groups)) {
+  for (const group of groups) {
     const held = inGroup(group, author);
     if (held === undefined) return undefined;
     if (!held) continue;
-    own = name;
+    own = group.name;
     break;
   }
-  const builtIn = Object.entries(AUTHOR_GROUPS).filter(([name, kinds]) => !Object.hasOwn(groups, name) && (kinds as readonly AuthorKind[]).includes(kind));
+  const builtIn = Object.entries(AUTHOR_GROUPS).filter(([name, kinds]) => !groups.some((group) => group.name === name) && (kinds as readonly AuthorKind[]).includes(kind));
   return [...(own === undefined ? [] : [own]), ...builtIn.map(([name]) => name), EVERYONE];
 }
 

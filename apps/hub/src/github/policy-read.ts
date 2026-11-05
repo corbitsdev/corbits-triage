@@ -37,7 +37,7 @@ function decideLandings(rule: DecideRule, automatic: readonly ActionKind[]): Lan
 function admitsFirstTimers(pack: CheckPack, whens: readonly StepWhen[]): boolean {
   return FIRST_TIMERS.some(function admits(kind) {
     const author = { login: "", kind, teams: [] };
-    const subject = { author: { ...author, groups: authorGroupsOf(pack.groups ?? {}, author) }, linkedIssue: false, ci: "none" as const, files: 0, lines: 0 };
+    const subject = { author: { ...author, groups: authorGroupsOf(pack.groups ?? [], author) }, linkedIssue: false, ci: "none" as const, files: 0, lines: 0 };
     return whens.every((when) => whenHolds(when.author && { author: when.author }, subject).matches !== false);
   });
 }

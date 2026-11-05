@@ -447,7 +447,7 @@ export type CheckPack = {
   /** So tools watching GitHub can react to it; absent, Triage writes no labels. */
   labels?: VerdictLabels;
   /** The groups the policy file defines, in its order, which steps name as `{ group }`. */
-  groups?: Record<string, FileGroup>;
+  groups?: NamedGroup[];
   /** What reading the stored policy left out because it no longer runs; each verdict says so. Never read back. */
   dropped?: string[];
 };
@@ -470,7 +470,6 @@ const ReviewTargetSchema = type({ "+": "reject", to: "'users'", users: Texts })
 
 export const GROUP_NAME_MAX = 64;
 
-/** Starting with a letter keeps a mapping of groups in the order the file wrote them. */
 export const GroupName = type(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/).atMostLength(GROUP_NAME_MAX);
 
 /** A policy file names a group as itself; the policy holds it as `{ group }` once read. */
@@ -488,6 +487,9 @@ export const fileGroupSchema = type({
 });
 export type FileGroup = typeof fileGroupSchema.infer;
 const FileGroupsSchema = type({ "[string]": fileGroupSchema });
+const NamedGroupsSchema = fileGroupSchema.merge({ name: GroupName }).array();
+/** A group the policy file defines, under its name; a pack lists them in the file's order. */
+export type NamedGroup = typeof NamedGroupsSchema.infer[number];
 const Count = type("number.integer").atLeast(0);
 const SizeBoundSchema = type({ "+": "reject", "over?": Count, "atMost?": Count });
 const stepWhenSchema = type({
@@ -586,7 +588,7 @@ export const checkPackSchema = type({
   "custom?": CustomCheckSchema.array().atMostLength(CUSTOM_CHECK_CAP),
   "actions?": PolicyActionsSchema,
   "labels?": type("true").or({ "+": "reject", "pass?": Label, "fail?": Label, "unsure?": Label }),
-  "groups?": FileGroupsSchema,
+  "groups?": NamedGroupsSchema,
 });
 
 const OverrideChecksSchema = type(
@@ -1153,12 +1155,19 @@ function distinctSteps(steps: Step[]): Step[] {
   });
 }
 
-function parseGroups(raw: unknown): Record<string, FileGroup> | undefined {
+/** A policy file, and mail stored before packs listed groups, hold a mapping; a mapping is read in its key order. */
+function parseGroups(raw: unknown): NamedGroup[] | undefined {
   if (raw === undefined) return undefined;
+  if (Array.isArray(raw)) {
+    const groups = NamedGroupsSchema(raw);
+    if (groups instanceof type.errors) throw new Error(`Groups ${groups.summary}`);
+    if (new Set(groups.map((group) => group.name)).size !== groups.length) throw new Error("Group names must be unique.");
+    return groups;
+  }
   const groups = FileGroupsSchema(raw);
   if (groups instanceof type.errors) throw new Error(`Groups ${groups.summary}`);
   if (Object.keys(groups).some((name) => !GroupName.allows(name))) throw new Error("Group names must be lowercase words joined by hyphens.");
-  return groups;
+  return Object.entries(groups).map(([name, group]) => ({ name, ...group }));
 }
 
 function parseLabels(raw: unknown): VerdictLabels | undefined {
@@ -1385,7 +1394,7 @@ export function ruleLabel(id: string): string {
 /** Every team the policy names, in a step or in a group, whose membership can decide who a step is for. */
 export function policyTeams(pack: CheckPack): string[] {
   const steps = VERDICTS.flatMap((list) => pack.actions[list].flatMap((step) => (step.when?.author ?? []).flatMap((match) => (typeof match === "object" && "team" in match ? [match.team] : []))));
-  const groups = Object.values(pack.groups ?? {}).flatMap((group) => group.teams ?? []);
+  const groups = (pack.groups ?? []).flatMap((group) => group.teams ?? []);
   return [...new Set([...steps, ...groups])];
 }
 

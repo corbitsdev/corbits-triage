@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDB, runMigrations, schema } from "@intx/db";
+import { authorGroupsOf, readCheckPack, readPolicyFile } from "@corbits/triage-contracts";
 import { closeOutDue, done, endNeverRan, notePlaced, recordEvent, take, type PullRequestRef } from "./manager-state.js";
 import { timings } from "./timings.js";
 import { migrateTriageTables } from "./triage-db.js";
@@ -118,3 +119,15 @@ test("PostgreSQL: a cancel that fails is logged and the reaper still ends the ne
   });
 }, 120_000);
 
+test("PostgreSQL: a pull request's mail keeps the policy's group order, so an author is in the first group the file lists that they match", async () => {
+  const policy = readPolicyFile("rules: []\ngroups:\n  approved: { users: [octocat] }\n  outside: { association: [CONTRIBUTOR] }\n", GITHUB.repo);
+  await withDatabase(async function stored(db) {
+    await recordEvent(db, TENANT, GITHUB, "d1", { type: "webhook", head: "h1", payload: { kind: "pr", headSha: "h1", pack: policy } });
+    await liveRun(db, "run_a");
+    const taken = await take(db, TENANT, GITHUB, "run_a");
+    if (taken.outcome !== "pass") throw new Error(`take answered ${taken.outcome}`);
+    const pack = readCheckPack(taken.events[0].event.payload.pack, GITHUB.repo);
+    const author = { login: "octocat", kind: "CONTRIBUTOR" as const, teams: [] };
+    expect(authorGroupsOf(pack.groups ?? [], author)).toEqual(["approved", "external", "everyone"]);
+  });
+}, 120_000);

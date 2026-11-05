@@ -204,7 +204,7 @@ const CI: Record<PrFacts["checks"], CiState> = { success: "passing", failure: "f
 function stepSubject(facts: PrFacts, pack: CheckPack): StepSubject {
   const author = { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown };
   return {
-    author: { ...author, groups: authorGroupsOf(pack.groups ?? {}, author) },
+    author: { ...author, groups: authorGroupsOf(pack.groups ?? [], author) },
     linkedIssue: issueReference(facts, "either") !== null,
     ci: CI[facts.checks],
     files: facts.changedFiles,
