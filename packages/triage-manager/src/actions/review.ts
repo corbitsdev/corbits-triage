@@ -59,7 +59,7 @@ function capitalized(word: string): string {
 /** Why `for` leaves the author out, failing closed when their groups cannot be told. */
 function authorOutside(groups: readonly string[], { facts, pack }: ReadItem): string | undefined {
   if (groups.includes(EVERYONE)) return undefined;
-  const held = authorGroupsOf(pack.groups ?? {}, { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown });
+  const held = authorGroupsOf(pack.groups ?? [], { login: facts.author, kind: facts.authorKind, teams: facts.authorTeams, teamsUnknown: facts.authorTeamsUnknown });
   const named = `the ${groups.join(" or ")} group`;
   if (held === undefined) return `Triage could not tell whether the author is in ${named}`;
   return held.some((group) => groups.includes(group)) ? undefined : `the author is not in ${named}`;

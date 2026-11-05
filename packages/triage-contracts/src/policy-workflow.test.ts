@@ -34,7 +34,7 @@ describe("policy file v4", () => {
   test("every v4 key reads as written beside the stored policy, which holds only the rules, and a step's groups read as who they stand for", () => {
     const checked = checkPolicyFile(V4, REPO);
     if (!checked.ok) throw new Error(JSON.stringify(checked.problems));
-    expect(checked.policy).toEqual({ ...readPolicyFile(RULES, REPO), groups: checked.workflow.groups });
+    expect(checked.policy).toEqual({ ...readPolicyFile(RULES, REPO), groups: [{ name: "maintainers", association: ["OWNER", "MEMBER", "COLLABORATOR"] }, { name: "core", teams: ["acme/core"], users: ["octocat"] }] });
     expect(checked.workflow).toEqual({
       groups: { maintainers: { association: ["OWNER", "MEMBER", "COLLABORATOR"] }, core: { teams: ["acme/core"], users: ["octocat"] } },
       "code-review": { on: true, for: ["maintainers"], provider: "anthropic", profile: "default", when: { triage: "pass", paths: ["!**/*.md", "!**/*.lock"] } },
@@ -252,11 +252,11 @@ describe("policy file v4", () => {
 });
 
 describe("author groups", () => {
-  const groups = {
-    core: { teams: ["acme/core"] },
-    maintainers: { users: ["octocat"] },
-    regulars: { association: ["CONTRIBUTOR" as const], users: ["octocat"] },
-  };
+  const groups = [
+    { name: "core", teams: ["acme/core"] },
+    { name: "maintainers", users: ["octocat"] },
+    { name: "regulars", association: ["CONTRIBUTOR" as const], users: ["octocat"] },
+  ];
   function author(over: Partial<StepAuthor>): StepAuthor {
     return { login: "octocat", kind: "CONTRIBUTOR", teams: [], ...over };
   }
@@ -264,14 +264,14 @@ describe("author groups", () => {
   test("the first file group matching wins, built-in groups are facts no file group of that name replaced, and everyone always holds", () => {
     expect(authorGroupsOf(groups, author({}))).toEqual(["maintainers", "external", "everyone"]);
     expect(authorGroupsOf(groups, author({ teams: ["acme/core"], kind: "MEMBER" }))).toEqual(["core", "everyone"]);
-    expect(authorGroupsOf({}, author({ kind: "MEMBER" }))).toEqual(["maintainers", "everyone"]);
+    expect(authorGroupsOf([], author({ kind: "MEMBER" }))).toEqual(["maintainers", "everyone"]);
   });
 
   test("an unknown kind, or teams that can't be read deciding the first group, leaves the author's groups not known", () => {
     expect(authorGroupsOf(groups, author({ kind: undefined }))).toBeUndefined();
     expect(authorGroupsOf(groups, author({ teams: undefined }))).toBeUndefined();
     expect(authorGroupsOf(groups, author({ teamsUnknown: ["acme/core"] }))).toBeUndefined();
-    expect(authorGroupsOf({ maintainers: { users: ["octocat"] }, ...groups }, author({ teams: undefined }))).toEqual(["maintainers", "external", "everyone"]);
+    expect(authorGroupsOf([{ name: "maintainers", users: ["octocat"] }, ...groups], author({ teams: undefined }))).toEqual(["maintainers", "external", "everyone"]);
   });
 
   test("a step for a group holds by the author's groups, everyone always, and is not known without them", () => {
