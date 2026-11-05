@@ -140,7 +140,8 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
     try {
       await deps.send({ ...head, record, payload });
     } catch (err) {
-      if (reachedNoListener(err)) {
+      const unrouted = reachedNoListener(err);
+      if (unrouted && !again) {
         // The head stays queued for the reconciler, which mails it once a listener is up.
         await failDelivery(deps.store, head, err, now);
         deps.retry();
@@ -153,6 +154,8 @@ export function createGithubPrTriage(deps: GithubPrTriageDeps) {
       } catch (restoreErr) {
         deps.log({ level: "error", msg: "triage_state_restore_failed", tenantId, repo, pr: number, headSha, error: String(restoreErr) });
       }
+      // The reconciler's own mail carries no extra review, so the head is not left queued for it.
+      if (unrouted) return failure(503, "triage_restarting", "Triage is restarting for this repository. Try again in a minute.");
       return githubLimited(err) ?? failure(502, "hub_unavailable", `Could not queue ${repo}#${number}: ${errorText(err)}. Try again.`);
     }
     deps.log({ level: "info", msg: "triage_requested", tenantId, principalId, repo, pr: number, headSha });
