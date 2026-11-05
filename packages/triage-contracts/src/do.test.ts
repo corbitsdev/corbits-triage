@@ -10,6 +10,7 @@ const FILE = `rules:
     text: CI passes.
     reason: Required.
     evidence: [maintainer-stated]
+labels: true
 actions:
   pass: [{ do: assign, target: { to: author } }]
   unsure: [{ do: close }, { do: nothing }]

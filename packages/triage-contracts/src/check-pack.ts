@@ -686,7 +686,7 @@ const STARTER_REASONS = {
 } as const satisfies Partial<Record<CatalogId, string>>;
 
 /**
- * The first policy file for a repository with none: a chosen subset of the recommended rules, with no steps. It keeps
+ * The first policy file for a repository with none: a chosen subset of the recommended rules, with no steps or labels. It keeps
  * the rules that need no model and hold for any repository; a linked issue and forbidden paths are left out, since a
  * repository without an issue tracker, or one that edits `.github/**`, would fail every pull request.
  */
@@ -696,7 +696,8 @@ export function starterPack(repo: string): CheckPack {
   for (const [id, reason] of Object.entries(STARTER_REASONS) as Array<[keyof typeof STARTER_REASONS, string]>) {
     checks[id] = { ...recommended[id]!, reason, evidence: [MAINTAINER_STATED] };
   }
-  return { ...emptyPack(repo), checks, actions: { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] } };
+  const { kind, schemaVersion, repo: clean, custom } = emptyPack(repo);
+  return { kind, schemaVersion, repo: clean, checks, custom, actions: { when: [...POLICY_EVENTS], pass: [], fail: [], unsure: [] } };
 }
 
 export function catalogCheckEnabled(pack: CheckPack, id: CatalogId): boolean {
@@ -1161,7 +1162,8 @@ function parseGroups(raw: unknown): Record<string, FileGroup> | undefined {
 }
 
 function parseLabels(raw: unknown): VerdictLabels | undefined {
-  if (raw === undefined || raw === true) return { ...VERDICT_LABELS };
+  if (raw === undefined) return undefined;
+  if (raw === true) return { ...VERDICT_LABELS };
   const row = record(raw, "labels");
   const extra = Object.keys(row).filter((key) => !(VERDICTS as readonly string[]).includes(key));
   if (extra.length) throw new Error(`labels must set only pass, fail or unsure, not ${extra.join(", ")}.`);

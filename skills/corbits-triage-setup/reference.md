@@ -97,7 +97,7 @@ To add a group to `sensitive-paths`, change the starter's rule. Writing `groups`
 
 ## Actions
 
-Optional. Without `actions`, Triage only posts its comment and verdict label (a build status on Bitbucket Data Center). Each verdict has an ordered list of at most 20 steps; a verdict left out has none.
+Optional. Without `actions`, Triage only posts its comment, and its verdict label where `labels` turns labels on (a build status on Bitbucket Data Center). Each verdict has an ordered list of at most 20 steps; a verdict left out has none.
 
 ```yaml
 actions:
@@ -150,7 +150,7 @@ Triage carries out an action on its own only where the workspace allows that act
 
 ## Labels
 
-Optional. Renames the verdict labels (at most 50 characters each). Defaults:
+Optional. Without `labels`, Triage adds no labels. `labels: true` turns the verdict labels on with their default names; a map renames them (at most 50 characters each), a verdict left out keeping its default:
 
 ```yaml
 labels:

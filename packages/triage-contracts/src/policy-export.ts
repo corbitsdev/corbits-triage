@@ -111,10 +111,10 @@ function fileActions(pack: CheckPack): Record<string, unknown> | undefined {
   return Object.keys(actions).length ? actions : undefined;
 }
 
-function fileLabels({ labels }: CheckPack): Record<string, string> | undefined {
+function fileLabels({ labels }: CheckPack): Record<string, string> | true | undefined {
   if (!labels) return undefined;
   const changed = VERDICTS.flatMap((verdict) => (labels[verdict] === VERDICT_LABELS[verdict] ? [] : [[verdict, labels[verdict]]]));
-  return changed.length ? Object.fromEntries(changed) : undefined;
+  return changed.length ? Object.fromEntries(changed) : true;
 }
 
 /** The schema 3 file for `pack`, and each thing it holds that the file cannot. */

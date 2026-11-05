@@ -42,7 +42,7 @@ const ASSIGN_ON_PASS = "actions:\n  pass:\n    - do: assign\n      target:\n    
 const REVIEW_ON_PASS = "actions:\n  pass:\n    - do: request-review\n      target:\n        to: users\n        users:\n          - hubot\n";
 
 export function policy(rules: string[], extra = ""): string {
-  return `rules:\n${rules.map((rule) => `${rule}    reason: The maintainers set it.\n    evidence:\n      - maintainer-stated\n`).join("")}${extra}`;
+  return `rules:\n${rules.map((rule) => `${rule}    reason: The maintainers set it.\n    evidence:\n      - maintainer-stated\n`).join("")}labels: true\n${extra}`;
 }
 
 /** The judge finds every change focused, by the first of a choice's options, and no pull request steering it. */

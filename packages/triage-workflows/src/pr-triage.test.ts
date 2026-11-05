@@ -839,7 +839,7 @@ describe("a run that could not read the pull request", () => {
     expect(github.labels).toEqual(["bug", "Triage: Ready"]);
   });
 
-  test("a policy the hub can't read marks each head the mail names failed with why on both hosts, once, on GitHub only with the grant", async () => {
+  test("a policy the hub can't read marks each head the mail names failed with why, on GitHub with no label and the verdict label taken off, on Bitbucket once", async () => {
     const reason = "The policy file has unknown checks: max-size.";
     const mail = { kind: "pr", prNumber: 8, policy: { enabled: true }, policyUnreadable: reason, automatic: ACTION_KINDS, events: ["opened"] };
     const github = fakeGithub({ labels: ["bug", "Triage: Ready"] });
@@ -847,7 +847,7 @@ describe("a run that could not read the pull request", () => {
     const [marked] = (outputs["evaluateRules"] as { items: Verdict[] }).items;
     expect(marked).toMatchObject({ repo: REPO, number: 8, degraded: "error", reason: `Policy can't be read: ${reason}`, actions: [] });
     expect(unsettledBy(marked!, github.pr.head)).toEqual({});
-    expect(github.labels).toEqual(["bug", "Triage: Failed to Run"]);
+    expect(github.labels).toEqual(["bug"]);
     const ungranted = fakeGithub({ labels: ["bug"] });
     await runTriage(ungranted.gh, [], false, hubMail({ ...mail, repo: REPO, headSha: ungranted.pr.head, automatic: [] }, "github@acme.test"));
     expect(writes(ungranted.requests)).toEqual([]);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type } from "arktype";
 import { parse } from "yaml";
 import { asRecord } from "@corbits/common";
-import { checkPolicyFile, POLICY_FILE_PATH, policyFileReason, RESERVED_BLOCKS, type PolicyWorkflow, type RepoSource } from "@corbits/triage-contracts";
+import { checkPolicyFile, POLICY_FILE_PATH, policyFileReason, RESERVED_BLOCKS, type PolicyWorkflow, type RepoSource, type VerdictLabels } from "@corbits/triage-contracts";
 import { stateOf, textRefusal, type PolicyFileState } from "../../apps/hub/src/github/policy-file.ts";
 import { fileRefusal, readRepoPolicy, type RepoPolicyDeps } from "../../apps/hub/src/github/repo-policy.ts";
 import { Failure } from "../../apps/hub/src/route-schema.ts";
@@ -37,7 +37,7 @@ const REPORTS: Record<ReaderName, { pending: boolean; runs: boolean }> = {
 };
 
 /** `seams` is where a reader answers otherwise by design; every other reader answers `accept`, `reason` and `pending`. */
-const Expected = type({ "+": "reject", ...outcome, "seams?": type({ "+": "reject", "action?": Outcome, "checkPolicyFile?": Outcome, "hubRead?": Outcome, "hubWrite?": Outcome }) });
+const Expected = type({ "+": "reject", ...outcome, "labels?": type({ pass: "string", fail: "string", unsure: "string" }).or("null"), "seams?": type({ "+": "reject", "action?": Outcome, "checkPolicyFile?": Outcome, "hubRead?": Outcome, "hubWrite?": Outcome }) });
 
 function hubDeps(state: PolicyFileState): RepoPolicyDeps {
   return {
@@ -86,24 +86,26 @@ function action(text: string): Observed {
 }
 
 /** The file as the hub reads it from the default branch, resolved as triage runs it. */
-async function hubRead(state: PolicyFileState): Promise<Observed> {
+async function hubRead(state: PolicyFileState): Promise<Observed & { labels?: VerdictLabels | null }> {
   const read = await readRepoPolicy(hubDeps(state), TENANT, REPO, "github");
   if (read.status === "invalid") return { accept: false, reason: read.reason };
   if (read.status !== "ok" || state.status !== "ok") throw new Error(`The hub read ${state.status} but resolved ${read.status}.`);
-  return { accept: true, pending: state.file.pending, reserved: reservedIn(read.policyWorkflow ?? state.workflow) };
+  return { accept: true, pending: state.file.pending, reserved: reservedIn(read.policyWorkflow ?? state.workflow), labels: read.pack.labels ?? null };
 }
 
-async function readers(text: string): Promise<Record<ReaderName, Observed>> {
+async function readers(text: string): Promise<Record<ReaderName, Observed> & { labels?: VerdictLabels | null }> {
   const checked = checkPolicyFile(text, REPO);
   const state = stateOf({ path: POLICY_FILE_PATH, read: { kind: "file", sha: "0".repeat(40), text, url: `https://github.com/${REPO}/blob/main/${POLICY_FILE_PATH}` } }, REPO);
   async function refusal(tenantId: string, repo: string, source: RepoSource, policy: Record<string, unknown>): Promise<string | undefined> {
     return fileRefusal(hubDeps(state), tenantId, repo, source, policy);
   }
   const refused = await textRefusal(refusal, TENANT, { name: REPO, connected: true }, text);
+  const { labels, ...read } = await hubRead(state);
   return {
+    labels,
     checkPolicyFile: checked.ok ? { accept: true, pending: checked.pending && policyFileReason(checked.pending), reserved: reservedIn(checked.workflow) } : { accept: false, reason: policyFileReason(checked.problems) },
     action: action(text),
-    hubRead: await hubRead(state),
+    hubRead: read,
     hubWrite: refused ? { accept: false, reason: Failure.assert(await refused.json()).error.message } : { accept: true },
   };
 }
@@ -115,8 +117,9 @@ function wanted({ accept, reason, pending }: Outcome, reader: ReaderName): Obser
 const policies = readdirSync(FILES).filter((name) => !name.endsWith(".expect.yml"));
 
 test.each(policies)("every reader answers %s as expected", async (name) => {
-  const { seams, ...expected } = Expected.assert(parse(readFileSync(join(FILES, name.replace(/\.yml$/, ".expect.yml")), "utf8")));
+  const { seams, labels, ...expected } = Expected.assert(parse(readFileSync(join(FILES, name.replace(/\.yml$/, ".expect.yml")), "utf8")));
   const observed = await readers(readFileSync(join(FILES, name), "utf8"));
+  if (labels !== undefined) expect(observed.labels).toEqual(labels);
   expect(READERS.map((reader) => [reader, observed[reader]])).toEqual(READERS.map((reader) => [reader, wanted(seams?.[reader] ?? expected, reader)]));
 }, 15_000);
 
