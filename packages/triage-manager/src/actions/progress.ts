@@ -1,11 +1,10 @@
 import type { EffectContext } from "@intx/workflow";
 import { type } from "arktype";
 import { asRecord } from "@corbits/common";
-import { repoSourceOf, VERDICT_LABELS, type Awaits, type KeptVerdict } from "@corbits/triage-contracts";
+import { repoSourceOf, type Awaits, type KeptVerdict } from "@corbits/triage-contracts";
 import { withoutDos } from "@corbits/triage-workflows/actions/evaluate";
 import { waitingMark } from "@corbits/triage-workflows/actions/waiting";
 import { writeMark, type MirrorOutcome } from "@corbits/triage-workflows/actions/mirror";
-import type { Item } from "@corbits/triage-workflows/logic/item";
 import { CODE_REVIEW_RUNNING, type Verdict } from "@corbits/triage-workflows/logic/render";
 import { managerMailOf } from "./hub.js";
 import { verdict } from "./judge.js";
@@ -64,9 +63,8 @@ export async function progress(input: unknown, ctx: EffectContext, signal: Abort
   const awaits: Awaits[] = [...(waitingOnHost(parsed.rules.output.items) ? ["ci" as const] : []), ...reviewing];
   if (awaits.length === 0) return { skipped: true };
   const { pullRequest } = managerMailOf(parsed.payload);
-  const item = parsed.rules.output.items[0] as Item;
-  const facts = { repo: pullRequest.repo, number: pullRequest.number, headSha: head, checks: item.facts.checks, events: item.facts.events };
+  const facts = { repo: pullRequest.repo, number: pullRequest.number, headSha: head };
   const keepVerdict = await keptBy(input, parsed, awaits, asRecord(granted.codeReview)?.["again"], ctx, signal);
-  const mark = waitingMark(repoSourceOf(pullRequest.source), facts, awaits, granted.automatic, item.pack?.labels ?? VERDICT_LABELS, granted.appLogin, keepVerdict, knownOf(parsed, awaits));
+  const mark = waitingMark(repoSourceOf(pullRequest.source), facts, awaits, granted.automatic, granted.appLogin, keepVerdict, knownOf(parsed, awaits));
   return mark ? writeMark(mark, ctx) : { skipped: true };
 }

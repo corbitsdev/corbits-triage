@@ -164,7 +164,6 @@ const MIRROR_FIELDS = {
   number: { type: "integer" },
   labels: { type: "array", items: str },
   owned: { type: "array", items: str },
-  keep: { type: "array", items: str, description: "While the pull request carries any of these labels, its labels are left as they are" },
   comment: str,
   header: {
     ...obj({
@@ -344,7 +343,6 @@ async function dispatch(gh: GithubFetch, call: ToolCallInput, reads: Reads): Pro
         number: a.number,
         labels: a.labels,
         owned: a.owned,
-        keep: a.keep,
         comment: a.comment,
         header: a.header,
         onHead: a.onHead,

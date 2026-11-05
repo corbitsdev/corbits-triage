@@ -190,7 +190,7 @@ export async function take(input: unknown, ctx: EffectContext, _signal: AbortSig
   // A pass of approvals alone, before any pull request mail was recorded, has nothing to triage.
   const triage = request !== undefined && (forHead !== undefined || report.review !== undefined || report.reviewFailed !== undefined || report.judge !== undefined || report.judgeFailed !== undefined || overdue || waitedOut);
   const starting = headSince === undefined || Date.now() - Date.parse(headSince) < CI_START_MS;
-  const taken = request && { ...request, ...(waitedOut && { noWait: true }), ...(!waitedOut && starting && { ciStarting: true }) };
+  const taken = request && { ...request, ...(waitedOut && { noWait: true }), ...(!waitedOut && starting && { ciStarting: true }), ...(headSince === undefined && { newHead: true }) };
   const verdict = report.judge ?? storedVerdict(reviewers, head);
   const waiting = waitingSince !== undefined && !waitedOut;
   return { run: answer.outcome === "pass" || overdue || waitedOut, approvals, triage, ...(taken && { taken }), head, ...report, ...(verdict && { verdict }), overdue, reviewers, ...(waiting && { waitingSince }), ...(stopped && { stopped: outstanding }), ...(threads.length > 0 && { threads }), ...(commentThreads !== undefined && commentThreads.length > 0 && { commentThreads }) };
