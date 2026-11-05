@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { checkPackName, emptyPack, type PrTriageRow } from "@corbits/triage-contracts";
 import type { CodeReviewRecord } from "../manager-state.js";
+import { TriageStoppedError } from "./deployment.js";
 import { createGithubPrTriage, type GithubPrTriageDeps } from "./pr-triage.js";
 import { DEFAULT_RECONCILE_POLICY, type ObservedRun } from "./reconcile-plan.js";
 import type { TriageStateVersion } from "./triage-state-store.js";
@@ -124,6 +125,18 @@ describe("createGithubPrTriage", () => {
     const [again, done] = s.delivered.map((mail) => (mail.payload as { codeReview: Record<string, unknown> }).codeReview);
     expect(again).toMatchObject({ on: true, again: expect.any(String) });
     expect(done).toEqual({ on: true, for: expect.any(Array), triage: expect.any(Array), rules: "pass" });
+  });
+
+  test("on a head whose code review failed, a mail no listener takes answers 503 and leaves no queued head, so the extra review is not lost", async () => {
+    const readCheckPack: GithubPrTriageDeps["readCheckPack"] = async () => ({ status: "ok", pack: PACK, automatic: [], source: { file: { path: ".corbits-triage.yml", sha: "art_pack-1" } }, policyWorkflow: { "code-review": { on: true } } });
+    const failed: CodeReviewRecord[] = [{ runId: "review-1", head: "abc123", at: NOW.toISOString(), state: "failed", failed: "the reviewer's run ended" }];
+    const s = stub();
+    const send: GithubPrTriageDeps["send"] = async () => {
+      throw new TriageStoppedError("github");
+    };
+    const res = await handler(ENABLED, s, { readCheckPack, codeReviews: async () => failed, send })(request(), MEMBER);
+    await refused(res, 503, "triage_restarting");
+    expect(s.saved.at(-1)).toEqual([]);
   });
 
   test("a member denied use of the GitHub App credential gets 403 and nothing is mailed", async () => {
