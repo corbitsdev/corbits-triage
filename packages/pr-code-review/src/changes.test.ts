@@ -30,6 +30,8 @@ test("exact snapshot comparison handles additions, deletions and quoted paths wi
     expect(diff).toContain(`+++ b/${after}/code`);
     expect(await changesBetween(dir, before, before)).toBe("");
     await expect(changesBetween(dir, "../escape", after)).rejects.toThrow("pinned commits");
+    await rm(join(dir, before), { recursive: true });
+    await expect(changesBetween(dir, before, after)).rejects.toThrow("review comparison failed");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -8,10 +8,11 @@ import { checkoutsUnder, isBelow, repoReadUnder, REPO_READ_DEFINITIONS, rootedAt
 import { TOOL_PROMPTS } from "@corbits/pr-code-review/prompts";
 import { type } from "arktype";
 import { PreviousReview } from "@corbits/triage-contracts";
-import { candidates, checks, review, reviewInputFor, Verdict } from "@corbits/pr-code-review/actions/review";
+import { candidates, checks, review, reviewInputFor, parseVerdict } from "@corbits/pr-code-review/actions/review";
 import { budgetOf, Checkout } from "@corbits/pr-code-review/actions/checkout";
 import { firstObject } from "@corbits/pr-code-review/findings";
 import { addRead, citesLineRead, linesShown } from "@corbits/pr-code-review/lines-read";
+import { historyEntries } from "@corbits/pr-code-review/history";
 import { costOf, priceKey, priceOf } from "../../triage-workflows/evals/prices.js";
 import { ANTHROPIC } from "../src/profile.js";
 
@@ -22,7 +23,7 @@ const Fixture = type({
   request: { number: "number.integer > 0", title: "string", description: "string", checkout: Checkout },
   finding: { path: "string", start: "number", end: "number", title: "string", why: "string", trigger: "string", priority: "number" },
   diff: "string",
-  changes: "string",
+  changes: "string | null",
   previous: PreviousReview,
   files: { "[string]": "string" },
 });
@@ -52,12 +53,7 @@ function callCost(input: number, output: number): number {
   return cost;
 }
 
-function verdictOf(value: unknown): typeof Verdict.infer | undefined {
-  const parsed = Verdict(value);
-  return parsed instanceof type.errors ? undefined : parsed;
-}
-
-function prepareFiles(files: Record<string, string>, changes: string): void {
+function prepareFiles(files: Record<string, string>, changes: string | null, previous: typeof PreviousReview.infer): void {
   rmSync(root, { recursive: true, force: true });
   rmSync(diffRoot, { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
@@ -69,7 +65,8 @@ function prepareFiles(files: Record<string, string>, changes: string): void {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, text);
   }
-  writeFileSync(join(diffRoot, "since-review.patch"), changes);
+  if (changes !== null) writeFileSync(join(diffRoot, "since-review.patch"), changes);
+  writeFileSync(join(diffRoot, "review-history.json"), JSON.stringify(historyEntries(previous), null, 2));
 }
 
 async function verify(prompt: string, text: string) {
@@ -93,7 +90,7 @@ async function verify(prompt: string, text: string) {
     const calls = answer.content.filter((block) => block.type === "tool_use");
     if (calls.length === 0) {
       const text = answer.content.filter((block) => block.type === "text").map((block) => block.text ?? "").join("");
-      const verdict = firstObject(text, verdictOf);
+      const verdict = firstObject(text, parseVerdict);
       if (!verdict) throw new Error("verifier returned no verdict; see the saved responses");
       if (verdict.verdict !== "unsure" && !citesLineRead(verdict.reason, linesRead)) return { verdict: "unsure" as const, reason: "verifier cited no line it read" };
       return verdict;
@@ -115,7 +112,7 @@ async function verify(prompt: string, text: string) {
 
 try {
   for (const fixture of fixtures) {
-    prepareFiles(fixture.files, fixture.changes);
+    prepareFiles(fixture.files, fixture.changes, fixture.previous);
     for (let repetition = 0; repetition < fixture.repeat; repetition++) {
       for (const mode of ["baseline", "patched"] as const) {
         const started = Date.now();

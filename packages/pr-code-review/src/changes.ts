@@ -8,7 +8,7 @@ export async function changesBetween(directory: string, before: string, after: s
     stdout: "pipe", stderr: "pipe", timeout: 60_000,
   });
   const [text, error, exit] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited]);
-  if (exit !== 0 && exit !== 1) throw new Error(`review comparison failed (${exit}): ${error}`);
+  if ((exit !== 0 && exit !== 1) || error.trim() !== "") throw new Error(`review comparison failed (${exit}): ${error}`);
   // Only strip the leading snapshot directory, never matching strings inside filenames or code.
   function repositoryPath(path: string): string {
     return path.replace(/^("?[ab]\/)[0-9a-f]{40}\//, "$1");

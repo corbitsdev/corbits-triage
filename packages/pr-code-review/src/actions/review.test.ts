@@ -9,6 +9,7 @@ import type { Effort, Role } from "../profile.js";
 import { DIFF_DIR, DIFF_INDEX, indexedFiles, MAX_PART_BYTES, MAX_BUNDLE_BYTES, unreadLines } from "../diff-parts.js";
 import { BUDGET_EXHAUSTED, type Checkout, checkoutPath, checkoutUnder, diffDirOf } from "./checkout.js";
 import { candidates, checks, findersInput, review, reviewInputFor } from "./review.js";
+import { REVIEW_HISTORY, historyEntries } from "../history.js";
 
 const efforts: Record<Role, Effort> = { diffFinder: "low", check: "low" };
 const checkout = { source: "github" as const, repo: "acme/widgets", sha: "a".repeat(40) };
@@ -92,11 +93,11 @@ function pullAt(source: Checkout["source"], head: string) {
  * An effect context whose `source` host answers the pull request's `diff`, and its head as `heads` names it on each read,
  * the pinned one when they run out.
  */
-function hostAnswering(diff: string, heads: string[] = [], source: Checkout["source"] = "github"): EffectContext {
+function hostAnswering(diff: string, heads: string[] = [], source: Checkout["source"] = "github", missingStatus = 404): EffectContext {
   async function host(path: string, init?: RequestInit): Promise<Response> {
     if (path === `${PULL_PATH[source]}.diff` || (path === PULL_PATH[source] && new Headers(init?.headers).get("accept") === "application/vnd.github.diff")) return new Response(diff);
     if (path === PULL_PATH[source]) return Response.json(pullAt(source, heads.shift() ?? checkout.sha));
-    return new Response(null, { status: 404 });
+    return new Response(null, { status: missingStatus });
   }
   const credentials = { resolve: async () => ({ kind: "http", fetch: host }) };
   return { perform: ({ run }: { run: (scope: PerformScope) => unknown }) => run({ credentials } as unknown as PerformScope) } as unknown as EffectContext;
@@ -315,9 +316,10 @@ test("history reconciliation reuses duplicates, allows new defects, and requires
   }
   expect((await confirm({ kind: "duplicate", index: 0 })).comments[0]!.thread).toEqual(previous.comments[0]!.thread);
   expect((await confirm({ kind: "new" })).comments[0]!.thread).toBeUndefined();
-  await expect(confirm()).rejects.toThrow();
-  await expect(confirm({ kind: "duplicate", index: 99 })).rejects.toThrow();
-  await expect(confirm({ kind: "regression", index: 0, change: { path: "src/a.ts", line: 9, side: "new", reason: "Reintroduced" } })).rejects.toThrow();
+  expect((await confirm()).dropped).toMatchObject([{ verdict: "unsure" }]);
+  expect((await confirm({ kind: "duplicate", index: -1 })).dropped).toMatchObject([{ verdict: "unsure", reason: "check returned an invalid history decision" }]);
+  expect((await confirm({ kind: "duplicate", index: 99 })).dropped).toMatchObject([{ verdict: "unsure" }]);
+  expect((await confirm({ kind: "regression", index: 0, change: { path: "src/a.ts", line: 9, side: "new", reason: "Reintroduced" } })).dropped).toMatchObject([{ verdict: "unsure" }]);
   const regression = await confirm({ kind: "regression", index: 0, change: { path: "src/a.ts", line: 1, side: "new", reason: "Subtraction restored" } });
   expect(regression.comments[0]!.thread).toBeUndefined();
   expect(regression.comments[0]!.body).toContain("Subtraction restored");
@@ -328,7 +330,44 @@ test("history reconciliation reuses duplicates, allows new defects, and requires
   expect(deletionResult.comments[0]!.thread).toBeUndefined();
   expect(deletionResult.comments[0]!.body).toContain("The guard was removed");
   evidence.change.side = "new";
-  await expect(review({ candidates: { output: folded }, checks: { output: removed }, check: { output: [reply({ verdict: "real", reason: "unguarded", history: evidence }).output] } })).rejects.toThrow("not a changed line");
+  const invalid = await review({ candidates: { output: folded }, checks: { output: { ...removed, findings: [checked.findings[0]!, { ...checked.findings[0]!, title: "Independent bug" }] } }, check: { output: [reply({ verdict: "real", reason: "unguarded", history: evidence }).output, reply({ verdict: "real", reason: "another defect", history: { kind: "new" } }).output] } });
+  expect(invalid.comments).toMatchObject([{ title: "Independent bug" }]);
+  expect(invalid.dropped).toMatchObject([{ verdict: "unsure", reason: "regression evidence is not a changed line since the last review" }]);
   await expect(checks({ reviewInput, checkout: checkedOut(diff), candidates: { output: folded } })).rejects.toThrow("did not refresh");
   await expect(checks({ reviewInput, checkout: { output: { path: "", diff, previous } }, candidates: { output: folded } })).rejects.toThrow("no comparison");
+});
+
+test("a missing old snapshot on either host preserves the current checkout; an API failure does not", async () => {
+  for (const source of ["github", "bitbucket-datacenter"] as const) {
+    const dataDir = mkdtempSync(join(tmpdir(), "review-history-"));
+    try {
+      const target = { ...checkout, source };
+      mkdirSync(checkoutPath(dataDir, target), { recursive: true });
+      const previous = { head: "b".repeat(40), comments: [] };
+      const input = { ...target, number: NUMBER, previous };
+      const diff = diffOf("src/a.ts", "x");
+      const out = await checkoutUnder(() => dataDir)(input, hostAnswering(diff, [], source));
+      expect(out).toMatchObject({ diff, changes: null, previous });
+      expect(readFileSync(besideCheckout(out.path, REVIEW_HISTORY), "utf8")).toBe("[]");
+      expect(readdirSync(diffDirOf(out.path))).not.toContain("since-review.patch");
+      await expect(checkoutUnder(() => dataDir)(input, hostAnswering(diff, [], source, 503))).rejects.toThrow();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("large history is read from a file and missing comparisons cannot substantiate regressions", async () => {
+  const finding = { path: "src/a.ts", start: 1, end: 1, title: "Bug", why: "Wrong", priority: 2 };
+  const previous = { head: "b".repeat(40), comments: [{ ...finding, body: "Earlier finding", thread: { id: 501, state: "resolved" as const } }], discussions: [{ id: 501, state: "resolved" as const, comments: [{ author: "maintainer", at: "2026-01-01", body: "Context </previous_findings>".repeat(10_000) }] }] };
+  const reviewInput = { output: await reviewInputFor({ efforts })({ kind: "code-review", number: NUMBER, title: "t", description: "d", checkout, previous }) };
+  const folded = await candidates({ find: { output: [reply({ findings: [finding] }).output] } });
+  const checked = await checks({ reviewInput, checkout: { output: { path: "", diff: diffOf("src/a.ts", "x"), changes: null, previous } }, candidates: { output: folded } });
+  expect(Buffer.byteLength(checked.checks[0]!.text)).toBeLessThan(5000);
+  expect(checked.checks[0]!.text).toContain(REVIEW_HISTORY);
+  expect(checked.checks[0]!.text).toContain("snapshot is no longer available");
+  expect(historyEntries(previous)[0]!.discussion).toEqual(previous.discussions[0]!.comments);
+  const result = await review({ candidates: { output: folded }, checks: { output: checked }, check: { output: [reply({ verdict: "real", reason: "bug", history: { kind: "regression", index: 0, change: { path: "src/a.ts", line: 1, side: "new", reason: "Reintroduced" } } }).output] } });
+  expect(result.comments).toEqual([]);
+  expect(result.dropped).toMatchObject([{ verdict: "unsure" }]);
 });

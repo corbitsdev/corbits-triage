@@ -66,6 +66,8 @@ allow is held for a person.
 
 Reviewing, fixing or cleaning up a pull request is a workflow of its own, started by mail or by an action's signal,
 never a step inside the manager.
+A missing earlier snapshot does not stop review of the current head; a finding that needs the unavailable comparison
+remains unsure, without discarding other confirmed findings.
 
 ## Keeping it running
 

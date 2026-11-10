@@ -12,6 +12,7 @@ import type { EffectContext, PerformScope } from "@intx/workflow";
 import { type } from "arktype";
 import { DIFF_DIR, DIFF_INDEX, indexedFiles, indexText } from "../diff-parts.js";
 import { changesBetween } from "../changes.js";
+import { historyEntries } from "../history.js";
 
 export const Checkout = type({ source: "'github' | 'bitbucket-datacenter'", repo: "string", sha: /^[0-9a-f]{40}$/ });
 export type Checkout = typeof Checkout.infer;
@@ -28,7 +29,8 @@ export interface CheckedOut {
   diff: string;
   diffHash?: string;
   previous?: PreviousReview;
-  changes?: string;
+  /** Null when the host no longer has the previously reviewed snapshot. */
+  changes?: string | null;
 }
 
 const DISCUSSIONS = { github: githubDiscussions, "bitbucket-datacenter": bitbucketDiscussions };
@@ -120,6 +122,24 @@ async function download(host: HostFetch, { source, repo, sha }: Checkout, path: 
   }
 }
 
+async function previousChanges(host: HostFetch, target: Checkout, head: string, path: string, dataDir: string): Promise<string | null> {
+  const earlier = { ...target, sha: head };
+  const before = checkoutPath(dataDir, earlier);
+  const missing = new Error("previously reviewed snapshot is no longer available");
+  async function snapshotHost(hostPath: string, init?: RequestInit) {
+    const response = await host(hostPath, init);
+    if (response.status === 404) throw missing;
+    return response;
+  }
+  try {
+    if (!(await isCheckedOut(before))) await download(snapshotHost, earlier, before);
+  } catch (err) {
+    if (err === missing) return null;
+    throw err;
+  }
+  return changesBetween(dirname(path), head, target.sha);
+}
+
 /** The host as the credential bound for `source` reaches it. */
 async function hostOf(credentials: PerformScope["credentials"], source: Checkout["source"]): Promise<HostFetch> {
   const mediated = await credentials.resolve(source);
@@ -178,12 +198,10 @@ export function checkoutUnder(dataDir: () => string) {
       await writeDiff(path, diff);
       const hash = diffHash(diff);
       if (!previous) return { path, diff, ...(hash && { diffHash: hash }) };
-      const earlier = { ...target, sha: previous.head };
-      const before = checkoutPath(dataDir(), earlier);
-      if (!(await isCheckedOut(before))) await download(host, earlier, before);
-      const changes = await changesBetween(dirname(path), previous.head, target.sha);
-      await writeFile(join(diffDirOf(path), "since-review.patch"), changes, { flag: "wx" });
+      const changes = await previousChanges(host, target, previous.head, path, dataDir());
+      if (changes !== null) await writeFile(join(diffDirOf(path), "since-review.patch"), changes, { flag: "wx" });
       const history = await discussedHistory(host, target, number, previous);
+      await writeFile(join(diffDirOf(path), "review-history.json"), JSON.stringify(historyEntries(history), null, 2), { flag: "wx" });
       return { path, diff, ...(hash && { diffHash: hash }), previous: history, changes };
     }
     return (await ctx.perform({ effectId: "checkout", capability: READ_REPOSITORY, run })) as CheckedOut;
