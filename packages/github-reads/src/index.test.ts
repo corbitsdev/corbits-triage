@@ -367,7 +367,7 @@ test("getChecks: only the latest run of each check name counts", async () => {
   expect(summarizeChecks(await ci("success", "failure"))).toBe("failure");
 });
 
-test("review discussion preserves replies and resolution and rejects incomplete history", async () => {
+test("review discussion preserves replies and resolution, omits deleted threads and rejects malformed pagination", async () => {
   let incomplete = false;
   const opener = { databaseId: 501, createdAt: "2026-01-01", author: { login: "bot" }, body: "Bug" };
   async function host(_path: string, init?: RequestInit): Promise<Response> {
@@ -378,7 +378,30 @@ test("review discussion preserves replies and resolution and rejects incomplete 
     } } } } });
   }
   expect(await readReviewDiscussions(host, "a/b", 1, [501])).toMatchObject([{ id: 501, state: "resolved", comments: [{ body: "Bug" }, { author: "maintainer", body: "Intentional: caller validates it" }] }]);
-  await expect(readReviewDiscussions(host, "a/b", 1, [999])).rejects.toThrow("unavailable");
+  expect(await readReviewDiscussions(host, "a/b", 1, [999, 501])).toHaveLength(1);
   incomplete = true;
   await expect(readReviewDiscussions(host, "a/b", 1, [501])).rejects.toThrow("incomplete");
+});
+
+test("review discussion pages older replies and distinguishes deletion from a failed read", async () => {
+  const opener = { databaseId: 501, createdAt: "2026-01-01", author: { login: "bot" }, body: "Bug" };
+  const latest = { ...opener, databaseId: 602, author: { login: "maintainer" }, body: "Intentional" };
+  let outcome: "page" | "deleted" | "error" = "page";
+  async function host(_path: string, init?: RequestInit): Promise<Response> {
+    const { variables } = JSON.parse(String(init?.body));
+    if (variables.before) {
+      expect(variables).toEqual({ id: "thread", before: "older" });
+      if (outcome !== "page") return Response.json({ data: { node: null }, ...(outcome === "error" && { errors: [{ message: "Denied" }] }) });
+      return Response.json({ data: { node: { comments: { pageInfo: { hasPreviousPage: false, startCursor: "first" }, nodes: [opener] } } } });
+    }
+    return Response.json({ data: { repository: { pullRequest: { reviewThreads: {
+      pageInfo: { hasNextPage: false, endCursor: null },
+      nodes: [{ id: "thread", isResolved: false, isOutdated: false, opener: { nodes: [opener] }, comments: { pageInfo: { hasPreviousPage: true, startCursor: "older" }, nodes: [latest] } }],
+    } } } } });
+  }
+  expect(await readReviewDiscussions(host, "a/b", 1, [501])).toMatchObject([{ id: 501, state: "replied", comments: [{ body: "Bug" }, { body: "Intentional" }] }]);
+  outcome = "deleted";
+  expect(await readReviewDiscussions(host, "a/b", 1, [501])).toEqual([]);
+  outcome = "error";
+  await expect(readReviewDiscussions(host, "a/b", 1, [501])).rejects.toThrow("could not read");
 });

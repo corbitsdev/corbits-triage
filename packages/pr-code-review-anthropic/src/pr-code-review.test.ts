@@ -245,6 +245,19 @@ test("the complete workflow carries confirmed duplicates through the director an
   expect(next.run.outputs["review"]).toMatchObject({ complete: true, comments: [{ title: FINDING.title, thread: { id: 501, state: "resolved" } }] });
 });
 
+test("a deleted finding thread does not stop the next review or suppress a current bug", async () => {
+  const first = await review(join(dir, "deleted-history-data"));
+  const result = CodeReviewOutput.assert(first.run.outputs["review"]);
+  const comments = result.comments.map((finding) => ({ ...finding, thread: { id: 999, state: "resolved" as const } }));
+  const next = await review(join(dir, "deleted-history-data"), { previous: { head: "b".repeat(40), comments } });
+  expect(next.run.terminalStatus).toBe("completed");
+  const reviewed = CodeReviewOutput.assert(next.run.outputs["review"]);
+  expect(reviewed.complete).toBe(true);
+  expect(reviewed.comments).toHaveLength(1);
+  expect(reviewed.comments[0]!.title).toBe(FINDING.title);
+  expect(reviewed.comments[0]!.thread).toBeUndefined();
+});
+
 test("a pull request whose diff is over 1 MiB gets its review: its mail stays inlined and the review reads the diff from the host", async () => {
   const added = Array.from({ length: 40_000 }, (_, i) => `+export const line${i} = "${"x".repeat(20)}";`);
   const big = ["diff --git a/src/big.ts b/src/big.ts", "new file mode 100644", "--- /dev/null", "+++ b/src/big.ts", `@@ -0,0 +1,${added.length} @@`, ...added, ""].join("\n");

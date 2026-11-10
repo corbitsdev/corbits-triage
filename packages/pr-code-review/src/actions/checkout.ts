@@ -37,11 +37,11 @@ export const REVIEW_CHANGES = `${DIFF_DIR}/since-review.patch`;
 async function discussedHistory(host: HostFetch, target: Checkout, number: number, previous: PreviousReview): Promise<PreviousReview> {
   const ids = [...new Set(previous.comments.map((finding) => finding.thread.id))];
   const discussions = await DISCUSSIONS[target.source](host, target.repo, number, ids);
-  const comments = previous.comments.map(function refreshed(finding) {
+  const comments = previous.comments.flatMap(function refreshed(finding) {
     const discussion = discussions.find((thread) => thread.id === finding.thread.id);
-    if (!discussion) throw new Error(`review thread ${finding.thread.id} is unavailable`);
+    if (!discussion) return [];
     const { comments: _comments, ...thread } = discussion;
-    return { ...finding, thread };
+    return [{ ...finding, thread }];
   });
   return { ...previous, comments, discussions };
 }

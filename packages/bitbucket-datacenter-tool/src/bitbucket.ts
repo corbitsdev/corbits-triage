@@ -438,7 +438,7 @@ export async function readReviewDiscussions(bb: BitbucketFetch, repo: string, nu
   for (const id of ids) {
     if (!Number.isSafeInteger(id)) throw new Error(`comment id must be an integer, got ${id}`);
     const thread = await threadCommentAt(bb, repo, number, id);
-    if (!thread) throw new Error(`review thread ${id} is unavailable`);
+    if (!thread) continue;
     const comments = [thread, ...replies(thread)].map(function comment(row) {
       if (row.text === undefined) throw new Error(`review thread ${id} has an unread comment`);
       return { author: row.author.slug ?? null, body: row.text, at: new Date(row.createdDate).toISOString() };
