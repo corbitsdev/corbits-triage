@@ -70,6 +70,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
   let root = "";
   let refusedRounds = 0;
   let pending = 0;
+  let hasHistory = false;
   let linesRead: LinesRead = new Map();
   // Only read_file windows show a patch file's lines in full; grep's matches never count toward reading the diff whole.
   const windowsRead: LinesRead = new Map();
@@ -103,11 +104,13 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
     if (refusedRounds > 0) return verdict?.verdict === "not_real" && cited(verdict) ? caps.reply(JSON.stringify(verdict)) : unsure(verdict?.reason ?? CHECK_UNFINISHED);
     if (!verdict && root !== "" && spent >= budget) return unsure(CHECK_UNFINISHED);
     if (!verdict) throw new Error(NO_VERDICT);
+    if (hasHistory && verdict.verdict === "real" && verdict.history === undefined) throw new Error("check did not reconcile prior findings");
     if (!cited(verdict)) return unsure(`${UNCITED}: ${verdict.reason}`);
     return caps.reply(JSON.stringify(verdict));
   }
 
   async function start(content: string) {
+    hasHistory = content.includes("<previous_findings>");
     const checkout = checkoutOf(content);
     if (!checkout) return caps.infer({ systemPrompt: basePrompt, tools: [] });
     if (!tools) throw new Error("reader: the input names a checkout this agent does not read");

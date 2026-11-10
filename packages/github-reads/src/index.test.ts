@@ -17,6 +17,7 @@ import {
   listPrTimeline,
   parseCodeowners,
   readMergeStates,
+  readReviewDiscussions,
   readPrDiff,
   readRepoDocsPage,
   REPO_DOCS_MAX_BYTES,
@@ -364,4 +365,20 @@ test("getChecks: only the latest run of each check name counts", async () => {
   }
   expect(summarizeChecks(await ci("cancelled", "success"))).toBe("success");
   expect(summarizeChecks(await ci("success", "failure"))).toBe("failure");
+});
+
+test("review discussion preserves replies and resolution and rejects incomplete history", async () => {
+  let incomplete = false;
+  const opener = { databaseId: 501, createdAt: "2026-01-01", author: { login: "bot" }, body: "Bug" };
+  async function host(_path: string, init?: RequestInit): Promise<Response> {
+    expect(JSON.parse(String(init?.body)).query).toContain("hasPreviousPage");
+    return Response.json({ data: { repository: { pullRequest: { reviewThreads: {
+      pageInfo: { hasNextPage: false, endCursor: null },
+      nodes: [{ isResolved: true, isOutdated: true, opener: { nodes: [opener] }, comments: { pageInfo: { hasPreviousPage: incomplete }, nodes: [opener, { ...opener, databaseId: 502, author: { login: "maintainer" }, body: "Intentional: caller validates it" }] } }],
+    } } } } });
+  }
+  expect(await readReviewDiscussions(host, "a/b", 1, [501])).toMatchObject([{ id: 501, state: "resolved", comments: [{ body: "Bug" }, { author: "maintainer", body: "Intentional: caller validates it" }] }]);
+  await expect(readReviewDiscussions(host, "a/b", 1, [999])).rejects.toThrow("unavailable");
+  incomplete = true;
+  await expect(readReviewDiscussions(host, "a/b", 1, [501])).rejects.toThrow("incomplete");
 });

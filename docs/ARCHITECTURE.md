@@ -59,8 +59,9 @@ allow is held for a person.
    deploys code review in a sandbox. Each mails its result back.
 6. While it waits, the manager edits its one comment in place. A head that waits only on CI ends the manager; the
    reconciler mails the head again once CI settles.
-7. The manager posts the verdict label, the final comment and the review, then runs the policy's actions where the
-   grants allow and holds the rest for a person.
+7. The manager posts the verdict label, the final comment and the review, reusing an earlier finding's thread when
+   verification, prior discussion and the changes since the last review identify the same defect. It then runs the
+   policy's actions where the grants allow and holds the rest for a person.
 8. The manager ends. The next event on the pull request starts again at step 1.
 
 Reviewing, fixing or cleaning up a pull request is a workflow of its own, started by mail or by an action's signal,

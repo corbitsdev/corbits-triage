@@ -1,6 +1,6 @@
 import { errorText } from "@corbits/common";
 import { parsePatch, type DiffHunk } from "@corbits/common/patch";
-import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, listReviewThreads, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, type GithubFetch, type ReviewThread } from "@corbits/github-reads";
+import { CODE_REVIEW_MARKER, getPr, isTriageComment, json, jsonAll, listPrFiles, listReviewThreads, lowercase, REQUEST_CHANGES_DO_MARKER, TRIAGE_COMMENT_MARKER, reviewThreadState, type GithubFetch } from "@corbits/github-reads";
 import { findingSection, HTML_MARKERS, inlineFindingText, type CodeReviewComment, type FindingLines, type SendCodeReviewInput, type SentThreads, type ThreadRead, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type HeadChange, type MarkedComment, type TriageHeader, type WrittenComment, writeClosedComment } from "@corbits/triage-contracts";
 
 function send(method: string, body: unknown): RequestInit {
@@ -364,22 +364,11 @@ export async function sendCodeReview(gh: GithubFetch, input: SendCodeReviewInput
   return { reviewId: posted.id as number, sent: true, ...(await reviewThreads(gh, repo, number, posted.id, input.comments, comments.length)) };
 }
 
-/** A thread's state, read off the comment that opened it: a reply counts only when someone other than its author wrote it. */
-function threadRead(thread: ReviewThread): ThreadRead | undefined {
-  const [first] = thread.opener.nodes;
-  if (!first) return undefined;
-  const id = first.databaseId;
-  if (thread.isResolved) return { id, state: "resolved" };
-  if (thread.isOutdated) return { id, state: "outdated" };
-  const reply = thread.comments.nodes.findLast((comment) => comment.databaseId !== id && comment.author?.login !== first.author?.login);
-  return reply ? { id, state: "replied", at: reply.createdAt } : { id, state: "untouched" };
-}
-
 /** The state of each review thread a comment of `ids` opened. */
 export async function findingThreadStates(gh: GithubFetch, repo: string, number: number, ids: readonly number[]): Promise<ThreadRead[]> {
   const wanted = new Set(ids);
   return (await listReviewThreads(gh, repo, number)).flatMap(function wantedRead(thread) {
-    const read = threadRead(thread);
+    const read = reviewThreadState(thread);
     return read && wanted.has(read.id) ? [read] : [];
   });
 }

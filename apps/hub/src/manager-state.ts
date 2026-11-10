@@ -620,17 +620,17 @@ function withinCap(groups: readonly (readonly number[])[]): number[] {
 
 /**
  * Comments a pass reads, at most `MAX_THREAD_READS`, newest within each group, and the thread each code-review event
- * keeps per finding. A pass whose webhooks triage as threads, a resumed pass's included, reads findings posted on
- * `head`: ids not stored resolved, then ids stored resolved. The first pass on `head` then reads findings posted on
- * other heads, newest unresolved then newest resolved, which a person can reopen. A later pass that does not triage as
- * threads reads none. An id past the cap is left out. `commentThreads` is named either way, so a comment id kept only
+ * keeps per finding. A code-review result or thread webhook, including a resumed pass, reads findings on `head`:
+ * ids not stored resolved, then ids stored resolved. The first pass on `head` also reads findings on other heads,
+ * newest unresolved then newest resolved, which a person can reopen. Other passes read none. An id past the cap is
+ * left out. `commentThreads` is named either way, so a comment id kept only
  * on the event still joins to a read on this pass and a stored resolved still releases on a later one.
  */
 async function threadsFor(tx: Tx, tenantId: string, pr: PullRequestRef, claim: Claim, head: string, passEvents: readonly TakenEvent[]): Promise<{ ids: number[]; commentThreads: CommentThreads[] }> {
   const reported = eventsOf(await codeReviewResults(tx, tenantId, pr));
   const commentThreads = commentThreadsOf(reported, pr);
   const first = !claim.history.some((pass) => pass.head === head);
-  const currentHead = passEvents.some(({ event }) => event.type === "webhook" && triagesThreads(event.payload));
+  const currentHead = passEvents.some(({ event }) => (event.type === "webhook" && triagesThreads(event.payload)) || (event.type === "reviewer-result" && event.payload["kind"] === "code-review"));
   if (!first && !currentHead) return { ids: [], commentThreads };
   const current = currentHead ? reportedThreads(reported, head, true) : new Map<number, string>();
   const other = first ? reportedThreads(reported, head, false) : new Map<number, string>();

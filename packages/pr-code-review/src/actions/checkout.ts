@@ -1,20 +1,23 @@
 import { lstat, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { readPrDiff as bitbucketDiff, readPrHead as bitbucketHead } from "@corbits/bitbucket-datacenter-reads";
 import { checkout as bitbucketCheckout } from "@corbits/bitbucket-datacenter-tool";
+import { readReviewDiscussions as bitbucketDiscussions } from "@corbits/bitbucket-datacenter-tool/bitbucket";
 import { diffHash } from "@corbits/common/diff-hash";
-import { readPr as githubPr, readPrDiff as githubDiff } from "@corbits/github-reads";
+import { readPr as githubPr, readPrDiff as githubDiff, readReviewDiscussions as githubDiscussions } from "@corbits/github-reads";
+import { PreviousReview } from "@corbits/triage-contracts";
 import { checkout as githubCheckout } from "@corbits/github-tool";
 import { checkoutsUnder, checkTarget, sidecarDataDir } from "@corbits/repo-read-tool";
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import { type } from "arktype";
 import { DIFF_DIR, DIFF_INDEX, indexedFiles, indexText } from "../diff-parts.js";
+import { changesBetween } from "../changes.js";
 
 export const Checkout = type({ source: "'github' | 'bitbucket-datacenter'", repo: "string", sha: /^[0-9a-f]{40}$/ });
 export type Checkout = typeof Checkout.infer;
 
 /** The checkout action's input: the head, and the pull request whose diff it reads and writes beside the checkout. */
-const CheckoutInput = Checkout.and({ number: "number.integer > 0" });
+const CheckoutInput = Checkout.and({ number: "number.integer > 0", "previous?": PreviousReview });
 
 /**
  * What the checkout action returns: the checkout's folder, the pull request's whole diff, which the later steps read,
@@ -24,6 +27,23 @@ export interface CheckedOut {
   path: string;
   diff: string;
   diffHash?: string;
+  previous?: PreviousReview;
+  changes?: string;
+}
+
+const DISCUSSIONS = { github: githubDiscussions, "bitbucket-datacenter": bitbucketDiscussions };
+export const REVIEW_CHANGES = `${DIFF_DIR}/since-review.patch`;
+
+async function discussedHistory(host: HostFetch, target: Checkout, number: number, previous: PreviousReview): Promise<PreviousReview> {
+  const ids = [...new Set(previous.comments.flatMap((finding) => finding.thread ? [finding.thread.id] : []))];
+  const discussions = await DISCUSSIONS[target.source](host, target.repo, number, ids);
+  const comments = previous.comments.map(function refreshed(finding) {
+    const discussion = discussions.find((thread) => thread.id === finding.thread?.id);
+    if (!discussion) return finding;
+    const { comments: _comments, ...thread } = discussion;
+    return { ...finding, thread };
+  });
+  return { ...previous, comments, discussions };
 }
 
 export const READ_FILE_TOOL = { github: "github_read_file", "bitbucket-datacenter": "bitbucket_datacenter_read_file" } as const;
@@ -149,7 +169,7 @@ export function checkoutUnder(dataDir: () => string) {
   return async function checkout(input: unknown, ctx: EffectContext): Promise<CheckedOut> {
     const parsed = CheckoutInput(input);
     if (parsed instanceof type.errors) throw new Error(`checkout: invalid input: ${parsed.summary}`);
-    const { number, ...target } = parsed;
+    const { number, previous, ...target } = parsed;
     const path = checkoutPath(dataDir(), target);
     async function run({ credentials }: PerformScope): Promise<CheckedOut> {
       const host = await hostOf(credentials, target.source);
@@ -157,7 +177,14 @@ export function checkoutUnder(dataDir: () => string) {
       if (!(await isCheckedOut(path))) await download(host, target, path);
       await writeDiff(path, diff);
       const hash = diffHash(diff);
-      return { path, diff, ...(hash && { diffHash: hash }) };
+      if (!previous) return { path, diff, ...(hash && { diffHash: hash }) };
+      const earlier = { ...target, sha: previous.head };
+      const before = checkoutPath(dataDir(), earlier);
+      if (!(await isCheckedOut(before))) await download(host, earlier, before);
+      const changes = await changesBetween(dirname(path), previous.head, target.sha);
+      await writeFile(join(diffDirOf(path), "since-review.patch"), changes, { flag: "wx" });
+      const history = await discussedHistory(host, target, number, previous);
+      return { path, diff, ...(hash && { diffHash: hash }), previous: history, changes };
     }
     return (await ctx.perform({ effectId: "checkout", capability: READ_REPOSITORY, run })) as CheckedOut;
   };

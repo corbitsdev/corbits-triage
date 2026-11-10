@@ -9,6 +9,7 @@ import { Mailed, type MailInput } from "../mail.js";
 import { publishedReviewer } from "../release.js";
 import { deploy, managerMailOf } from "./hub.js";
 import { Reviewer, storedReviewer, TakeOutput } from "./manager.js";
+import { previousReviewOf } from "../review-history.js";
 
 /** How many code reviews of one head may fail before later passes on it deploy no other. */
 const REVIEW_ATTEMPTS = 2;
@@ -198,7 +199,8 @@ export async function deployReview(input: unknown, ctx: EffectContext, _signal: 
   const again = asRecord(taken["codeReview"])?.["again"];
   const reviewRun = await deploy(ctx, "deploy", tenantId, release);
   const deadline = new Date(Date.now() + CODE_REVIEW_RUN_MS).toISOString();
-  const content = reviewMailContent(taken["codeReviewRequest"], tenantId);
+  const previous = previousReviewOf(parsed.take.output);
+  const content = reviewMailContent({ ...asRecord(taken["codeReviewRequest"]), ...(previous && { previous }) }, tenantId);
   return { reviewer: { kind: "code-review", head, runId: reviewRun, deployedBy: runId, deadline, ...(typeof again === "string" && { again }) }, mail: { tenantId, to: reviewRun, content, readyBy: deadline } };
 }
 
@@ -259,12 +261,26 @@ export async function postReview(input: unknown, ctx: EffectContext, _signal: Ab
   if (!summary && found.review.comments.length === 0) return { posted: false };
   const { pullRequest } = managerMailOf(parsed.payload);
   const source = repoSourceOf(pullRequest.source);
-  const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: found.review.comments.map(({ thread: _thread, ...finding }) => finding), appLogin: taken["appLogin"] };
+  // A new report can reuse earlier threads, but cannot vouch for its own thread IDs.
+  const previous = previousReviewOf(parsed.take.output, review ? found.runId : undefined);
+  const knownThreads = new Set(previous?.comments.map((finding) => finding.thread.id));
+  const reused = found.review.comments.map(function priorThread(finding) {
+    if (finding.thread === undefined) return null;
+    if (!knownThreads.has(finding.thread.id)) throw new Error("postReview: finding names no known review thread");
+    return finding.thread.id;
+  });
+  const fresh = found.review.comments.filter((_finding, index) => reused[index] === null);
+  if (fresh.length === 0 && reused.length > 0) return { posted: true, threads: { runId: found.runId, ids: reused } };
+  const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: fresh.map(({ thread: _thread, ...finding }) => finding), appLogin: taken["appLogin"] };
   const result = await hostWrite(ctx)(source, call(toolName(source, "send_code_review"), args, `review:${head}`));
   if (result.isError) throw new Error(`postReview: ${JSON.stringify(result.content)}`);
   const sent = Sent.assert(result.content);
   // A review the host skipped, as one whose head moved on, names no comments.
   if ("skipped" in sent) return { posted: true };
   if (sent.threads === null) return { posted: true, ...(sent.unread !== undefined && { unread: sent.unread }) };
-  return { posted: true, threads: { runId: found.runId, ids: sent.threads } };
+  if (sent.threads.length !== fresh.length) throw new Error("postReview: host returned the wrong number of finding threads");
+  const posted = sent.threads;
+  let next = 0;
+  const ids = reused.map((id) => id ?? posted[next++]!);
+  return { posted: true, threads: { runId: found.runId, ids } };
 }

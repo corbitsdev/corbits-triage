@@ -134,3 +134,20 @@ test("PostgreSQL: a pull request's mail keeps the policy's group order, so an au
     expect(() => readCheckPack(stored.state.payload.pack, GITHUB.repo)).toThrow("stored before Triage kept group order");
   });
 }, 120_000);
+
+test("PostgreSQL: a completed review refreshes reused threads even after the first pass on its head", async () => {
+  await withDatabase(async function reusedThread(db) {
+    for (const source of ["github", "bitbucket-datacenter"] as const) {
+      const pr = { ...GITHUB, source };
+      const run = `run_${source}`;
+      await liveRun(db, run);
+      await recordEvent(db, TENANT, pr, "push", webhook("new"));
+      expect((await take(db, TENANT, pr, run)).outcome).toBe("pass");
+      await done(db, TENANT, pr, run, [], { wait: true });
+      const result = { summary: "", complete: true, budgetExhausted: false, comments: [{ path: "a.ts", start: 1, end: 1, title: "Still present", body: "Same defect", priority: 2, thread: { id: 501, state: "resolved" } }] };
+      await recordEvent(db, TENANT, pr, "review", { type: "reviewer-result", head: "new", payload: { kind: "code-review", result } });
+      const taken = await take(db, TENANT, pr, run);
+      expect(taken).toMatchObject({ outcome: "pass", threads: [501] });
+    }
+  });
+}, 120_000);

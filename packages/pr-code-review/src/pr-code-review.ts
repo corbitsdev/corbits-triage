@@ -46,7 +46,7 @@ export function codeReviewSteps(agents: CodeReviewAgents, sources: Sources, { pr
   }
   return {
     [id("reviewInput")]: action({ handler: "reviewInput", input: request, ...(after && { after }) }),
-    [id("checkout")]: checkoutAction(sources, { merge: [outputOf("reviewInput", "request.checkout"), { project: outputOf("reviewInput", "request"), fields: ["number"] }] }, [id("reviewInput")]),
+    [id("checkout")]: checkoutAction(sources, outputOf("reviewInput", "checkout"), [id("reviewInput")]),
     [id("lint")]: action({ handler: "lint", input: { project: { from: `steps.${id("checkout")}.output` }, fields: ["path", "diff"] }, after: [id("checkout")], timeout: CODE_REVIEW_STEP_TIMEOUT_MS }),
     [id("findersInput")]: action({ handler: "findersInput", input: stepsOf("reviewInput", "checkout"), after: [id("checkout")] }),
     [id("find")]: map({
