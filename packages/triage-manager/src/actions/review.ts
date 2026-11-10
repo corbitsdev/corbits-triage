@@ -257,20 +257,24 @@ export async function postReview(input: unknown, ctx: EffectContext, _signal: Ab
   if (head === undefined || !taken || parsed.reviewScope.output.closed) return { posted: false };
   const found = toPost(review, reviewRun, parsed.reviewScope.output.reviewed ? storedReviewer(reviewers, head) : undefined);
   if (!found) return { posted: false };
-  const summary = codeReviewSummary(found.review);
+  let summary = codeReviewSummary(found.review);
   if (!summary && found.review.comments.length === 0) return { posted: false };
   const { pullRequest } = managerMailOf(parsed.payload);
   const source = repoSourceOf(pullRequest.source);
-  // A new report can reuse earlier threads, but cannot vouch for its own thread IDs.
-  const previous = previousReviewOf(parsed.take.output, review ? found.runId : undefined);
+  // Stored and newly reported reviews must both prove reuse against a different run.
+  const previous = previousReviewOf(parsed.take.output, found.runId);
   const knownThreads = new Set(previous?.comments.map((finding) => finding.thread.id));
   const reused = found.review.comments.map(function priorThread(finding) {
     if (finding.thread === undefined) return null;
-    if (!knownThreads.has(finding.thread.id)) throw new Error("postReview: finding names no known review thread");
+    if (!knownThreads.has(finding.thread.id)) return null;
     return finding.thread.id;
   });
   const fresh = found.review.comments.filter((_finding, index) => reused[index] === null);
-  if (fresh.length === 0 && reused.length > 0) return { posted: true, threads: { runId: found.runId, ids: reused } };
+  if (fresh.length === 0 && reused.length > 0) {
+    // Repeated findings need no announcement, but an incomplete review must still say so.
+    summary = codeReviewSummary({ ...found.review, summary: "" });
+    if (!summary) return { posted: true, threads: { runId: found.runId, ids: reused } };
+  }
   const args = { repo: pullRequest.repo, number: pullRequest.number, sha: head, summary, comments: fresh.map(({ thread: _thread, ...finding }) => finding), appLogin: taken["appLogin"] };
   const result = await hostWrite(ctx)(source, call(toolName(source, "send_code_review"), args, `review:${head}`));
   if (result.isError) throw new Error(`postReview: ${JSON.stringify(result.content)}`);

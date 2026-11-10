@@ -68,6 +68,7 @@ Reviewing, fixing or cleaning up a pull request is a workflow of its own, starte
 never a step inside the manager.
 A missing earlier snapshot does not stop review of the current head; a finding that needs the unavailable comparison
 remains unsure, without discarding other confirmed findings.
+A completed round with only repeated findings adds no routine review comment; incomplete-review notices still post.
 
 ## Keeping it running
 

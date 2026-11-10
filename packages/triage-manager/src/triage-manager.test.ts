@@ -525,6 +525,29 @@ describe("triage-manager with code review", () => {
     }
   });
 
+  test("a stored review with an unproven thread is posted through the host, then reused on retry", async () => {
+    const finding = { ...REVIEW.comments[0]!, thread: { id: 999, state: "resolved" } };
+    const stored = { ...reviewer(), result: { ...REVIEW, comments: [finding] } };
+    const request = hubRequest(RELEASING, { ...CODE_REVIEW, ...REVIEW_REQUEST });
+    const take = { ...PASS, request, reviewers: [stored], threads: [999] };
+    const { writes, host: base } = threadedHost([], CI_GREEN);
+    async function host(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (url.pathname.endsWith("/reviews") && (init?.method ?? "GET") === "GET") {
+        return Response.json(writes.flatMap((write, index) => write.path.endsWith("/reviews") ? [{ id: index + 1, user: { login: REQUEST["appLogin"] }, ...write.body as object }] : []));
+      }
+      return base(input, init);
+    }
+    for (const attempt of ["first", "retry"]) {
+      const hub = fakeHub({ takes: [take], dones: [ENDED] });
+      expect((await runMail(reviewed, wake(), host, hub.hub)).terminalStatus, attempt).toBe("completed");
+      expect(doneBody(hub.calls), attempt).toMatchObject({ threadIds: { runId: DEPLOYED, ids: [501] } });
+    }
+    expect(writes.filter((write) => write.path.endsWith("/reviews"))).toHaveLength(1);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+  });
+
   test("a reused resolved finding reopened during review still holds approve and merge", async () => {
     const request = hubRequest(RELEASING, { ...CODE_REVIEW, ...REVIEW_REQUEST });
     const finding = inline("resolved");
