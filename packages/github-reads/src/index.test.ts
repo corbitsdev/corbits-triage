@@ -386,11 +386,15 @@ test("review discussion preserves replies and resolution, omits deleted threads 
 test("review discussion pages older replies and distinguishes deletion from a failed read", async () => {
   const opener = { databaseId: 501, createdAt: "2026-01-01", author: { login: "bot" }, body: "Bug" };
   const latest = { ...opener, databaseId: 602, author: { login: "maintainer" }, body: "Intentional" };
-  let outcome: "page" | "deleted" | "error" = "page";
+  let outcome: "page" | "deleted" | "error" | "not-found" | "mixed" | "partial" = "page";
   async function host(_path: string, init?: RequestInit): Promise<Response> {
     const { variables } = JSON.parse(String(init?.body));
     if (variables.before) {
       expect(variables).toEqual({ id: "thread", before: "older" });
+      const missing = { type: "NOT_FOUND", path: ["node"], message: "Could not resolve to a node" };
+      if (outcome === "not-found") return Response.json({ data: { node: null }, errors: [missing] });
+      if (outcome === "mixed") return Response.json({ data: { node: null }, errors: [missing, { type: "FORBIDDEN", message: "Denied" }] });
+      if (outcome === "partial") return Response.json({ data: { node: { comments: { pageInfo: { hasPreviousPage: false }, nodes: [] } } }, errors: [missing] });
       if (outcome !== "page") return Response.json({ data: { node: null }, ...(outcome === "error" && { errors: [{ message: "Denied" }] }) });
       return Response.json({ data: { node: { comments: { pageInfo: { hasPreviousPage: false, startCursor: "first" }, nodes: [opener] } } } });
     }
@@ -402,6 +406,10 @@ test("review discussion pages older replies and distinguishes deletion from a fa
   expect(await readReviewDiscussions(host, "a/b", 1, [501])).toMatchObject([{ id: 501, state: "replied", comments: [{ body: "Bug" }, { body: "Intentional" }] }]);
   outcome = "deleted";
   expect(await readReviewDiscussions(host, "a/b", 1, [501])).toEqual([]);
-  outcome = "error";
-  await expect(readReviewDiscussions(host, "a/b", 1, [501])).rejects.toThrow("could not read");
+  outcome = "not-found";
+  expect(await readReviewDiscussions(host, "a/b", 1, [501])).toEqual([]);
+  for (const failure of ["error", "mixed", "partial"] as const) {
+    outcome = failure;
+    await expect(readReviewDiscussions(host, "a/b", 1, [501])).rejects.toThrow("could not read");
+  }
 });

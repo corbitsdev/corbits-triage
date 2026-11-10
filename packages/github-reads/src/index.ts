@@ -510,7 +510,7 @@ const DISCUSSION_QUERY = `query($id: ID!, $before: String!) {
     }
   } }
 }`;
-const DiscussionReply = type({ data: { node: type({ comments: DiscussionPage }).or("null") }, "errors?": "unknown[]" });
+const DiscussionReply = type({ data: { node: type({ comments: DiscussionPage }).or("null") }, "errors?": type({ "type?": "string", "path?": "(string | number)[]" }).array() });
 
 /** Body reads are separate from merge-gate reads; deleted threads have no history to reuse. */
 export async function readReviewDiscussions(gh: GithubFetch, repo: string, number: number, ids: readonly number[]): Promise<ReviewDiscussion[]> {
@@ -530,12 +530,12 @@ export async function readReviewDiscussions(gh: GithubFetch, repo: string, numbe
       cursors.add(before);
       const reply = await json(gh, "/graphql", { method: "POST", body: JSON.stringify({ query: DISCUSSION_QUERY, variables: { id: thread.id, before } }), headers: { "content-type": "application/json" } });
       const parsed = DiscussionReply.assert(reply);
-      if (parsed.errors?.length) throw new Error(`could not read review thread ${id}`);
       const { node } = parsed.data;
-      if (!node) {
+      if (!node && (parsed.errors === undefined || parsed.errors.every((error) => error.type === "NOT_FOUND" && error.path?.length === 1 && error.path[0] === "node"))) {
         deleted = true;
         break;
       }
+      if (!node || parsed.errors?.length) throw new Error(`could not read review thread ${id}`);
       page = node.comments;
       rows = [...page.nodes, ...rows];
     }
