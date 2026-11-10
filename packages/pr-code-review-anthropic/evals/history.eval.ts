@@ -9,7 +9,7 @@ import { TOOL_PROMPTS } from "@corbits/pr-code-review/prompts";
 import { type } from "arktype";
 import { PreviousReview } from "@corbits/triage-contracts";
 import { candidates, checks, review, reviewInputFor, parseVerdict } from "@corbits/pr-code-review/actions/review";
-import { budgetOf, Checkout } from "@corbits/pr-code-review/actions/checkout";
+import { budgetOf, Checkout, diffDirOf, writeDiff } from "@corbits/pr-code-review/actions/checkout";
 import { firstObject } from "@corbits/pr-code-review/findings";
 import { addRead, citesLineRead, linesShown } from "@corbits/pr-code-review/lines-read";
 import { historyEntries } from "@corbits/pr-code-review/history";
@@ -42,7 +42,7 @@ const LIMIT_USD = 10;
 const MAX_OUTPUT = 16_000;
 const dataDir = mkdtempSync(join(tmpdir(), "review-history-eval-"));
 const root = join(checkoutsUnder(dataDir), "repo");
-const diffRoot = join(checkoutsUnder(dataDir), "diff");
+const diffRoot = diffDirOf(root);
 const reader = await repoReadUnder(() => dataDir)({} as BaseEnv);
 const tools = REPO_READ_DEFINITIONS.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
 const Reply = type({ content: type({ type: "string", "text?": "string", "id?": "string", "name?": "string", "input?": "Record<string, unknown>" }).array(), usage: { input_tokens: "number", output_tokens: "number" } });
@@ -53,11 +53,10 @@ function callCost(input: number, output: number): number {
   return cost;
 }
 
-function prepareFiles(files: Record<string, string>, changes: string | null, previous: typeof PreviousReview.infer): void {
+async function prepareFiles(files: Record<string, string>, diff: string, changes: string | null, previous: typeof PreviousReview.infer): Promise<void> {
   rmSync(root, { recursive: true, force: true });
   rmSync(diffRoot, { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
-  mkdirSync(diffRoot, { recursive: true });
   for (const [name, text] of Object.entries(files)) {
     if (name.startsWith("/diff/")) continue;
     const path = resolve(root, name);
@@ -65,6 +64,7 @@ function prepareFiles(files: Record<string, string>, changes: string | null, pre
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, text);
   }
+  await writeDiff(root, diff);
   if (changes !== null) writeFileSync(join(diffRoot, "since-review.patch"), changes);
   writeFileSync(join(diffRoot, "review-history.json"), JSON.stringify(historyEntries(previous), null, 2));
 }
@@ -112,7 +112,7 @@ async function verify(prompt: string, text: string) {
 
 try {
   for (const fixture of fixtures) {
-    prepareFiles(fixture.files, fixture.changes, fixture.previous);
+    await prepareFiles(fixture.files, fixture.diff, fixture.changes, fixture.previous);
     for (let repetition = 0; repetition < fixture.repeat; repetition++) {
       for (const mode of ["baseline", "patched"] as const) {
         const started = Date.now();

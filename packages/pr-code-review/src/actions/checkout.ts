@@ -169,7 +169,7 @@ async function freshDir(dir: string) {
 }
 
 /** Writes each changed file's patch parts and the index naming them beside the checkout at `path`. */
-async function writeDiff(path: string, diff: string) {
+export async function writeDiff(path: string, diff: string) {
   const files = indexedFiles(diff);
   const dir = diffDirOf(path);
   await freshDir(dir);

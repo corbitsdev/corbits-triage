@@ -1,5 +1,5 @@
 import { createReadStream, type Dirent } from "node:fs";
-import { readdir, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { minimatch } from "minimatch";
 import { RE2JS } from "re2js";
@@ -7,6 +7,7 @@ import { clip, linePage, rangeEnd, LINE_PREFIX_CHARS, MAX_LINES } from "./lines"
 
 export const MAX_MATCHES = 100;
 export const MAX_ENTRIES = 500;
+const MAX_FILE_BYTES = 2_000_000;
 
 /** The real path of `path` under root; one that resolves outside it, through `..`, an absolute path or a symlink, is refused. */
 async function confine(root: string, path: string): Promise<string> {
@@ -22,8 +23,14 @@ async function confine(root: string, path: string): Promise<string> {
   return real;
 }
 
+async function textOf(file: string): Promise<string | undefined> {
+  if ((await stat(file)).size > MAX_FILE_BYTES) return undefined;
+  const text = await readFile(file, "utf8");
+  return text.includes("\0") ? undefined : text;
+}
+
 /** Null marks binary content; paged reads retain only the displayed prefix of each line. */
-async function* fileLines(file: string, prefixOnly = false): AsyncGenerator<string | null> {
+async function* fileLines(file: string): AsyncGenerator<string | null> {
   let pending = "";
   for await (const chunk of createReadStream(file, { encoding: "utf8" })) {
     const text = String(chunk);
@@ -36,7 +43,7 @@ async function* fileLines(file: string, prefixOnly = false): AsyncGenerator<stri
       const newline = text.indexOf("\n", start);
       const end = newline < 0 ? text.length : newline;
       pending += text.slice(start, end);
-      if (prefixOnly) pending = pending.slice(0, LINE_PREFIX_CHARS);
+      pending = pending.slice(0, LINE_PREFIX_CHARS);
       if (newline < 0) break;
       yield pending;
       pending = "";
@@ -53,7 +60,7 @@ export async function readLines(root: string, path: string, start = 1, end = sta
   const to = rangeEnd(start, end);
   const lines: string[] = [];
   let totalLines = 0;
-  for await (const line of fileLines(file, true)) {
+  for await (const line of fileLines(file)) {
     if (line === null) throw new Error(`${path} is binary`);
     totalLines++;
     if (totalLines >= start && totalLines <= to) lines.push(line);
@@ -87,19 +94,14 @@ export async function grep(root: string, pattern: string, glob?: string) {
   for await (const file of walk(base)) {
     const path = posixPath(base, file);
     if (glob && !minimatch(path, glob, { dot: true, matchBase: !glob.includes("/") })) continue;
-    const found: typeof matches = [];
-    let lineNumber = 0;
-    for await (const line of fileLines(file)) {
-      if (line === null) {
-        found.length = 0;
-        break;
-      }
-      lineNumber++;
-      if (matches.length + found.length > MAX_MATCHES || !re.matcher(line).find()) continue;
-      found.push({ path, line: lineNumber, text: clip(line) });
+    const text = await textOf(file);
+    if (text === undefined) continue;
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (!re.matcher(lines[i]!).find()) continue;
+      if (matches.length === MAX_MATCHES) return { matches, truncated: true };
+      matches.push({ path, line: i + 1, text: clip(lines[i]!) });
     }
-    matches.push(...found);
-    if (matches.length > MAX_MATCHES) return { matches: matches.slice(0, MAX_MATCHES), truncated: true };
   }
   return { matches, truncated: false };
 }
