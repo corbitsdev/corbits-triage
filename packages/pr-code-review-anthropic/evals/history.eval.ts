@@ -53,7 +53,7 @@ function callCost(input: number, output: number): number {
   return cost;
 }
 
-async function prepareFiles(files: Record<string, string>, diff: string, changes: string | null, previous: typeof PreviousReview.infer): Promise<void> {
+async function prepareFiles(files: Record<string, string>, diff: string, changes: string | null, previous?: typeof PreviousReview.infer): Promise<void> {
   rmSync(root, { recursive: true, force: true });
   rmSync(diffRoot, { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
@@ -65,8 +65,10 @@ async function prepareFiles(files: Record<string, string>, diff: string, changes
     writeFileSync(path, text);
   }
   await writeDiff(root, diff);
-  if (changes !== null) writeFileSync(join(diffRoot, "since-review.patch"), changes);
-  writeFileSync(join(diffRoot, "review-history.json"), JSON.stringify(historyEntries(previous), null, 2));
+  if (previous) {
+    if (changes !== null) writeFileSync(join(diffRoot, "since-review.patch"), changes);
+    writeFileSync(join(diffRoot, "review-history.json"), JSON.stringify(historyEntries(previous), null, 2));
+  }
 }
 
 async function verify(prompt: string, text: string) {
@@ -112,9 +114,9 @@ async function verify(prompt: string, text: string) {
 
 try {
   for (const fixture of fixtures) {
-    await prepareFiles(fixture.files, fixture.diff, fixture.changes, fixture.previous);
     for (let repetition = 0; repetition < fixture.repeat; repetition++) {
       for (const mode of ["baseline", "patched"] as const) {
+        await prepareFiles(fixture.files, fixture.diff, fixture.changes, mode === "patched" ? fixture.previous : undefined);
         const started = Date.now();
         const beforeCost = costUsd;
         const input = await reviewInputFor(ANTHROPIC)({ kind: "code-review", ...fixture.request, ...(mode === "patched" && { previous: fixture.previous }) });
@@ -123,7 +125,8 @@ try {
         const verdict = await verify(mode === "baseline" ? baseline : patched, checked.checks[0]!.text);
         const result = await review({ candidates: { output: folded }, checks: { output: checked }, check: { output: [{ reply: JSON.stringify(verdict) }] } });
         const posted = result.comments.filter((finding) => finding.thread === undefined).length;
-        const observed = verdict.verdict === "real" ? verdict.history?.kind ?? "new" : verdict.verdict;
+        let observed: string = verdict.verdict === "real" ? verdict.history?.kind ?? "new" : verdict.verdict;
+        if (result.dropped.length > 0) observed = result.dropped[0]!.verdict;
         const correct = observed === fixture.expected || (fixture.expected === "duplicate" && observed === "not_real");
         const postingCorrect = fixture.expected === "new" || fixture.expected === "regression" ? posted === 1 : posted === 0 && observed !== "unsure";
         const row = { id: fixture.id, repetition, mode, expected: fixture.expected, observed, correct, postingCorrect, posted, verdict, costUsd: costUsd - beforeCost, ms: Date.now() - started };
