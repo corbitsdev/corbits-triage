@@ -1,20 +1,24 @@
 import { lstat, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { readPrDiff as bitbucketDiff, readPrHead as bitbucketHead } from "@corbits/bitbucket-datacenter-reads";
 import { checkout as bitbucketCheckout } from "@corbits/bitbucket-datacenter-tool";
+import { readReviewDiscussions as bitbucketDiscussions } from "@corbits/bitbucket-datacenter-tool/bitbucket";
 import { diffHash } from "@corbits/common/diff-hash";
-import { readPr as githubPr, readPrDiff as githubDiff } from "@corbits/github-reads";
+import { readPr as githubPr, readPrDiff as githubDiff, readReviewDiscussions as githubDiscussions } from "@corbits/github-reads";
+import { PreviousReview } from "@corbits/triage-contracts";
 import { checkout as githubCheckout } from "@corbits/github-tool";
 import { checkoutsUnder, checkTarget, sidecarDataDir } from "@corbits/repo-read-tool";
 import type { EffectContext, PerformScope } from "@intx/workflow";
 import { type } from "arktype";
 import { DIFF_DIR, DIFF_INDEX, indexedFiles, indexText } from "../diff-parts.js";
+import { changesBetween } from "../changes.js";
+import { historyEntries } from "../history.js";
 
 export const Checkout = type({ source: "'github' | 'bitbucket-datacenter'", repo: "string", sha: /^[0-9a-f]{40}$/ });
 export type Checkout = typeof Checkout.infer;
 
 /** The checkout action's input: the head, and the pull request whose diff it reads and writes beside the checkout. */
-const CheckoutInput = Checkout.and({ number: "number.integer > 0" });
+const CheckoutInput = Checkout.and({ number: "number.integer > 0", "previous?": PreviousReview });
 
 /**
  * What the checkout action returns: the checkout's folder, the pull request's whole diff, which the later steps read,
@@ -24,6 +28,24 @@ export interface CheckedOut {
   path: string;
   diff: string;
   diffHash?: string;
+  previous?: PreviousReview;
+  /** Null when the host no longer has the previously reviewed snapshot. */
+  changes?: string | null;
+}
+
+const DISCUSSIONS = { github: githubDiscussions, "bitbucket-datacenter": bitbucketDiscussions };
+export const REVIEW_CHANGES = `${DIFF_DIR}/since-review.patch`;
+
+async function discussedHistory(host: HostFetch, target: Checkout, number: number, previous: PreviousReview): Promise<PreviousReview> {
+  const ids = [...new Set(previous.comments.map((finding) => finding.thread.id))];
+  const discussions = await DISCUSSIONS[target.source](host, target.repo, number, ids);
+  const comments = previous.comments.flatMap(function refreshed(finding) {
+    const discussion = discussions.find((thread) => thread.id === finding.thread.id);
+    if (!discussion) return [];
+    const { comments: _comments, ...thread } = discussion;
+    return [{ ...finding, thread }];
+  });
+  return { ...previous, comments, discussions };
 }
 
 export const READ_FILE_TOOL = { github: "github_read_file", "bitbucket-datacenter": "bitbucket_datacenter_read_file" } as const;
@@ -100,6 +122,24 @@ async function download(host: HostFetch, { source, repo, sha }: Checkout, path: 
   }
 }
 
+async function previousChanges(host: HostFetch, target: Checkout, head: string, path: string, dataDir: string): Promise<string | null> {
+  const earlier = { ...target, sha: head };
+  const before = checkoutPath(dataDir, earlier);
+  const missing = new Error("previously reviewed snapshot is no longer available");
+  async function snapshotHost(hostPath: string, init?: RequestInit) {
+    const response = await host(hostPath, init);
+    if (response.status === 404) throw missing;
+    return response;
+  }
+  try {
+    if (!(await isCheckedOut(before))) await download(snapshotHost, earlier, before);
+  } catch (err) {
+    if (err === missing) return null;
+    throw err;
+  }
+  return changesBetween(dirname(path), head, target.sha);
+}
+
 /** The host as the credential bound for `source` reaches it. */
 async function hostOf(credentials: PerformScope["credentials"], source: Checkout["source"]): Promise<HostFetch> {
   const mediated = await credentials.resolve(source);
@@ -129,7 +169,7 @@ async function freshDir(dir: string) {
 }
 
 /** Writes each changed file's patch parts and the index naming them beside the checkout at `path`. */
-async function writeDiff(path: string, diff: string) {
+export async function writeDiff(path: string, diff: string) {
   const files = indexedFiles(diff);
   const dir = diffDirOf(path);
   await freshDir(dir);
@@ -149,7 +189,7 @@ export function checkoutUnder(dataDir: () => string) {
   return async function checkout(input: unknown, ctx: EffectContext): Promise<CheckedOut> {
     const parsed = CheckoutInput(input);
     if (parsed instanceof type.errors) throw new Error(`checkout: invalid input: ${parsed.summary}`);
-    const { number, ...target } = parsed;
+    const { number, previous, ...target } = parsed;
     const path = checkoutPath(dataDir(), target);
     async function run({ credentials }: PerformScope): Promise<CheckedOut> {
       const host = await hostOf(credentials, target.source);
@@ -157,7 +197,12 @@ export function checkoutUnder(dataDir: () => string) {
       if (!(await isCheckedOut(path))) await download(host, target, path);
       await writeDiff(path, diff);
       const hash = diffHash(diff);
-      return { path, diff, ...(hash && { diffHash: hash }) };
+      if (!previous) return { path, diff, ...(hash && { diffHash: hash }) };
+      const changes = await previousChanges(host, target, previous.head, path, dataDir());
+      if (changes !== null) await writeFile(join(diffDirOf(path), "since-review.patch"), changes, { flag: "wx" });
+      const history = await discussedHistory(host, target, number, previous);
+      await writeFile(join(diffDirOf(path), "review-history.json"), JSON.stringify(historyEntries(history), null, 2), { flag: "wx" });
+      return { path, diff, ...(hash && { diffHash: hash }), previous: history, changes };
     }
     return (await ctx.perform({ effectId: "checkout", capability: READ_REPOSITORY, run })) as CheckedOut;
   };

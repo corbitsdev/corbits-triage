@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { errorText } from "@corbits/common";
 import { plainSegments } from "@corbits/repo-read-tool/host-reads";
 import { changesSince, CODE_REVIEW_MARKER, filePath, jsonAll, repoPath, TRIAGE_BUILD_KEY, type BitbucketFetch } from "@corbits/bitbucket-datacenter-reads";
-import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type TriageHeader, type VerdictStatus, type WrittenComment, writeClosedComment } from "@corbits/triage-contracts";
+import { findingSection, inlineFindingText, isLinkReferenceTriageComment, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS, writeHeadedComment, writeUnheadedComment, type CommentHost, type KeptVerdict, type MarkedComment, type CodeReviewComment, type SendCodeReviewInput, type SentThreads, type ThreadRead, type ReviewDiscussion, type TriageHeader, type VerdictStatus, type WrittenComment, writeClosedComment } from "@corbits/triage-contracts";
 
 export type { BitbucketFetch };
 
@@ -384,7 +384,7 @@ export async function sendCodeReview(bb: BitbucketFetch, input: SendCodeReviewIn
   return { commentId: (await createComment(bb, { repo, number, text })).commentId, sent: true, threads };
 }
 
-type ThreadComment = { author: { id: number }; createdDate: number; threadResolved?: boolean; threadResolvedDate?: number; anchor?: { orphaned?: boolean }; comments?: ThreadComment[] };
+type ThreadComment = { author: { id: number; slug?: string }; text?: string; createdDate: number; threadResolved?: boolean; threadResolvedDate?: number; anchor?: { orphaned?: boolean }; comments?: ThreadComment[] };
 
 /** Data Center leaves `comments` out of a comment nobody replied to. */
 function replies(comment: ThreadComment): ThreadComment[] {
@@ -405,12 +405,12 @@ function threadReadOf(id: number, comment: ThreadComment): ThreadRead {
 }
 
 /** The state of the thread comment `id` opened, or undefined for a comment deleted since. */
-async function threadAt(bb: BitbucketFetch, repo: string, number: number, id: number): Promise<ThreadRead | undefined> {
+async function threadCommentAt(bb: BitbucketFetch, repo: string, number: number, id: number): Promise<ThreadComment | undefined> {
   const path = `${prPath(repo, number)}/comments/${id}`;
   const res = await bb(path, { headers: { accept: "application/json" } });
   if (res.status === 404) return undefined;
   if (!res.ok) throw new Error(`bitbucket GET ${path} -> ${res.status} ${await errorMessage(res)}`.trimEnd());
-  return threadReadOf(id, await res.json() as ThreadComment);
+  return await res.json() as ThreadComment;
 }
 
 /**
@@ -423,11 +423,27 @@ export async function findingThreadStates(bb: BitbucketFetch, repo: string, numb
   for (const id of ids) {
     if (!Number.isSafeInteger(id)) throw new Error(`comment id must be an integer, got ${id}`);
     try {
-      const read = await threadAt(bb, repo, number, id);
-      if (read) threads.push(read);
+      const comment = await threadCommentAt(bb, repo, number, id);
+      if (comment) threads.push(threadReadOf(id, comment));
     } catch (err) {
       failed.push(errorText(err));
     }
   }
   return { threads, ...(failed.length > 0 && { unread: failed.join("; ") }) };
+}
+
+/** Read the whole conversation using Data Center's recursive comment representation. */
+export async function readReviewDiscussions(bb: BitbucketFetch, repo: string, number: number, ids: readonly number[]): Promise<ReviewDiscussion[]> {
+  const discussions: ReviewDiscussion[] = [];
+  for (const id of ids) {
+    if (!Number.isSafeInteger(id)) throw new Error(`comment id must be an integer, got ${id}`);
+    const thread = await threadCommentAt(bb, repo, number, id);
+    if (!thread) continue;
+    const comments = [thread, ...replies(thread)].map(function comment(row) {
+      if (row.text === undefined) throw new Error(`review thread ${id} has an unread comment`);
+      return { author: row.author.slug ?? null, body: row.text, at: new Date(row.createdDate).toISOString() };
+    });
+    discussions.push({ ...threadReadOf(id, thread), comments });
+  }
+  return discussions;
 }

@@ -6,7 +6,7 @@ import { lazy, turnText } from "@corbits/common/reactor";
 import { refused, REPO_READ_DEFINITIONS, rootedAt } from "@corbits/repo-read-tool";
 import { BUDGET_EXHAUSTED, budgetOf, checkoutOf, checkoutPath, diffDirOf, isCheckedOut } from "./actions/checkout.js";
 import { MODEL_FAILED, NO_CHECKOUT, NO_VERDICT, UNREADABLE } from "./failures.js";
-import { Verdict } from "./actions/review.js";
+import { Verdict, parseVerdict } from "./actions/review.js";
 import { firstObject, parseFindings } from "./findings.js";
 import { addRead, addWindow, citesLineRead, linesShown, type LinesRead } from "./lines-read.js";
 import { shownTag } from "./diff-parts.js";
@@ -43,11 +43,6 @@ export interface ReaderDirectorConfig {
 
 type Verdict = typeof Verdict.infer;
 
-function verdictOf(json: unknown): Verdict | undefined {
-  const verdict = Verdict(json);
-  return verdict instanceof type.errors ? undefined : verdict;
-}
-
 /**
  * Lets the model read the checkout of the head the input names under `dataDir` with the read tools alone, each call
  * confined to its folder, until it answers; the reply is the model's final text. An input that names no head gets one
@@ -70,6 +65,7 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
   let root = "";
   let refusedRounds = 0;
   let pending = 0;
+  let hasHistory = false;
   let linesRead: LinesRead = new Map();
   // Only read_file windows show a patch file's lines in full; grep's matches never count toward reading the diff whole.
   const windowsRead: LinesRead = new Map();
@@ -99,15 +95,17 @@ function readerDirector(caps: ReactorCapabilities, basePrompt: string, { tools, 
   }
 
   function verdictReply(text: string) {
-    const verdict = firstObject(text, verdictOf);
+    const verdict = firstObject(text, parseVerdict);
     if (refusedRounds > 0) return verdict?.verdict === "not_real" && cited(verdict) ? caps.reply(JSON.stringify(verdict)) : unsure(verdict?.reason ?? CHECK_UNFINISHED);
     if (!verdict && root !== "" && spent >= budget) return unsure(CHECK_UNFINISHED);
     if (!verdict) throw new Error(NO_VERDICT);
+    if (hasHistory && verdict.verdict === "real" && verdict.history === undefined) return unsure("check did not reconcile prior findings");
     if (!cited(verdict)) return unsure(`${UNCITED}: ${verdict.reason}`);
     return caps.reply(JSON.stringify(verdict));
   }
 
   async function start(content: string) {
+    hasHistory = content.includes("<previous_findings>");
     const checkout = checkoutOf(content);
     if (!checkout) return caps.infer({ systemPrompt: basePrompt, tools: [] });
     if (!tools) throw new Error("reader: the input names a checkout this agent does not read");

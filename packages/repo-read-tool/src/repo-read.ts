@@ -1,9 +1,9 @@
-import type { Dirent } from "node:fs";
+import { createReadStream, type Dirent } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { minimatch } from "minimatch";
 import { RE2JS } from "re2js";
-import { clip, linesOf, MAX_LINES } from "./lines";
+import { clip, linePage, rangeEnd, LINE_PREFIX_CHARS, MAX_LINES } from "./lines";
 
 export const MAX_MATCHES = 100;
 export const MAX_ENTRIES = 500;
@@ -29,13 +29,43 @@ async function textOf(file: string): Promise<string | undefined> {
   return text.includes("\0") ? undefined : text;
 }
 
+/** Null marks binary content; paged reads retain only the displayed prefix of each line. */
+async function* fileLines(file: string): AsyncGenerator<string | null> {
+  let pending = "";
+  for await (const chunk of createReadStream(file, { encoding: "utf8" })) {
+    const text = String(chunk);
+    if (text.includes("\0")) {
+      yield null;
+      return;
+    }
+    let start = 0;
+    while (start < text.length) {
+      const newline = text.indexOf("\n", start);
+      const end = newline < 0 ? text.length : newline;
+      pending += text.slice(start, end);
+      pending = pending.slice(0, LINE_PREFIX_CHARS);
+      if (newline < 0) break;
+      yield pending;
+      pending = "";
+      start = newline + 1;
+    }
+  }
+  yield pending;
+}
+
 /** Lines start..end (1-based, inclusive) of a text file, numbered and paged as `linesOf` pages them. */
 export async function readLines(root: string, path: string, start = 1, end = start + MAX_LINES - 1) {
   const file = await confine(root, path);
   if (!(await stat(file)).isFile()) throw new Error(`${path} is not a file`);
-  const text = await textOf(file);
-  if (text === undefined) throw new Error(`${path} is binary or larger than ${MAX_FILE_BYTES} bytes`);
-  return linesOf(path, text, start, end);
+  const to = rangeEnd(start, end);
+  const lines: string[] = [];
+  let totalLines = 0;
+  for await (const line of fileLines(file)) {
+    if (line === null) throw new Error(`${path} is binary`);
+    totalLines++;
+    if (totalLines >= start && totalLines <= to) lines.push(line);
+  }
+  return linePage(path, lines, start, totalLines);
 }
 
 async function* walk(dir: string): AsyncGenerator<string> {

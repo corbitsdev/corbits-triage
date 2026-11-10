@@ -344,6 +344,17 @@ describe("triage-manager with code review", () => {
     expect(mailed).toHaveLength(1);
   });
 
+  test("a new head's review mail carries findings from earlier heads, including resolved threads", async () => {
+    const { host } = githubHost();
+    const mailed: unknown[] = [];
+    const comments = [{ ...REVIEW.comments[0]!, thread: { id: 501, state: "resolved" } }];
+    const previous = { ...reviewer(), head: "b".repeat(40), runId: "run_earlier", result: { ...REVIEW, comments } };
+    const hub = fakeHub({ takes: [{ ...PASS, request: ON, reviewers: [previous] }], dones: [ENDED] });
+    expect((await runMail(reviewed, wake(), host, hub.hub, mailed)).terminalStatus).toBe("completed");
+    const [mail] = mailed as [{ content: string }];
+    expect(JSON.parse(mail.content)).toMatchObject({ ...REVIEW_REQUEST.codeReviewRequest, previous: { head: previous.head, comments } });
+  });
+
   /** GitHub answering the review's inline comments and its review threads as GraphQL gives them. `checkRuns` is the head's CI. */
   function threadedHost(threads?: object[], checkRuns?: object[]) {
     const { writes, host } = githubHost(HEAD, { checkRuns });
@@ -496,6 +507,60 @@ describe("triage-manager with code review", () => {
     expect(terminalStatus).toBe("completed");
     return writes;
   }
+
+  test("a reworded finding on a new head keeps the old thread and only new defects are posted", async () => {
+    const prior = { ...REVIEW.comments[0]!, thread: { id: 900, state: "untouched" } };
+    const old = { ...reviewer("2998-01-01T00:00:00.000Z"), head: "old", runId: "run_old", result: { ...REVIEW, comments: [prior] } };
+    for (const fresh of [[], [{ ...REVIEW.comments[0]!, title: "A different defect" }]]) {
+      const repeated = { ...prior, title: "Reworded same defect" };
+      const result = { ...REVIEW, comments: [repeated, ...fresh] };
+      const taken = reported({ result }, ON);
+      const hub = fakeHub({ takes: [{ ...taken, reviewers: [old, ...taken.reviewers], threads: [900] }], dones: [ENDED] });
+      const { writes, host } = threadedHost([thread([900])]);
+      expect((await runMail(reviewed, wake(), host, hub.hub)).terminalStatus).toBe("completed");
+      const reviews = writes.filter((write) => write.path.endsWith("/reviews"));
+      expect(reviews).toHaveLength(fresh.length);
+      if (fresh.length) expect(reviews[0]!.body).toMatchObject({ comments: [{ body: expect.stringContaining("A different defect") }] });
+      expect(doneBody(hub.calls)).toMatchObject({ threadIds: { runId: DEPLOYED, ids: fresh.length ? [900, 501] : [900] } });
+    }
+  });
+
+  test("a stored review with an unproven thread is posted through the host, then reused on retry", async () => {
+    const finding = { ...REVIEW.comments[0]!, thread: { id: 999, state: "resolved" } };
+    const stored = { ...reviewer(), result: { ...REVIEW, comments: [finding] } };
+    const request = hubRequest(RELEASING, { ...CODE_REVIEW, ...REVIEW_REQUEST });
+    const take = { ...PASS, request, reviewers: [stored], threads: [999] };
+    const { writes, host: base } = threadedHost([], CI_GREEN);
+    async function host(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (url.pathname.endsWith("/reviews") && (init?.method ?? "GET") === "GET") {
+        return Response.json(writes.flatMap((write, index) => write.path.endsWith("/reviews") ? [{ id: index + 1, user: { login: REQUEST["appLogin"] }, ...write.body as object }] : []));
+      }
+      return base(input, init);
+    }
+    for (const attempt of ["first", "retry"]) {
+      const hub = fakeHub({ takes: [take], dones: [ENDED] });
+      expect((await runMail(reviewed, wake(), host, hub.hub)).terminalStatus, attempt).toBe("completed");
+      expect(doneBody(hub.calls), attempt).toMatchObject({ threadIds: { runId: DEPLOYED, ids: [501] } });
+    }
+    expect(writes.filter((write) => write.path.endsWith("/reviews"))).toHaveLength(1);
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+  });
+
+  test("a reused resolved finding reopened during review still holds approve and merge", async () => {
+    const request = hubRequest(RELEASING, { ...CODE_REVIEW, ...REVIEW_REQUEST });
+    const finding = inline("resolved");
+    const result = { ...REVIEW, comments: [finding] };
+    const taken = reported({ result }, request);
+    const old = { ...reviewer("2998-01-01T00:00:00.000Z"), head: "old", runId: "run_old", result };
+    const hub = fakeHub({ takes: [{ ...taken, reviewers: [old, ...taken.reviewers], threads: [501] }], dones: [ENDED] });
+    const { writes, host } = threadedHost([thread([501])], CI_GREEN);
+    expect((await runMail(reviewed, wake(), host, hub.hub)).terminalStatus).toBe("completed");
+    expect(approved(writes)).toBe(false);
+    expect(wroteMerge(writes)).toBe(false);
+    expect(writes.filter((write) => write.path.endsWith("/reviews"))).toEqual([]);
+  });
 
   test("a resolved host thread on a threads wake writes approve and merge", async () => {
     const writes = await threadsWake([thread([501], { isResolved: true })], [inline("untouched")]);

@@ -51,6 +51,14 @@ export function findingOpen(thread: FindingThread | undefined): boolean {
 export const CodeReviewComment = type({ path: "string", start: "number", end: "number", title: "string", body: "string", priority: "number", "quoted?": "string", "unverified?": "true", "thread?": FindingThread });
 export type CodeReviewComment = typeof CodeReviewComment.infer;
 
+/** The current host state and complete conversation of one of Triage's finding threads. */
+export const ReviewDiscussion = FindingThread.and({ comments: type({ author: "string | null", body: "string", at: "string" }).array() });
+export type ReviewDiscussion = typeof ReviewDiscussion.infer;
+
+/** All posted findings of this PR, with the last reviewed head as the comparison checkpoint. */
+export const PreviousReview = type({ head: "string", comments: CodeReviewComment.and({ thread: FindingThread }).array(), "discussions?": ReviewDiscussion.array() });
+export type PreviousReview = typeof PreviousReview.infer;
+
 /** A finding the review left out: its check found it not real, or could not decide and only one finder reported it. */
 const CodeReviewDropped = CodeReviewComment.and({ verdict: "'not_real' | 'unsure'", reason: "string" });
 

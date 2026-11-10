@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { minimatch } from "minimatch";
 import { asRecord, cachedLoads, compare, errorText } from "@corbits/common";
-import { parseFindingHeadline, threadsHold, threadsUnread } from "@corbits/triage-contracts/code-review";
+import { parseFindingHeadline, threadsHold, threadsUnread, type ReviewDiscussion, type ThreadRead } from "@corbits/triage-contracts/code-review";
 import type { HeadCi } from "@corbits/triage-contracts/merge-gate";
 import { contributionRuleRank, isDocPath } from "@corbits/triage-contracts/paths";
 import { teamSlug } from "@corbits/triage-contracts/team";
@@ -442,14 +442,16 @@ export async function readMergeStates(gh: GithubFetch, repo: string, numbers: re
   return Object.entries(data.repository).flatMap(([alias, node]) => (node === null || failed.has(alias) ? [] : [{ number: node.number, open: node.state === "OPEN", mergeable: MERGEABLE[node.mergeable], mergeableState: node.mergeStateStatus.toLowerCase(), reviewDecision: node.reviewDecision }]));
 }
 
-const ThreadComment = type({ databaseId: "number", createdAt: "string", author: type({ login: "string" }).or("null"), "pullRequestReview?": type({ databaseId: "number" }).or("null") });
+const ThreadComment = type({ databaseId: "number", createdAt: "string", "body?": "string", author: type({ login: "string" }).or("null"), "pullRequestReview?": type({ databaseId: "number" }).or("null") });
+const DiscussionPage = type({ nodes: ThreadComment.array(), pageInfo: { hasPreviousPage: "boolean", "startCursor?": "string | null" } });
 const ThreadsReply = type({
+  "errors?": "unknown[]",
   data: {
     repository: {
       pullRequest: {
         reviewThreads: {
           pageInfo: { hasNextPage: "boolean", endCursor: "string | null" },
-          nodes: type({ isResolved: "boolean", isOutdated: "boolean", opener: { nodes: ThreadComment.array() }, comments: { nodes: ThreadComment.array() } }).array(),
+          nodes: type({ "id?": "string", isResolved: "boolean", isOutdated: "boolean", opener: { nodes: ThreadComment.array() }, comments: { nodes: ThreadComment.array(), "pageInfo?": DiscussionPage.get("pageInfo") } }).array(),
         },
       },
     },
@@ -458,13 +460,13 @@ const ThreadsReply = type({
 export type ReviewThread = (typeof ThreadsReply.infer)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][number];
 
 // A thread's state needs only the comment that opened it and its newest reply, so the newest page of comments is enough.
-const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String, $discussion: Boolean!) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) { reviewThreads(first: 100, after: $after) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      isResolved isOutdated
+      id @include(if: $discussion) isResolved isOutdated
       opener: comments(first: 1) { nodes { databaseId createdAt author { login } pullRequestReview { databaseId } } }
-      comments(last: 100) { nodes { databaseId createdAt author { login } } }
+      comments(last: 100) { pageInfo @include(if: $discussion) { hasPreviousPage startCursor } nodes { databaseId createdAt body @include(if: $discussion) author { login } } }
     }
   } } }
 }`;
@@ -473,18 +475,80 @@ const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $af
 const THREAD_PAGES = 10;
 
 /** Every review thread of the pull request; only GraphQL tells whether a thread is resolved. */
-export async function listReviewThreads(gh: GithubFetch, repo: string, number: number): Promise<ReviewThread[]> {
+export async function listReviewThreads(gh: GithubFetch, repo: string, number: number, discussion = false): Promise<ReviewThread[]> {
   const [owner, name] = repo.split("/");
   const threads: ReviewThread[] = [];
   let after: string | null = null;
   for (let page = 0; page < THREAD_PAGES; page++) {
-    const reply = await json(gh, "/graphql", { method: "POST", body: JSON.stringify({ query: THREADS_QUERY, variables: { owner, name, number, after } }), headers: { "content-type": "application/json" } });
-    const { reviewThreads } = ThreadsReply.assert(reply).data.repository.pullRequest;
+    const reply = await json(gh, "/graphql", { method: "POST", body: JSON.stringify({ query: THREADS_QUERY, variables: { owner, name, number, after, discussion } }), headers: { "content-type": "application/json" } });
+    const parsed = ThreadsReply.assert(reply);
+    if (parsed.errors?.length) throw new Error("could not read review threads");
+    const { reviewThreads } = parsed.data.repository.pullRequest;
     threads.push(...reviewThreads.nodes);
     after = reviewThreads.pageInfo.hasNextPage ? reviewThreads.pageInfo.endCursor : null;
     if (after === null) return threads;
   }
   throw new Error(`more than ${THREAD_PAGES * 100} review threads`);
+}
+
+/** A thread's state, read off the comment that opened it: a reply counts only when someone other than its author wrote it. */
+export function reviewThreadState(thread: ReviewThread): ThreadRead | undefined {
+  const [first] = thread.opener.nodes;
+  if (!first) return undefined;
+  const id = first.databaseId;
+  if (thread.isResolved) return { id, state: "resolved" };
+  if (thread.isOutdated) return { id, state: "outdated" };
+  const reply = thread.comments.nodes.findLast((comment) => comment.databaseId !== id && comment.author?.login !== first.author?.login);
+  return reply ? { id, state: "replied", at: reply.createdAt } : { id, state: "untouched" };
+}
+
+const DISCUSSION_QUERY = `query($id: ID!, $before: String!) {
+  node(id: $id) { ... on PullRequestReviewThread {
+    comments(last: 100, before: $before) {
+      pageInfo { hasPreviousPage startCursor }
+      nodes { databaseId createdAt body author { login } }
+    }
+  } }
+}`;
+const DiscussionReply = type({ data: { node: type({ comments: DiscussionPage }).or("null") }, "errors?": type({ "type?": "string", "path?": "(string | number)[]" }).array() });
+
+/** Body reads are separate from merge-gate reads; deleted threads have no history to reuse. */
+export async function readReviewDiscussions(gh: GithubFetch, repo: string, number: number, ids: readonly number[]): Promise<ReviewDiscussion[]> {
+  if (ids.length === 0) return [];
+  const threads = await listReviewThreads(gh, repo, number, true);
+  const discussions: ReviewDiscussion[] = [];
+  for (const id of ids) {
+    const thread = threads.find((thread) => thread.opener.nodes[0]?.databaseId === id);
+    if (!thread) continue;
+    let page = DiscussionPage.assert(thread.comments);
+    let rows = page.nodes;
+    const cursors = new Set<string>();
+    let deleted = false;
+    while (page.pageInfo.hasPreviousPage) {
+      const before = page.pageInfo.startCursor;
+      if (!thread.id || !before || cursors.has(before)) throw new Error(`review thread ${id} has incomplete discussion`);
+      cursors.add(before);
+      const reply = await json(gh, "/graphql", { method: "POST", body: JSON.stringify({ query: DISCUSSION_QUERY, variables: { id: thread.id, before } }), headers: { "content-type": "application/json" } });
+      const parsed = DiscussionReply.assert(reply);
+      const { node } = parsed.data;
+      if (!node && (parsed.errors === undefined || parsed.errors.every((error) => error.type === "NOT_FOUND" && error.path?.length === 1 && error.path[0] === "node"))) {
+        deleted = true;
+        break;
+      }
+      if (!node || parsed.errors?.length) throw new Error(`could not read review thread ${id}`);
+      page = node.comments;
+      rows = [...page.nodes, ...rows];
+    }
+    if (deleted) continue;
+    const comments = rows.map(function comment(row) {
+      if (row.body === undefined) throw new Error(`review thread ${id} has an unread comment`);
+      return { author: row.author?.login ?? null, body: row.body, at: row.createdAt };
+    });
+    const state = reviewThreadState(thread);
+    if (!state) throw new Error(`review thread ${id} has no opening comment`);
+    discussions.push({ ...state, comments });
+  }
+  return discussions;
 }
 
 /** The ids of the code reviews `appLogin`, the App's bot account, sent: its own reviews that carry the marker. */

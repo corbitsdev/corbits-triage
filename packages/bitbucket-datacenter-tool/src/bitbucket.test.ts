@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { executeAction, type ActionStep } from "./action";
-import { closeOut, findingThreadStates, mirror, sendCodeReview, type BitbucketFetch, type Comment } from "./bitbucket";
+import { closeOut, findingThreadStates, readReviewDiscussions, mirror, sendCodeReview, type BitbucketFetch, type Comment } from "./bitbucket";
 import { runAction } from "./sidecar-bundle";
 import { closedText, LINK_REFERENCE_MARKER, LINK_REFERENCE_MARKERS } from "@corbits/triage-contracts";
 
@@ -439,4 +439,15 @@ describe("findingThreadStates", () => {
       unread: `bitbucket GET ${PR_PATH}/comments/15 -> 500 Server error`,
     });
   });
+});
+
+test("review discussion reads nested replies and resolved state", async () => {
+  async function host(path: string): Promise<Response> {
+    if (path.endsWith("/503")) return new Response("unavailable", { status: 503 });
+    if (!path.endsWith("/501")) return new Response("missing", { status: 404 });
+    return Response.json({ author: BOT, text: "Bug", createdDate: 0, threadResolved: true, comments: [{ author: AUTHOR, text: "Intentional", createdDate: 1, comments: [{ author: BOT, text: "Understood", createdDate: 2 }] }] });
+  }
+  expect(await readReviewDiscussions(host, "TRI/widgets", 1, [501])).toMatchObject([{ id: 501, state: "resolved", comments: [{ body: "Bug" }, { body: "Intentional" }, { body: "Understood" }] }]);
+  expect(await readReviewDiscussions(host, "TRI/widgets", 1, [999, 501])).toHaveLength(1);
+  await expect(readReviewDiscussions(host, "TRI/widgets", 1, [503])).rejects.toThrow("503");
 });

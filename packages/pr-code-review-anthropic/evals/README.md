@@ -122,3 +122,15 @@ refused unless keeping every comment scores as the saved run did and every
 comment carries a confidence. It prints the precision and recall frontier and
 the loosest cutoff at a fixed 85% precision bar, with recall by reach, clean
 cases left silent, comments per pull request and pull requests commented on.
+
+## Review history
+
+`bun --conditions=intx-src packages/pr-code-review-anthropic/evals/history.eval.ts fixtures.json baseline.txt results.json`
+compares fixed candidate findings with and without prior review history. Supply a JSON array matching `Fixture` in
+the runner: PR request (including its pinned checkout), candidate, current diff, exact change since the prior review, prior findings/discussions, file contents,
+expected outcome and repeat count. `baseline.txt` is the previous check system prompt. Fixtures stay local when they
+contain private repository code. Use `changes: null` for an unavailable prior snapshot; large histories are read from
+the same file as in production. This calls Anthropic with `ANTHROPIC_API_KEY`, caps the run at $10 using the shared
+price table, and saves verdicts, posting decisions, cost and raw responses. It uses the production repository tools
+and citation checks, stopping with an inconclusive result if it would read past the production budget. It measures
+verifier reconciliation, not finder recall or the host's posting lifecycle.

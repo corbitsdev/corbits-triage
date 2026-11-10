@@ -7,11 +7,12 @@ import type { InferenceEvent } from "@intx/types/inference-events";
 import type { ToolResult } from "@intx/types/runtime";
 import { projectLiveToInert, type StepInvokeRequest, type WorkflowAuthorizeFn } from "@intx/workflow";
 import { checkoutUnder } from "@corbits/pr-code-review/actions/checkout";
+import { REVIEW_HISTORY } from "@corbits/pr-code-review/history";
 import { codeReviewAgents, credentialBindingsFor } from "@corbits/pr-code-review/agents";
 import { codeReviewDirectors } from "@corbits/pr-code-review/directors";
 import { CHECK_UNFINISHED, UNCITED } from "@corbits/pr-code-review/reader-director";
 import { codeReviewWorkflow } from "@corbits/pr-code-review/pr-code-review";
-import { stockTriggerMail } from "@corbits/triage-contracts";
+import { CodeReviewOutput, stockTriggerMail, type PreviousReview } from "@corbits/triage-contracts";
 import { reviewMailContent } from "@corbits/triage-manager/actions/review";
 import { reviewRequestOf, type PullRequestToReview } from "../../../apps/hub/src/pull-request-reader.js";
 import { runLocalWorkflow } from "../../triage-workflows/src/run-local.js";
@@ -71,6 +72,7 @@ let outside = false;
 let checkKeepsReading: "confirms" | "silent" | undefined;
 /** Whether the check of `OUTSIDE` cites no line it read. */
 let checkUncited = false;
+let checkOmitsHistory = false;
 
 const allow: WorkflowAuthorizeFn = async function allow() {
   return { effect: "allow", matchingGrants: [], resolvedBy: null };
@@ -83,7 +85,8 @@ async function host(input: string | URL | Request, init?: RequestInit): Promise<
     if (new Headers(init?.headers).get("accept") === "application/vnd.github.diff") return new Response(served);
     return Response.json({ number: NUMBER, state: "open", head: { sha: SHA } });
   }
-  if (pathname === `/repos/${REPO}/tarball/${SHA}`) return new Response(tarball);
+  if (pathname.startsWith(`/repos/${REPO}/tarball/`)) return new Response(tarball);
+  if (pathname === "/graphql") return Response.json({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "thread", isResolved: true, isOutdated: false, opener: { nodes: [{ databaseId: 501, createdAt: "2026-01-01T00:00:00Z", author: { login: "reviewer" } }] }, comments: { pageInfo: { hasPreviousPage: false }, nodes: [{ databaseId: 501, body: "Previously discussed", createdAt: "2026-01-01T00:00:00Z", author: { login: "reviewer" } }] } }], pageInfo: { hasNextPage: false, endCursor: null } } } } } });
   if (pathname === `/repos/${REPO}/contents/src/a.ts`) return new Response(FILE);
   if (pathname === `/repos/${REPO}/contents/src/b.ts`) return new Response(CALLER);
   return new Response("not found", { status: 404 });
@@ -103,7 +106,7 @@ function verdict(sent: string) {
   }
 
   if (sent.includes(PLANTED.title)) return { verdict: "not_real", reason: DISPROOF };
-  if (!sent.includes(OUTSIDE.title)) return { verdict: "real", reason: "src/a.ts:2 `return a - b;` subtracts." };
+  if (!sent.includes(OUTSIDE.title)) return { verdict: "real", reason: "src/a.ts:2 `return a - b;` subtracts.", ...(sent.includes("<previous_findings>") && !checkOmitsHistory && { history: { kind: "duplicate", index: 0 } }) };
   if (checkUncited) return { verdict: "real", reason: "four is 0 at line 9 of b.ts." };
   if (sent.includes("const four = add(2, 2)")) return { verdict: "real", reason: "src/b.ts:2 `export const four = add(2, 2);` is 0." };
   return { verdict: "unsure", reason: "The caller was not read." };
@@ -117,7 +120,7 @@ function answer(body: MessagesRequest) {
     return [{ type: "tool_use", id: `verify-${sent.split("tool_result").length}`, name: "read_file", input: { path: OUTSIDE.path } }];
   }
   if (sent.includes("Verify this finding.") && !sent.includes("tool_result")) {
-    return [{ type: "tool_use", id: "verify", name: "read_file", input: { path: sent.includes(OUTSIDE.title) ? OUTSIDE.path : "src/a.ts" } }];
+    return [{ type: "tool_use", id: "verify", name: "read_file", input: { path: sent.includes(OUTSIDE.title) ? OUTSIDE.path : "src/a.ts" } }, ...(sent.includes(REVIEW_HISTORY) ? [{ type: "tool_use", id: "history", name: "read_file", input: { path: REVIEW_HISTORY } }] : [])];
   }
   if (sent.includes("Verify this finding.")) return [{ type: "text", text: JSON.stringify(verdict(sent)) }];
   expect(sent).toContain("Review the diff and report");
@@ -179,6 +182,9 @@ interface ReviewOptions {
   /** Where the repository finder reads; the checkout's folder when absent. */
   readerDir?: string;
   budgets?: { check?: number };
+  previous?: PreviousReview;
+  missingSnapshot?: boolean;
+  discussionBody?: string;
   /** The diff the host answers for the pull request. */
   diff?: string;
   /** The mail the review is sent; a stock trigger mail of the request when absent. */
@@ -186,7 +192,7 @@ interface ReviewOptions {
 }
 
 /** A review whose checkout action writes under `checkoutDir`, of the host's pull request. */
-async function review(checkoutDir: string, { readerDir = checkoutDir, budgets, diff = DIFF, content }: ReviewOptions = {}) {
+async function review(checkoutDir: string, { readerDir = checkoutDir, budgets, previous, missingSnapshot, discussionBody, diff = DIFF, content }: ReviewOptions = {}) {
   const origin = `http://localhost:${model.port}`;
   const results: ToolResult[] = [];
   const attempts: Record<string, number> = {};
@@ -204,14 +210,25 @@ async function review(checkoutDir: string, { readerDir = checkoutDir, budgets, d
     attempts[agentId] = (attempts[agentId] ?? 0) + 1;
   }
   served = diff;
-  const request = { kind: "code-review", number: NUMBER, title: "Add", description: "", checkout: { source: "github", repo: REPO, sha: SHA }, ...(budgets && { budgets }) };
+  async function workflowHost(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+    const { pathname } = new URL(input instanceof Request ? input.url : input);
+    if (missingSnapshot && pathname === `/repos/${REPO}/tarball/${previous?.head}`) return new Response(null, { status: 404 });
+    const response = await host(input, init);
+    if (discussionBody !== undefined && pathname === "/graphql") {
+      const body = await response.json() as { data: { repository: { pullRequest: { reviewThreads: { nodes: { comments: { nodes: { body: string }[] } }[] } } } } };
+      body.data.repository.pullRequest.reviewThreads.nodes[0].comments.nodes[0].body = discussionBody;
+      return Response.json(body);
+    }
+    return response;
+  }
+  const request = { kind: "code-review", number: NUMBER, title: "Add", description: "", checkout: { source: "github", repo: REPO, sha: SHA }, ...(budgets && { budgets }), ...(previous && { previous }) };
   const run = await runLocalWorkflow({
     workflow: codeReviewWorkflow(codeReviewAgents(ANTHROPIC, directors, readerDataDir))({ sources: ["github"] }),
     directors: Object.values(directors).map((d) => d.factory),
     actions: { ...actions, checkout: checkoutUnder(() => checkoutDir) },
     credentialBindings: credentialBindingsFor(["github"]),
     authorize: allow,
-    github: host,
+    github: workflowHost,
     inference: { credentialId: "inference", origin, apiKey: "local" },
     sourceFor,
     triggerPayload: content === undefined ? stockTriggerMail(request) : mailOf(content),
@@ -232,6 +249,55 @@ test("the finder receives the actual patch, answers without paging, and preserve
   const second = await review(join(dir, "data"));
   expect(second.run.terminalStatus).toBe("completed");
   expect(fetched.filter((path) => path.includes("/tarball/"))).toHaveLength(1);
+});
+
+test("the complete workflow carries confirmed duplicates through the director and refreshes prior discussions", async () => {
+  const first = await review(join(dir, "history-data"));
+  const result = CodeReviewOutput.assert(first.run.outputs["review"]);
+  const comments = result.comments.map((finding) => ({ ...finding, title: "Earlier wording for the subtraction bug", thread: { id: 501, state: "untouched" as const } }));
+  const next = await review(join(dir, "history-data"), { previous: { head: "b".repeat(40), comments } });
+  expect(next.run.terminalStatus).toBe("completed");
+  expect(next.run.outputs["review"]).toMatchObject({ complete: true, comments: [{ title: FINDING.title, thread: { id: 501, state: "resolved" } }] });
+});
+
+test("a deleted finding thread does not stop the next review or suppress a current bug", async () => {
+  const first = await review(join(dir, "deleted-history-data"));
+  const result = CodeReviewOutput.assert(first.run.outputs["review"]);
+  const comments = result.comments.map((finding) => ({ ...finding, thread: { id: 999, state: "resolved" as const } }));
+  const next = await review(join(dir, "deleted-history-data"), { previous: { head: "b".repeat(40), comments } });
+  expect(next.run.terminalStatus).toBe("completed");
+  const reviewed = CodeReviewOutput.assert(next.run.outputs["review"]);
+  expect(reviewed.complete).toBe(true);
+  expect(reviewed.comments).toHaveLength(1);
+  expect(reviewed.comments[0]!.title).toBe(FINDING.title);
+  expect(reviewed.comments[0]!.thread).toBeUndefined();
+});
+
+test("a missing old snapshot and large discussion still allow a duplicate to reuse its thread", async () => {
+  const data = join(dir, "missing-snapshot-data");
+  const first = await review(data);
+  const result = CodeReviewOutput.assert(first.run.outputs["review"]);
+  const comments = result.comments.map((finding) => ({ ...finding, thread: { id: 501, state: "untouched" as const } }));
+  const next = await review(data, { previous: { head: "b".repeat(40), comments }, missingSnapshot: true, discussionBody: "Previously discussed. ".repeat(4000) });
+  expect(next.run.terminalStatus).toBe("completed");
+  expect(next.run.outputs["checkout"]).toMatchObject({ changes: null });
+  expect(next.run.outputs["review"]).toMatchObject({ complete: true, comments: [{ thread: { id: 501, state: "resolved" } }] });
+  expect(next.results.some((result) => result.callId === "history" && !result.isError)).toBe(true);
+});
+
+test("a check that omits its history decision becomes unsure without failing the workflow", async () => {
+  const data = join(dir, "missing-decision-data");
+  const first = await review(data);
+  const result = CodeReviewOutput.assert(first.run.outputs["review"]);
+  const comments = result.comments.map((finding) => ({ ...finding, thread: { id: 501, state: "resolved" as const } }));
+  checkOmitsHistory = true;
+  try {
+    const next = await review(data, { previous: { head: "b".repeat(40), comments } });
+    expect(next.run.terminalStatus).toBe("completed");
+    expect(next.run.outputs["review"]).toMatchObject({ complete: true, comments: [], dropped: [{ verdict: "unsure", reason: "check did not reconcile prior findings" }] });
+  } finally {
+    checkOmitsHistory = false;
+  }
 });
 
 test("a pull request whose diff is over 1 MiB gets its review: its mail stays inlined and the review reads the diff from the host", async () => {

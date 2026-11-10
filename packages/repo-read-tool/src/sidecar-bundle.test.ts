@@ -43,4 +43,8 @@ test("paths under /diff read the call's diff folder beside the checkout, which m
   expect(await call("read_file", { path: "/diff/a.ts", diffRoot: dir })).toMatchObject({ content: `${dir} is not a checkout on this sidecar`, isError: true });
   expect(await call("read_file", { path: "/diff/0001.patch" })).toMatchObject({ isError: true });
   expect(await call("grep", { pattern: "x", diffRoot: `${head}.diff` })).toMatchObject({ content: { matches: [] } });
+  const comparison = `${" context line\n".repeat(180_000)}+late_regression\n`;
+  writeFileSync(`${head}.diff/since-review.patch`, comparison);
+  expect(Buffer.byteLength(comparison)).toBeGreaterThan(2_000_000);
+  expect(await call("read_file", { path: "/diff/since-review.patch", diffRoot: `${head}.diff`, start: 180_001 })).toMatchObject({ content: { path: "/diff/since-review.patch", totalLines: 180_002, text: "180001\t+late_regression\n180002\t" } });
 });
