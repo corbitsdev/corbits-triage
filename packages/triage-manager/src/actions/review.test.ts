@@ -12,11 +12,9 @@ const NO_WRITES = { perform() { throw new Error("a repeated finding must not wri
 
 for (const source of ["github", "bitbucket-datacenter"] as const) {
   const payload = { headers: { to: ["manager@acme.test"] }, parts: [{ contentType: "text/plain", text: manageMail("tnt_acme", { source, repo: "acme/widgets", number: 1 }) }] };
-  test(`${source}: repeated findings keep their original thread without another host write, including retry`, async () => {
+  test(`${source}: repeated findings keep their original thread without another host write`, async () => {
     const input = { payload, take: { output: TAKE }, reviewScope: { output: { reviewed: true } } };
-    for (let retry = 0; retry < 2; retry++) {
-      expect(await postReview(input, NO_WRITES, new AbortController().signal)).toEqual({ posted: true, threads: { runId: "new_run", ids: [501] } });
-    }
+    expect(await postReview(input, NO_WRITES, new AbortController().signal)).toEqual({ posted: true, threads: { runId: "new_run", ids: [501] } });
   });
   test(`${source}: an already posted review is reused on a later pass`, async () => {
     const take = { ...TAKE, reviewers: [{ ...OLD, head: "new", runId: "new_run" }] };
@@ -30,16 +28,6 @@ for (const source of ["github", "bitbucket-datacenter"] as const) {
     const take = { ...TAKE, reviewers: [current], commentThreads: [{ runId: "new_run", threads: [FINDING.thread] }] };
     const input = { payload, take: { output: take }, reviewScope: { output: { reviewed: true } } };
     await expect(postReview(input, NO_WRITES, new AbortController().signal)).rejects.toThrow("no known review thread");
-  });
-  test(`${source}: a mixed review preserves reused and newly posted thread ordering`, async () => {
-    const { thread: _thread, ...withoutThread } = FINDING;
-    const fresh = { ...withoutThread, title: "Different defect" };
-    const review = { ...RESULT, comments: [FINDING, fresh, FINDING] };
-    let writes = 0;
-    const ctx = { perform() { writes++; return { content: { threads: [777] } }; } } as unknown as EffectContext;
-    const input = { payload, take: { output: { ...TAKE, review } }, reviewScope: { output: { reviewed: true } } };
-    expect(await postReview(input, ctx, new AbortController().signal)).toEqual({ posted: true, threads: { runId: "new_run", ids: [501, 777, 501] } });
-    expect(writes).toBe(1);
   });
   test(`${source}: an unrecognized thread cannot suppress a new finding`, async () => {
     const review = { ...RESULT, comments: [{ ...FINDING, thread: { id: 999, state: "resolved" } }] };

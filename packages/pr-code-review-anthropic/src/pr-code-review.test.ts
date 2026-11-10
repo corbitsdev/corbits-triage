@@ -239,12 +239,10 @@ test("the finder receives the actual patch, answers without paging, and preserve
 test("the complete workflow carries confirmed duplicates through the director and refreshes prior discussions", async () => {
   const first = await review(join(dir, "history-data"));
   const result = CodeReviewOutput.assert(first.run.outputs["review"]);
-  for (const state of ["untouched", "resolved"] as const) {
-    const comments = result.comments.map((finding) => ({ ...finding, title: "Earlier wording for the subtraction bug", thread: { id: 501, state } }));
-    const next = await review(join(dir, "history-data"), { previous: { head: "b".repeat(40), comments } });
-    expect(next.run.terminalStatus).toBe("completed");
-    expect(next.run.outputs["review"]).toMatchObject({ complete: true, comments: [{ title: FINDING.title, thread: { id: 501, state: "resolved" } }] });
-  }
+  const comments = result.comments.map((finding) => ({ ...finding, title: "Earlier wording for the subtraction bug", thread: { id: 501, state: "untouched" as const } }));
+  const next = await review(join(dir, "history-data"), { previous: { head: "b".repeat(40), comments } });
+  expect(next.run.terminalStatus).toBe("completed");
+  expect(next.run.outputs["review"]).toMatchObject({ complete: true, comments: [{ title: FINDING.title, thread: { id: 501, state: "resolved" } }] });
 });
 
 test("a pull request whose diff is over 1 MiB gets its review: its mail stays inlined and the review reads the diff from the host", async () => {

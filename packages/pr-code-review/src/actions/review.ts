@@ -43,7 +43,13 @@ interface Candidates {
   unread: UnreadLines[];
   unreadFiles: number;
 }
-const HistoryDecision = type({ kind: "'new'" }).or({ kind: "'duplicate'", index: "number.integer >= 0" }).or({ kind: "'regression'", index: "number.integer >= 0", change: { path: "string", line: "number.integer > 0", side: "'old' | 'new'", reason: "string > 0" } });
+const HistoryDecision = type({ kind: "'new'" })
+  .or({ kind: "'duplicate'", index: "number.integer >= 0" })
+  .or({
+    kind: "'regression'",
+    index: "number.integer >= 0",
+    change: { path: "string", line: "number.integer > 0", side: "'old' | 'new'", reason: "string > 0" },
+  });
 export const Verdict = type({ verdict: "'real' | 'not_real' | 'unsure'", reason: "string", "history?": HistoryDecision });
 type Verdict = typeof Verdict.infer;
 interface Checks { findings: Reported[]; checks: { text: string; inference: StepInference }[]; changes?: string; previous?: PreviousReview }
