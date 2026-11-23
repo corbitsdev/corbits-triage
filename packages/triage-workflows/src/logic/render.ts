@@ -626,7 +626,7 @@ const MATCHES_LISTED = 5;
 
 /**
  * Docs names the files that need docs; other checks, scoped custom ones included, name what they found. Only a
- * code-pattern rule's output counts its matches, and the comment lists the first five and how many more there are.
+ * code-pattern rule's output counts its matches.
  */
 function failureEvidence(c: CheckResult, ctx: RenderContext): string {
   if (!c.evidence.length) return "";

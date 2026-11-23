@@ -19,14 +19,15 @@ describe("cited evidence", () => {
 
 describe("code-pattern matches", () => {
   test("the comment lists the first five matches and then how many more there are", () => {
-    function feedback(count: number): string {
+    function ruleLine(count: number): string | undefined {
       const evidence = Array.from({ length: count }, (_, index) => `src/a.ts:${index + 1} zero-fallback: Invented fallback.`);
       const failing = { check: "conventions", kind: "machine", result: "fail", reason: "added code matches a code pattern", evidence, output: { kind: "values", values: { matched: count } } } as const;
       const det: DeterministicResult = { state: "needs-author-update", reason: "a rule failed", findings: [], checks: [failing], needsJudgment: false, sources: classificationSources(emptyPack("acme/widgets")) };
-      return renderVerdict({ labels: VERDICT_LABELS, repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det }).feedback;
+      return renderVerdict({ labels: VERDICT_LABELS, repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det }).feedback.split("\n").at(-1);
     }
-    expect(feedback(5)).toEndWith("`src/a.ts:5 zero-fallback: Invented fallback.`");
-    expect(feedback(47)).toEndWith("`src/a.ts:5 zero-fallback: Invented fallback.`, and 42 more");
+    const firstFive = [1, 2, 3, 4, 5].map((line) => `\`src/a.ts:${line} zero-fallback: Invented fallback.\``).join(", ");
+    expect(ruleLine(5)).toBe(`- added code matches a code pattern: ${firstFive}`);
+    expect(ruleLine(6)).toBe(`- added code matches a code pattern: ${firstFive}, and 1 more`);
   });
 });
 
