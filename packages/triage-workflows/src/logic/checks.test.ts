@@ -231,14 +231,12 @@ rules:
     });
   });
 
-  test("only root vendored and built code is skipped, and named as skipped; the same folders nested are checked", () => {
-    const skipped = ["vendor/lib/a.ts: skipped as vendored, built or installed code", "dist/a.js: skipped as vendored, built or installed code"];
+  test("only root vendored and built code is skipped, and never listed as evidence; the same folders nested are checked", () => {
     const rootOnly = patterns([{ ...file, path: "vendor/lib/a.ts" }, { ...file, path: "dist/a.js" }], {});
     expect(rootOnly.checks.find((check) => check.check === "conventions")).toMatchObject({
       result: "pass",
-      reason: "nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code",
-      evidence: skipped,
-      skipped,
+      reason: "nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code (2 files not checked)",
+      evidence: [],
     });
     for (const path of ["src/build/a.ts", "scripts/build/deploy.ts", "src/vendor/a.ts", "apps/web/src/generated/x.ts"]) {
       const nested = patterns([{ ...file, path }], { [path]: content });
@@ -291,13 +289,16 @@ rules:
     expect(patterns([file], { "src/a.ts": content }, broken).checks.find((check) => check.check === "broken")).toMatchObject({ result: "unconfirmed" });
   });
 
-  test("a match in a checked file fails, and without one a file that adds code the host sent no diff for leaves the rule unconfirmed", () => {
+  test("a match in a checked file fails with only the matches as evidence and the unchecked files counted, and without one a file that adds code the host sent no diff for leaves the rule unconfirmed", () => {
     const large = { path: "src/large.ts", status: "modified", additions: 9_000, deletions: 0 };
     const clean = { path: "src/b.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+const b = 1;" };
-    const left = "src/large.ts: not checked, the host sent no diff";
     expect(filesToRead([file, large, clean], "github")).toEqual(["src/a.ts", "src/b.ts"]);
-    const failed = patterns([file, large], { "src/a.ts": content });
-    expect(failed.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "fail", evidence: expect.arrayContaining([left]), skipped: [left] });
+    const failed = patterns([file, large, { ...file, path: "vendor/lib/a.ts" }], { "src/a.ts": content });
+    expect(failed.checks.find((check) => check.check === "conventions")).toMatchObject({
+      result: "fail",
+      reason: "added code matches a code pattern (2 files not checked)",
+      evidence: ["src/a.ts:2 zero-fallback: Invented fallback `?? 0`; handle the missing value instead.", "src/a.ts:3 nested-ternary: Nested ternary; use if statements or a lookup."],
+    });
     const unchecked = patterns([clean, large], { "src/b.ts": "const b = 1;\n" });
     expect(unchecked.checks.find((check) => check.check === "conventions")).toMatchObject({ result: "unconfirmed", reason: "code patterns could not be checked: src/large.ts: the host sent no diff" });
   });

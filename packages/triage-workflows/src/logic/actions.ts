@@ -96,13 +96,6 @@ function changesFor({ checks, pack }: Pick<ActionInput, "checks" | "pack">): Che
   return authorFailures(checks, classificationSources(pack));
 }
 
-function findingLines(check: CheckResult): string[] {
-  const skipped = check.skipped;
-  if (skipped === undefined) return check.evidence.map((item) => `  - ${inlineCode(item)}`);
-  const omitted = new Set(skipped);
-  return check.evidence.filter((item) => !omitted.has(item)).map((item) => `  - ${inlineCode(item)}`);
-}
-
 /** Only what the author must fix is requested; anything else waits on a maintainer, not on the author. */
 function changesBody(input: ActionInput): string {
   const failed = changesFor(input);
@@ -110,7 +103,7 @@ function changesBody(input: ActionInput): string {
   const lines = ["Triage requests changes:"];
   for (const check of failed) {
     lines.push(`- ${checkName(input.pack, check.check)}: ${check.reason}`);
-    lines.push(...findingLines(check));
+    lines.push(...check.evidence.map((item) => `  - ${inlineCode(item)}`));
   }
   return bounded(lines);
 }
