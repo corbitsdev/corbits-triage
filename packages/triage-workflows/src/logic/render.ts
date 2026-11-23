@@ -622,9 +622,16 @@ export function bounded(lines: string[]): string {
   return `- and ${lines.filter(isBullet).length} more`;
 }
 
-/** Docs names the files that need docs; other checks, scoped custom ones included, name what they found. */
+const MATCHES_LISTED = 10;
+
+/**
+ * Docs names the files that need docs; other checks, scoped custom ones included, name what they found. Only a
+ * code-pattern rule's output counts its matches, and past ten the comment gives that number.
+ */
 function failureEvidence(c: CheckResult, ctx: RenderContext): string {
   if (!c.evidence.length) return "";
+  const matched = c.output.kind === "values" && c.output.values.matched;
+  if (typeof matched === "number" && matched > MATCHES_LISTED) return `: ${matched} matches`;
   const listed = c.evidence.map((evidence) => evidenceCode(c, evidence, ctx)).join(", ");
   return c.kind === "model" && c.check === "docs" ? ` for ${listed}` : `: ${listed}`;
 }

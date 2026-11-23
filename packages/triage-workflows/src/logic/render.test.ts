@@ -17,6 +17,20 @@ describe("cited evidence", () => {
   });
 });
 
+describe("code-pattern matches", () => {
+  test("the comment lists up to ten matches and past ten gives their number", () => {
+    function feedback(count: number): string {
+      const evidence = Array.from({ length: count }, (_, index) => `src/a.ts:${index + 1} zero-fallback: Invented fallback.`);
+      const failing = { check: "conventions", kind: "machine", result: "fail", reason: "added code matches a code pattern", evidence, output: { kind: "values", values: { matched: count } } } as const;
+      const det: DeterministicResult = { state: "needs-author-update", reason: "a rule failed", findings: [], checks: [failing], needsJudgment: false, sources: classificationSources(emptyPack("acme/widgets")) };
+      return renderVerdict({ labels: VERDICT_LABELS, repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det }).feedback;
+    }
+    expect(feedback(10)).toContain("`src/a.ts:10 zero-fallback: Invented fallback.`");
+    expect(feedback(11)).toContain("- added code matches a code pattern: 11 matches");
+    expect(feedback(11)).not.toContain("src/a.ts");
+  });
+});
+
 function noul(answers: Record<string, number>) {
   return parseAnswers(Object.entries({ instructed: 0.1, ...answers }).map(([id, value]) => JSON.stringify({ id, type: "noul", noul: value })).join(""));
 }
@@ -71,8 +85,8 @@ describe("author text in the comment", () => {
       "\u202e@team\u0007 [l](https://evil.example)",
     ];
     const checks = [
-      { check: "ci-green", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: hostile },
-      { check: "focused", kind: "model" as const, result: "fail" as const, reason: "unrelated changes", evidence: hostile },
+      { check: "ci-green", kind: "machine" as const, result: "fail" as const, reason: "required checks are failing", evidence: hostile, output: { kind: "values" as const, values: { status: "failure" } } },
+      { check: "focused", kind: "model" as const, result: "fail" as const, reason: "unrelated changes", evidence: hostile, output: { kind: "values" as const, values: {} } },
     ];
     const verdict = renderVerdict({
       labels: VERDICT_LABELS,
