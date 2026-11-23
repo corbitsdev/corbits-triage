@@ -19,7 +19,7 @@ const GRAMMARS: Record<PatternExtension, Grammar> = {
   jsx: JAVASCRIPT,
 };
 
-export type PatternsResult = { matches: string[]; skipped: string[]; checked: number } | { unread: string };
+export type PatternsResult = { matches: string[]; skipped: number; checked: number } | { unread: string };
 
 function presetRules(id: string): readonly PatternRule[] {
   const rules = PATTERN_PRESETS[id];
@@ -142,9 +142,6 @@ export function patternsResult(check: PatternsCheck, files: readonly PrFileFacts
     return { unread: errorText(error) };
   }
   if (matches.length === 0 && unchecked.length > 0) return { unread: namedUnchecked(unchecked) };
-  const skipped = [
-    ...unchecked.map((file) => `${file.path}: not checked, ${file.why}`),
-    ...files.filter((file) => checkable(file) && isForeignPath(file.path)).map((file) => `${file.path}: skipped as vendored, built or installed code`),
-  ];
+  const skipped = unchecked.length + files.filter((file) => checkable(file) && isForeignPath(file.path)).length;
   return { matches, skipped, checked: files.filter(inScope).length - unchecked.length };
 }

@@ -136,8 +136,6 @@ export interface CheckResult {
   output: CheckOutput;
   /** Set on a rule whose failure is asked of a maintainer, leaving the verdict Unsure instead of Fail. */
   onFail?: "ask";
-  /** The evidence lines naming files the rule skipped rather than checked. */
-  skipped?: string[];
   /** The label a rule that did not fail still adds: sensitive paths or risk below its `failAt` and at or above its `labelAt`. */
   label?: string;
 }
@@ -587,9 +585,8 @@ function evaluate(facts: PrFacts, rules: CheckRules, pack?: CheckPack): Determin
         kind: "machine",
         result: failed ? "fail" : "pass",
         reason,
-        evidence: [...found.matches, ...found.skipped],
+        evidence: found.matches,
         output: { kind: "values", values: { matched: found.matches.length } },
-        ...(found.skipped.length > 0 && { skipped: found.skipped }),
       });
     }
   }
@@ -653,11 +650,13 @@ function riskResult(facts: PrFacts, rules: CheckRules): CheckResult {
   return { ...base, result: "pass", ...(outcome === "label" && level !== "low" && { label: levelLabel("risk", level) }) };
 }
 
-function patternsReason(failed: boolean, found: { skipped: string[]; checked: number }): string {
-  if (failed) return "added code matches a code pattern";
-  if (found.checked === 0 && found.skipped.length > 0) return "nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code";
+function patternsReason(failed: boolean, found: { skipped: number; checked: number }): string {
+  const files = found.skipped === 1 ? "file" : "files";
+  const notChecked = found.skipped > 0 ? ` (${found.skipped} ${files} not checked)` : "";
+  if (failed) return `added code matches a code pattern${notChecked}`;
+  if (found.checked === 0 && found.skipped > 0) return `nothing checked: the only TypeScript or JavaScript changed is vendored, built or installed code${notChecked}`;
   if (found.checked === 0) return "nothing checked: no TypeScript or JavaScript code added";
-  return "no code pattern matched";
+  return `no code pattern matched${notChecked}`;
 }
 
 function deriveFromPack(facts: PrFacts, pack: CheckPack): DeterministicResult {
