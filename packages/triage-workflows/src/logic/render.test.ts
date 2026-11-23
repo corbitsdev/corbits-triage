@@ -18,16 +18,15 @@ describe("cited evidence", () => {
 });
 
 describe("code-pattern matches", () => {
-  test("the comment lists up to ten matches and past ten gives their number", () => {
+  test("the comment lists the first five matches and then how many more there are", () => {
     function feedback(count: number): string {
       const evidence = Array.from({ length: count }, (_, index) => `src/a.ts:${index + 1} zero-fallback: Invented fallback.`);
       const failing = { check: "conventions", kind: "machine", result: "fail", reason: "added code matches a code pattern", evidence, output: { kind: "values", values: { matched: count } } } as const;
       const det: DeterministicResult = { state: "needs-author-update", reason: "a rule failed", findings: [], checks: [failing], needsJudgment: false, sources: classificationSources(emptyPack("acme/widgets")) };
       return renderVerdict({ labels: VERDICT_LABELS, repoSource: "github", author: "octocat", repo: "acme/widgets", headSha: "abc123", det }).feedback;
     }
-    expect(feedback(10)).toContain("`src/a.ts:10 zero-fallback: Invented fallback.`");
-    expect(feedback(11)).toContain("- added code matches a code pattern: 11 matches");
-    expect(feedback(11)).not.toContain("src/a.ts");
+    expect(feedback(5)).toEndWith("`src/a.ts:5 zero-fallback: Invented fallback.`");
+    expect(feedback(47)).toEndWith("`src/a.ts:5 zero-fallback: Invented fallback.`, and 42 more");
   });
 });
 

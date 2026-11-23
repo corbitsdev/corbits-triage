@@ -622,18 +622,19 @@ export function bounded(lines: string[]): string {
   return `- and ${lines.filter(isBullet).length} more`;
 }
 
-const MATCHES_LISTED = 10;
+const MATCHES_LISTED = 5;
 
 /**
  * Docs names the files that need docs; other checks, scoped custom ones included, name what they found. Only a
- * code-pattern rule's output counts its matches, and past ten the comment gives that number.
+ * code-pattern rule's output counts its matches, and the comment lists the first five and how many more there are.
  */
 function failureEvidence(c: CheckResult, ctx: RenderContext): string {
   if (!c.evidence.length) return "";
   const matched = c.output.kind === "values" && c.output.values.matched;
-  if (typeof matched === "number" && matched > MATCHES_LISTED) return `: ${matched} matches`;
-  const listed = c.evidence.map((evidence) => evidenceCode(c, evidence, ctx)).join(", ");
-  return c.kind === "model" && c.check === "docs" ? ` for ${listed}` : `: ${listed}`;
+  const shown = typeof matched === "number" ? c.evidence.slice(0, MATCHES_LISTED) : c.evidence;
+  const listed = shown.map((evidence) => evidenceCode(c, evidence, ctx)).join(", ");
+  if (c.kind === "model" && c.check === "docs") return ` for ${listed}`;
+  return c.evidence.length > shown.length ? `: ${listed}, and ${c.evidence.length - shown.length} more` : `: ${listed}`;
 }
 
 /** Focused judged each file against the pull request's title, so the title is why a file is separate. */
